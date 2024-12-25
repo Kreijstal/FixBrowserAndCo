@@ -1,0 +1,38 @@
+name: Update Time File
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: write # Changed to write to allow creating releases
+  pages: write
+  id-token: write
+
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Runs every hour at the 0th minute
+  workflow_dispatch: # Allows manual triggering of the workflow
+
+jobs:
+  update-time:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Get current date and time
+        id: date
+        run: echo "CURRENT_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+
+      - name: Create or update time file
+        run: echo "${{ env.CURRENT_TIME }}" > time.txt
+
+      - name: Commit and push changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add time.txt
+          git commit -m "Update time to ${{ env.CURRENT_TIME }}"
+          git push
