@@ -11,7 +11,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 def download_and_extract(url: str, package_name: str) -> bool:
     try:
         print(f"Downloading {url}")
-        response = requests.get(url, stream=True, verify=False)  # Added verify=False here
+        response = requests.get(url, stream=True, verify=False)
         if response.status_code == 200:
             zip_path = f"{package_name}.zip"
             
@@ -92,6 +92,23 @@ def try_version_update(package: str, current_version: str, base_url: str) -> Opt
     
     return None
 
+def get_base_url(package: str) -> str:
+    # Dictionary of packages that belong to fixscript.org
+    fixscript_packages = {
+        'fixbuild', 'fixgui', 'fiximage', 'fixio', 'fixnative', 'fixscript',
+        'fixscript-classes', 'fixscript-macros', 'fixscript-optional',
+        'fixscript-unpack', 'fixtask', 'fixutil'
+    }
+
+    if package.startswith('mathlib') or package in ['bindiff', 'png', 'zcomp']:
+        return "http://public-domain.advel.cz/download"
+    elif package == 'cellsplit':
+        return "https://www.cellsplit.org/download"
+    elif package in fixscript_packages:
+        return "https://www.fixscript.org/download"
+    else:
+        return "https://www.fixbrowser.org/download"
+
 def main():
     versions = {}
     updated = False
@@ -105,13 +122,8 @@ def main():
     # Process each package
     for package, version in versions.items():
         print(f"Processing {package} version {version}")
-        if package.startswith('mathlib') or package in ['bindiff', 'png', 'zcomp']:
-            base_url = "http://public-domain.advel.cz/download"
-        elif package == 'cellsplit':
-            base_url = "https://www.cellsplit.org/download"
-        else:
-            base_url = "https://www.fixbrowser.org/download"
-
+        base_url = get_base_url(package)
+        
         new_version = try_version_update(package, version, base_url)
         if new_version:
             if new_version != version:
