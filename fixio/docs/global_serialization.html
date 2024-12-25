@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>Global functions</h2>
+
+<h3>Serialization</h3>
+
+<dl>
+	<dt><code>
+		function <b>serialize_key</b>(value): Byte[]<br>
+		function <b>serialize_key</b>(buf: Byte[], value)<br>
+	</code></dt>
+	<dd>
+		Serializes given value in a manner compatible with comparisons in serialized
+		form. This is the same as ordinary serialization except that references are
+		duplicated and the hash tables are sorted by key. This provides a canonical
+		form suitable for keys. Optionally the serialized value can be appended into
+		an existing array.
+	</dd>
+	<dt><code>
+		function <b>serialize_compare</b>(buf1: Byte[], buf2: Byte[]): Integer<br>
+		function <b>serialize_compare</b>(buf1: Byte[], off1: Integer, len1: Integer, buf2: Byte[], off2: Integer, len2: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Compares values directly in their serialized form. It is preferred that the
+		<code>serialize_key</code> function is used for serialization to provide consistent
+		sorting of hash keys and avoiding an error when encountering references as they are
+		not supported when comparing. The comparison occurs between the same type only,
+		different types are compared in this order: integers, floats, arrays, strings, hash tables
+		(from smaller to bigger). The result is less than zero if the first value is smaller,
+		greater than zero if the first value is bigger or zero if the values are the same.
+	</dd>
+</dl>
+
+</body>
+</html>

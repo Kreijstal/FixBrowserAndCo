@@ -1,0 +1,168 @@
+use "build";
+use "classes";
+
+import "io/file";
+import "io/stream";
+import "io/process";
+import "io/shared";
+import "io/time";
+import "native/native";
+import "util/long";
+import "util/string";
+
+build {
+	main: "cellsplit/main",
+	binary: "cellsplit.bin",
+	binary_windows32: "cellsplit",
+	binary_windows64: "cellsplit64",
+	binary_macos: "CellSplit.app/Contents/MacOS/CellSplit",
+	targets: ["windows32", "linux32", "linux64", "macos"],
+	resources: "res",
+	gui: true
+};
+
+build {
+	main: "cellsplit/server/main",
+	binary: "server",
+	targets: ["windows32", "linux32", "linux64", "macos"],
+	resources: "res",
+	exclude: ["fonts"]
+};
+
+var @use_target;
+
+function build_only(name)
+{
+	var params = clone(get_builds(){name});
+	params{"targets"} = [use_target];
+	build(params);
+}
+
+prepare
+{
+	use_target = get_current_target();
+
+	var args = get_arguments();
+	for (var i=0; i<length(args); i++) {
+		if (args[i] == "--target") {
+			use_target = args[i+1];
+			array_remove(args, i--, 2);
+			continue;
+		}
+	}
+}
+
+task build (-update-scripts)
+{
+	if (is_macos()) {
+		patch_macos_binary();
+	}
+}
+
+task dist (-update-scripts)
+{
+	patch_macos_binary();
+}
+
+task client (-update-scripts) "compile client only"
+{
+	build_only("cellsplit.bin");
+
+	if (use_target == "macos") {
+		patch_macos_binary();
+	}
+}
+
+task server (-update-scripts) "compile server only"
+{
+	build_only("server");
+}
+
+function @patch_macos_binary()
+{
+	var fname = "CellSplit.app/Contents/MacOS/CellSplit";
+	var bin = File::read_whole(fname);
+	// search for fixio_integrate_event_loop function:
+	var idx = (bin as String).search_string("\55\48\89\E5\41\57\41\56\53\50\49\89\D6\49\89\F7\48\8D");
+	if (idx >= 0) {
+		bin[idx] = 0xC3; // and make it no-op using ret instruction
+	}
+	File::write_whole(fname, bin);
+}
+
+task -update-scripts ""
+{
+	var scriptdir = "res/scripts/";
+	if (!needs_update(scriptdir+"classes.fix.gz", [get_fixbuild_path(), "build.fix"])) {
+		return;
+	}
+	var prefix = ".tmp."+Clock::get_micro_time();
+	makedir(prefix);
+	File::write_whole(Path(prefix, "import.fix"), {
+		"import \"classes\";\n",
+		"import \"macros\";\n"
+	});
+	var bin_file = Path(prefix, "output");
+	Process::run([get_fixbuild_path(), "-nc", "-src", prefix, "-m", "import", "-o", bin_file.to_string(), "-t", "linux32"]);
+	var data = File::read_whole(bin_file);
+	var stream = ArrayStream::create(data.get_view(data.length-12, 12));
+	var magic1 = stream.read_int_LE();
+	var magic2 = stream.read_int_LE();
+	var off = stream.read_int_LE();
+	var len = data.length - off - 12;
+	if (magic1 != 0x093C1FBE || magic2 != 0x8404665A) {
+		throw error("can't find data");
+	}
+	stream = ArrayStream::create(data.get_view(off, len));
+	var script_name = stream.read_null_string({""});
+	while (stream.get_position() < len) {
+		var fname = stream.read_null_string({""});
+		var file_off = stream.read_int_LE();
+		var file_len = stream.read_int_LE();
+		var flags = stream.read_ubyte();
+		if (fname == "import.fix") continue;
+
+		File::write_whole(scriptdir+fname, data.get_view(file_off, file_len));
+		var (r, e) = Process::run(["gzip", "-9", "-f", scriptdir+fname]);
+		if (e != null || r != 0) {
+			remove(scriptdir+fname);
+			File::write_whole(scriptdir+fname+".gz", gzip_compress(data.get_view(file_off, file_len)));
+		}
+	}
+	remove(prefix+"/import.fix");
+	remove(bin_file.to_string());
+	removedir(prefix);
+
+	foreach (var fname in ["object.fix"]) {
+		var p = Process::create([get_fixbuild_path(), "--fixbuild-script-get", fname], null, null, REDIR_OUT);
+		var contents = p.create_stream().read_all();
+		if (p.wait() != 0) {
+			throw error("couldn't extract "+fname);
+		}
+		File::write_whole(scriptdir+fname, contents);
+		var (r, e) = Process::run(["gzip", "-9", "-f", scriptdir+fname]);
+		if (e != null || r != 0) {
+			remove(scriptdir+fname);
+			File::write_whole(scriptdir+fname+".gz", gzip_compress(contents));
+		}
+	}
+}
+
+task native "build native library"
+{
+	if (System::get_type() == SYSTEM_WINDOWS) {
+		run("gcc -O3 -shared -static-libgcc -o cellsplit.dll native/native.c");
+	}
+	else {
+		run("gcc -O3 -shared -o cellsplit.so native/native.c");
+	}
+}
+
+task clean
+{
+	var scriptdir = "res/scripts/";
+	remove(scriptdir+"__fixlines.fix.gz");
+	remove(scriptdir+"classes.fix.gz");
+	remove(scriptdir+"macros.fix.gz");
+	remove(scriptdir+"object.fix.gz");
+}

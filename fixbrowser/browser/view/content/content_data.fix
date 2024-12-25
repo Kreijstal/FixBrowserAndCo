@@ -1,0 +1,362 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "unpack";
+use "classes";
+
+import "image/image";
+import "gui/view";
+import "gui/event";
+import "gui/subview";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/image";
+import "browser/view/content/background";
+
+class ContentData
+{
+	var view: SubView;
+	var focus_subview: SubView;
+
+	var web_view;
+	var show_menu_func;
+	var reload_model_func;
+	var relayout_func;
+	var open_url_func;
+	var open_image_func;
+	
+	var hover_status_func;
+	var hover_status_data;
+
+	var layout_calc_size: CalcSize;
+
+	var active_hover_group: HoverGroup;
+	var active_hover_block: BlockView;
+	var active_hover_id: Integer;
+
+	var @relayout_triggered: Boolean;
+
+	constructor create(view: SubView)
+	{
+		this.view = view;
+	}
+
+	function show_menu(menu: Menu)
+	{
+		show_menu_func(view, null, 0, 0, menu);
+	}
+
+	function show_menu(layer: Layer, x: Integer, y: Integer, menu: Menu)
+	{
+		show_menu_func(view, layer, x, y, menu);
+	}
+
+	function show_link_menu(url: String)
+	{
+		var menu = Menu::create();
+		menu.add_item("Open link", ContentData::handle_open_link#2, this, url as Dynamic);
+		menu.add_separator();
+		menu.add_item("Copy link URL", ContentData::handle_copy_link_url#2, this, url as Dynamic);
+		show_menu(menu);
+	}
+
+	function show_image_menu(link_url: String, image_url: String, img: WebImage)
+	{
+		var menu = Menu::create();
+		if (link_url) {
+			menu.add_item("Open link", ContentData::handle_open_link#2, this, link_url as Dynamic);
+			menu.add_separator();
+			menu.add_item("Copy link URL", ContentData::handle_copy_link_url#2, this, link_url as Dynamic);
+			menu.add_separator();
+		}
+		menu.add_item("View image", ContentData::handle_view_image#2, this, [image_url, img] as Dynamic);
+		menu.add_item("Copy image URL", ContentData::handle_copy_link_url#2, this, image_url as Dynamic);
+		show_menu(menu);
+	}
+
+	function @handle_open_link(url: String)
+	{
+		set_hover_status(null);
+		open_url(url);
+	}
+
+	function @handle_copy_link_url(url: String)
+	{
+		Clipboard::set_text(url);
+	}
+
+	function @handle_view_image(data[url: String, img: WebImage])
+	{
+		open_image(url, img);
+	}
+
+	function reload_model()
+	{
+		reload_model_func(web_view);
+	}
+
+	function relayout()
+	{
+		if (!relayout_triggered) {
+			relayout_triggered = true;
+			Timer::run_once(0, ContentData::do_relayout#1, this);
+		}
+	}
+
+	function @do_relayout()
+	{
+		relayout_triggered = false;
+		relayout_func(web_view);
+		active_hover_group = null;
+	}
+
+	function open_url(url: String)
+	{
+		open_url_func(web_view, url);
+	}
+
+	function open_image(url: String, img: WebImage)
+	{
+		open_image_func(web_view, url, img);
+	}
+
+	function set_hover_status(text: String)
+	{
+		if (hover_status_func) {
+			hover_status_func(hover_status_data, text);
+		}
+	}
+
+	function handle_hover_event(event: MouseEvent, group: HoverGroup, block: BlockView, id: Integer)
+	{
+		if (event.get_type() == EVENT_MOUSE_LEAVE) {
+			if (active_hover_group === group) {
+				repaint_hover_group();
+				active_hover_group = null;
+				active_hover_block = null;
+				active_hover_id = 0;
+				view.set_cursor(CURSOR_DEFAULT);
+				set_hover_status(null);
+			}
+		}
+		else {
+			if (active_hover_group !== group) {
+				repaint_hover_group();
+				active_hover_group = group;
+				active_hover_block = block;
+				active_hover_id = id;
+				repaint_hover_group();
+				view.set_cursor(CURSOR_HAND);
+				set_hover_status(group.url);
+			}
+		}
+	}
+
+	function @repaint_hover_group()
+	{
+		if (active_hover_block) {
+			repaint_hover_group(active_hover_block, active_hover_id, active_hover_group);
+		}
+	}
+
+	function @repaint_hover_group(block: BlockView, id: Integer, group: HoverGroup)
+	{
+		block.repaint_part(id);
+
+		macro check(dir) {
+			var $cur_id = id;
+			for (;;) {
+				$cur_id = block.get_#dir#_part($cur_id);
+				if ($cur_id == -1) break;
+				var idx = block.get_part_index($cur_id);
+				var data = block.get_linepart_data(idx);
+				if (!InlineObject::is_instance(data)) break;
+				var part_group = (data as InlineObject).hover_group;
+				if (part_group !== group) break;
+				block.repaint_part($cur_id);
+			}
+		}
+
+		check(prev);
+		check(next);
+	}
+}
+
+class CalcSize
+{
+	var max_width: Integer;
+
+	constructor create()
+	{
+	}
+}
+
+class MirrorState
+{
+	var @data;
+	var @part_added_func;
+	var redirected: Boolean;
+
+	constructor create(data, part_added_func)
+	{
+		this.data = data;
+		this.part_added_func = part_added_func;
+		redirected = true;
+	}
+
+	function is_redirected(): Boolean
+	{
+		if (!this) return false;
+		return redirected;
+	}
+
+	function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, min_layer: Integer, max_layer: Integer, part_data)
+	{
+		if (!this) return;
+		part_added_func(data, block, id, x, y, width, ascent, descent, overdraw, min_layer, max_layer, part_data);
+	}
+}
+
+class InlineObject
+{
+	var @marker;
+	var background: BackgroundView;
+	var hover_background: BackgroundView;
+	var hover_group: HoverGroup;
+	var content_data: ContentData;
+	var mirror: MirrorState;
+	var text_start: Integer;
+	var text_end: Integer;
+
+	function @marker() {}
+
+	constructor create(background: BackgroundView, hover_background, hover_group: HoverGroup, content_data: ContentData, mirror: MirrorState)
+	{
+		this.marker = InlineObject::marker#1;
+		this.background = background;
+		this.hover_background = hover_background;
+		this.hover_group = hover_group;
+		this.content_data = content_data;
+		this.mirror = mirror;
+		this.text_start = -1;
+		this.text_end = -1;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= INLINEOBJECT_SIZE && (obj as InlineObject).marker === InlineObject::marker#1;
+	}
+
+	function update_inline_connection(next_background: BackgroundView)
+	{
+		background.update_inline_connection(next_background);
+		if (hover_background) {
+			hover_background.inline_clip_left = background.inline_clip_left;
+			hover_background.inline_clip_right = background.inline_clip_right;
+		}
+	}
+}
+
+class InlineLinePart: LinePart
+{
+	constructor create()
+	{
+	}
+
+	override function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		var style = data as InlineObject;
+		if (style.mirror.is_redirected()) {
+			return;
+		}
+
+		var background = style.background;
+		var hover = (style.content_data.active_hover_group === style.hover_group);
+		if (hover && style.hover_background != null) {
+			background = style.hover_background;
+		}
+		if (!background) {
+			paint_content(block, id, p, x, y, width, ascent, descent, text, off, len, hover, data);
+		}
+	}
+
+	override function paint_layer(block: BlockView, id: Integer, layer: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		if (layer > 0) {
+			var style = data as InlineObject;
+			if (style.mirror.is_redirected()) {
+				return;
+			}
+
+			var background = style.background;
+			var hover = (style.content_data.active_hover_group === style.hover_group);
+			if (hover && style.hover_background != null) {
+				background = style.hover_background;
+			}
+
+			if (background) {
+				var num_layers = length(background.backgrounds);
+				if (layer == num_layers) {
+					var margin_left = background.inline_margin_left;
+					var margin_right = background.inline_margin_right;
+					if (margin_left > 0) {
+						if (off == style.text_start) {
+							x += margin_left;
+							width -= margin_left;
+						}
+					}
+					if (margin_right > 0) {
+						if (off+len == style.text_end) {
+							width -= margin_right;
+						}
+					}
+				}
+				if (layer <= num_layers) {
+					var cur_background = background.backgrounds[layer-1];
+					var background_ascent = cur_background.inline_ascent;
+					var background_descent = cur_background.inline_descent;
+					if (off > style.text_start) {
+						background.inline_clip_left += 10000;
+					}
+					if (off+len < style.text_end) {
+						background.inline_clip_right += 10000;
+					}
+					var (r, e) = background.draw(p, x, y-background_ascent, width, background_ascent+background_descent, layer-1);
+					if (off > style.text_start) {
+						background.inline_clip_left -= 10000;
+					}
+					if (off+len < style.text_end) {
+						background.inline_clip_right -= 10000;
+					}
+					if (e) throw e;
+				}
+				if (layer == num_layers) {
+					paint_content(block, id, p, x, y, width, ascent, descent, text, off, len, hover, data);
+				}
+			}
+		}
+	}
+
+	virtual function paint_content(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, hover: Boolean, data)
+	{
+	}
+}

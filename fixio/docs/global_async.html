@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>Global functions</h2>
+
+<h3>Asynchronous I/O</h3>
+
+<p>
+<code>import "io/async";</code>
+</p>
+
+<dl>
+	<dt><code>
+		function <b>async_process</b>()<br>
+		function <b>async_process</b>(timeout: Integer)<br>
+	</code></dt>
+	<dd>
+		Start processing asynchronous I/O. You can provide a timeout: negative value means infinite waiting
+		(the default) and zero means no blocking. The timeout is in milliseconds. The return value is zero
+		unless <code>async_quit</code> function is used to pass another return value.
+	</dd>
+	<dt><code>function <b>async_run_later</b>(delay: Integer, callback, data)</code></dt>
+	<dd>
+		Schedules running a callback at a later time. When the delay is zero, the callback is run immediatelly
+		on the next processing of events. The callback must have this signature:<br>
+		<code>function <b>callback</b>(data)</code><br>
+	</dd>
+	<dt><code>
+		function <b>async_quit</b>()<br>
+		function <b>async_quit</b>(ret_value)<br>
+	</code></dt>
+	<dd>
+		Requests aborting current processing of asynchronous I/O. Optionally you can provide a return value
+		that is then returned form the <code>async_process</code> function. Does nothing when not inside
+		the processing.
+	</dd>
+</dl>
+
+</body>
+</html>

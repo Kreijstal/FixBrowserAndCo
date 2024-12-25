@@ -1,0 +1,1117 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "util/long";
+import "cellsplit/worker_comm";
+import "cellsplit/util/crypto";
+import "cellsplit/util/connection";
+import "cellsplit/util/vector";
+
+const @VERSION = 2;
+
+const {
+	// version 1:
+	PACKET_PRELOGIN,
+	PACKET_LOGIN,
+	PACKET_ERROR,
+	PACKET_ADD_CELL,
+	PACKET_REMOVE_CELL,
+	PACKET_UPDATE_CELLS,
+	PACKET_INPUT,
+	PACKET_ACTION,
+	PACKET_ADD_PELLETS,
+	PACKET_REMOVE_PELLETS,
+	PACKET_GROW_PELLET,
+	PACKET_CLEAR_VIEW,
+	PACKET_LEADERBOARD,
+	PACKET_CHAT,
+	PACKET_SKIN_DATA,
+	PACKET_KICK_PLAYER,
+	PACKET_REPLAY_REQUEST,
+	PACKET_REPLAY_CHALLENGE,
+	PACKET_REPLAY_DATA,
+
+	// version 2:
+	PACKET_SERVER_INFO_REQUEST,
+	PACKET_SERVER_INFO_RESPONSE,
+	PACKET_SERVER_RULES,
+	PACKET_SERVER_RULES_CONFIRM
+};
+
+const {
+	ACTION_SPLIT,
+	ACTION_EJECT_MASS,
+
+	// used only by internal bots in client:
+	ACTION_INTERNAL_RESET,
+	ACTION_INTERNAL_RESET_WITH_MASS
+};
+
+const {
+	CHAT_GLOBAL,
+	CHAT_TEAM,
+	CHAT_LOCAL
+};
+
+const {
+	SYSTEM_TYPE_OTHER    = 0,
+	SYSTEM_TYPE_WINDOWS  = 1,
+	SYSTEM_TYPE_LINUX    = 2,
+	SYSTEM_TYPE_MACOS    = 3,
+	SYSTEM_TYPE_HAIKU    = 4,
+	SYSTEM_TYPE_IOS      = 5,
+	SYSTEM_TYPE_ANDROID  = 6,
+	SYSTEM_TYPE_CHROMEOS = 7
+};
+
+const {
+	SYSTEM_FLAG_WEB    = 0x01,
+	SYSTEM_FLAG_MOBILE = 0x02
+};
+
+const MAX_SKIN_SIZE      = 131072; // 128KB
+const MAX_SKIN_DIMENSION = 1024;
+
+struct CellUpdate
+{
+	var id: Integer;
+	var x: Float;
+	var y: Float;
+	var size: Float;
+}
+
+const {
+	CELL_PLAYER,
+	CELL_VIRUS,
+	CELL_EJECTED_MASS
+};
+
+class Packet
+{
+	var @type: Integer;
+
+	constructor @create(type: Integer)
+	{
+		this.type = type;
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+
+	virtual function send(conn: Connection)
+	{
+		throw error("not implemented");
+	}
+
+	static function receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var type = stream.read_ubyte();
+		var packet: Packet;
+		switch (type) {
+			case PACKET_PRELOGIN:             packet = PreLoginPacket::receive(conn, stream); break;
+			case PACKET_LOGIN:                packet = LoginPacket::receive(conn, stream); break;
+			case PACKET_ERROR:                packet = ErrorPacket::receive(conn, stream); break;
+			case PACKET_ADD_CELL:             packet = AddCellPacket::receive(conn, stream); break;
+			case PACKET_REMOVE_CELL:          packet = RemoveCellPacket::receive(conn, stream); break;
+			case PACKET_UPDATE_CELLS:         packet = UpdateCellsPacket::receive(conn, stream); break;
+			case PACKET_INPUT:                packet = InputPacket::receive(conn, stream); break;
+			case PACKET_ACTION:               packet = ActionPacket::receive(conn, stream); break;
+			case PACKET_ADD_PELLETS:          packet = AddPelletsPacket::receive(conn, stream); break;
+			case PACKET_REMOVE_PELLETS:       packet = RemovePelletsPacket::receive(conn, stream); break;
+			case PACKET_GROW_PELLET:          packet = GrowPelletPacket::receive(conn, stream); break;
+			case PACKET_CLEAR_VIEW:           packet = ClearViewPacket::receive(conn, stream); break;
+			case PACKET_LEADERBOARD:          packet = LeaderboardPacket::receive(conn, stream); break;
+			case PACKET_CHAT:                 packet = ChatPacket::receive(conn, stream); break;
+			case PACKET_SKIN_DATA:            packet = SkinDataPacket::receive(conn, stream); break;
+			case PACKET_KICK_PLAYER:          packet = KickPlayerPacket::receive(conn, stream); break;
+			case PACKET_REPLAY_REQUEST:       packet = ReplayRequestPacket::receive(conn, stream); break;
+			case PACKET_REPLAY_CHALLENGE:     packet = ReplayChallengePacket::receive(conn, stream); break;
+			case PACKET_REPLAY_DATA:          packet = ReplayDataPacket::receive(conn, stream); break;
+			case PACKET_SERVER_INFO_REQUEST:  packet = ServerInfoRequestPacket::receive(conn, stream); break;
+			case PACKET_SERVER_INFO_RESPONSE: packet = ServerInfoResponsePacket::receive(conn, stream); break;
+			case PACKET_SERVER_RULES:         packet = ServerRulesPacket::receive(conn, stream); break;
+			case PACKET_SERVER_RULES_CONFIRM: packet = ServerRulesConfirmPacket::receive(conn, stream); break;
+
+			default:
+				throw error("invalid packet type ("+type+")");
+		}
+		packet.type = type;
+		return packet;
+	}
+}
+
+class PreLoginPacket: Packet
+{
+	var version: Integer;
+	var cookie: Byte[];
+
+	constructor create()
+	{
+		super::create(PACKET_PRELOGIN);
+		version = VERSION;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_PRELOGIN);
+		stream.write_ubyte(version);
+		if (cookie) {
+			stream.write_ubyte(cookie.length);
+			stream.write(cookie);
+		}
+		else {
+			stream.write_ubyte(0);
+		}
+		conn.send_packet(stream.get_output());
+		conn.set_version(version);
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new PreLoginPacket;
+		packet.version = stream.read_ubyte();
+		if (packet.version == 0) {
+			throw error("invalid version");
+		}
+		if (packet.version >= 1) {
+			var len = stream.read_ubyte();
+			if (len > 0) {
+				packet.cookie = Array::create(len);
+				stream.read(packet.cookie);
+			}
+			if (conn.get_version() != 0) {
+				throw error("version already set");
+			}
+			conn.set_version(packet.version);
+		}
+		return packet;
+	}
+}
+
+class LoginPacket: Packet
+{
+	var version: Integer;
+	var nick: String;
+
+	// version 2:
+	var system_type: Integer;
+	var system_flags: Integer;
+
+	constructor create(system_type: Integer, system_flags: Integer)
+	{
+		super::create(PACKET_LOGIN);
+		this.version = VERSION;
+		this.system_type = system_type;
+		this.system_flags = system_flags;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_LOGIN);
+
+		var data_stream = ArrayStream::create();
+		data_stream.write_ubyte(version);
+		if (conn.get_version() >= 2) {
+			data_stream.write_ubyte(system_type);
+			data_stream.write_ubyte(system_flags);
+		}
+		data_stream.write_null_string(nick.to_utf8());
+		conn.get_out_cipher().encrypt(stream, data_stream.get_output(), 4096);
+
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new LoginPacket;
+
+		var data_stream = ArrayStream::create(conn.get_in_cipher().decrypt(stream, 4096));
+		packet.version = data_stream.read_ubyte();
+		if (packet.version != conn.get_version()) {
+			throw error("invalid version (possible man in the middle attack)");
+		}
+		if (conn.get_version() >= 2) {
+			packet.system_type = data_stream.read_ubyte();
+			packet.system_flags = data_stream.read_ubyte();
+		}
+		packet.nick = String::from_utf8(data_stream.read_null_string());
+
+		return packet;
+	}
+}
+
+class ErrorPacket: Packet
+{
+	var reason: String;
+
+	constructor create(reason: String)
+	{
+		super::create(PACKET_ERROR);
+		this.reason = reason;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_ERROR);
+		stream.write_null_string(reason.to_utf8());
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ErrorPacket;
+		packet.reason = String::from_utf8(stream.read_null_string());
+		return packet;
+	}
+}
+
+class AddCellPacket: Packet
+{
+	var id: Integer;
+	var type: Integer;
+	var pos: Vector;
+	var size: Float;
+	var color: Integer;
+	var account: String;
+	var nick: String;
+	var own: Boolean;
+
+	constructor create()
+	{
+		super::create(PACKET_ADD_CELL);
+		pos = Vector();
+	}
+
+	constructor create(id: Integer, type: Integer, cx: Float, cy: Float, size: Float, color: Integer, account: String, nick: String, own: Boolean)
+	{
+		super::create(PACKET_ADD_CELL);
+		this.id = id;
+		this.type = type;
+		this.pos = Vector(cx, cy);
+		this.size = size;
+		this.color = color;
+		this.account = account != null? account.as_const() : null;
+		this.nick = {nick};
+		this.own = own;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_ADD_CELL);
+		stream.write_int_LE(id);
+		stream.write_ubyte(type);
+		stream.write_float_LE(pos.x);
+		stream.write_float_LE(pos.y);
+		stream.write_float_LE(size);
+		stream.write_int_LE(color);
+		stream.write_null_string(account? account.to_utf8() as String : ""); //XXX
+		stream.write_null_string(nick? nick.to_utf8() as String : ""); //XXX
+		stream.write_ubyte(((own as Integer) != 0) as Integer); //XXX
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new AddCellPacket;
+		packet.id = stream.read_int_LE();
+		packet.type = stream.read_ubyte();
+		packet.pos = Vector(stream.read_float_LE(), stream.read_float_LE());
+		packet.size = stream.read_float_LE();
+		packet.color = stream.read_int_LE();
+		var s = stream.read_null_string() as String;
+		packet.account = s.length > 0? String::from_utf8(s) : null;
+		s = stream.read_null_string() as String;
+		packet.nick = s.length > 0? String::from_utf8(s) : null;
+		packet.own = stream.read_ubyte() != 0;
+		return packet;
+	}
+}
+
+class RemoveCellPacket: Packet
+{
+	var id: Integer;
+
+	constructor create(id: Integer)
+	{
+		super::create(PACKET_REMOVE_CELL);
+		this.id = id;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_REMOVE_CELL);
+		stream.write_int_LE(id);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new RemoveCellPacket;
+		packet.id = stream.read_int_LE();
+		return packet;
+	}
+}
+
+class UpdateCellsPacket: Packet
+{
+	var data: [CellUpdate];
+
+	constructor create()
+	{
+		super::create(PACKET_UPDATE_CELLS);
+		this.data = [];
+	}
+
+	function add(id: Integer, cx: Float, cy: Float, size: Float)
+	{
+		data[] = {
+			.id: id,
+			.x: cx,
+			.y: cy,
+			.size: size
+		};
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_UPDATE_CELLS);
+		var data = this.data;
+		stream.write_int_LE(length(data) / CellUpdate::SIZE);
+		foreach (var i in data) {
+			stream.write_int_LE(data[i].id);
+			stream.write_float_LE(data[i].x);
+			stream.write_float_LE(data[i].y);
+			stream.write_float_LE(data[i].size);
+		}
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new UpdateCellsPacket;
+		var count = stream.read_int_LE();
+		var data = Array::create(count*CellUpdate::SIZE, 4) as [CellUpdate];
+		foreach (var i in data) {
+			data[i].id = stream.read_int_LE();
+			data[i].x = stream.read_float_LE();
+			data[i].y = stream.read_float_LE();
+			data[i].size = stream.read_float_LE();
+		}
+		packet.data = data;
+		return packet;
+	}
+}
+
+class InputPacket: Packet
+{
+	var x: Float;
+	var y: Float;
+
+	constructor create()
+	{
+		super::create(PACKET_INPUT);
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_INPUT);
+		stream.write_float_LE(x);
+		stream.write_float_LE(y);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new InputPacket;
+		packet.x = stream.read_float_LE();
+		packet.y = stream.read_float_LE();
+		return packet;
+	}
+}
+
+class ActionPacket: Packet
+{
+	var action: Integer;
+	var mass: Float;
+
+	constructor create(action: Integer)
+	{
+		super::create(PACKET_ACTION);
+		this.action = action;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_ACTION);
+		stream.write_ubyte(action);
+		if (action == ACTION_INTERNAL_RESET_WITH_MASS) {
+			stream.write_float_LE(mass);
+		}
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ActionPacket;
+		packet.action = stream.read_ubyte();
+		if (packet.action == ACTION_INTERNAL_RESET_WITH_MASS) {
+			packet.mass = stream.read_float_LE();
+		}
+		return packet;
+	}
+}
+
+class AddPelletsPacket: Packet
+{
+	var pellets: [Pellet];
+
+	constructor create()
+	{
+		super::create(PACKET_ADD_PELLETS);
+		pellets = [];
+	}
+
+	constructor create(pellets: [Pellet])
+	{
+		super::create(PACKET_ADD_PELLETS);
+		this.pellets = clone(pellets);
+	}
+
+	constructor create(id: Integer, x: Float, y: Float, size: Float, color: Integer)
+	{
+		super::create(PACKET_ADD_PELLETS);
+		pellets = [];
+		pellets[] = {
+			.id: id,
+			.x: x,
+			.y: y,
+			.size: size,
+			.color: color
+		};
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_ADD_PELLETS);
+		var pellets = this.pellets;
+		stream.write_int_LE(length(pellets)/Pellet::SIZE);
+		foreach (var i in pellets) {
+			stream.write_int_LE(pellets[i].id);
+			stream.write_float_LE(pellets[i].x);
+			stream.write_float_LE(pellets[i].y);
+			stream.write_float_LE(pellets[i].size);
+			stream.write_int_LE(pellets[i].color);
+		}
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new AddPelletsPacket;
+		var cnt = stream.read_int_LE();
+		var pellets = Array::create(cnt*Pellet::SIZE, 4) as [Pellet];
+		for (var i=0; i<cnt; i++) {
+			var id = stream.read_int_LE();
+			var x = stream.read_float_LE();
+			var y = stream.read_float_LE();
+			var size = stream.read_float_LE();
+			var color = stream.read_int_LE();
+			pellets[(i * Pellet::SIZE) as Pellet] = { //XXX
+				.id: id,
+				.x: x,
+				.y: y,
+				.size: size,
+				.color: color
+			};
+		}
+		packet.pellets = pellets;
+		return packet;
+	}
+}
+
+class RemovePelletsPacket: Packet
+{
+	var ids: Integer[];
+
+	constructor create()
+	{
+		super::create(PACKET_REMOVE_PELLETS);
+		ids = [];
+	}
+
+	constructor create(id: Integer)
+	{
+		super::create(PACKET_REMOVE_PELLETS);
+		this.ids = [id];
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_REMOVE_PELLETS);
+		var ids = this.ids;
+		stream.write_int_LE(ids.length);
+		for (var i=0; i<ids.length; i++) {
+			stream.write_int_LE(ids[i]);
+		}
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new RemovePelletsPacket;
+		var cnt = stream.read_int_LE();
+		var ids = Array::create(cnt, 4);
+		for (var i=0; i<cnt; i++) {
+			ids[i] = stream.read_int_LE();
+		}
+		packet.ids = ids;
+		return packet;
+	}
+}
+
+class GrowPelletPacket: Packet
+{
+	var id: Integer;
+	var size: Float;
+
+	constructor create()
+	{
+		super::create(PACKET_GROW_PELLET);
+	}
+
+	constructor create(id: Integer, size: Float)
+	{
+		super::create(PACKET_GROW_PELLET);
+		this.id = id;
+		this.size = size;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_GROW_PELLET);
+		stream.write_int_LE(id);
+		stream.write_float_LE(size);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new GrowPelletPacket;
+		packet.id = stream.read_int_LE();
+		packet.size = stream.read_float_LE();
+		return packet;
+	}
+}
+
+class ClearViewPacket: Packet
+{
+	constructor create()
+	{
+		super::create(PACKET_CLEAR_VIEW);
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_CLEAR_VIEW);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ClearViewPacket;
+		return packet;
+	}
+}
+
+class LeaderboardPacket: Packet
+{
+	var top_players: String[];
+	var styles: Integer[];
+	var own_place: Integer;
+
+	// version 2:
+	var own_nick: String;
+
+	constructor create(top_players: String[], styles: Integer[], own_place: Integer, own_nick: String)
+	{
+		super::create(PACKET_LEADERBOARD);
+		this.top_players = top_players;
+		this.styles = styles;
+		this.own_place = own_place;
+		this.own_nick = own_nick;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_LEADERBOARD);
+		var data_stream = ArrayStream::create();
+		data_stream.write_ubyte(top_players.length);
+		for (var i=0; i<top_players.length; i++) {
+			data_stream.write_null_string(top_players[i].to_utf8());
+			data_stream.write_int_LE(styles[i]);
+		}
+		data_stream.write_ushort_LE(own_place);
+		if (conn.get_version() >= 2) {
+			data_stream.write_null_string(own_nick.to_utf8());
+		}
+		conn.get_out_cipher().encrypt(stream, data_stream.get_output(), 65536);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new LeaderboardPacket;
+		var data_stream = ArrayStream::create(conn.get_in_cipher().decrypt(stream, 65536));
+		packet.top_players = [];
+		packet.styles = [];
+		var cnt = data_stream.read_ubyte();
+		for (var i=0; i<cnt; i++) {
+			packet.top_players[] = String::from_utf8(data_stream.read_null_string());
+			packet.styles[] = data_stream.read_int_LE();
+		}
+		packet.own_place = data_stream.read_ushort_LE();
+		if (conn.get_version() >= 2) {
+			packet.own_nick = String::from_utf8(data_stream.read_null_string());
+		}
+		return packet;
+	}
+}
+
+class ChatPacket: Packet
+{
+	var kind: Integer;
+	var account_id: String;
+	var nick: String;
+	var message: String;
+	var style: Integer;
+
+	constructor create(kind: Integer, message: String, style: Integer)
+	{
+		super::create(PACKET_CHAT);
+		this.kind = kind;
+		this.message = message;
+		this.style = style;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_CHAT);
+		var data_stream = ArrayStream::create();
+		data_stream.write_ubyte(kind);
+		data_stream.write_null_string((account_id != null? account_id : "").to_utf8());
+		data_stream.write_null_string((nick != null? nick : "").to_utf8());
+		data_stream.write_null_string(message.to_utf8());
+		data_stream.write_int_LE(style);
+		conn.get_out_cipher().encrypt(stream, data_stream.get_output(), 4096);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ChatPacket;
+		var data_stream = ArrayStream::create(conn.get_in_cipher().decrypt(stream, 4096));
+		packet.kind = data_stream.read_ubyte();
+		packet.account_id = String::from_utf8(data_stream.read_null_string());
+		packet.nick = String::from_utf8(data_stream.read_null_string());
+		packet.message = String::from_utf8(data_stream.read_null_string());
+		packet.style = data_stream.read_int_LE();
+		return packet;
+	}
+}
+
+class SkinDataPacket: Packet
+{
+	var level: Integer;
+	var done: Boolean;
+	var account_id: String;
+	var data: Byte[];
+	var off: Integer;
+	var len: Integer;
+
+	constructor create(level: Integer, done: Boolean, account_id: String, data: Byte[], off: Integer, len: Integer)
+	{
+		super::create(PACKET_SKIN_DATA);
+		this.level = level;
+		this.done = done;
+		this.account_id = account_id;
+		this.data = data;
+		this.off = off;
+		this.len = len;
+	}
+
+	static function get_max_size(account_id: String): Integer
+	{
+		if (!account_id) {
+			account_id = "";
+		}
+		var len = 1+account_id.to_utf8().length+1+2;
+		return 16384 - len;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_SKIN_DATA);
+		var data_stream = ArrayStream::create();
+		if (done) {
+			data_stream.write_ubyte(level | 0x80);
+		}
+		else {
+			data_stream.write_ubyte(level);
+		}
+		data_stream.write_null_string((account_id != null? account_id : "").to_utf8());
+		data_stream.write_ushort_LE(len);
+		data_stream.write(data, off, len);
+		conn.get_out_cipher().encrypt(stream, data_stream.get_output(), 16384);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new SkinDataPacket;
+		var data_stream = ArrayStream::create(conn.get_in_cipher().decrypt(stream, 16384));
+		packet.level = data_stream.read_ubyte();
+		if ((packet.level & 0x80) != 0) {
+			packet.level &= ~0x80;
+			packet.done = true;
+		}
+		packet.account_id = String::from_utf8(data_stream.read_null_string());
+		packet.len = data_stream.read_ushort_LE();
+		packet.data = Array::create_shared(packet.len, 1);
+		data_stream.read(packet.data);
+		return packet;
+	}
+}
+
+class KickPlayerPacket: Packet
+{
+	var account_id: String;
+	var ban: Boolean;
+	var reason: String;
+	var cookie: Byte[];
+
+	constructor create(account_id: String, ban: Boolean, reason: String, cookie: Byte[])
+	{
+		super::create(PACKET_KICK_PLAYER);
+		this.account_id = account_id;
+		this.ban = ban;
+		this.reason = reason;
+		this.cookie = cookie;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_KICK_PLAYER);
+		var data_stream = ArrayStream::create();
+		data_stream.write_null_string(account_id.to_utf8());
+		data_stream.write_ubyte(ban? 1:0);
+		data_stream.write_null_string(reason.to_utf8());
+		data_stream.write_ubyte(cookie.length);
+		data_stream.write(cookie);
+		conn.get_out_cipher().encrypt(stream, data_stream.get_output(), 4096);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new KickPlayerPacket;
+		var data_stream = ArrayStream::create(conn.get_in_cipher().decrypt(stream, 4096));
+		packet.account_id = String::from_utf8(data_stream.read_null_string());
+		packet.ban = data_stream.read_ubyte() != 0;
+		packet.reason = String::from_utf8(data_stream.read_null_string());
+		var len = data_stream.read_ubyte();
+		packet.cookie = Array::create(len, 1);
+		data_stream.read(packet.cookie);
+		return packet;
+	}
+}
+
+class ReplayRequestPacket: Packet
+{
+	var start_time: Long;
+	var end_time: Long;
+
+	constructor create()
+	{
+		super::create(PACKET_REPLAY_REQUEST);
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_REPLAY_REQUEST);
+		stream.write_long_LE(start_time);
+		stream.write_long_LE(end_time);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ReplayRequestPacket;
+		packet.start_time = stream.read_long_LE();
+		packet.end_time = stream.read_long_LE();
+		return packet;
+	}
+}
+
+class ReplayChallengePacket: Packet
+{
+	var data: Byte[];
+
+	constructor create(data: Byte[])
+	{
+		super::create(PACKET_REPLAY_CHALLENGE);
+		this.data = data;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_REPLAY_CHALLENGE);
+		stream.write_ubyte(data.length);
+		stream.write(data);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ReplayChallengePacket;
+		var len = stream.read_ubyte();
+		packet.data = Array::create(len, 1);
+		stream.read(packet.data);
+		return packet;
+	}
+}
+
+class ReplayPart
+{
+	var time_base: Integer;
+	var data: Byte[];
+
+	constructor create(time_base: Integer, data: Byte[])
+	{
+		this.time_base = time_base;
+		this.data = data;
+	}
+}
+
+class ReplayDataPacket: Packet
+{
+	var parts: ReplayPart[];
+
+	constructor create(parts: ReplayPart[])
+	{
+		super::create(PACKET_REPLAY_DATA);
+		this.parts = parts;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_REPLAY_DATA);
+		foreach (var part in parts) {
+			stream.write_int_LE(part.time_base);
+			stream.write_int_LE(part.data.length);
+			stream.write(part.data);
+		}
+		stream.write_int_LE(-1);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ReplayDataPacket;
+		packet.parts = [];
+		for (;;) {
+			var part = new ReplayPart;
+			part.time_base = stream.read_int_LE();
+			if (part.time_base == -1) break;
+			var len = stream.read_int_LE();
+			part.data = Array::create_shared(len, 1);
+			stream.read(part.data);
+			packet.parts[] = part;
+		}
+		return packet;
+	}
+}
+
+class ServerInfoRequestPacket: Packet
+{
+	var version: Integer;
+
+	constructor create()
+	{
+		super::create(PACKET_SERVER_INFO_REQUEST);
+		this.version = 1;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_SERVER_INFO_REQUEST);
+		stream.write_ubyte(version);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ServerInfoRequestPacket;
+		packet.version = stream.read_ubyte();
+		return packet;
+	}
+}
+
+class ServerInfoResponsePacket: Packet
+{
+	var num_players: Integer;
+	var max_players: Integer;
+	var num_bots: Integer;
+	
+	constructor create()
+	{
+		super::create(PACKET_SERVER_INFO_RESPONSE);
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_SERVER_INFO_RESPONSE);
+		stream.write_ushort_LE(num_players);
+		stream.write_ushort_LE(max_players);
+		stream.write_ushort_LE(num_bots);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ServerInfoResponsePacket;
+		packet.num_players = stream.read_ushort_LE();
+		packet.max_players = stream.read_ushort_LE();
+		packet.num_bots = stream.read_ushort_LE();
+		return packet;
+	}
+}
+
+class ServerRulesPacket: Packet
+{
+	var rules: String[];
+	
+	constructor create(rules: String[])
+	{
+		super::create(PACKET_SERVER_RULES);
+		this.rules = rules;
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_SERVER_RULES);
+		stream.write_ubyte(rules.length);
+		foreach (var line in rules) {
+			stream.write_null_string(line.to_utf8());
+		}
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ServerRulesPacket;
+		var cnt = stream.read_ubyte();
+		packet.rules = Array::create(cnt);
+		for (var i=0; i<cnt; i++) {
+			packet.rules[i] = String::from_utf8(stream.read_null_string());
+		}
+		return packet;
+	}
+}
+
+class ServerRulesConfirmPacket: Packet
+{
+	constructor create()
+	{
+		super::create(PACKET_SERVER_RULES_CONFIRM);
+	}
+
+	override function send(conn: Connection)
+	{
+		var stream = conn.get_stream();
+		stream.write_ubyte(PACKET_SERVER_RULES_CONFIRM);
+		conn.send_packet(stream.get_output());
+	}
+
+	static function @receive(conn: Connection, stream: ArrayStream): Packet
+	{
+		var packet = new ServerRulesConfirmPacket;
+		return packet;
+	}
+}
+
+function @flag(s: String, name: String)
+{
+	if (s.length > 1) {
+		s[] = ',';
+	}
+	s += name;
+}
+
+function system_type_to_string(value: Integer): String
+{
+	switch (value) {
+		case SYSTEM_TYPE_OTHER:    return "(other)";
+		case SYSTEM_TYPE_WINDOWS:  return "Windows";
+		case SYSTEM_TYPE_LINUX:    return "Linux";
+		case SYSTEM_TYPE_MACOS:    return "MacOS";
+		case SYSTEM_TYPE_HAIKU:    return "Haiku";
+		case SYSTEM_TYPE_IOS:      return "iOS";
+		case SYSTEM_TYPE_ANDROID:  return "Android";
+		case SYSTEM_TYPE_CHROMEOS: return "ChromeOS";
+	}
+	return "???";
+}
+
+function system_flags_to_string(value: Integer): String
+{
+	var s = {"["};
+	if ((value & SYSTEM_FLAG_WEB) != 0) flag(s, "web");
+	if ((value & SYSTEM_FLAG_MOBILE) != 0) flag(s, "mobile");
+	s[] = ']';
+	return s;
+}

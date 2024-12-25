@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/struct";</code>
+</p>
+
+<p>
+Provides macros for manual allocation and deallocation of structs stored in a shared array.
+</p>
+
+<p>
+This module requires using of classes for the macros that use struct types.
+</p>
+
+<p>
+The macros access the array by reference, that way it can resize it by creating a new shared
+array and copying the existing content to it. The array doesn't need to be initialized,
+it will be automatically created on a first allocation. The array always use 4 bytes per
+element.
+</p>
+
+<p>
+Any allocated space must be freed with the corresponding macro of the alloc/free pair. Array
+and raw allocations must free or resize the whole allocated space. There are no checks for
+faulty operations (such as double or mismatched freeing).
+</p>
+
+<p>
+When passing the arrays between tasks it is required to send a new reference of the shared
+array before use. This is because the allocation can resize the array by creating a new array.
+The previous array will then contain old data and shouldn't be used anymore.
+</p>
+
+<p>
+The allocator uses the first-fit algorithm with the free ranges sorted by their offset. This
+allow to merge free ranges and reduces the overall array size. The overhead is just a single
+element at the start of the array that is used as a pointer to the first free range. The
+downside of the allocator is that it can be slower and more fragmented in the case that many
+too small free ranges are at the beginning. If this is an issue you can pack differently sized
+structs in different shared arrays.
+</p>
+
+<h2>Global macros</h2>
+
+<h3>Struct allocation</h3>
+
+<dl>
+	<dt><code>macro <b>struct_init</b>(&amp;arr, capacity: Integer)</code></dt>
+	<dd>
+		Initializes the array with given capacity (powers of two are recommended).
+		This operation is optional, the array will be initialized with the default capacity
+		on the first allocation.
+	</dd>
+	<dt><code>macro <b>struct_alloc</b>(&amp;arr, type)</code></dt>
+	<dd>
+		Allocates space for the struct. The <code>type</code> must be a struct type. Returns
+		the struct.
+	</dd>
+	<dt><code>macro <b>struct_free</b>(&amp;arr, type, str)</code></dt>
+	<dd>
+		Deallocates space used by the struct. The <code>type</code> must be a struct type.
+	</dd>
+</dl>
+
+<h3>Struct array allocation</h3>
+
+<dl>
+	<dt><code>macro <b>struct_alloc_array</b>(&amp;arr, type, num_elems: Integer)</code></dt>
+	<dd>
+		Allocates space for an array of structs. The <code>type</code> must be a struct type.
+		Returns the first struct.
+	</dd>
+	<dt><code>macro <b>struct_realloc_array</b>(&amp;arr, type, &amp;str, &amp;num_elems: Integer, new_num_elems: Integer)</code></dt>
+	<dd>
+		Resizes space for the struct array. The <code>type</code> must be a struct type
+		and the passed struct must be the first struct in the array.
+	</dd>
+	<dt><code>macro <b>struct_free_array</b>(&amp;arr, type, str, num_elems: Integer)</code></dt>
+	<dd>
+		Deallocates space used by the struct array. The <code>type</code> must be a struct type
+		and the passed struct must be the first struct in the array.
+	</dd>
+</dl>
+
+<h3>Raw allocation</h3>
+
+<dl>
+	<dt><code>macro <b>struct_raw_alloc</b>(&amp;arr, size: Integer): Integer</code></dt>
+	<dd>
+		Allocates space of given size. Returns the offset in the array. The offset is never
+		zero.
+	</dd>
+	<dt><code>macro <b>struct_raw_realloc</b>(&amp;arr, &amp;size: Integer, &amp;off: Integer, new_size: Integer)</code></dt>
+	<dd>
+		Resizes space to a new size.
+	</dd>
+	<dt><code>macro <b>struct_raw_free</b>(&amp;arr, size, off: Integer)</code></dt>
+	<dd>
+		Deallocates space.
+	</dd>
+</dl>
+
+<h2>Global functions</h2>
+
+<dl>
+	<dt><code>function <b>struct_get_free_size</b>(arr): Integer</code></dt>
+	<dd>
+		Returns the overall free space.
+	</dd>
+	<dt><code>function <b>struct_get_occupancy</b>(arr): Float</code></dt>
+	<dd>
+		Returns how occupied the array is. The result is in the 0-1 range.
+	</dd>
+	<dt><code>function <b>struct_dump</b>(arr)</code></dt>
+	<dd>
+		Dumps the visual overview of the allocations in the array.
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,624 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/tcp";
+import "io/gzip";
+import "io/crypto/sha256";
+import "io/http/util";
+import "io/http/request";
+import "io/http/percent";
+import "io/http/url";
+import "io/http/debug_cache";
+import "io/tls/tls";
+import "io/tls/cert";
+import "io/tls/root_certs";
+import "util/html";
+import "util/string";
+import "util/date";
+import "browser/worker/result";
+
+const @DEBUG_CACHE = true;
+const @TLS_SESSION_WAIT = 30;
+const @TLS_NON_RESUMABLE_TIMEOUT = 3600;
+const @TLS_VALID_CERT_TIMEOUT = 3600;
+
+const {
+	@HTTP_stream = STREAM_SIZE,
+	@HTTP_is_https,
+	@HTTP_tls_cert_hash,
+	@HTTP_tls_certs,
+	@HTTP_tls_error,
+	@HTTP_hostname,
+	@HTTP_port,
+	@HTTP_path_query,
+	@HTTP_headers,
+	@HTTP_post_data,
+	@HTTP_request,
+	@HTTP_read_buf,
+	@HTTP_read_pos,
+	@HTTP_chunked_state,
+	@HTTP_chunked_len,
+	@HTTP_gzip_stream,
+	@HTTP_SIZE
+};
+
+const {
+	@PARENT_STREAM_http = STREAM_SIZE,
+	@PARENT_STREAM_SIZE
+};
+
+const {
+	@STATE_CHUNK_LEN = 1,
+	@STATE_CHUNK_LEN_END,
+	@STATE_CHUNK_EXTENSION,
+	@STATE_CHUNK_BODY,
+	@STATE_CHUNK_BODY_END,
+	@STATE_CHUNK_BODY_END2,
+	@STATE_CHUNK_END
+};
+
+const {
+	@TLS_CONNECTING_FIRST = 1,
+	@TLS_CONNECTING_RESUMABLE,
+	@TLS_CONNECTING_NON_RESUMABLE
+};
+
+function http_create(url)
+{
+	var http = object_extend(stream_create(), HTTP_SIZE);
+	http->STREAM__vfunc__read_part__4 = read_part#4;
+	http->STREAM__vfunc__write_part__4 = write_part#4;
+	http->STREAM__vfunc__flush__1 = flush#1;
+	http->STREAM__vfunc__close__1 = close#1;
+	http->HTTP_hostname = {url->URL_host};
+	http->HTTP_path_query = url_path_query_to_string(url);
+	http->HTTP_headers = {};
+
+	var scheme = url->URL_scheme;
+	http->HTTP_is_https = (scheme == "https");
+	if (!http->HTTP_is_https && scheme != "http") {
+		return 0, error({"invalid URL scheme: ", scheme});
+	}
+	var port = url->URL_port;
+	if (port < 0 || port > 65535) {
+		return 0, error({"invalid URL port: ", port});
+	}
+	if (port == 0) {
+		port = http->HTTP_is_https? 443 : 80;
+	}
+	http->HTTP_port = port;
+
+	if ((!http->HTTP_is_https && port != 80) || (http->HTTP_is_https && port != 443)) {
+		http_set_header(http, "Host", {url->URL_host, ":", port});
+	}
+	else {
+		http_set_header(http, "Host", url->URL_host);
+	}
+	http_set_header(http, "Connection", "close");
+	return http;
+}
+
+function http_set_header(http, name, value)
+{
+	var headers = http->HTTP_headers;
+	name = normalize_header_name({name});
+	if (name == "Set-Cookie") {
+		var list = hash_get(headers, name, null);
+		if (!list) {
+			list = [];
+			headers{name} = list;
+		}
+		list[] = value;
+	}
+	else {
+		headers{name} = value;
+	}
+}
+
+function http_set_post_params(http, params)
+{
+	var s = {""};
+	for (var i=0; i<length(params); i++) {
+		var (name, value) = hash_entry(params, i);
+		if (i > 0) {
+			s[] = '&';
+		}
+		string_append(s, percent_encode_query(name));
+		if (value) {
+			s[] = '=';
+			string_append(s, percent_encode_query(value));
+		}
+	}
+	http_set_post_data(http, "application/x-www-form-urlencoded; charset=UTF-8", s);
+}
+
+function http_set_post_data(http, content_type, data)
+{
+	http_set_header(http, "Content-Type", content_type);
+	http_set_header(http, "Content-Length", length(data));
+	http->HTTP_post_data = data;
+}
+
+function http_connect(http)
+{
+	http_connect(http, null, null);
+}
+
+function http_connect(http, status_func, status_data)
+{
+	var cache_key;
+	if (DEBUG_CACHE) {
+		cache_key = [
+			http->HTTP_is_https,
+			http->HTTP_hostname,
+			http->HTTP_port,
+			http->HTTP_path_query,
+			http->HTTP_headers,
+			http->HTTP_post_data
+		];
+		http->HTTP_stream = cache_get(cache_key);
+	}
+
+	if (!http->HTTP_stream) {
+		if (http->HTTP_is_https) {
+			var key = ["https.connecting", http->HTTP_hostname, http->HTTP_port];
+
+			var value = global_cond_swap(key, 0, TLS_CONNECTING_FIRST, TLS_SESSION_WAIT);
+			if (value == TLS_CONNECTING_FIRST) {
+				global_wait(key, value);
+			}
+
+			var (r, e) = http_open_tls_stream(http, key, status_func, status_data);
+			if (e) {
+				global_cond_swap(key, TLS_CONNECTING_FIRST, 0, TLS_SESSION_WAIT);
+				return 0, e;
+			}
+
+			global_cond_swap(key, TLS_CONNECTING_FIRST, TLS_CONNECTING_RESUMABLE, TLS_SESSION_WAIT);
+		}
+		else {
+			http->HTTP_stream = tcp_connection_open(http->HTTP_hostname, http->HTTP_port);
+		}
+		if (DEBUG_CACHE) {
+			http->HTTP_stream = cache_create_writer(http->HTTP_stream, cache_key);
+		}
+	}
+
+	var stream = http->HTTP_stream;
+	var headers = http->HTTP_headers;
+	var post_data = http->HTTP_post_data;
+	var s = {(post_data? "POST " : "GET "), http->HTTP_path_query, " HTTP/1.1\r\n"};
+	for (var i=0; i<length(headers); i++) {
+		var (name, value) = hash_entry(headers, i);
+		if (name == "Set-Cookie") {
+			for (var j=0; j<length(value); j++) {
+				string_append(s, {name, ": ", value[j], "\r\n"});
+			}
+		}
+		else {
+			string_append(s, {name, ": ", value, "\r\n"});
+		}
+	}
+	string_append(s, "\r\n");
+	if (post_data) {
+		string_append(s, post_data);
+	}
+	stream_write(stream, s);
+	if (post_data) {
+		// TODO: doesn't work (bad_record_mac alert)
+		//stream_write(stream, post_data);
+	}
+	stream_flush(stream);
+
+	var req = request_create();
+	var buf = parse_headers(stream, req, true);
+	http->HTTP_request = req;
+	
+	if (request_get_header(req, "Transfer-Encoding") == "chunked") {
+		http->HTTP_chunked_state = STATE_CHUNK_LEN;
+	}
+
+	if (request_get_header(req, "Content-Encoding") == "gzip") {
+		var parent_stream = object_extend(stream_create(), PARENT_STREAM_SIZE);
+		parent_stream->STREAM__vfunc__read_part__4 = parent_stream_read_part#4;
+		parent_stream->PARENT_STREAM_http = http;
+		http->HTTP_gzip_stream = gzip_stream_create(parent_stream);
+	}
+
+	if (length(buf) > 0) {
+		http->HTTP_read_buf = buf;
+	}
+}
+
+function http_get_tls_cert_hash(http)
+{
+	return http->HTTP_tls_cert_hash;
+}
+
+function http_get_tls_certs(http)
+{
+	return http->HTTP_tls_certs;
+}
+
+function http_get_tls_error(http)
+{
+	return http->HTTP_tls_error;
+}
+
+function @match_host(host, mask)
+{
+	if (host == mask) return true;
+
+	if (!string_starts_with(mask, "*.")) {
+		return false;
+	}
+	
+	var idx = string_search_char(mask, '*', 2);
+	if (idx != -1) return false;
+
+	idx = string_search_char(host, '.');
+	if (idx == -1) return false;
+
+	var s = {"*.", string_substring(host, idx+1)};
+	return s == mask;
+}
+
+function http_set_valid_certificate(hostname, hash, permanent)
+{
+	var cached_key = ["valid certificate", hostname, hash];
+	if (permanent) {
+		global_set(cached_key, true);
+	}
+	else {
+		global_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
+	}
+}
+
+function @http_check_certificate(http, tls)
+{
+	var hash = sha256(tls_get_cert_binary(tls, 0));
+	var cached_key = ["valid certificate", http->HTTP_hostname, hash];
+	if (global_get(cached_key)) {
+		global_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
+		return;
+	}
+
+	var certs = [];
+	http->HTTP_tls_cert_hash = hash;
+	http->HTTP_tls_certs = certs;
+
+	var cert = tls_get_cert(tls, 0);
+	certs[] = cert;
+
+	var found = false;
+	if (cert->CERT_subject_alt_name) {
+		for (var i=0; i<length(cert->CERT_subject_alt_name); i++) {
+			if (match_host(http->HTTP_hostname, cert->CERT_subject_alt_name[i])) {
+				found = true;
+				break;
+			}
+		}
+	}
+	else if (cert->CERT_subject->NAME_common_name && match_host(http->HTTP_hostname, cert->CERT_subject->NAME_common_name)) {
+		found = true;
+	}
+	if (!found) {
+		http->HTTP_tls_error = "domain mismatch";
+		return 0, error(http->HTTP_tls_error);
+	}
+
+	if (cert->CERT_subject == cert->CERT_issuer) {
+		http->HTTP_tls_error = "self-signed certificate";
+		return 0, error(http->HTTP_tls_error);
+	}
+
+	var err = check_validity(cert);
+	if (err) {
+		http->HTTP_tls_error = err;
+		return 0, error(http->HTTP_tls_error);
+	}
+
+	var other_certs = {};
+	var validity_error = null;
+	for (var i=1; i<tls_get_cert_count(tls); i++) {
+		var other = tls_get_cert(tls, i);
+		err = check_validity(other);
+		if (err) {
+			if (!validity_error) {
+				validity_error = err;
+			}
+			continue;
+		}
+		if (get_root_cert(other->CERT_subject)) {
+			continue;
+		}
+		other_certs{other->CERT_subject} = other;
+	}
+
+	var cnt = 16;
+	for (;;) {
+		if (cnt-- <= 0) {
+			http->HTTP_tls_error = "too many intermediate certificates";
+			return 0, error(http->HTTP_tls_error);
+		}
+
+		var issuer = hash_get(other_certs, cert->CERT_issuer, null);
+		if (!issuer) break;
+	
+		if (issuer->CERT_subject == issuer->CERT_issuer) {
+			break;
+		}
+
+		certs[] = issuer;
+		cert = issuer;
+	}
+
+	if (length(certs) == 1 && validity_error) {
+		http->HTTP_tls_error = validity_error;
+		return 0, error(http->HTTP_tls_error);
+	}
+
+	var issuer = get_root_cert(cert->CERT_issuer);
+	if (!issuer) {
+		// TODO: fix certificate verification
+		//http->HTTP_tls_error = "certificate is not trusted";
+		//return 0, error(http->HTTP_tls_error);
+		log({"certificate is not trusted for ", http->HTTP_hostname, ", proceeding anyway for now"});
+	}
+	certs[] = issuer;
+
+	for (var i=1; i<length(certs); i++) {
+		http->HTTP_tls_error = cert_validate(certs[i-1], certs[i]);
+		if (http->HTTP_tls_error) {
+			return 0, error(http->HTTP_tls_error);
+		}
+	}
+
+	global_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
+}
+
+function @check_validity(cert)
+{
+	var cur_date = date_get_utc();
+
+	if (date_get_corrected(cert->CERT_validity_start) != cert->CERT_validity_start) {
+		return {"certificate ", cert->CERT_subject->NAME_common_name, " has wrong start date"};
+	}
+	if (date_get_corrected(cert->CERT_validity_end) != cert->CERT_validity_end) {
+		return {"certificate ", cert->CERT_subject->NAME_common_name, " has wrong end date"};
+	}
+	
+	if (date_compare(cur_date, cert->CERT_validity_start) < 0) {
+		return {"certificate ", cert->CERT_subject->NAME_common_name, " is not yet valid (starts in the future)"};
+	}
+	if (date_compare(cur_date, cert->CERT_validity_end) > 0) {
+		return {"certificate ", cert->CERT_subject->NAME_common_name, " has expired (ends in the past)"};
+	}
+
+	return null;
+}
+
+function @http_open_tls_stream(http, conn_key, status_func, status_data)
+{
+	var tls = tls_create(tcp_connection_open(http->HTTP_hostname, http->HTTP_port), http->HTTP_hostname, http->HTTP_port);
+	tls_connect(tls, status_func, status_data);
+	if (status_func) {
+		status_func(status_data, "Checking certificate...");
+	}
+	var (cert_res, cert_err) = http_check_certificate(http, tls);
+	if (cert_err) {
+		tls_force_close(tls);
+		return 0, cert_err;
+	}
+
+	if (tls_is_session_resumed(tls)) {
+		var (stream, e) = tls_open_stream(tls, status_func, status_data);
+		if (e) {
+			global_set(conn_key, TLS_CONNECTING_NON_RESUMABLE, TLS_NON_RESUMABLE_TIMEOUT);
+			tls_abort_resumed_session(tls);
+			log("aborting resumed session due to error:");
+			dump(e);
+			if (status_func) {
+				status_func(status_data, {"Aborting resumed session due to error: ", e[0]});
+			}
+
+			tls = tls_create(tcp_connection_open(http->HTTP_hostname, http->HTTP_port), http->HTTP_hostname, http->HTTP_port);
+			tls_connect(tls, status_func, status_data);
+			if (status_func) {
+				status_func(status_data, "Checking certificate...");
+			}
+			(cert_res, cert_err) = http_check_certificate(http, tls);
+			if (cert_err) {
+				tls_force_close(tls);
+				return 0, cert_err;
+			}
+			http->HTTP_stream = tls_open_stream(tls, status_func, status_data);
+		}
+		else {
+			http->HTTP_stream = stream;
+		}
+	}
+	else {
+		http->HTTP_stream = tls_open_stream(tls, status_func, status_data);
+	}
+}
+
+function http_get_request(http)
+{
+	return http->HTTP_request;
+}
+
+function @process_chunked(http, buf, off, len)
+{
+	var state = http->HTTP_chunked_state;
+	var first_hide_idx = 0;
+	var last_valid_idx = -1;
+
+	if (state == STATE_CHUNK_END) {
+		return -1;
+	}
+
+	for (var i=0; i<len; i++) {
+		var c = buf[off+i];
+
+		switch (state) {
+			case STATE_CHUNK_LEN: {
+				switch (c) {
+					case '0'..'9':
+						http->HTTP_chunked_len = http->HTTP_chunked_len * 16 + (c - '0');
+						continue;
+
+					case 'a'..'f':
+						http->HTTP_chunked_len = http->HTTP_chunked_len * 16 + (c - 'a' + 10);
+						continue;
+
+					case 'A'..'F':
+						http->HTTP_chunked_len = http->HTTP_chunked_len * 16 + (c - 'A' + 10);
+						continue;
+						
+					case '\r':
+						state = http->HTTP_chunked_state = STATE_CHUNK_LEN_END;
+						continue;
+
+					case ';':
+						state = http->HTTP_chunked_state = STATE_CHUNK_EXTENSION;
+						continue;
+				}
+				return 0, error("invalid chunk encoding format");
+			}
+
+			case STATE_CHUNK_EXTENSION: {
+				if (c == '\r') {
+					state = http->HTTP_chunked_state = STATE_CHUNK_LEN_END;
+					continue;
+				}
+				continue;
+			}
+
+			case STATE_CHUNK_LEN_END: {
+				if (c == '\n') {
+					state = http->HTTP_chunked_state = (http->HTTP_chunked_len > 0? STATE_CHUNK_BODY : STATE_CHUNK_END);
+					if (state == STATE_CHUNK_END) {
+						if (last_valid_idx == -1) {
+							return -1;
+						}
+						return last_valid_idx + 1;
+					}
+					continue;
+				}
+				return 0, error("invalid chunk encoding format");
+			}
+
+			case STATE_CHUNK_BODY: {
+				if (first_hide_idx < i) {
+					var remove_num = i - first_hide_idx;
+					array_copy(buf, off+first_hide_idx, buf, off+i, len-i);
+					i = first_hide_idx;
+					len -= remove_num;
+				}
+				first_hide_idx = i+1;
+				last_valid_idx = i;
+				if (--http->HTTP_chunked_len == 0) {
+					state = http->HTTP_chunked_state = STATE_CHUNK_BODY_END;
+				}
+				continue;
+			}
+
+			case STATE_CHUNK_BODY_END: {
+				if (c == '\r') {
+					state = http->HTTP_chunked_state = STATE_CHUNK_BODY_END2;
+					continue;
+				}
+				return 0, error("invalid chunk encoding format");
+			}
+
+			case STATE_CHUNK_BODY_END2: {
+				if (c == '\n') {
+					state = http->HTTP_chunked_state = STATE_CHUNK_LEN;
+					continue;
+				}
+				return 0, error("invalid chunk encoding format");
+			}
+
+			case STATE_CHUNK_END: {
+				return 0, error("invalid state");
+			}
+		}
+	}
+
+	return last_valid_idx + 1;
+}
+
+function @parent_stream_read_part(parent_stream, buf, off, len)
+{
+	return read_part_uncompressed(parent_stream->PARENT_STREAM_http, buf, off, len);
+}
+
+function @read_part_uncompressed(http, buf, off, len)
+{
+	var read_buf = http->HTTP_read_buf;
+	if (read_buf) {
+		var read_pos = http->HTTP_read_pos;
+		var num = min(len, length(read_buf) - read_pos);
+		array_copy(buf, off, read_buf, read_pos, num);
+		read_pos += num;
+		if (read_pos == length(read_buf)) {
+			http->HTTP_read_buf = null;
+		}
+		else {
+			http->HTTP_read_pos = read_pos;
+		}
+		if (http->HTTP_chunked_state) {
+			num = process_chunked(http, buf, off, num);
+		}
+		return num;
+	}
+
+	var num = stream_read_part(http->HTTP_stream, buf, off, len);
+	if (http->HTTP_chunked_state) {
+		num = process_chunked(http, buf, off, num);
+	}
+	return num;
+}
+
+function @read_part(http, buf, off, len)
+{
+	if (http->HTTP_gzip_stream) {
+		return stream_read_part(http->HTTP_gzip_stream, buf, off, len);
+	}
+	return read_part_uncompressed(http, buf, off, len);
+}
+
+function @write_part(http, buf, off, len)
+{
+	return stream_write_part(http->HTTP_stream, buf, off, len);
+}
+
+function @flush(http)
+{
+	stream_flush(http->HTTP_stream);
+}
+
+function @close(http)
+{
+	stream_close(http->HTTP_stream);
+}

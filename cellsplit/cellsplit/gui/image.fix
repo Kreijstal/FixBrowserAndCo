@@ -1,0 +1,75 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "gui/subview";
+import "gui/subview/button";
+
+class GameImage: SubButton
+{
+	var @image: Image;
+	var @mipmaps: Image[];
+	
+	constructor create(image: Image)
+	{
+		this.image = image;
+
+		var img = image;
+		mipmaps = [img];
+		while (img.get_width() > 1 || img.get_height() > 1) {
+			img = img.downscale();
+			mipmaps[] = img;
+		}
+	}
+
+	function get_image(): Image
+	{
+		return image;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var scale = get_scale();
+		var tr = Transform::create();
+		var width = iceil(image.get_width()*scale);
+		var height = iceil(image.get_height()*scale);
+		if (width > height) {
+			scale *= float(get_width()) / float(width);
+		}
+		else {
+			scale *= float(get_height()) / float(height);
+		}
+		var idx = 0;
+		while (idx+1 < mipmaps.length && scale < 0.5) {
+			idx++;
+			scale *= 2.0;
+		}
+		var img = mipmaps[idx];
+		tr.scale(scale);
+		p.fill_rect(0, 0, width, height, Shader {
+			blend(sample_bicubic(img, tr, CLAMP_X|CLAMP_Y));
+		});
+		draw_children(p);
+	}
+}

@@ -1,0 +1,336 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/svg";
+import "task/channel";
+import "gui/view";
+import "browser/worker/fetch_comm";
+import "browser/worker/cache_comm";
+
+var @cache: Dynamic[String];
+var @fetch_channel: Channel;
+var @cache_channel: Channel;
+var @receive_channel: Channel;
+var @active_requests: FetchRequest[String];
+var @invalid_image: WebImage;
+
+class WebImage
+{
+	var @data: Byte[];
+	var @img: Image;
+	var @gif;
+	var @svg: SVGImage;
+	var @cur_frame: Integer;
+	var @delay: Integer;
+	var @mipmaps: Image[];
+	var @scaled_img: Image;
+	var @scaled_size: Float;
+
+	constructor create(buf: Byte[])
+	{
+		data = buf;
+		var (gif, e) = gif_create(buf);
+		if (e) {
+			var (img, e2) = load_image(buf);
+			if (e2) {
+				svg = SVGImage::load(buf);
+				this.img = Image::create(iround(svg.get_width()), iround(svg.get_height()));
+				var p = Painter::create(this.img);
+				svg.draw(p);
+			}
+			else {
+				this.img = img;
+			}
+		}
+		else {
+			this.gif = gif;
+			cur_frame = -1;
+			update();
+		}
+	}
+
+	function get_data(): Byte[]
+	{
+		return data;
+	}
+
+	function update()
+	{
+		if (!gif) return;
+
+		for (var iters=0; iters<10; iters++) {
+			var (img: Image, delay_or_error) = gif_next(gif);
+			if (!is_int(delay_or_error)) {
+				img = null;
+				dump(delay_or_error);
+			}
+			if (!img) {
+				if (cur_frame == 0) {
+					gif = null;
+					return;
+				}
+				cur_frame = -1;
+				gif_reset(gif);
+				(img, delay_or_error) = gif_next(gif);
+				if (!is_int(delay_or_error)) {
+					dump(delay_or_error);
+					return;
+				}
+			}
+
+			this.img = img;
+			cur_frame++;
+
+			delay = delay_or_error as Integer;
+			if (delay == 0) {
+				continue;
+			}
+
+			delay = max(10, delay);
+			return;
+		}
+
+		delay = 10;
+	}
+
+	function get_width(): Integer
+	{
+		if (svg) {
+			return iround(svg.get_width());
+		}
+		return img.get_width();
+	}
+
+	function get_height(): Integer
+	{
+		if (svg) {
+			return iround(svg.get_height());
+		}
+		return img.get_height();
+	}
+
+	function is_animated(): Boolean
+	{
+		return gif != null;
+	}
+
+	function @get_frame(): Image
+	{
+		return img;
+	}
+
+	function get_delay(): Integer
+	{
+		return delay;
+	}
+
+	function draw(p: Painter, x: Integer, y: Integer, scale: Float)
+	{
+		if (svg) {
+			if (!scaled_img || scaled_size != scale) {
+				var scaled = Image::create(max(1, iround(svg.get_width() * scale)), max(1, iround(svg.get_height() * scale)));
+				var p2 = Painter::create(scaled);
+				p2.scale(scale);
+				svg.draw(p2);
+				scaled_img = scaled;
+				scaled_size = scale;
+			}
+			p.draw_image(x, y, scaled_img);
+			return;
+		}
+		if (scale != 1.0) {
+			var cur_img = img;
+			var idx = 0;
+			while (scale < 0.5 && (cur_img.get_width() > 1 || cur_img.get_height() > 1)) {
+				if (!mipmaps) {
+					mipmaps = [];
+				}
+				var scaled_img: Image;
+				if (idx < length(mipmaps)) {
+					scaled_img = mipmaps[idx];
+				}
+				else {
+					scaled_img = Image::create((cur_img.get_width()+1)/2, (cur_img.get_height()+1)/2);
+					mipmaps[] = scaled_img;
+				}
+				var p2 = Painter::create(scaled_img);
+				var tr = Transform::create();
+				tr.scale(scaled_img.get_width() / float(cur_img.get_width()), scaled_img.get_height() / float(cur_img.get_height()));
+				p2.fill_rect(0, 0, scaled_img.get_width(), scaled_img.get_height(), Shader {
+					replace(sample_bicubic(cur_img, tr, CLAMP));
+				});
+				cur_img = scaled_img;
+				idx++;
+				scale = scale * 2.0;
+			}
+			var width = iround(cur_img.get_width() * scale);
+			var height = iround(cur_img.get_height() * scale);
+			var tr = Transform::create();
+			tr.translate(x, y);
+			tr.scale(scale);
+			p.fill_rect(x, y, width, height, Shader {
+				blend(sample_bicubic(cur_img, tr, CLAMP));
+			});
+		}
+		else {
+			p.draw_image(x, y, img);
+		}
+	}
+
+	static function @get_invalid_image(): WebImage
+	{
+		if (!invalid_image) {
+			var img = Image::create(16, 16);
+			var p = Painter::create(img);
+			p.fill_rect(0, 0, img.get_width(), img.get_height(), 0xFF000000);
+			p.fill_rect(1, 1, img.get_width()-2, img.get_height()-2, 0xFFFFFFFF);
+			p.fill_shape(Shape::line(0, 0, img.get_width(), img.get_height()).get_outline(2.0), 0xFF000000);
+			p.fill_shape(Shape::line(img.get_width(), 0, 0, img.get_height()).get_outline(2.0), 0xFF000000);
+			invalid_image = WebImage::create(img.to_png());
+		}
+		return clone(invalid_image);
+	}
+
+	static function get(url: String, reload: Boolean, callback, data)
+	{
+		if (!cache) {
+			cache = {};
+			receive_channel = Channel::create(1000);
+			active_requests = {};
+		}
+
+		if (!reload) {
+			var ref = hash_get(cache, url, null);
+			if (ref) {
+				callback(data, weakref_get(ref));
+				return;
+			}
+
+			var cache_reply = cache_channel.call([CACHE_GET, url]);
+			if (cache_reply) {
+				var img: WebImage;
+				var buf = cache_reply[1] as Byte[];
+				var (r, e) = WebImage::create(buf);
+				if (e) {
+					dump(e);
+				}
+				else {
+					img = r;
+				}
+	
+				if (!img || !img.get_frame()) {
+					img = get_invalid_image();
+				}
+
+				cache[url] = weakref_create(img, cache, url);
+				callback(data, img);
+				return;
+			}
+		}
+
+		var request = hash_get(active_requests, url, null) as FetchRequest;
+		if (request) {
+			request.add_callback(callback, data);
+			return;
+		}
+
+		url = {url};
+		fetch_channel.send([url, reload, receive_channel]);
+		
+		if (length(active_requests) == 0) {
+			Timer::run(100, WebImage::check_channel#1, null);
+		}
+		active_requests[url] = FetchRequest::create(url, callback, data);
+	}
+
+	static function @check_channel(data): Boolean
+	{
+		for (;;) {
+			var msg = receive_channel.receive(0);
+			if (Channel::is_timeout(msg)) break;
+
+			var url = msg[1] as String;
+			var request = active_requests[url];
+			hash_remove(active_requests, url);
+
+			var img: WebImage;
+			if (msg[0] == FETCH_CONTENT_IMAGE) {
+				var buf = msg[2] as Byte[];
+				var (r, e) = WebImage::create(buf);
+				if (e) {
+					dump(e);
+				}
+				else {
+					img = r;
+				}
+			}
+
+			if (!img || !img.get_frame()) {
+				img = get_invalid_image();
+			}
+
+			cache[url] = weakref_create(img, cache, url);
+			request.run_callbacks(img);
+		}
+		return length(active_requests) > 0;
+	}
+}
+
+class @FetchRequest
+{
+	var url: String;
+
+	constructor create(url: String, callback, data)
+	{
+		this.url = url;
+		add_callback(callback, data);
+	}
+
+	function add_callback(callback, data)
+	{
+		var arr = this as Dynamic[];
+		arr[] = callback;
+		arr[] = data;
+	}
+
+	function run_callbacks(img: WebImage)
+	{
+		var arr = this as Dynamic[];
+		for (var i=FETCHREQUEST_SIZE; i<length(arr); i+=2) {
+			var callback = arr[i+0];
+			var data = arr[i+1];
+			var (r, e) = callback(data, img);
+			if (e) {
+				dump(e);
+			}
+		}
+	}
+}
+
+function __image_cache_set_channels(fetch_channel_param: Channel, cache_channel_param: Channel)
+{
+	fetch_channel = fetch_channel_param;
+	cache_channel = cache_channel_param;
+}

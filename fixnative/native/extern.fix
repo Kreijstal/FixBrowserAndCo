@@ -1,0 +1,1684 @@
+/*
+ * FixScript Native v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "classes" : classes;
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	@CTX_structs,
+	@CTX_typedefs,
+	@CTX_create_structs,
+	@CTX_functions,
+	@CTX_common_code_generated,
+	@CTX_add_tmp_vars,
+	@CTX_class_ctx,
+	@CTX_import_typedefs,
+	@CTX_import_functions,
+	@CTX_js_vars_created,
+	@CTX_SIZE
+};
+
+const {
+	@TYPE_BYTE = 1,
+	@TYPE_SHORT,
+	@TYPE_INT,
+	@TYPE_LONG,
+	@TYPE_NLONG,
+	@TYPE_FLOAT,
+	@TYPE_DOUBLE,
+	@TYPE_VOIDPTR,
+	@TYPE_VOIDPTR_PARTIAL,
+	@TYPE_WIDECHAR,
+	@TYPE_VOID,
+
+	@TYPE_POINTER,
+	@TYPE_STRUCT
+};
+
+const {
+	@TYPE_type,
+	@TYPE_SIZE
+};
+
+const {
+	@POINTER_type = TYPE_SIZE,
+	@POINTER_SIZE
+};
+
+const {
+	@STRUCT_name = TYPE_SIZE,
+	@STRUCT_line,
+	@STRUCT_members,
+	@STRUCT_union,
+	@STRUCT_SIZE
+};
+
+const {
+	@MEMBER_name,
+	@MEMBER_type,
+	@MEMBER_count,
+	@MEMBER_SIZE
+};
+
+const {
+	@FUNC_name,
+	@FUNC_ret_type,
+	@FUNC_params,
+	@FUNC_varargs,
+	@FUNC_stdcall,
+	@FUNC_bound_lib,
+	@FUNC_SIZE
+};
+
+const {
+	@JSTYPE_VOID,
+	@JSTYPE_BOOLEAN,
+	@JSTYPE_INT,
+	@JSTYPE_FLOAT,
+	@JSTYPE_DOUBLE,
+	@JSTYPE_POINTER,
+	@JSTYPE_STRING
+};
+
+var @files;
+var @global_counter;
+
+function process_tokens(fname, tokens, src)
+{
+	if (!files) {
+		files = {};
+	}
+	
+	var ctx = context_create();
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		switch (tokens[i+TOK_type]) {
+			case KW_IMPORT: {
+				i = expect_type(tokens, src, i, TOK_STRING, "string");
+				var script_name = get_token_string(tokens, src, i);
+				var import_fname = {""};
+				script_query(script_name, import_fname, null, null, null);
+				var import_ctx = hash_get(files, import_fname, null);
+				if (import_ctx) {
+					context_import(ctx, import_ctx);
+				}
+				break;
+			}
+
+			case TOK_IDENT:
+				if (tokens[i+TOK_len] == 6) {
+					var off = tokens[i+TOK_off];
+					if (src[off] == 'e' && src[off+1] == 'x' && src[off+2] == 't' && src[off+3] == 'e' && src[off+4] == 'r' && src[off+5] == 'n') {
+						i += TOK_SIZE;
+						if (tokens[i] == TOK_STRING) {
+							var kind = get_token_string(tokens, src, i);
+							if (kind == "C") {
+								i = parse_extern(tokens, src, i, ctx) - TOK_SIZE;
+								continue;
+							}
+							if (kind == "JS") {
+								i = parse_js_extern(tokens, src, i, ctx) - TOK_SIZE;
+								continue;
+							}
+						}
+					}
+				}
+				break;
+		}
+	}
+
+	var class_ctx = class_context_get(fname);
+	ctx->CTX_class_ctx = class_ctx;
+
+	for (var i=0; i<length(ctx->CTX_functions); i++) {
+		var (name, func) = hash_entry(ctx->CTX_functions, i);
+		class_context_register_function_call(class_ctx, name, call_get_types#4, call_adjust_call#7, ctx);
+		tokens_parse(tokens, src, {"var nfunc_", name, ": Pointer;"}, 0);
+	}
+	for (var i=0; i<length(ctx->CTX_import_functions); i++) {
+		var (name, func) = hash_entry(ctx->CTX_import_functions, i);
+		class_context_register_function_call(class_ctx, name, call_get_types#4, call_adjust_call#7, ctx);
+	}
+
+	files{fname} = ctx;
+
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @call_get_types(ctx, name, num_params, line)
+{
+	var func = hash_get(ctx->CTX_functions, name, null);
+	if (!func) {
+		func = ctx->CTX_import_functions{name};
+	}
+
+	//log({"called for ", name, " with ", num_params, " at line ", line});
+
+	var func_params = func->FUNC_params;
+	var func_num_params = length(func_params);
+	for (var i=0; i<length(func_params); i++) {
+		var (param_name, type) = hash_entry(func_params, i);
+		if (is_int(type)) {
+			switch (type) {
+				case TYPE_LONG:
+				case TYPE_NLONG:
+				case TYPE_DOUBLE:
+					func_num_params++;
+					break;
+			}
+		}
+	}
+
+	if (num_params < func_num_params) return null;
+	if (!func->FUNC_varargs && num_params > func_num_params) return null;
+
+	var types = [];
+	if (is_int(func->FUNC_ret_type)) {
+		switch (func->FUNC_ret_type) {
+			case TYPE_BYTE:
+			case TYPE_SHORT:
+			case TYPE_INT:
+				types[] = classes:TYPE_INTEGER;
+				break;
+
+			case TYPE_FLOAT:
+				types[] = classes:TYPE_FLOAT;
+				break;
+
+			case TYPE_LONG:
+			case TYPE_NLONG:
+			case TYPE_DOUBLE:
+				types[] = classes:TYPE_INTEGER;
+				break;
+			
+			case TYPE_VOIDPTR:
+			case TYPE_WIDECHAR:
+				types[] = class_context_get_class(ctx->CTX_class_ctx, "Pointer");
+				break;
+
+			case TYPE_VOID:
+				types[] = classes:TYPE_VOID;
+				break;
+			
+			default:
+				return 0, error({script_line(line), ": unsupported type"});
+		}
+	}
+	else {
+		switch (func->FUNC_ret_type[0]) {
+			case TYPE_POINTER:
+				types[] = class_context_get_class(ctx->CTX_class_ctx, "Pointer");
+				break;
+
+			case TYPE_STRUCT:
+				return 0, error({script_line(line), ": passing of structs by value is currently unsupported"});
+				break;
+
+			default:
+				return 0, error({script_line(line), ": unsupported type"});
+		}
+	}
+	for (var i=0; i<length(func_params); i++) {
+		var (param_name, type) = hash_entry(func_params, i);
+		if (is_int(type)) {
+			switch (type) {
+				case TYPE_BYTE:
+				case TYPE_SHORT:
+				case TYPE_INT:
+					types[] = classes:TYPE_INTEGER;
+					break;
+
+				case TYPE_FLOAT:
+					types[] = classes:TYPE_FLOAT;
+					break;
+
+				case TYPE_LONG:
+				case TYPE_NLONG:
+				case TYPE_DOUBLE:
+					types[] = classes:TYPE_INTEGER;
+					types[] = classes:TYPE_INTEGER;
+					break;
+				
+				case TYPE_VOIDPTR:
+				case TYPE_WIDECHAR:
+					types[] = classes:TYPE_DYNAMIC;
+					break;
+				
+				default:
+					return 0, error({script_line(line), ": unsupported type"});
+			}
+		}
+		else {
+			switch (type[0]) {
+				case TYPE_POINTER:
+					types[] = classes:TYPE_DYNAMIC;
+					break;
+
+				case TYPE_STRUCT:
+					return 0, error({script_line(line), ": passing of structs by value is currently unsupported"});
+					break;
+
+				default:
+					return 0, error({script_line(line), ": unsupported type"});
+			}
+		}
+	}
+
+	while (length(types) < num_params+1) {
+		types[] = classes:TYPE_DYNAMIC;
+	}
+
+	//class_type_dump_list(types);
+	return types;
+}
+
+function @call_adjust_call(ctx, name, param_types, tokens, src, start, end)
+{
+	var func = hash_get(ctx->CTX_functions, name, null);
+	if (!func) {
+		func = ctx->CTX_import_functions{name};
+	}
+
+	var line = tokens[start+TOK_line], orig_line = line;
+	var needs_tmp_vars = false;
+
+	var params = [start+TOK_SIZE*2];
+	var level = 0;
+	for (var i=params[0]; i<end; i+=TOK_SIZE) {
+		switch (tokens[i+TOK_type]) {
+			case '{', '(', '[':
+				level++;
+				continue;
+			case ')':
+				if (level == 0) {
+					params[] = i;
+				}
+			case '}', ']':
+				level--;
+				continue;
+			case ',':
+				if (level == 0) {
+					params[] = i;
+					params[] = i+TOK_SIZE;
+				}
+				continue;
+		}
+	}
+	/*
+	for (var i=0; i<length(params); i+=2) {
+		log({"param #", i/2, ":"});
+		for (var j=params[i+0]; j<params[i+1]; j+=TOK_SIZE) {
+			log({"  token='", get_token_value(tokens, src, j), "'"});
+		}
+	}
+	*/
+
+	var signature = {""};
+	if (func->FUNC_stdcall) {
+		signature[] = '$';
+	}
+	if (func->FUNC_varargs) {
+		signature[] = '+';
+	}
+
+	var ret_type = func->FUNC_ret_type;
+	if (is_int(ret_type)) {
+		switch (ret_type) {
+			case TYPE_BYTE:     signature[] = 'i'; break;
+			case TYPE_SHORT:    signature[] = 'i'; break;
+			case TYPE_INT:      signature[] = 'i'; break;
+			case TYPE_LONG:     signature[] = 'l'; break;
+			//case TYPE_NLONG:    signature[] = 'l'; break;
+			case TYPE_FLOAT:    signature[] = 'f'; break;
+			case TYPE_DOUBLE:   signature[] = 'd'; break;
+			case TYPE_VOIDPTR:  signature[] = 'p'; break;
+			case TYPE_WIDECHAR: signature[] = 'i'; break;
+			case TYPE_VOID:     signature[] = 'v'; break;
+
+			default:
+				return 0, error({script_line(line), ": unsupported type"});
+		}
+	}
+	else {
+		switch (ret_type[0]) {
+			case TYPE_POINTER:
+				signature[] = 'p';
+				break;
+
+			case TYPE_STRUCT:
+				return 0, error({script_line(line), ": returning of structs by value is currently unsupported"});
+
+			default:
+				return 0, error({script_line(line), ": unsupported type"});
+		}
+	}
+
+	var new_tokens = [];
+	if (func->FUNC_bound_lib) {
+		tokens_parse(new_tokens, src, {
+			"native_call({",
+				"var __native_nfunc=nfunc_", name, ";",
+				"if (!__native_nfunc) {",
+					"__native_nfunc = nfunc_", name, " = library_get_bound_symbol(", token_escape_string(func->FUNC_bound_lib), ", ", token_escape_string(name), ");",
+				"}",
+				"=__native_nfunc}, ",
+			"\"\""
+		}, line);
+	}
+	else {
+		tokens_parse(new_tokens, src, {"native_call(nfunc_", name, ", \"\""}, line);
+	}
+	var sig_pos = length(new_tokens) - TOK_SIZE;
+
+	var func_params = func->FUNC_params;
+	var param_pos = 0;
+
+	for (var i=0; i<length(func_params); i++) {
+		var (param_name, type) = hash_entry(func_params, i);
+		tokens_parse(new_tokens, src, ",", line);
+		if (is_int(type)) {
+			var off = params[param_pos*2+0];
+			var len = params[param_pos*2+1] - off;
+			array_append(new_tokens, tokens, off, len);
+			line = tokens[off+len+TOK_line];
+
+			switch (type) {
+				case TYPE_BYTE:     signature[] = 'i'; param_pos++; break;
+				case TYPE_SHORT:    signature[] = 'i'; param_pos++; break;
+				case TYPE_INT:      signature[] = 'i'; param_pos++; break;
+				case TYPE_LONG:     signature[] = 'l'; param_pos += 2; break;
+				case TYPE_NLONG:    signature[] = 'n'; param_pos += 2; break;
+				case TYPE_FLOAT:    signature[] = 'f'; param_pos++; break;
+				case TYPE_DOUBLE:   signature[] = 'd'; param_pos += 2; break;
+				case TYPE_VOIDPTR:  signature[] = 'p'; param_pos++; break;
+				case TYPE_WIDECHAR: signature[] = 'i'; param_pos++; break;
+
+				default:
+					return 0, error({script_line(line), ": unsupported type"});
+			}
+		}
+		else {
+			switch (type[0]) {
+				case TYPE_POINTER: {
+					var string = false;
+					var base_type = type->POINTER_type;
+					if (base_type == TYPE_BYTE) {
+						string = true;
+						tokens_parse(new_tokens, src, {"memory_for_string_utf8("}, line);
+					}
+					else if (base_type == TYPE_WIDECHAR) {
+						string = true;
+						tokens_parse(new_tokens, src, {"memory_for_string_utf16("}, line);
+					}
+
+					var off = params[param_pos*2+0];
+					var len = params[param_pos*2+1] - off;
+					array_append(new_tokens, tokens, off, len);
+					line = tokens[off+len+TOK_line];
+					
+					if (string) {
+						tokens_parse(new_tokens, src, ")", line);
+					}
+
+					signature[] = 'p';
+					param_pos++; 
+					break;
+				}
+
+				case TYPE_STRUCT:
+					return 0, error({script_line(line), ": passing of structs by value is currently unsupported"});
+					break;
+			}
+		}
+	}
+
+	if (func->FUNC_varargs) {
+		while (param_pos < length(param_types)-1) {
+			tokens_parse(new_tokens, src, ",", line);
+
+			var type = param_types[param_pos+1];
+			var suffix = null;
+			if (is_int(type)) {
+				switch (type) {
+					//case classes:TYPE_DYNAMIC:
+
+					case classes:TYPE_INTEGER:
+					case classes:TYPE_BOOLEAN:
+						signature[] = 'i';
+						break;
+
+					case classes:TYPE_FLOAT: {
+						signature[] = 'd';
+						tokens_parse(new_tokens, src, "{ (__native_tmp_lo, __native_tmp_hi) = fconv(", line);
+						suffix = "); =__native_tmp_lo}, __native_tmp_hi";
+						needs_tmp_vars = true;
+						break;
+					}
+
+					case classes:TYPE_STRING:
+						break;
+					
+					default:
+						return 0, error({script_line(line), ": unsupported vararg type"});
+				}
+			}
+
+			var off = params[param_pos*2+0];
+			var len = params[param_pos*2+1] - off;
+			array_append(new_tokens, tokens, off, len);
+			line = tokens[off+len+TOK_line];
+			param_pos++;
+
+			if (suffix) {
+				tokens_parse(new_tokens, src, suffix, line);
+			}
+		}
+	}
+
+	tokens_parse(new_tokens, src, ")", line);
+
+	var off = length(src);
+	array_append(src, token_escape_string(signature));
+	new_tokens[sig_pos+TOK_off] = off;
+	new_tokens[sig_pos+TOK_len] = length(src) - off;
+
+	if (needs_tmp_vars) {
+		var hash = ctx->CTX_add_tmp_vars;
+		if (!hash) {
+			hash = {};
+			ctx->CTX_add_tmp_vars = hash;
+			class_context_register_postprocess(ctx->CTX_class_ctx, add_tmp_vars#4, ctx);
+		}
+		hash{new_tokens[TOK_off]} = true;
+	}
+
+	/*
+	log("adjust_call");
+	class_type_dump_list(param_types);
+	for (var i=start; i<end; i+=TOK_SIZE) {
+		log({"token='", get_token_value(tokens, src, i), "'"});
+	}
+	log("----");
+	*/
+	array_replace_range(tokens, start, end, new_tokens);
+	return start + length(new_tokens);
+}
+
+function @add_tmp_vars(ctx, fname, tokens, src)
+{
+	var func_start = -2;
+	var hash = ctx->CTX_add_tmp_vars;
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		switch (tokens[i+TOK_type]) {
+			case KW_FUNCTION:
+				func_start = -1;
+				break;
+
+			case '{':
+				if (func_start == -1) {
+					func_start = i;
+				}
+				break;
+		}
+
+		if (hash_contains(hash, tokens[i+TOK_off]) && func_start >= 0) {
+			var line = tokens[func_start+TOK_line];
+			var new_tokens = [];
+			tokens_parse(new_tokens, src, "var __native_tmp_lo, __native_tmp_hi;", line);
+			array_insert_array(tokens, func_start+TOK_SIZE, new_tokens);
+			func_start = -2;
+			i += length(new_tokens) - TOK_SIZE;
+		}
+	}
+}
+
+function @context_create()
+{
+	var ctx = object_create(CTX_SIZE);
+	ctx->CTX_structs = {};
+	ctx->CTX_typedefs = {};
+	ctx->CTX_create_structs = [];
+	ctx->CTX_functions = {};
+	ctx->CTX_import_typedefs = {};
+	ctx->CTX_import_functions = {};
+	return ctx;
+}
+
+function @import_hash(dest, src)
+{
+	for (var i=0; i<length(src); i++) {
+		var (k, v) = hash_entry(src, i);
+		if (!hash_contains(dest, k)) {
+			dest{k} = v;
+		}
+	}
+}
+
+function @context_import(ctx, other)
+{
+	import_hash(ctx->CTX_import_typedefs, other->CTX_typedefs);
+	import_hash(ctx->CTX_import_functions, other->CTX_functions);
+}
+
+function @context_add_struct(ctx, name, struct, line)
+{
+	if (!name) {
+		name = {"__anon_struct_", global_counter++};
+	}
+	if (hash_contains(ctx->CTX_structs, name)) {
+		return 0, error({script_line(line), ": struct already defined"});
+	}
+	if (struct->STRUCT_name) {
+		return 0, error("internal error: struture is already named");
+	}
+	struct->STRUCT_name = name;
+	ctx->CTX_structs{name} = struct;
+	ctx->CTX_create_structs[] = struct;
+}
+
+function @context_add_typedef(ctx, name, type, line)
+{
+	if (hash_contains(ctx->CTX_typedefs, name)) {
+		return 0, error({script_line(line), ": typedef already defined"});
+	}
+	ctx->CTX_typedefs{name} = type;
+	if (is_array(type) && type->TYPE_type == TYPE_STRUCT && !type->STRUCT_name) {
+		type->STRUCT_name = name;
+		ctx->CTX_create_structs[] = type;
+	}
+}
+
+function @pointer_create(type)
+{
+	var ptr = object_create(POINTER_SIZE);
+	ptr->TYPE_type = TYPE_POINTER;
+	ptr->POINTER_type = type;
+	return ptr;
+}
+
+function @struct_create(line)
+{
+	var struct = object_create(STRUCT_SIZE);
+	struct->TYPE_type = TYPE_STRUCT;
+	struct->STRUCT_line = line;
+	struct->STRUCT_members = {};
+	return struct;
+}
+
+function @parse_extern(tokens, src, i, ctx)
+{
+	var new_tokens = [];
+	var start = i - TOK_SIZE;
+	var bound_lib = null;
+
+	i = expect_symbol(tokens, src, i, '{');
+
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == TOK_IDENT) {
+			var ident = get_token_value(tokens, src, i);
+			if (ident == "struct" || ident == "union") {
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var name = get_token_value(tokens, src, i);
+				var struct = struct_create(tokens[i+TOK_line]);
+				struct->STRUCT_union = (ident == "union");
+				context_add_struct(ctx, name, struct, tokens[i+TOK_line]);
+				i = parse_struct(tokens, src, i, ctx, struct);
+				i = expect_symbol(tokens, src, i, ';');
+				continue;
+			}
+			else if (ident == "typedef") {
+				i = expect_next(tokens, src, i);
+				if (tokens[i+TOK_type] == TOK_IDENT) {
+					ident = get_token_value(tokens, src, i); 
+					if (ident == "struct" || ident == "union") {
+						i = expect_next(tokens, src, i);
+						if (tokens[i+TOK_type] == '{') {
+							i -= TOK_SIZE;
+							var struct = struct_create(tokens[i+TOK_line]);
+							struct->STRUCT_union = (ident == "union");
+							i = parse_struct(tokens, src, i, ctx, struct);
+							i = expect_type(tokens, src, i, TOK_IDENT, "struct name");
+							var name = get_token_value(tokens, src, i);
+							context_add_typedef(ctx, name, struct, tokens[i+TOK_line]);
+							i = expect_symbol(tokens, src, i, ';');
+							continue;
+						}
+						else {
+							i -= TOK_SIZE*2;
+						}
+					}
+					else {
+						i -= TOK_SIZE;
+					}
+				}
+				else {
+					i -= TOK_SIZE;
+				}
+				var out = [null];
+				i = parse_type(tokens, src, i, ctx, out, true, true);
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var name = get_token_value(tokens, src, i);
+				context_add_typedef(ctx, name, out[0], tokens[i+TOK_line]);
+				i = expect_symbol(tokens, src, i, ';');
+				continue;
+			}
+			else if (ident == "bind") {
+				i = expect_symbol(tokens, src, i, '(');
+				i = expect_type(tokens, src, i, TOK_STRING, "string");
+				bound_lib = get_token_string(tokens, src, i);
+				i = expect_symbol(tokens, src, i, ')');
+				i = expect_symbol(tokens, src, i, ';');
+				continue;
+			}
+		}
+		else if (tokens[i+TOK_type] == '}') {
+			break;
+		}
+
+		i -= TOK_SIZE;
+
+		var func = object_create(FUNC_SIZE);
+		func->FUNC_bound_lib = bound_lib;
+
+		var out = [null];
+		i = parse_type(tokens, src, i, ctx, out, true, true);
+		func->FUNC_ret_type = out[0];
+
+		i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+		func->FUNC_name = get_token_value(tokens, src, i);
+
+		if (func->FUNC_name == "STDCALL") {
+			i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+			func->FUNC_name = get_token_value(tokens, src, i);
+			func->FUNC_stdcall = true;
+		}
+		
+		func->FUNC_params = {};
+		i = expect_symbol(tokens, src, i, '(');
+		i = expect_next(tokens, src, i);
+
+		if (tokens[i+TOK_type] == TOK_IDENT && get_token_value(tokens, src, i) == "void") {
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] != ')') {
+				i -= TOK_SIZE;
+			}
+		}
+
+		if (tokens[i+TOK_type] != ')') {
+			i -= TOK_SIZE;
+			for (;;) {
+				i = expect_next(tokens, src, i);
+				if (tokens[i+TOK_type] == '..') {
+					var off = tokens[i+TOK_off];
+					i = expect_next(tokens, src, i);
+					if (tokens[i+TOK_type] == '.' && tokens[i+TOK_off] == off+2) {
+						if (func->FUNC_stdcall) {
+							return 0, error({script_line(tokens[i+TOK_line]), ": varargs is incompatible with stdcall"});
+						}
+						func->FUNC_varargs = true;
+						i = expect_symbol(tokens, src, i, ')');
+						break;
+					}
+					else {
+						i -= TOK_SIZE;
+					}
+				}
+				i -= TOK_SIZE;
+
+				i = parse_type(tokens, src, i, ctx, out, true, false);
+				var type = out[0];
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var name = get_token_value(tokens, src, i);
+				if (hash_contains(func->FUNC_params, name)) {
+					return 0, error({script_line(tokens[i+TOK_line]), ": duplicate parameter"});
+				}
+				func->FUNC_params{name} = type;
+				i = expect_next(tokens, src, i);
+				var sym = tokens[i+TOK_type];
+				if (sym == ',') continue;
+				if (sym == ')') break;
+				return 0, error({script_line(tokens[i+TOK_line]), ": expected parameter"});
+			}
+		}
+		i = expect_symbol(tokens, src, i, ';');
+
+		if (hash_contains(ctx->CTX_functions, func->FUNC_name)) {
+			return 0, error({script_line(tokens[i+TOK_line]), ": duplicate function"});
+		}
+		ctx->CTX_functions{func->FUNC_name} = func;
+		continue;
+	}
+
+	if (!ctx->CTX_common_code_generated) {
+		var line = tokens[start+TOK_line];
+		tokens_parse(new_tokens, src, {
+			"var @__common_pointer_size;",
+			"var @__common_nlong_size;",
+			"function @__common_struct_init() {",
+				"__common_pointer_size = System::get_pointer_size();",
+				"__common_nlong_size = System::get_nlong_size();",
+			"}"
+		}, line);
+		ctx->CTX_common_code_generated = true;
+	}
+
+	gen_structs(ctx, new_tokens, src);
+	array_replace_range(tokens, start, i+TOK_SIZE, new_tokens);
+	return start;
+}
+
+function @gen_structs(ctx, tokens, src)
+{
+	for (var i=0; i<length(ctx->CTX_create_structs); i++) {
+		var struct = ctx->CTX_create_structs[i];
+		var name = struct->STRUCT_name;
+		var line = struct->STRUCT_line;
+		var members = struct->STRUCT_members;
+		tokens_parse(tokens, src, {"var @__struct_", name, "_size;"}, line);
+		tokens_parse(tokens, src, {"var @__struct_", name, "_align;"}, line);
+		for (var j=0; j<length(members); j++) {
+			var (k, v) = hash_entry(members, j);
+			tokens_parse(tokens, src, {"var @__struct_", name, "__", v->MEMBER_name, ";"}, line);
+		}
+		tokens_parse(tokens, src, {"class ", name, "{"}, line);
+		tokens_parse(tokens, src, {
+			"static function create(): ", name, " {",
+				"return Memory::alloc(size()) as ", name, ";",
+			"}",
+			"static function from(p: Pointer): ", name, " {",
+				"if (!__struct_", name, "_align) init();",
+				"return p as ", name, ";",
+			"}",
+			"static function size(): Integer {",
+				"if (!__struct_", name, "_align) init();",
+				"return __struct_", name, "_size;",
+			"}",
+			"static function align(): Integer {",
+				"if (!__struct_", name, "_align) init();",
+				"return __struct_", name, "_align;",
+			"}",
+			"static function @init() {",
+				"__common_struct_init();",
+				"var layout = ", struct->STRUCT_union? "Union" : "Struct", "Layout::create();"
+		}, line);
+		for (var j=0; j<length(members); j++) {
+			var (k, member) = hash_entry(members, j);
+			var type = member->MEMBER_type;
+			var add_code;
+			if (is_int(type)) {
+				var base = get_base_type(type);
+				if (member->MEMBER_count >= 0) {
+					add_code = {"add_", base, "_array(", member->MEMBER_count, ")"};
+				}
+				else {
+					add_code = {"add_", base, "()"};
+				}
+			}
+			else {
+				switch (type->TYPE_type) {
+					case TYPE_POINTER: {
+						if (member->MEMBER_count >= 0) {
+							add_code = {"add_pointer_array(", member->MEMBER_count, ")"};
+						}
+						else {
+							add_code = {"add_pointer()"};
+						}
+						break;
+					}
+					
+					case TYPE_STRUCT: {
+						var other = type->STRUCT_name;
+						if (member->MEMBER_count >= 0) {
+							add_code = {"add_struct_array(", other, "::size(), ", other, "::align(), ", member->MEMBER_count, ")"};
+						}
+						else {
+							add_code = {"add_struct(", other, "::size(), ", other, "::align())"};
+						}
+						break;
+					}
+					default:
+						return 0, error({"unhandled type: ", type->TYPE_type});
+				}
+			}
+			tokens_parse(tokens, src, {"__struct_", name, "__", member->MEMBER_name, " = layout.", add_code, ";"}, line);
+		}
+		tokens_parse(tokens, src, {
+				"__struct_", name, "_size = layout.get_size();",
+				"__struct_", name, "_align = layout.get_align();",
+			"}"
+		}, line);
+		for (var j=0; j<length(members); j++) {
+			var (k, member) = hash_entry(members, j);
+			var type = member->MEMBER_type;
+			if (is_int(type)) {
+				var base = get_base_type(type);
+				var lang_type = get_lang_type(base);
+				if (member->MEMBER_count >= 0) {
+					var lang_size = get_lang_size(base);
+					if (is_long_type(type)) {
+						tokens_parse(tokens, src, {
+							"function get_", member->MEMBER_name, "(idx: Integer): ", lang_type, " {",
+								"var (lo, hi) = (this as Pointer).get_", base, "(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ");",
+								"return lo, hi;",
+							"}",
+							"function set_", member->MEMBER_name, "(idx: Integer, lo: ", lang_type, ", hi: ", lang_type, ") {",
+								"(this as Pointer).set_", base, "(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ", lo, hi);",
+							"}"
+						}, line);
+					}
+					else {
+						tokens_parse(tokens, src, {
+							"function get_", member->MEMBER_name, "(idx: Integer): ", lang_type, " {",
+								"return (this as Pointer).get_", base, "(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ");",
+							"}",
+							"function set_", member->MEMBER_name, "(idx: Integer, value: ", lang_type, ") {",
+								"(this as Pointer).set_", base, "(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ", value);",
+							"}"
+						}, line);
+					}
+				}
+				else {
+					if (is_long_type(type)) {
+						tokens_parse(tokens, src, {
+							"function get_", member->MEMBER_name, "(): ", lang_type, " {",
+								"var (lo, hi) = (this as Pointer).get_", base, "(__struct_", name, "__", member->MEMBER_name, ");",
+								"return lo, hi;",
+							"}",
+							"function set_", member->MEMBER_name, "(lo: ", lang_type, ", hi: ", lang_type, ") {",
+								"(this as Pointer).set_", base, "(__struct_", name, "__", member->MEMBER_name, ", lo, hi);",
+							"}"
+						}, line);
+					}
+					else {
+						tokens_parse(tokens, src, {
+							"function get_", member->MEMBER_name, "(): ", lang_type, " {",
+								"return (this as Pointer).get_", base, "(__struct_", name, "__", member->MEMBER_name, ");",
+							"}",
+							"function set_", member->MEMBER_name, "(value: ", lang_type, ") {",
+								"(this as Pointer).set_", base, "(__struct_", name, "__", member->MEMBER_name, ", value);",
+							"}"
+						}, line);
+					}
+				}
+			}
+			else {
+				switch (type->TYPE_type) {
+					case TYPE_POINTER: {
+						if (is_array(type->POINTER_type) && type->POINTER_type->TYPE_type == TYPE_STRUCT) {
+							var name2 = type->POINTER_type->STRUCT_name;
+							if (member->MEMBER_count >= 0) {
+								var lang_size = get_lang_size("pointer");
+								tokens_parse(tokens, src, {
+									"function get_", member->MEMBER_name, "(idx: Integer): ", name2, " {",
+										"return (this as Pointer).get_pointer(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ") as ", name2, ";",
+									"}",
+									"function set_", member->MEMBER_name, "(idx: Integer, value: ", name2, ") {",
+										"(this as Pointer).set_pointer(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ", value as Pointer);",
+									"}"
+								}, line);
+							}
+							else {
+								tokens_parse(tokens, src, {
+									"function get_", member->MEMBER_name, "(): ", name2, " {",
+										"return (this as Pointer).get_pointer(__struct_", name, "__", member->MEMBER_name, ") as ", name2, ";",
+									"}",
+									"function set_", member->MEMBER_name, "(value: ", name2, ") {",
+										"(this as Pointer).set_pointer(__struct_", name, "__", member->MEMBER_name, ", value as Pointer);",
+									"}"
+								}, line);
+							}
+						}
+						else {
+							var base = "pointer";
+							var lang_type = "Pointer";
+							if (member->MEMBER_count >= 0) {
+								var lang_size = get_lang_size("pointer");
+								tokens_parse(tokens, src, {
+									"function get_", member->MEMBER_name, "(idx: Integer): ", lang_type, " {",
+										"return (this as Pointer).get_", base, "(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ");",
+									"}",
+									"function set_", member->MEMBER_name, "(idx: Integer, value: ", lang_type, ") {",
+										"(this as Pointer).set_", base, "(__struct_", name, "__", member->MEMBER_name, " + idx*", lang_size, ", value);",
+									"}"
+								}, line);
+							}
+							else {
+								tokens_parse(tokens, src, {
+									"function get_", member->MEMBER_name, "(): ", lang_type, " {",
+										"return (this as Pointer).get_", base, "(__struct_", name, "__", member->MEMBER_name, ");",
+									"}",
+									"function set_", member->MEMBER_name, "(value: ", lang_type, ") {",
+										"(this as Pointer).set_", base, "(__struct_", name, "__", member->MEMBER_name, ", value);",
+									"}"
+								}, line);
+							}
+						}
+						break;
+					}
+					case TYPE_STRUCT: {
+						var name2 = type->STRUCT_name;
+						if (member->MEMBER_count >= 0) {
+							tokens_parse(tokens, src, {
+								"function get_", member->MEMBER_name, "(idx: Integer): ", name2, " {",
+									"return (this as Pointer).with_offset(__struct_", name, "__", member->MEMBER_name, " + idx*", name2, "::size()) as ", name2, ";",
+								"}"
+							}, line);
+						}
+						else {
+							tokens_parse(tokens, src, {
+								"function get_", member->MEMBER_name, "(): ", name2, " {",
+									"return (this as Pointer).with_offset(__struct_", name, "__", member->MEMBER_name, ") as ", name2, ";",
+								"}"
+							}, line);
+						}
+						break;
+					}
+					default:
+						return 0, error({"unhandled type: ", type->TYPE_type});
+				}
+			}
+		}
+		tokens_parse(tokens, src, "}", line);
+	}
+	array_clear(ctx->CTX_create_structs);
+}
+
+function @get_base_type(type)
+{
+	switch (type) {
+		case TYPE_BYTE: return "byte"; break;
+		case TYPE_SHORT: return "short"; break;
+		case TYPE_INT: return "int"; break;
+		case TYPE_LONG: return "long"; break;
+		case TYPE_NLONG: return "nlong"; break;
+		case TYPE_FLOAT: return "float"; break;
+		case TYPE_DOUBLE: return "double"; break;
+		case TYPE_VOIDPTR: return "pointer"; break;
+		case TYPE_WIDECHAR: return "short"; break;
+	}
+	return 0, error({"unhandled type: ", type});
+}
+
+function @get_lang_type(base)
+{
+	switch (length(base)) {
+		case 3:
+			if (base == "int") return "Integer";
+			break;
+		case 4:
+			if (base == "byte") return "Byte";
+			if (base == "long") return "Integer";
+			break;
+		case 5:
+			if (base == "short") return "Short";
+			if (base == "nlong") return "Integer";
+			if (base == "float") return "Float";
+			break;
+		case 6:
+			if (base == "double") return "Integer";
+			break;
+		case 7:
+			if (base == "pointer") return "Pointer";
+			break;
+	}
+	return 0, error({"unhandled type: ", base});
+}
+
+function @is_long_type(type)
+{
+	switch (type) {
+		case TYPE_LONG:
+		case TYPE_NLONG:
+		case TYPE_DOUBLE:
+			return true;
+	}
+	return false;
+}
+
+function @get_lang_size(base)
+{
+	switch (length(base)) {
+		case 3:
+			if (base == "int") return "4";
+			break;
+
+		case 4:
+			if (base == "byte") return "1";
+			if (base == "long") return "8";
+			break;
+
+		case 5:
+			if (base == "short") return "2";
+			if (base == "float") return "4";
+			if (base == "nlong") return "__common_nlong_size";
+			break;
+
+		case 6:
+			if (base == "double") return "8";
+			break;
+
+		case 7:
+			if (base == "pointer") return "__common_pointer_size";
+			break;
+	}
+	return 0, error({"unhandled type: ", base});
+}
+
+function @parse_type(tokens, src, i, ctx, out, parse_pointers, allow_void)
+{
+	var type = null;
+	i = expect_next(tokens, src, i);
+
+	if (tokens[i+TOK_type] == KW_CONST) {
+		i = expect_next(tokens, src, i);
+	}
+
+	if (tokens[i+TOK_type] == TOK_IDENT) {
+		var name = get_token_value(tokens, src, i);
+
+		switch (length(name)) {
+			case 6:
+				if (name == "signed") {
+					i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+					name = get_token_value(tokens, src, i);
+					break;
+				}
+				break;
+
+			case 8:
+				if (name == "unsigned") {
+					i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+					name = get_token_value(tokens, src, i);
+					break;
+				}
+				break;
+		}
+
+		switch (length(name)) {
+			case 3:
+				if (name == "int") { type = TYPE_INT; break; }
+				break;
+
+			case 4:
+				if (name == "char") { type = TYPE_BYTE; break; }
+				if (name == "long") {
+					i = expect_next(tokens, src, i);
+					if (tokens[i+TOK_type] == TOK_IDENT && get_token_value(tokens, src, i) == "long") {
+						type = TYPE_LONG;
+					}
+					else {
+						i -= TOK_SIZE;
+						type = TYPE_NLONG;
+					}
+					break;
+				}
+				if (name == "void") {
+					if (parse_pointers) {
+						if (allow_void) {
+							i = expect_next(tokens, src, i);
+							if (tokens[i+TOK_type] == '*') {
+								type = TYPE_VOIDPTR;
+							}
+							else {
+								i -= TOK_SIZE;
+								type = TYPE_VOID;
+							}
+						}
+						else {
+							i = expect_symbol(tokens, src, i, '*');
+							type = TYPE_VOIDPTR;
+						}
+					}
+					else {
+						type = TYPE_VOIDPTR_PARTIAL;
+					}
+					break;
+				}
+				break;
+
+			case 5:
+				if (name == "short") { type = TYPE_SHORT; break; }
+				if (name == "float") { type = TYPE_FLOAT; break; }
+				break;
+
+			case 6:
+				if (name == "double") { type = TYPE_DOUBLE; break; }
+				if (name == "int8_t") { type = TYPE_BYTE; break; }
+				if (name == "struct" || name == "union") {
+					var struct = struct_create(tokens[i+TOK_line]);
+					struct->STRUCT_union = (name == "union");
+					i = expect_next(tokens, src, i);
+					if (tokens[i+TOK_type] == TOK_IDENT) {
+						context_add_struct(ctx, get_token_value(tokens, src, i), struct, tokens[i+TOK_line]);
+					}
+					else {
+						context_add_struct(ctx, null, struct, tokens[i+TOK_line]);
+						i -= TOK_SIZE;
+					}
+					i = parse_struct(tokens, src, i, ctx, struct);
+					type = struct;
+					break;
+				}
+				break;
+
+			case 7:
+				if (name == "uint8_t") { type = TYPE_BYTE; break; }
+				if (name == "int16_t") { type = TYPE_SHORT; break; }
+				if (name == "int32_t") { type = TYPE_INT; break; }
+				if (name == "int64_t") { type = TYPE_LONG; break; }
+				if (name == "wchar_t") { type = TYPE_WIDECHAR; break; }
+				break;
+
+			case 8:
+				if (name == "uint16_t") { type = TYPE_SHORT; break; }
+				if (name == "uint32_t") { type = TYPE_INT; break; }
+				if (name == "uint64_t") { type = TYPE_LONG; break; }
+				break;
+		}
+
+		if (!type) {
+			type = hash_get(ctx->CTX_typedefs, name, null);
+			if (!type) {
+				type = hash_get(ctx->CTX_import_typedefs, name, null);
+			}
+			if (type == TYPE_VOID && !allow_void) {
+				if (parse_pointers) {
+					i = expect_symbol(tokens, src, i, '*');
+					type = TYPE_VOIDPTR;
+				}
+				else {
+					type = TYPE_VOIDPTR_PARTIAL;
+				}
+			}
+		}
+
+		if (!type) {
+			return 0, error({script_line(tokens[i+TOK_line]), ": unknown type"});
+		}
+	}
+
+	if (!type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected type"});
+	}
+
+	if (parse_pointers) {
+		for (;;) {
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == KW_CONST) {
+				i = expect_next(tokens, src, i);
+			}
+			if (tokens[i+TOK_type] == '*') {
+				type = pointer_create(type);
+				continue;
+			}
+			i -= TOK_SIZE;
+			break;
+		}
+	}
+
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] != KW_CONST) {
+		i -= TOK_SIZE;
+	}
+
+	out[0] = type;
+	return i;
+}
+
+function @parse_struct(tokens, src, i, ctx, struct)
+{
+	var out = [null];
+	i = expect_symbol(tokens, src, i, '{');
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == '}') break;
+
+		i -= TOK_SIZE;
+		i = parse_type(tokens, src, i, ctx, out, false, false);
+
+		for (;;) {
+			var type = out[0];
+			if (type == TYPE_VOIDPTR_PARTIAL) {
+				i = expect_symbol(tokens, src, i, '*');
+				type = TYPE_VOIDPTR;
+			}
+			for (;;) {
+				i = expect_next(tokens, src, i);
+				if (tokens[i+TOK_type] == '*') {
+					type = pointer_create(type);
+					continue;
+				}
+				i -= TOK_SIZE;
+				break;
+			}
+
+			var member = object_create(MEMBER_SIZE);
+			member->MEMBER_type = type;
+			i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+			member->MEMBER_name = get_token_value(tokens, src, i);
+			i = expect_next(tokens, src, i);
+
+			if (tokens[i+TOK_type] == '[') {
+				i = expect_type(tokens, src, i, TOK_NUMBER, "count");
+				var count = string_parse_int(get_token_value(tokens, src, i));
+				if (count < 0) {
+					return 0, error({script_line(tokens[i+TOK_line]), ": negative count"});
+				}
+				member->MEMBER_count = count;
+				i = expect_symbol(tokens, src, i, ']');
+			}
+			else {
+				member->MEMBER_count = -1;
+				i -= TOK_SIZE;
+			}
+
+			if (hash_contains(struct->STRUCT_members, member->MEMBER_name)) {
+				return 0, error({script_line(tokens[i+TOK_line]), ": duplicate member name"});
+			}
+			struct->STRUCT_members{member->MEMBER_name} = member;
+
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == ',') continue;
+			i -= TOK_SIZE;
+			break;
+		}
+
+		i = expect_symbol(tokens, src, i, ';');
+	}
+	return i;
+}
+
+function @parse_js_extern(tokens, src, i, ctx)
+{
+	var start = i - TOK_SIZE;
+	var new_tokens = [];
+
+	i = expect_symbol(tokens, src, i, '{');
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == '}') break;
+
+		i -= TOK_SIZE;
+		i = expect_type(tokens, src, i, KW_FUNCTION, "function");
+		var line = tokens[i+TOK_line];
+
+		i = expect_type(tokens, src, i, TOK_IDENT, "function name");
+		var func_name = get_token_value(tokens, src, i);
+
+		var params = {};
+		i = expect_symbol(tokens, src, i, '(');
+		i = expect_next(tokens, src, i);
+		if (tokens[i] != ')') {
+			i -= TOK_SIZE;
+			for (;;) {
+				i = expect_type(tokens, src, i, TOK_IDENT, "parameter name");
+				var param_name = get_token_value(tokens, src, i);
+				i = expect_symbol(tokens, src, i, ':');
+				i = expect_type(tokens, src, i, TOK_IDENT, "type");
+				var value = get_token_value(tokens, src, i);
+				var type = get_js_type(value);
+				if (type == -1) {
+					return 0, error({script_line(tokens[i+TOK_line]), ": unknown type"});
+				}
+
+				params{param_name} = type;
+
+				i = expect_next(tokens, src, i);
+				if (tokens[i] == ',') continue;
+				if (tokens[i] == ')') break;
+				return 0, error({script_line(tokens[i+TOK_line]), ": expected function parameter"});
+			}
+		}
+
+		i = expect_next(tokens, src, i);
+		var ret_type = JSTYPE_VOID;
+		if (tokens[i] == ':') {
+			i = expect_type(tokens, src, i, TOK_IDENT, "return type");
+			ret_type = get_js_type(get_token_value(tokens, src, i));
+			if (ret_type == -1) {
+				return 0, error({script_line(tokens[i+TOK_line]), ": unknown return type"});
+			}
+		}
+		else {
+			i -= TOK_SIZE;
+		}
+
+		i = expect_symbol(tokens, src, i, '{');
+		var body_start = i;
+		i = expect_expression(tokens, src, i, false);
+		i = expect_symbol(tokens, src, i, '}');
+		var body_end = i+TOK_SIZE;
+
+		var body = {"function ", func_name, "("};
+		for (var j=0; j<length(params); j++) {
+			var (param_name, param_type) = hash_entry(params, j);
+			if (j > 0) body[] = ',';
+			array_append(body, param_name);
+		}
+		body[] = ')';
+		var prev_type = -1;
+		for (var j=body_start; j<body_end; j+=TOK_SIZE) {
+			var token_off = tokens[j+TOK_off];
+			var token_len = tokens[j+TOK_len];
+			var cur_type = tokens[j];
+			if (prev_type != -1) {
+				var space = false;
+				if (cur_type < ' ' && prev_type < ' ') space = true;
+				if (prev_type == TOK_UNKNOWN) space = false;
+				if (space) body[] = ' ';
+			}
+			array_append(body, src, token_off, token_len);
+			prev_type = cur_type;
+		}
+		array_append(body, {
+			"var prev_suspend_ptr = suspend_ptr;",
+			"var prev_suspend_ret_type = suspend_ret_type;",
+			"suspend_ptr = ptr;",
+			"suspend_ret_type = ", ret_type, ";",
+			"try {",
+				"var __extern_ret = ", func_name, "("
+		});
+		var required_size = 0;
+		var pos = 0;
+		for (var j=0; j<length(params); j++) {
+			var (param_name, param_type) = hash_entry(params, j);
+			if (j > 0) body[] = ',';
+			switch (param_type) {
+				case JSTYPE_BOOLEAN: array_append(body, {"mem32[(ptr+", pos, ")>>2] != 0"}); pos += 4; break;
+				case JSTYPE_INT:     array_append(body, {"mem32[(ptr+", pos, ")>>2]"}); pos += 4; break;
+				case JSTYPE_FLOAT:   array_append(body, {"memF32[(ptr+", pos, ")>>2]"}); pos += 4; break;
+				case JSTYPE_DOUBLE:  array_append(body, {"getDouble(ptr+", pos, ")"}); pos += 8; break;
+				case JSTYPE_POINTER: array_append(body, {"mem32[(ptr+", pos, ")>>2]"}); pos += 4; break;
+				case JSTYPE_STRING:  array_append(body, {"getString(ptr+", pos, ")"}); pos += 8; break;
+				default:
+					return 0, error("unknown type");
+			}
+			required_size += get_js_type_size(param_type);
+		}
+		array_append(body, ");");
+		if (ret_type != JSTYPE_VOID) {
+			array_append(body, "if (suspend_ptr != 0) {");
+		}
+		switch (ret_type) {
+			case JSTYPE_VOID:    break;
+			case JSTYPE_BOOLEAN: array_append(body, "mem32[ptr>>2] = __extern_ret? 1:0;"); break;
+			case JSTYPE_INT:     array_append(body, "mem32[ptr>>2] = __extern_ret;"); break;
+			case JSTYPE_FLOAT:   array_append(body, "memF32[ptr>>2] = __extern_ret;"); break;
+			case JSTYPE_DOUBLE:  array_append(body, "setDouble(ptr, __extern_ret);"); break;
+			case JSTYPE_POINTER: array_append(body, "mem32[ptr>>2] = __extern_ret;"); break;
+			case JSTYPE_STRING:  array_append(body, "setString(ptr, __extern_ret);"); break;
+			default:
+				return 0, error("unknown type");
+		}
+		required_size = max(required_size, get_js_type_size(ret_type));
+		if (ret_type != JSTYPE_VOID) {
+			body[] = '}';
+		}
+		array_append(body, {
+			"}",
+			"finally {",
+				"suspend_ptr = prev_suspend_ptr;",
+				"suspend_ret_type = prev_suspend_ret_type;",
+			"}"
+		});
+
+		var code = {""};
+		if (!ctx->CTX_js_vars_created) {
+			array_append(code, "var @__extern_jstmp: Memory;");
+			ctx->CTX_js_vars_created = true;
+		}
+		array_append(code, {"var @__extern_jsfunc_", func_name, ";"});
+		array_append(code, {"function ", func_name, "("});
+		for (var j=0; j<length(params); j++) {
+			var (param_name, param_type) = hash_entry(params, j);
+			if (j > 0) code[] = ',';
+			array_append(code, {param_name, ":", get_fixscript_type(param_type)});
+		}
+		var tmp_name = "__extern_jstmp";
+		var var_name = {"__extern_jsfunc_", func_name};
+		array_append(code, {
+			"):", get_fixscript_type(ret_type), " {",
+			"if (!", var_name, ") {",
+				var_name, " = @native_js_create(", token_escape_string(body), ");",
+			"}",
+			"var __extern_ptr = ", tmp_name, ";",
+			"if (__extern_ptr == null || __extern_ptr.get_size() < ", required_size, ") {", //XXX
+				"__extern_ptr = ", tmp_name, " = Memory::alloc_fast(", required_size, ");",
+			"}"
+		});
+		pos = 0;
+		for (var j=0; j<length(params); j++) {
+			var (param_name, param_type) = hash_entry(params, j);
+			if (j > 0) body[] = ',';
+			switch (param_type) {
+				case JSTYPE_BOOLEAN: array_append(code, {"__extern_ptr.set_int(", pos, ", ", param_name, "? 1:0);"}); pos += 4; break;
+				case JSTYPE_INT:     array_append(code, {"__extern_ptr.set_int(", pos, ", ", param_name, ");"}); pos += 4; break;
+				case JSTYPE_FLOAT:   array_append(code, {"__extern_ptr.set_float(", pos, ", ", param_name, ");"}); pos += 4; break;
+				case JSTYPE_DOUBLE:  array_append(code, {"__extern_ptr.set_double(", pos, ", ", param_name, ".lo, ", param_name, ".hi);"}); pos += 8; break;
+				case JSTYPE_POINTER: array_append(code, {"__extern_ptr.set_int(", pos, ", ", param_name, ".get_value());"}); pos += 4; break;
+				case JSTYPE_STRING:  array_append(code, {"if (", param_name, ") { var __extern_str = Memory::for_string_utf8(", param_name, "); __extern_ptr.set_int(", pos, ", __extern_str.get_value()); __extern_ptr.set_int(", pos+4, ", __extern_str.get_size()-1); } else { __extern_ptr.set_int(", pos, ", 0); }"}); pos += 8; break;
+				default:
+					return 0, error("unknown type");
+			}
+		}
+		array_append(code, {
+			"@native_js_call(", var_name, ", __extern_ptr);"
+		});
+		switch (ret_type) {
+			case JSTYPE_VOID:    break;
+			case JSTYPE_BOOLEAN: array_append(code, "return __extern_ptr.get_int(0) != 0;"); break;
+			case JSTYPE_INT:     array_append(code, "return __extern_ptr.get_int(0);"); break;
+			case JSTYPE_FLOAT:   array_append(code, "return __extern_ptr.get_float(0);"); break;
+			case JSTYPE_DOUBLE:  array_append(code, "return Double(__extern_ptr.get_int(0), __extern_ptr.get_int(4));"); break;
+			case JSTYPE_POINTER: array_append(code, "return Pointer::create(__extern_ptr.get_int(0), 0);"); break;
+			case JSTYPE_STRING:  array_append(code, "if (__extern_ptr.get_int(0) != 0) { var __extern_str = Memory::create(__extern_ptr.get_int(0), 0, __extern_ptr.get_int(4), true); var __extern_ret = string_from_utf8(__extern_str.get_view(0, __extern_str.get_size(), 1)); __extern_str.free(); return __extern_ret; } else return null;"); break;
+			default:
+				return 0, error("unknown type");
+		}
+		code[] = '}';
+
+		tokens_parse(new_tokens, src, code, line);
+	}
+	array_replace_range(tokens, start, i+TOK_SIZE, new_tokens);
+	return start;
+}
+
+function @get_js_type(value)
+{
+	switch (length(value)) {
+		case 3:
+			if (value == "int") return JSTYPE_INT;
+			break;
+		case 5:
+			if (value == "float") return JSTYPE_FLOAT;
+			break;
+		case 6:
+			if (value == "double") return JSTYPE_DOUBLE;
+			if (value == "string") return JSTYPE_STRING;
+			break;
+		case 7:
+			if (value == "boolean") return JSTYPE_BOOLEAN;
+			if (value == "pointer") return JSTYPE_POINTER;
+			break;
+	}
+	return -1;
+}
+
+function @get_fixscript_type(type)
+{
+	switch (type) {
+		case JSTYPE_VOID:    return "Void";
+		case JSTYPE_BOOLEAN: return "Boolean";
+		case JSTYPE_INT:     return "Integer";
+		case JSTYPE_FLOAT:   return "Float";
+		case JSTYPE_DOUBLE:  return "Double";
+		case JSTYPE_POINTER: return "Pointer";
+		case JSTYPE_STRING:  return "String";
+	}
+	return 0, error("unknown type");
+}
+
+function @get_js_type_size(type)
+{
+	switch (type) {
+		case JSTYPE_VOID:    return 0;
+		case JSTYPE_BOOLEAN: return 4;
+		case JSTYPE_INT:     return 4;
+		case JSTYPE_FLOAT:   return 4;
+		case JSTYPE_DOUBLE:  return 8;
+		case JSTYPE_POINTER: return 4;
+		case JSTYPE_STRING:  return 8;
+	}
+	return 0, error("unknown type");
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": unexpected end of file"});
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i, inner)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0 && inner) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @add_token(tokens, src, type, value, line)
+{
+	tokens[] = type;
+	tokens[] = length(src);
+	tokens[] = length(value);
+	tokens[] = line;
+	array_append(src, value);
+}

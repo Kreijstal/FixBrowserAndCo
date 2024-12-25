@@ -1,0 +1,96 @@
+import "util/string";
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+function process_tokens(fname, tokens, src)
+{
+	var off = 0;
+	if (tokens[off+TOK_type] != '=') {
+		return 0, error("bad syntax");
+	}
+	off += TOK_SIZE;
+	if (tokens[off+TOK_type] != TOK_STRING) {
+		return 0, error("bad syntax");
+	}
+	var domain = array_extract(src, tokens[off+TOK_off]+1, tokens[off+TOK_len]-2);
+	off += TOK_SIZE;
+	if (tokens[off+TOK_type] != ';') {
+		return 0, error("bad syntax");
+	}
+	off += TOK_SIZE;
+	if (length(tokens) != 3*TOK_SIZE) {
+		return 0, error("customizing of functions is not supported currently");
+	}
+
+	if (length(domain) == 0) {
+		array_set_length(tokens, 0);
+		tokens_parse(tokens, src, ";", 0);
+		return;
+	}
+
+	var idx = string_rev_search_char(domain, '.');
+	var tld = string_substring(domain, idx+1);
+	var script_name = {"site/", tld, "/", string_substring(domain, 0, 2), "/", domain, "/entry"};
+	
+	array_set_length(tokens, 0);
+	tokens_parse(tokens, src, {"; import \"", script_name, "\" : parent;"}, 0);
+	
+	var funcs = [];
+	script_query(script_name, null, null, null, funcs);
+	for (var i=0; i<length(funcs); i++) {
+		var func_name = funcs[i];
+		idx = string_rev_search_char(func_name, '#');
+		var num_params = string_parse_int(string_substring(func_name, idx+1));
+		array_set_length(func_name, idx);
+		
+		tokens_parse(tokens, src, {"function ", func_name, "("}, 0);
+		for (var j=0; j<num_params; j++) {
+			if (j > 0) {
+				tokens_parse(tokens, src, ",", 0);
+			}
+			tokens_parse(tokens, src, {"p", j}, 0);
+		}
+		tokens_parse(tokens, src, {") { return parent:", func_name, "("}, 0);
+		for (var j=0; j<num_params; j++) {
+			if (j > 0) {
+				tokens_parse(tokens, src, ",", 0);
+			}
+			tokens_parse(tokens, src, {"p", j}, 0);
+		}
+		tokens_parse(tokens, src, "); }", 0);
+	}
+}

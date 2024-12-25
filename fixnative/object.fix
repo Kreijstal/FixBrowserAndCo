@@ -1,0 +1,239 @@
+/*
+ * FixScript Classes v0.5 - http://www.fixscript.org/
+ * Copyright (c) 2019-2021 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+var @to_string_funcs;
+var @dump_map: Integer[Integer];
+var @dump_level: Integer;
+
+class Object
+{
+	var @marker;
+
+	function @marker() {}
+
+	constructor create()
+	{
+		this.marker = Object::marker#1;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= OBJECT_SIZE && (obj as Object).marker === Object::marker#1;
+	}
+
+	virtual function to_string(): String
+	{
+		return "Object#"+((this as Integer)|0);
+	}
+
+	static function set_to_string(obj, func)
+	{
+		if (is_instance(obj)) {
+			obj[1] = func;
+			return;
+		}
+		var funcs = to_string_funcs;
+		if (!funcs) {
+			funcs = {};
+			to_string_funcs = funcs;
+		}
+		if (is_funcref(obj)) {
+			funcs{obj} = func;
+			return;
+		}
+		funcs{weakref_create(obj, funcs)} = func;
+	}
+
+	static function get_to_string(obj)
+	{
+		if (is_array(obj) && length(obj) > 0) {
+			var first = obj[0];
+			if (first === Object::marker#1) {
+				return obj[1];
+			}
+			if (is_funcref(first)) {
+				var name = @to_string(first);
+				var suffix = "_to_string#1>";
+				if (length(name) > length(suffix)) {
+					if (array_extract(name, length(name)-length(suffix), length(suffix)) == suffix) {
+						return first;
+					}
+				}
+			}
+		}
+		var funcs = to_string_funcs;
+		if (!funcs) return null;
+		if (is_funcref(obj)) {
+			return hash_get(funcs, obj, null);
+		}
+		return hash_get(funcs, weakref_create(obj, funcs), null);
+	}
+}
+
+function dump(value)
+{
+	if (!dump_map) {
+		dump_map = {};
+	}
+	var s = {""};
+	dump_level++;
+	var (r, e) = dump(s, value, "");
+	dump_level--;
+	if (dump_level == 0) {
+		hash_clear(dump_map);
+	}
+	if (e) throw e;
+	@log(s);
+}
+
+function to_string(value, newlines: Boolean): String
+{
+	if (newlines) {
+		if (!dump_map) {
+			dump_map = {};
+		}
+		var s = {""};
+		dump_level++;
+		var (r, e) = dump(s, value, "");
+		dump_level--;
+		if (dump_level == 0) {
+			hash_clear(dump_map);
+		}
+		if (e) throw e;
+		return s;
+	}
+	return @to_string(value);
+}
+
+function @dump(s: String, value, indent: String)
+{
+	if (is_int(value) || is_float(value) || is_string(value)) {
+		array_append(s, @to_string(value));
+		return;
+ 	}
+
+	var level = hash_get(dump_map, value|0, -1);
+	if (level >= 0) {
+		array_append(s, "(reference "+(level-dump_level)+")");
+		return;
+	}
+
+	dump_map[value|0] = dump_level;
+
+	if (is_array(value)) {
+		var to_string_func = Object::get_to_string(value);
+		if (to_string_func) {
+			array_append(s, __classes_insert_prefix(to_string_func(value) as String, indent));
+			hash_remove(dump_map, value|0);
+			return;
+		}
+		if (length(value) == 0) {
+			array_append(s, "[]");
+			hash_remove(dump_map, value|0);
+			return;
+		}
+		var next_indent = indent+"  ";
+		array_append(s, "[\n");
+		array_append(s, next_indent);
+		for (var i=0; i<length(value); i++) {
+			dump_level++;
+			var (r, e) = dump(s, value[i], next_indent);
+			dump_level--;
+			if (e) throw e;
+			if (i < length(value)-1) {
+				s[] = ',';
+				s[] = '\n';
+				array_append(s, next_indent);
+			}
+			else {
+				s[] = '\n';
+			}
+		}
+		array_append(s, indent);
+		array_append(s, "]");
+		hash_remove(dump_map, value|0);
+		return;
+	}
+
+	if (is_hash(value)) {
+		if (length(value) == 0) {
+			array_append(s, "{}");
+			hash_remove(dump_map, value|0);
+			return;
+		}
+		var next_indent = indent+"  ";
+		array_append(s, "{\n");
+		array_append(s, next_indent);
+		for (var i=0; i<length(value); i++) {
+			var (key, val) = hash_entry(value, i);
+
+			dump_level++;
+			var (r1, e1) = dump(s, key, next_indent);
+			dump_level--;
+			if (e1) throw e1;
+
+			array_append(s, ": ");
+
+			dump_level++;
+			var (r2, e2) = dump(s, val, next_indent);
+			dump_level--;
+			if (e2) throw e2;
+
+			if (i < length(value)-1) {
+				s[] = ',';
+				s[] = '\n';
+				array_append(s, next_indent);
+			}
+			else {
+				s[] = '\n';
+			}
+		}
+		array_append(s, indent);
+		array_append(s, "}");
+		hash_remove(dump_map, value|0);
+		return;
+	}
+
+	if (is_funcref(value)) {
+		var to_string_func = Object::get_to_string(value);
+		if (to_string_func) {
+			array_append(s, __classes_insert_prefix(to_string_func(value) as String, indent));
+			hash_remove(dump_map, value|0);
+			return;
+		}
+	}
+
+	array_append(s, __classes_insert_prefix(@to_string(value, true), indent));
+	hash_remove(dump_map, value|0);
+}
+
+function __classes_insert_prefix(s: String, prefix: String): String
+{
+	for (var i=0; i<length(s); i++) {
+		if (s[i] == '\n') {
+			array_insert_array(s, i+1, prefix);
+			i += length(prefix);
+		}
+	}
+	return s;
+}

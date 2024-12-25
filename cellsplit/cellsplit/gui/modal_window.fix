@@ -1,0 +1,212 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/subview";
+import "gui/event";
+
+var @active_modals: ModalWindow[];
+
+class ModalWindow
+{
+	var @parent: SubView;
+	var @block: BlockView;
+
+	static function is_instance(obj): Boolean
+	{
+		// TODO: handle this better
+		// check for CancelArea from gui/code_editor/popup.fix
+		if ((length(obj) == SubView::SIZE+2) && SubView::is_instance(obj)) { //XXX
+			var popup = obj[SubView::SIZE+0]; // PopupWindow
+			var view = obj[SubView::SIZE+1] as SubView;
+			if (SubView::is_instance(view) && view.get_child_count() == 1 && view === (obj as SubView).get_child(0) && length(popup) == 4) {
+				var parent = popup[0] as SubView;
+				var cancel = popup[1] as SubView;
+				if (cancel === obj) {
+					return true;
+				}
+			}
+		}
+		return is_array(obj) && length(obj) >= BlockView::SIZE && (obj as BlockView).marker === BlockView::marker#1;
+	}
+
+	static function show(parent: SubView, view: SubView): ModalWindow
+	{
+		var scale = parent.get_scale();
+		var rect1 = parent.get_local_rect();
+		var rect2 = view.get_local_rect();
+		rect2.x2 = min(rect1.x2 - iround(20*scale), rect2.x2);
+		rect2.y2 = min(rect1.y2 - iround(20*scale), rect2.y2);
+		view.set_rect(rect2);
+		return show(parent, (rect1.x2 - rect2.x2)/2, (rect1.y2 - rect2.y2)/2, view);
+	}
+
+	constructor show(parent: SubView, x: Integer, y: Integer, view: SubView)
+	{
+		this.parent = parent;
+
+		var point = [x, y];
+		var top = parent.point_to_top(point);
+
+		block = BlockView::create();
+		block.set_rect(-1000000, -1000000, top.get_width()+2000000, top.get_height()+2000000);
+		top.add(block);
+
+		block.add(view);
+		view.set_rect(1000000+point[0], 1000000+point[1], view.get_width(), view.get_height());
+
+		view.focus();
+
+		if (!active_modals) {
+			active_modals = [];
+		}
+		active_modals[] = this;
+	}
+
+	function set_view(view: SubView)
+	{
+		if (!view) {
+			set_view(0, 0, null);
+			return;
+		}
+		var parent = block.get_parent();
+		var scale = parent.get_scale();
+		var rect1 = parent.get_local_rect();
+		var rect2 = view.get_local_rect();
+		rect2.x2 = min(rect1.x2 - iround(20*scale), rect2.x2);
+		rect2.y2 = min(rect1.y2 - iround(20*scale), rect2.y2);
+		view.set_rect(rect2);
+		set_view((rect1.x2 - rect2.x2)/2, (rect1.y2 - rect2.y2)/2, view);
+	}
+	
+	function set_view(x: Integer, y: Integer, view: SubView)
+	{
+		if (!view) {
+			view = SubView::create();
+		}
+		
+		if (block.get_child_count() == 1) {
+			block.remove(block.get_child(0));
+		}
+
+		var point = [x, y];
+		block.get_parent().point_to_top(point);
+
+		var rect = view.get_rect();
+		rect.translate(1000000+point[0], 1000000+point[1]);
+		block.add(view);
+		view.set_rect(rect);
+
+		view.focus();
+	}
+
+	function get_view(): SubView
+	{
+		if (block.get_child_count() == 1) {
+			return block.get_child(0);
+		}
+		return null;
+	}
+
+	function hide()
+	{
+		for (var i=0; i<active_modals.length; i++) {
+			if (active_modals[i] === this) {
+				active_modals.remove(i);
+				break;
+			}
+		}
+		
+		if (block.get_child_count() == 1) {
+			block.remove(block.get_child(0));
+		}
+		
+		var top = block.get_parent();
+		if (!top) return;
+
+		block.focus();
+		block.unfocus();
+
+		top.remove(block);
+	}
+
+	static function update_modals()
+	{
+		if (!active_modals) return;
+		foreach (var modal in active_modals) {
+			modal.set_view(modal.get_view());
+		}
+	}
+}
+
+class @BlockView: SubView
+{
+	var @marker;
+
+	function @marker() {}
+
+	constructor create()
+	{
+		this.marker = BlockView::marker#1;
+	}
+
+	override function handle_resize()
+	{
+		if (get_child_count() == 1) {
+			var view = get_child(0);
+			view.set_rect(view.get_rect());
+		}
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		return true;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		return true;
+	}
+
+	override function handle_touch_event(event: TouchEvent): Boolean
+	{
+		return true;
+	}
+
+	override function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		return true;
+	}
+
+	override function catch_touch_event(event: TouchEvent): Boolean
+	{
+		return true;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		p.fill_rect(0, 0, get_width(), get_height(), 0x80000000);
+		draw_children(p);
+	}
+}

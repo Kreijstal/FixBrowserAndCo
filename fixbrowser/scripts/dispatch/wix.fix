@@ -1,0 +1,13 @@
+import "util/common";
+import "util/string";
+
+function adjust_document(request, document)
+{
+	var iframe = element_query(document, "iframe[id^='TPAMultiSection_']");
+	if (iframe) {
+		var src = element_get_attr(iframe, "src");
+		if (string_starts_with(src, "https://social-blog.wix.com/")) {
+			request_set_same_domain_url(request, src);
+		}
+	}
+}

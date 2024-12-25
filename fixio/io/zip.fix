@@ -1,0 +1,272 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/file";
+import "io/gzip";
+import "util/long";
+
+class ZipReader
+{
+	var @file: File;
+	var @entries: Entry[String];
+
+	constructor create(file: File)
+	{
+		this.file = file;
+
+		var end_record_off = search_end_record(file);
+		if (!end_record_off) {
+			throw error("end of central directory record not found");
+		}
+		//log("end_record_off="+end_record_off.to_string());
+
+		entries = read_central_directory(file, end_record_off);
+	}
+
+	function close()
+	{
+		file.close();
+	}
+
+	function get_files(): String[]
+	{
+		var files = [];
+		foreach (var name, entry in entries) {
+			files[] = {name};
+		}
+		return files;
+	}
+
+	function get_file(filename: String): Stream
+	{
+		var entry = entries.get(filename, null);
+		if (!entry) {
+			throw error("file "+filename+" not found in the archive");
+		}
+
+		var buf = Array::create_shared(30, 1);
+		file.seek_set(entry.offset);
+		file.read(buf);
+		var str = ArrayStream::create(buf);
+		if (str.read_int_LE() != 0x04034b50) throw error("invalid local file header signature");
+		str.skip(5*2+3*4);
+		var fname_len = str.read_ushort_LE();
+		var extra_len = str.read_ushort_LE();
+
+		var stream: Stream = EntryStream::create(file, Long::create(entry.offset+30+fname_len+extra_len), Long::create(entry.compressed_size));
+		if (entry.compressed) {
+			stream = ZStream::create(stream);
+		}
+		return stream;
+	}
+
+	static function @search_end_record(file: File): Long
+	{
+		var buf = Array::create_shared(256, 1);
+		var len = buf.length;
+		var off = file.get_length();
+		var state = 0;
+		var end_record_off: Long = null;
+		var searched = 0;
+		do {
+			off.sub_int(len);
+			if (off.cmp_int(0) < 0) {
+				var amount = -off.to_int();
+				off.set_int(0);
+				len -= amount;
+			}
+			file.set_position(off);
+			file.read(buf, 0, len);
+			searched += len;
+			for (var i=len-1; i>=0; i--) {
+				var c = buf[i];
+				switch (state) {
+					case 0:
+						if (c == 0x06) {
+							state = 1;
+							continue;
+						}
+						continue;
+
+					case 1:
+						if (c == 0x05) {
+							state = 2;
+							continue;
+						}
+						state = 0;
+						continue;
+
+					case 2:
+						if (c == 0x4B) {
+							state = 3;
+							continue;
+						}
+						state = 0;
+						continue;
+
+					case 3:
+						if (c == 0x50) {
+							end_record_off = off.dup().add_int(i);
+							break;
+						}
+						state = 0;
+						continue;
+				}
+				break;
+			}
+			
+			if (end_record_off) break;
+			if (searched > 65557) break;
+		}
+		while (!off.is_zero());
+
+		return end_record_off;
+	}
+
+	static function @read_central_directory(file: File, end_record_off: Long): Entry[String]
+	{
+		var buf = Array::create_shared(22, 1);
+		file.set_position(end_record_off);
+		file.read(buf);
+		var str = ArrayStream::create(buf);
+		str.skip(4);
+		if (str.read_ushort_LE() != 0) throw error("multiple ZIP disks are not supported");
+		if (str.read_ushort_LE() != 0) throw error("multiple ZIP disks are not supported");
+		var total_entries = str.read_ushort_LE();
+		//log("total_entries="+total_entries);
+		var total_entries2 = str.read_ushort_LE();
+		//log("total_entries2="+total_entries2);
+		if (total_entries != total_entries2) throw error("mismatch between total entries");
+		var size_of_central_directory = str.read_int_LE();
+		if (size_of_central_directory < 0) throw error("size of central directory is negative");
+		//log("size_of_central_directory="+size_of_central_directory);
+		var offset_of_central_directory = str.read_int_LE();
+		//log("offset_of_central_directory="+offset_of_central_directory);
+		if (offset_of_central_directory < 0) throw error("offset of central directory is negative");
+		var central_comment_len = str.read_ushort_LE();
+		//log("central_comment_len="+central_comment_len);
+
+		var end = end_record_off.dup().add_int(22+central_comment_len);
+		if (end.cmp(file.get_length()) != 0) {
+			throw error("invalid end of central directory record");
+		}
+
+		buf = Array::create_shared(size_of_central_directory, 1);
+		file.seek_set(offset_of_central_directory);
+		file.read(buf);
+		str = ArrayStream::create(buf);
+		var entries: Entry[String] = {};
+		for (var i=0; i<total_entries; i++) {
+			if (str.read_int_LE() != 0x02014b50) {
+				throw error("invalid central file header signature");
+			}
+			var entry = new Entry;
+			var version = str.read_ushort_LE();
+			//log("version="+version);
+			str.skip(4);
+			//log("needed="+str.read_ushort_LE());
+			//log("flags="+str.read_ushort_LE());
+			var method = str.read_ushort_LE();
+			if (method != 0 && method != 8) throw error("unsupported compression method");
+			entry.compressed = (method == 8);
+			//log("method="+method);
+			entry.time = str.read_ushort_LE();
+			entry.date = str.read_ushort_LE();
+			entry.crc = str.read_int_LE();
+			entry.compressed_size = str.read_int_LE();
+			entry.uncompressed_size = str.read_int_LE();
+			var fname_len = str.read_ushort_LE();
+			var extra_len = str.read_ushort_LE();
+			var comment_len = str.read_ushort_LE();
+			if (str.read_ushort_LE() != 0) {
+				throw error("multiple ZIP disks are not supported");
+			}
+			var attr1 = str.read_ushort_LE();
+			var attr2 = str.read_int_LE();
+			//log("attr1="+attr1+" attr2="+Long::create(attr2, 0).to_string());
+			if ((version >> 8) == 3) {
+				// TODO
+			}
+			entry.offset = str.read_int_LE();
+			//log("rel_offset="+entry.offset);
+
+			var fname = {""};
+			fname.set_length(fname_len);
+			str.read(fname);
+			entry.filename = fname;
+			str.skip(extra_len + comment_len);
+
+			if (entry.filename[entry.filename.length-1] != '/') {
+				//log(entry);
+				entries[entry.filename] = entry;
+			}
+		}
+		if (str.get_position() != buf.length) {
+			throw error("extra data in central directory");
+		}
+		return entries;
+	}
+}
+
+class @Entry
+{
+	var compressed: Boolean;
+	var time: Integer;
+	var date: Integer;
+	var crc: Integer;
+	var compressed_size: Integer;
+	var uncompressed_size: Integer;
+	var filename: String;
+	var offset: Integer;
+}
+
+class @EntryStream: Stream
+{
+	var @file: File;
+	var @offset: Long;
+	var @size: Long;
+
+	constructor create(file: File, offset: Long, size: Long)
+	{
+		this.file = file;
+		this.offset = offset;
+		this.size = size;
+	}
+
+	override function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (size.is_zero()) {
+			return -1;
+		}
+		if (size.cmp_int(len) < 0) {
+			len = size.to_int();
+		}
+		file.set_position(offset);
+		var read = file.read_part(buf, off, len);
+		if (read == -1) throw error("unexpected end of file");
+		offset.add_int(read);
+		size.sub_int(read);
+		return read;
+	}
+}

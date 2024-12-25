@@ -1,0 +1,151 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "native/extern";
+use "classes";
+use "autoinit";
+
+import "native/native";
+import "io/process";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/subview/text_field";
+import "cellsplit/gui/panel";
+import "cellsplit/gui/text_field";
+import "cellsplit/gui/button";
+import "cellsplit/gui/modal_window";
+
+const @SW_SHOWNORMAL = 1;
+
+extern "C" {
+	typedef void *HINSTANCE;
+	typedef void *HWND;
+
+	bind("shell32");
+	HINSTANCE STDCALL ShellExecuteA(HWND hwnd, char *lpOperation, char *lpFile, void *lpParameters, void *lpDirectory, int nShowCmd);
+}
+
+function @init()
+{
+	if (System::get_type() == SYSTEM_WINDOWS) {
+		Library::bind("shell32");
+	}
+}
+
+function open_browser(parent: SubView, link: String)
+{
+	foreach (var c in link) {
+		if (c < 32 || c >= 127) {
+			throw error("invalid encoding");
+		}
+	}
+
+	if (System::get_type() == SYSTEM_WINDOWS) {
+		ShellExecuteA(null, "open", link, null, null, SW_SHOWNORMAL);
+	}
+	else if (System::get_type() == SYSTEM_MACOS) {
+		Process::run(["open", link]);
+	}
+	else {
+		LinkPanel::show(parent, link);
+	}
+}
+
+class @LinkPanel: Panel
+{
+	var @modal: ModalWindow;
+
+	constructor show(parent: SubView, link: String)
+	{
+		super::create("Open URL:");
+		var scale = parent.get_scale();
+		set_rect(0, 0, iround(600*scale), iround(110*scale));
+		set_content(ContentView::create(link));
+		set_moveable(false);
+		modal = ModalWindow::show(parent, this);
+	}
+
+	function hide()
+	{
+		modal.hide();
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_ESCAPE) {
+			hide();
+			return true;
+		}
+		return false;
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		return handle_key_event(event);
+	}
+}
+
+class @ContentView: SubView
+{
+	var @text_field: GameTextField;
+	var @copy_button: GameButton;
+	var @close_button: GameButton;
+
+	constructor create(link: String)
+	{
+		text_field = GameTextField::create();
+		text_field.set_read_only(true);
+		text_field.set_text(link);
+		add(text_field);
+
+		copy_button = GameButton::create("Copy to clipboard");
+		copy_button.set_click_action(ContentView::copy_to_clipboard#1, this);
+		add(copy_button);
+
+		close_button = GameButton::create("Close");
+		close_button.set_click_action(ContentView::close#1, this);
+		add(close_button);
+	}
+
+	function @copy_to_clipboard()
+	{
+		Clipboard::set_text(text_field.get_text());
+		close();
+	}
+
+	function @close()
+	{
+		(get_parent() as LinkPanel).hide();
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		text_field.set_rect(0, 0, get_width(), iround(30*scale));
+
+		var x = (get_width() - iround(270*scale)) / 2;
+		var y = iround(40*scale);
+		copy_button.set_rect(x, y, iround(180*scale), iround(30*scale));
+		close_button.set_rect(x+iround(190*scale), y, iround(80*scale), iround(30*scale));
+	}
+}

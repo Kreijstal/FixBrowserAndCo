@@ -1,0 +1,847 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/code_editor/syntax";
+
+const @MAX_LINES = 128;
+
+class TextStorage
+{
+	var @syntax: Syntax;
+	var @sections: Section[];
+	var @starts: Integer[];
+	var @width: Integer;
+	var @visual_width: Float;
+
+	constructor create(syntax: Syntax)
+	{
+		this.syntax = syntax;
+		clear();
+	}
+
+	function set_syntax(syntax: Syntax)
+	{
+		this.syntax = syntax;
+		width = -1;
+		visual_width = -1.0;
+		var state = null;
+		foreach (var section in sections) {
+			section.update_syntax(0, section.get_height(), syntax, state);
+			state = section.get_end_state();
+		}
+	}
+
+	function get_text(): String
+	{
+		var s = {""};
+		foreach (var section in sections) {
+			s += section.text;
+		}
+		s.set_length(s.length-1);
+		return s;
+	}
+
+	function get_text_position(x: Integer, y: Integer): Integer
+	{
+		var pos = 0;
+		var idx = find_section_index(y);
+		for (var i=0; i<idx; i++) {
+			pos += sections[i].text.length;
+		}
+		var section = sections[idx];
+		pos += section.text_starts[y - starts[idx]] + x;
+		return pos;
+	}
+
+	function clear()
+	{
+		sections = [Section::create("", syntax, null)];
+		starts = [0, 1];
+		width = -1;
+		visual_width = -1.0;
+	}
+
+	function get_width(): Integer
+	{
+		if (width == -1) {
+			var sections = this.sections;
+			var w = 0;
+			foreach (var section in sections) {
+				w = max(w, section.get_width());
+			}
+			width = w;
+		}
+		return width;
+	}
+
+	function @find_section_index(y: Integer): Integer
+	{
+		var starts = this.starts;
+		for (var i=starts.length-2; i>=0; i--) {
+			if (y >= starts[i]) {
+				return i;
+			}
+		}
+		throw error("shouldn't happen");
+	}
+	
+	function get_row_width(y: Integer): Integer
+	{
+		if (y < 0 || y >= get_height()) return 0;
+		var idx = find_section_index(y);
+		return sections[idx].get_row_width(y - starts[idx]);
+	}
+
+	function get_visual_width(): Float
+	{
+		if (visual_width == -1.0) {
+			var sections = this.sections;
+			var w = 0.0;
+			foreach (var section in sections) {
+				w = fmax(w, section.get_visual_width());
+			}
+			visual_width = w;
+		}
+		return visual_width;
+	}
+
+	function get_height(): Integer
+	{
+		return starts[starts.length-1];
+	}
+
+	function get_row_text(y: Integer): String
+	{
+		if (y < 0 || y >= get_height()) return null;
+		var idx = find_section_index(y);
+		return sections[idx].get_row_text(y - starts[idx]);
+	}
+
+	function insert(x: Integer, y: Integer, s: String): Integer
+	{
+		if (x < 0) throw error("negative column");
+		if (y < 0) throw error("negative row");
+
+		var idx = find_section_index(y);
+		var local_y = y - starts[idx];
+
+		var section = sections[idx];
+		var old_height = section.get_height();
+		var num_lines = section.insert(x, local_y, s);
+		var new_height = section.get_height();
+		if (old_height != new_height) {
+			var diff = new_height - old_height;
+			for (var i=idx+1; i<starts.length; i++) {
+				starts[i] += diff;
+			}
+		}
+
+		width = -1;
+		visual_width = -1.0;
+
+		var state = null;
+		if (local_y > 0) {
+			state = section.end_states[local_y-1];
+		}
+		else if (idx > 0) {
+			state = sections[idx-1].get_end_state();
+		}
+
+		var last_y2 = section.update_syntax(local_y, local_y + num_lines, syntax, state);
+		if (last_y2 == section.get_height()) {
+			// TODO
+		}
+
+		if (section.get_height() > MAX_LINES) {
+			//split(idx);
+		}
+
+		return last_y2 - y;
+	}
+
+	function remove(x1: Integer, y1: Integer, x2: Integer, y2: Integer): Integer
+	{
+		if (x1 < 0) throw error("negative column");
+		if (y1 < 0) throw error("negative row");
+		if (x2 < 0) throw error("negative column");
+		if (y2 < 0) throw error("negative row");
+		if (y1 > y2) throw error("bad range");
+		if (y1 == y2 && x1 > x2) throw error("bad range");
+
+		var height = get_height();
+		if (y1 >= height) return 0;
+		if (y2 >= height) {
+			y2 = height-1;
+			x2 = get_row_width(y2);
+		}
+
+		x1 = min(x1, get_row_width(y1));
+		x2 = min(x2, get_row_width(y2));
+
+		var idx1 = find_section_index(y1);
+		var idx2 = find_section_index(y2);
+		var section = sections[idx1];
+		var start = starts[idx1];
+		if (idx1 == idx2) {
+			var old_height = section.get_height();
+			section.remove(x1, y1-start, x2, y2-start);
+			var new_height = section.get_height();
+			if (old_height != new_height) {
+				var diff = new_height - old_height;
+				for (var i=idx1+1; i<starts.length; i++) {
+					starts[i] += diff;
+				}
+			}
+		}
+		else {
+			// TODO
+			/*
+			section[idx1].remove(x1, y1-start, );
+			for (var i=idx1+1; i<idx2-1; i++) {
+			}
+			*/
+		}
+
+		var state = null;
+		if (y1 - start > 0) {
+			state = section.end_states[y1 - start - 1];
+		}
+		else if (idx1 > 0) {
+			state = sections[idx1-1].get_end_state();
+		}
+
+		var last_y2 = section.update_syntax(y1 - start, y1 - start + 1, syntax, state);
+		if (last_y2 == section.get_height()) {
+			// TODO
+		}
+
+		width = -1;
+		visual_width = -1.0;
+
+		if (y1 != y2) {
+			return get_height() - y1;
+		}
+		return last_y2 - y1;
+	}
+
+	function @split(idx: Integer)
+	{
+		var section = sections[idx];
+
+		while (section.get_height() > MAX_LINES) {
+			var new_section = section.split(MAX_LINES);
+			sections.insert(++idx, new_section);
+			starts.insert(idx, starts[idx-1]+MAX_LINES);
+			section = new_section;
+		}
+	}
+
+	function get_position(x: Float, y: Integer): Float
+	{
+		if (y < 0 || y >= get_height()) return 0.0;
+		var idx = find_section_index(y);
+		return sections[idx].get_position(x, y - starts[idx], syntax);
+	}
+
+	function get_visual_position(x: Integer, y: Integer): Float
+	{
+		if (y < 0 || y >= get_height()) return 0.0;
+		var idx = find_section_index(y);
+		return sections[idx].get_visual_position(x, y - starts[idx], syntax);
+	}
+
+	function draw(p: Painter, row_height: Integer, ascent: Integer, sel_x1: Integer, sel_y1: Integer, sel_x2: Integer, sel_y2: Integer)
+	{
+		var clip = p.get_clip_rect();
+		var clip_y1 = (clip.y1 / row_height)-1;
+		var clip_y2 = (clip.y2 / row_height)+2;
+		p.push();
+		var y = 0;
+		foreach (var section in sections) {
+			if (y > clip.y2+row_height) break;
+			var height = section.get_height();
+			var visual_height = height * row_height;
+			if (y+visual_height+row_height > clip.y1) {
+				var y1 = max(0, clip_y1);
+				var y2 = min(height, clip_y2);
+				section.draw(p, y1, y2, syntax, row_height, ascent, sel_x1, sel_y1, sel_x2, sel_y2);
+			}
+			p.translate(0, visual_height);
+			y += visual_height;
+			clip_y1 -= height;
+			clip_y2 -= height;
+		}
+		p.pop();
+	}
+}
+
+class SyntaxDataImpl: SyntaxData
+{
+	var @storage: TextStorage;
+
+	constructor create(storage: TextStorage)
+	{
+		this.storage = storage;
+	}
+	
+	override function get_row_count(): Integer
+	{
+		return storage.get_height();
+	}
+	
+	override function get_state(row: Integer): Dynamic
+	{
+		if (row < 0 || row > storage.get_height()) {
+			throw error("invalid row");
+		}
+		if (row == 0) return null;
+		row--;
+		var idx = storage.find_section_index(row);
+		return storage.sections[idx].end_states[row - storage.starts[idx]];
+	}
+
+	override function get_text(row: Integer): String
+	{
+		var text = storage.get_row_text(row);
+		if (!text) {
+			throw error("invalid row");
+		}
+		return text;
+	}
+
+	override function get_all_text(): String
+	{
+		return storage.get_text();
+	}
+
+	override function get_all_text_position(x: Integer, y: Integer): Integer
+	{
+		return storage.get_text_position(x, y);
+	}
+
+	override function get_attrs(row: Integer): [Attribute]
+	{
+		if (row < 0 || row >= storage.get_height()) {
+			throw error("invalid row");
+		}
+		var idx = storage.find_section_index(row);
+		var section = storage.sections[idx];
+		row -= storage.starts[idx];
+		var off = section.attr_starts[row];
+		var len = section.attr_starts[row+1] - off;
+		return array_extract(section.attrs, off, len);
+	}
+}
+
+class CompletionDataImpl: CompletionData
+{
+	var text: String;
+	var attrs: [Attribute];
+	var text_starts: Integer[];
+	var attr_starts: Integer[];
+	var values: String[];
+	var selections: Integer[];
+	var x1: Integer;
+	var x2: Integer;
+
+	var notify_func;
+	var notify_data;
+	var @notified: Boolean;
+
+	constructor create()
+	{
+		text = {""};
+		attrs = [];
+		text_starts = [0];
+		attr_starts = [0];
+		values = [];
+		selections = [];
+		x1 = -1;
+		x2 = -1;
+	}
+
+	function get_max_width(): Float
+	{
+		var max_width = 0.0;
+		for (var i=0; i<attr_starts.length-1; i++) {
+			var w = 0.0;
+			var start = attr_starts[i];
+			var end = attr_starts[i+1];
+			for (var j=start as Attribute; j<end; j++) {
+				w += attrs[j].width;
+			}
+			max_width = fmax(max_width, w);
+		}
+		return max_width;
+	}
+
+	override function get_count(): Integer
+	{
+		return text_starts.length-1;
+	}
+
+	override function get_value(idx: Integer): String
+	{
+		return values[idx];
+	}
+
+	override function remove_value(idx: Integer)
+	{
+		if (idx < 0 || idx >= values.length) {
+			throw error("invalid index");
+		}
+		
+		var start = text_starts[idx];
+		var end = text_starts[idx+1];
+		text.remove(start, end-start);
+		for (var i=idx+1; i<text_starts.length; i++) {
+			text_starts[i] -= end-start;
+		}
+		text_starts.remove(idx+1);
+
+		start = attr_starts[idx];
+		end = attr_starts[idx+1];
+		array_remove(attrs, start, end-start);
+		for (var i=idx+1; i<attr_starts.length; i++) {
+			attr_starts[i] -= end-start;
+		}
+		attr_starts.remove(idx+1);
+
+		values.remove(idx);
+		selections.remove(idx*2, 2);
+	}
+
+	override function set_range(x1: Integer, x2: Integer)
+	{
+		this.x1 = x1;
+		this.x2 = x2;
+	}
+
+	override function get_start_range(): Integer
+	{
+		return x1;
+	}
+
+	override function get_end_range(): Integer
+	{
+		return x2;
+	}
+	
+	override function add_text(s: String, style, width: Float)
+	{
+		text += s;
+		attrs[] = {
+			.length: s.length,
+			.width: width,
+			.style: style
+		};
+	}
+
+	override function finish_line(value: String, sel_start: Integer, sel_end: Integer)
+	{
+		text_starts[] = text.length;
+		attr_starts[] = length(attrs);
+		values[] = value;
+		selections[] = sel_start;
+		selections[] = sel_end;
+		notify();
+	}
+
+	function @notify()
+	{
+		if (notify_func && !notified) {
+			notified = true;
+			Timer::run_once(0, CompletionDataImpl::real_notify#1, this);
+		}
+	}
+
+	function @real_notify()
+	{
+		notified = false;
+		notify_func(notify_data, this);
+	}
+}
+
+class @Section
+{
+	var @text: String;
+	var @attrs: [Attribute];
+	var @text_starts: Integer[];
+	var @attr_starts: Integer[];
+	var @end_states: Dynamic[];
+	var @width: Integer;
+	var @visual_width: Float;
+
+	constructor create(s: String, syntax: Syntax, state: Dynamic)
+	{
+		text = {s};
+		attrs = [];
+		text_starts = [0];
+		attr_starts = [0];
+		end_states = [];
+		width = -1;
+		visual_width = -1.0;
+
+		if (s.length > 0) {
+			for (var i=0; i<s.length; i++) {
+				if (s[i] == '\n') {
+					text_starts[] = i+1;
+				}
+			}
+			if (s[s.length-1] != '\n') {
+				text[] = '\n';
+				text_starts[] = s.length;
+			}
+			attr_starts.set_length(text_starts.length);
+			end_states.set_length(text_starts.length-1);
+			update_syntax(0, get_height(), syntax, state);
+		}
+		else {
+			text[] = '\n';
+			text_starts[] = 1;
+			attr_starts[] = 0;
+			end_states[] = state;
+		}
+	}
+
+	function get_end_state(): Dynamic
+	{
+		return end_states[end_states.length-1];
+	}
+
+	function get_width(): Integer
+	{
+		if (width == -1) {
+			var last = 0;
+			var w = 0;
+			for (var i=1; i<text_starts.length; i++) {
+				var start = text_starts[i];
+				w = max(w, start - last - 1);
+				last = start;
+			}
+			width = w;
+		}
+		return width;
+	}
+
+	function get_row_width(y: Integer): Integer
+	{
+		var start = attr_starts[y];
+		var end = attr_starts[y+1];
+		var width = 0;
+		for (var j=start as Attribute; j<end; j++) {
+			width += attrs[j].length;
+		}
+		return width;
+	}
+
+	function get_visual_width(): Float
+	{
+		if (visual_width == -1.0) {
+			var last = 0;
+			var total_w = 0.0;
+			for (var i=1; i<attr_starts.length; i++) {
+				var start = attr_starts[i];
+				var w = 0.0;
+				for (var j=last as Attribute; j<start; j++) {
+					w += attrs[j].width;
+				}
+				total_w = fmax(total_w, w);
+				last = start;
+			}
+			visual_width = total_w;
+		}
+		return visual_width;
+	}
+
+	function get_height(): Integer
+	{
+		return text_starts.length-1;
+	}
+
+	function get_row_text(y: Integer): String
+	{
+		var off = text_starts[y];
+		var len = text_starts[y+1] - off;
+		return text.extract(off, len-1);
+	}
+
+	function insert(x: Integer, y: Integer, s: String): Integer
+	{
+		while (y >= text_starts.length-1) {
+			text[] = '\n';
+			text_starts[] = text_starts[text_starts.length-1]+1;
+			attr_starts[] = attr_starts[attr_starts.length-1];
+			end_states[] = end_states[end_states.length-1];
+		}
+
+		var off = text_starts[y];
+		var len = text_starts[y+1] - off - 1;
+		if (x > len) {
+			var extra = x - len;
+			var tmp = Array::create(extra);
+			tmp.fill(' ');
+			text.insert(off, tmp as String);
+			for (var i=y+1; i<text_starts.length; i++) {
+				text_starts[i] += extra;
+			}
+			len += extra;
+		}
+
+		var new_starts = [];
+		var new_attr_starts = [];
+		var new_end_states = [];
+		var attr_off = attr_starts[y];
+		var end_state = end_states[y];
+		var num_lines = 1;
+
+		off += x;
+		for (var i=0; i<s.length; i++) {
+			if (s[i] == '\n') {
+				new_starts[] = off+i+1;
+				new_attr_starts[] = attr_off;
+				new_end_states[] = end_state;
+				num_lines++;
+			}
+		}
+
+		for (var i=y+1; i<text_starts.length; i++) {
+			text_starts[i] += s.length;
+		}
+
+		text.insert(off, s);
+		text_starts.insert_array(y+1, new_starts);
+		attr_starts.insert_array(y+1, new_attr_starts);
+		end_states.insert_array(y+1, new_end_states);
+
+		width = -1;
+		visual_width = -1.0;
+		return num_lines;
+	}
+
+	function remove(x1: Integer, y1: Integer, x2: Integer, y2: Integer)
+	{
+		var off = text_starts[y1] + x1;
+		var len = text_starts[y2] + x2 - off;
+		text.remove(off, len);
+		text_starts.remove(y1+1, y2-y1);
+		attr_starts.remove(y1+1, y2-y1);
+		end_states.remove(y1+1, y2-y1);
+
+		for (var i=y1+1; i<text_starts.length; i++) {
+			text_starts[i] -= len;
+		}
+
+		width = -1;
+		visual_width = -1.0;
+	}
+
+	function split(y: Integer): Section
+	{
+		var new_section = new Section;
+
+		var start = text_starts[y];
+		new_section.text = text.extract(start, text.length-start);
+		text = text.extract(0, start);
+
+		start = attr_starts[y];
+		new_section.attrs = array_extract(attrs, start, length(attrs)-start);
+		attrs = array_extract(attrs, 0, start);
+
+		new_section.text_starts = text_starts.extract(y, text_starts.length-y);
+		var diff = text_starts[y];
+		for (var i=0; i<new_section.text_starts.length; i++) {
+			new_section.text_starts[i] -= diff;
+		}
+		text_starts = text_starts.extract(0, y+1);
+
+		new_section.attr_starts = attr_starts.extract(y, attr_starts.length-y);
+		diff = attr_starts[y];
+		for (var i=0; i<new_section.attr_starts.length; i++) {
+			new_section.attr_starts[i] -= diff;
+		}
+		attr_starts = attr_starts.extract(0, y+1);
+
+		new_section.end_states = end_states.extract(y, end_states.length-y);
+		end_states = end_states.extract(0, y);
+
+		new_section.width = -1;
+		new_section.visual_width = -1.0;
+		return new_section;
+	}
+
+	function update_syntax(y1: Integer, y2: Integer, syntax: Syntax, state: Dynamic): Integer
+	{
+		var new_attrs: [Attribute] = [];
+		var new_starts: Integer[] = [];
+		if (y1 > 0) {
+			state = end_states[y1-1];
+		}
+		var last_state = end_states[y2-1];
+		var orig_start = attr_starts[y1];
+		for (var i=y1; i<y2; i++) {
+			var off = text_starts[i];
+			var len = text_starts[i+1] - off - 1;
+			state = syntax.process(new_attrs, text, off, len, state);
+			new_starts[] = orig_start + length(new_attrs);
+			end_states[i] = state;
+		}
+		var last_y = y2;
+		var height = get_height();
+		if (last_state != end_states[y2-1]) {
+			for (var i=y2; i<height; i++) {
+				var off = text_starts[i];
+				var len = text_starts[i+1] - off - 1;
+				state = syntax.process(new_attrs, text, off, len, state);
+				new_starts[] = orig_start + length(new_attrs);
+				last_y = i+1;
+				if (state == end_states[i]) {
+					break;
+				}
+				end_states[i] = state;
+			}
+		}
+		var change = length(new_attrs) - (attr_starts[last_y] - attr_starts[y1]);
+		array_replace_range(attrs, attr_starts[y1], attr_starts[last_y], new_attrs);
+		attr_starts.replace_range(y1+1, last_y+1, new_starts);
+		for (var i=last_y; i<height; i++) {
+			attr_starts[i+1] += change;
+		}
+		return last_y;
+	}
+
+	function get_position(x: Float, y: Integer, syntax: Syntax): Float
+	{
+		var start_off = text_starts[y];
+		var off = start_off;
+		var start = attr_starts[y];
+		var end = attr_starts[y+1];
+		var cur_x = 0.0;
+		if (x < 0.0) {
+			return 0.0;
+		}
+		for (var j=start as Attribute; j<end; j++) {
+			var len = attrs[j].length;
+			var width = attrs[j].width;
+			var style = attrs[j].style;
+			if (x >= cur_x && x < cur_x+width) {
+				return syntax.get_position(text, off, len, width, style, x - cur_x) + (off - start_off);
+			}
+			off += len;
+			cur_x += width;
+		}
+		return off - start_off;
+	}
+
+	function get_visual_position(x: Integer, y: Integer, syntax: Syntax): Float
+	{
+		var start_off = text_starts[y];
+		var off = 0;
+		var start = attr_starts[y];
+		var end = attr_starts[y+1];
+		var cur_x = 0.0;
+		if (x < 0) {
+			return 0.0;
+		}
+		for (var j=start as Attribute; j<end; j++) {
+			var len = attrs[j].length;
+			var width = attrs[j].width;
+			var style = attrs[j].style;
+			if (x >= off && x <= off+len) {
+				return syntax.get_visual_position(text, start_off+off, len, width, style, x - off) + cur_x;
+			}
+			off += len;
+			cur_x += width;
+		}
+		return off;
+	}
+
+	function draw(p: Painter, y1: Integer, y2: Integer, syntax: Syntax, row_height: Integer, ascent: Integer, sel_x1: Integer, sel_y1: Integer, sel_x2: Integer, sel_y2: Integer)
+	{
+		for (var i=y1; i<y2; i++) {
+			var start = attr_starts[i];
+			var end = attr_starts[i+1];
+
+			macro draw(selection) {{
+				var off = text_starts[i];
+				var x = 0.0;
+				for (var j=start as Attribute; j<end; j++) {
+					var len = attrs[j].length;
+					var width = attrs[j].width;
+					var style = attrs[j].style;
+					syntax.draw_text(p, x, i*row_height, text, off, len, width, row_height, ascent, selection, style);
+					off += len;
+					x += width;
+				}
+			}}
+
+			macro calc_width() {{
+				var $w = 0.0;
+				for (var j=start as Attribute; j<end; j++) {
+					$w += attrs[j].width;
+				}
+				= iround($w)
+			}}
+
+			macro draw_selection(x1, x2) {{
+				var $x = x1;
+				var $width = (x2) - $x;
+				p.fill_rect($x, i*row_height, $width, row_height, 0xFF000066);
+				p.push();
+				p.clip($x, i*row_height, $width, row_height);
+				draw(true);
+				p.pop();
+			}}
+
+			draw(false);
+
+			if (i == sel_y1) {
+				var x1 = iround(get_visual_position(sel_x1, sel_y1, syntax));
+				if (sel_y1 == sel_y2) {
+					var x2 = iround(get_visual_position(sel_x2, sel_y2, syntax));
+					draw_selection(x1, x2);
+				}
+				else {
+					draw_selection(x1, calc_width());
+				}
+			}
+			else if (i == sel_y2) {
+				var x2 = iround(get_visual_position(sel_x2, sel_y2, syntax));
+				if (sel_y1 == sel_y2) {
+					var x1 = iround(get_visual_position(sel_x1, sel_y1, syntax));
+					draw_selection(x1, x2);
+				}
+				else {
+					draw_selection(0, x2);
+				}
+			}
+			else if (i > sel_y1 && i < sel_y2) {
+				draw_selection(0, calc_width());
+			}
+		}
+	}
+}

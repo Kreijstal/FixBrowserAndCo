@@ -1,0 +1,39 @@
+use "classes";
+
+import "common";
+
+var counter;
+var target;
+var ticks;
+
+function update() {
+	//log("counter="+(counter++));
+	var min_dist = 1000000.0;
+	var virus_vec: Vector;
+	foreach (var cell in get_own_cells()) {
+		foreach (var virus in get_virus_cells()) {
+			var vec = virus.get_position() - cell.get_position();
+			var dist = fmin(min_dist, vec.length() - cell.size - virus.size);
+			if (dist < min_dist) {
+				min_dist = dist;
+				virus_vec = vec;
+			}
+		}
+	}
+	//clear_log();
+	//log(min_dist);
+	//log(virus_vec);
+	if (min_dist < 10.0) {
+		target = get_average_position() - virus_vec;
+		set_target(target);
+		mark(target, "Anti-Virus");
+		return;
+	}
+	mark(0, 0, "origin");
+	if (--ticks <= 0) {
+		target = get_position_of_most_pellets();
+		ticks = 20;
+	}
+	set_target(target);
+	mark(target, "Food");
+}

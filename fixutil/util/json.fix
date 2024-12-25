@@ -1,0 +1,1144 @@
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "util/long";
+import "util/double";
+import "util/string";
+
+const @MIN_INTEGER_HI = -2097152; // -9007199254740992
+const @MAX_INTEGER_HI = +2097152; // +9007199254740992
+
+var @initialized: Boolean;
+
+class @Parser
+{
+	var @buf: String;
+	var @off: Integer;
+	var @strict: Boolean;
+
+	function @error(msg: String, off: Integer): Dynamic
+	{
+		var line = 1, column = 1;
+		var buf = this.buf;
+		for (var i=0; i<off; i++) {
+			if (buf[i] == '\n') {
+				line++;
+				column = 1;
+			}
+			else {
+				column++;
+			}
+		}
+		var e = error(msg+" at line "+line+", column "+column);
+		array_remove(e[1], 0);
+		return e;
+	}
+}
+
+function @value_null() {}
+function @value_true() {}
+function @value_false() {}
+function @no_value() {}
+
+class JSONNull
+{
+	static function get(): JSONNull
+	{
+		if (!initialized) {
+			init();
+		}
+		return value_null#0;
+	}
+
+	static function is_instance(value): Boolean
+	{
+		return value === value_null#0;
+	}
+}
+
+class JSONBoolean
+{
+	static function get(value: Boolean): JSONBoolean
+	{
+		if (!initialized) {
+			init();
+		}
+		return value? value_true#0 : value_false#0;
+	}
+
+	static function is_instance(value): Boolean
+	{
+		return value === value_true#0 || value === value_false#0;
+	}
+
+	function to_boolean(): Boolean
+	{
+		return this === value_true#0;
+	}
+
+	function to_string(): String
+	{
+		return this === value_true#0? "true" : "false";
+	}
+}
+
+class JSONLong
+{
+	var @to_string_func;
+	var @lo: Integer;
+	var @hi: Integer;
+
+	static function create(value: Long): JSONLong
+	{
+		return create(value.lo, value.hi);
+	}
+
+	static function create(lo: Integer, hi: Integer): JSONLong
+	{
+		if (hi < MIN_INTEGER_HI) {
+			throw error("integer overflow");
+		}
+		if (hi > MAX_INTEGER_HI || (hi == MAX_INTEGER_HI && lo != 0)) {
+			throw error("integer overflow");
+		}
+		return [JSONLong::dump_to_string#1, lo, hi] as JSONLong;
+	}
+
+	static function from_int(value: Integer): JSONLong
+	{
+		return [JSONLong::dump_to_string#1, value, value >> 31] as JSONLong;
+	}
+
+	static function from_string(s: String): JSONLong
+	{
+		var (lo, hi) = @string_parse_long(s);
+		return create(lo, hi);
+	}
+
+	static function is_instance(value): Boolean
+	{
+		return is_array(value) && length(value) > 0 && value[0] === JSONLong::dump_to_string#1;
+	}
+
+	function to_int(): Integer
+	{
+		if ((lo >> 31) != hi) {
+			throw error("integer overflow");
+		}
+		return lo;
+	}
+
+	function to_long(): Long
+	{
+		return Long::create(lo, hi);
+	}
+
+	function to_string(): String
+	{
+		return @string_from_long(lo, hi);
+	}
+
+	function @dump_to_string(): String
+	{
+		return "json:long("+@string_from_long(lo, hi)+")";
+	}
+}
+
+class JSONDouble
+{
+	var @to_string_func;
+	var @lo: Integer;
+	var @hi: Integer;
+	var @str: String;
+
+	static function create(value: Double): JSONDouble
+	{
+		return create(value.lo, value.hi);
+	}
+
+	static function create(lo: Integer, hi: Integer): JSONDouble
+	{
+		if ((hi & 0x7FF00000) == 0x7FF00000) {
+			if (((hi & 0x000FFFFF) | lo) != 0) {
+				throw error("NaNs are not allowed");
+			}
+			else {
+				throw error("infinities are not allowed");
+			}
+		}
+		return [JSONDouble::dump_to_string#1, lo, hi, null] as JSONDouble;
+	}
+
+	static function @create(lo: Integer, hi: Integer, str: String): JSONDouble
+	{
+		if ((hi & 0x7FF00000) == 0x7FF00000) {
+			if (((hi & 0x000FFFFF) | lo) != 0) {
+				throw error("NaNs are not allowed");
+			}
+			else {
+				throw error("infinities are not allowed");
+			}
+		}
+		return [JSONDouble::dump_to_string#1, lo, hi, str] as JSONDouble;
+	}
+
+	static function from_float(value: Float): JSONDouble
+	{
+		var (lo, hi) = fconv(value);
+		return create(lo, hi);
+	}
+
+	static function from_string(s: String): JSONDouble
+	{
+		var (lo, hi) = @string_parse_double(s);
+		if (!is_int(hi)) throw hi;
+		return create(lo, hi, s);
+	}
+
+	static function is_instance(value): Boolean
+	{
+		return is_array(value) && length(value) > 0 && value[0] === JSONDouble::dump_to_string#1;
+	}
+
+	function to_float(): Float
+	{
+		return fconv(lo, hi);
+	}
+
+	function to_double(): Double
+	{
+		return Double::create(lo, hi);
+	}
+
+	function to_string(): String
+	{
+		if (str) {
+			return str;
+		}
+		return @string_from_double(lo, hi);
+	}
+
+	function @dump_to_string(): String
+	{
+		return "json:double("+to_string()+")";
+	}
+}
+
+class JSON
+{
+	function to_bytes(): Byte[]
+	{
+		return to_string().to_utf8();
+	}
+
+	function to_string(): String
+	{
+		return to_string(this, {""}, 0);
+	}
+
+	static function @to_string(value, s: String, level: Integer): String
+	{
+		if (value === value_null#0) {
+			s += "null";
+			return s;
+		}
+		else if (value === value_true#0) {
+			s += "true";
+			return s;
+		}
+		else if (value === value_false#0) {
+			s += "false";
+			return s;
+		}
+		else if (is_int(value) || is_float(value)) {
+			s += {value};
+			return s;
+		}
+		else if (is_string(value)) {
+			s[] = '"';
+			for (var i=0; i<length(value); i++) {
+				var c = value[i];
+				switch (c) {
+					case '\n': s[] = '\\'; s[] = 'n'; continue;
+					case '\r': s[] = '\\'; s[] = 'r'; continue;
+					case '\t': s[] = '\\'; s[] = 't'; continue;
+					case '\\': s[] = '\\'; s[] = '\\'; continue;
+					case '"': s[] = '\\'; s[] = '"'; continue;
+				}
+				if (c < 0x20 || c > 0xFFFF) {
+					append_unicode_escape(s, c);
+					continue;
+				}
+				s[] = c;
+			}
+			s[] = '"';
+			return s;
+		}
+		else if (is_array(value)) {
+			if (length(value) > 0) {
+				var marker = value[0];
+				if (marker === JSONLong::dump_to_string#1) {
+					@string_from_long(s, value[1], value[2]);
+					return s;
+				}
+				else if (marker === JSONDouble::dump_to_string#1) {
+					if (value[3]) {
+						s += value[3] as String;
+					}
+					else {
+						@string_from_double(s, value[1], value[2]);
+					}
+					return s;
+				}
+			}
+
+			s[] = '[';
+			s[] = '\n';
+			for (var i=0; i<length(value); i++) {
+				indent(s, level+1);
+				to_string(value[i], s, level+1);
+				if (i < length(value)-1) s[] = ',';
+				s[] = '\n';
+			}
+			indent(s, level);
+			s[] = ']';
+			return s;
+		}
+		else if (is_hash(value)) {
+			s[] = '{';
+			s[] = '\n';
+			for (var i=0; i<length(value); i++) {
+				var (k, v) = hash_entry(value, i);
+				indent(s, level+1);
+				if (!is_string(k)) {
+					k = to_string(k);
+				}
+				to_string(k, s, level+1);
+				s[] = ':';
+				s[] = ' ';
+				to_string(v, s, level+1);
+				if (i < length(value)-1) s[] = ',';
+				s[] = '\n';
+			}
+			indent(s, level);
+			s[] = '}';
+			return s;
+		}
+		throw error("unserializable type");
+	}
+
+	static function @indent(s, num)
+	{
+		for (var i=0; i<num; i++) {
+			s[] = ' ';
+			s[] = ' ';
+		}
+	}
+
+	static function @append_unicode_escape(s, value)
+	{
+		if (value < 0) {
+			throw error("invalid unicode character");
+		}
+		if (value >= 0x10000) {
+			value -= 0x10000;
+			var hi = value >> 10;
+			var lo = value & 0x3FF;
+			if (hi > 0x3FF) throw error("invalid unicode character");
+			append_unicode_escape(s, 0xD800 + hi);
+			append_unicode_escape(s, 0xDC00 + lo);
+			return;
+		}
+		s[] = '\\';
+		s[] = 'u';
+		for (var i=3; i>=0; i--) {
+			var digit = (value >> (i*4)) & 0xF;
+			s[] = digit < 10? '0' + digit : 'A' + (digit - 10);
+		}
+	}
+
+	static function parse(data: Byte[]): JSON
+	{
+		return parse_string(String::from_utf8(data), true);
+	}
+
+	static function parse(data: Byte[], strict: Boolean): JSON
+	{
+		return parse_string(String::from_utf8(data), strict);
+	}
+
+	static function parse_string(s: String): JSON
+	{
+		return parse_string(s, true);
+	}
+
+	static function parse_string(s: String, strict: Boolean): JSON
+	{
+		if (!initialized) {
+			init();
+		}
+
+		var par = [s, 0, strict] as Parser;
+
+		var buf = par.buf;
+		var off = par.off;
+
+		while (off < buf.length) {
+			switch (buf[off]) {
+				case '\t', '\n', '\r', ' ': off++; continue;
+			}
+			break;
+		}
+
+		if (off == buf.length) throw error("no data");
+		par.off = off;
+		var value = parse_value(par);
+		off = par.off;
+
+		while (off < buf.length) {
+			switch (buf[off]) {
+				case '\t', '\n', '\r', ' ': off++; continue;
+			}
+			break;
+		}
+
+		if (off != par.buf.length) {
+			throw error("unexpected trailing data");
+		}
+		return value;
+	}
+
+	static function @parse_value(par: Parser): Dynamic
+	{
+		var buf = par.buf;
+		var off = par.off;
+
+		var c = buf[off];
+		switch (c) {
+			case '{': {
+				off++;
+
+				while (off < buf.length) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				if (off == buf.length) throw par.error("expected value or '}'", off);
+				if (buf[off] == '}') {
+					par.off = off+1;
+					return {};
+				}
+
+				var object: Dynamic[String] = {};
+				for (;;) {
+					while (off < buf.length) {
+						switch (buf[off]) {
+							case '\t', '\n', '\r', ' ': off++; continue;
+						}
+						break;
+					}
+
+					var first_off = off;
+					par.off = off;
+					var key = parse_value(par);
+					off = par.off;
+
+					// compatibility with improper JSON:
+
+					if (!is_string(key) && !par.strict) {
+						if (key === value_null#0) {
+							key = "null";
+						}
+						else if (key === value_true#0) {
+							key = "true";
+						}
+						else if (key === value_false#0) {
+							key = "false";
+						}
+						else if (is_int(key) || is_float(key)) {
+							key = {key};
+						}
+						else if (JSONLong::is_instance(key)) {
+							key = (key as JSONLong).to_string();
+						}
+						else if (JSONDouble::is_instance(key)) {
+							key = (key as JSONDouble).to_string();
+						}
+					}
+
+					if (!is_string(key)) {
+						throw par.error("only strings allowed as object keys", first_off);
+					}
+
+					while (off < buf.length) {
+						switch (buf[off]) {
+							case '\t', '\n', '\r', ' ': off++; continue;
+						}
+						break;
+					}
+
+					if (off == buf.length || buf[off] != ':') throw par.error("expected ':'", off);
+					off++;
+
+					while (off < buf.length) {
+						switch (buf[off]) {
+							case '\t', '\n', '\r', ' ': off++; continue;
+						}
+						break;
+					}
+
+					par.off = off;
+					var value = parse_value(par);
+					off = par.off;
+
+					while (off < buf.length) {
+						switch (buf[off]) {
+							case '\t', '\n', '\r', ' ': off++; continue;
+						}
+						break;
+					}
+
+					object[key] = value;
+
+					if (off == buf.length) throw par.error("expected ',' or '}'", off);
+					if (buf[off] == ',') {
+						off++;
+						continue;
+					}
+					break;
+				}
+				
+				if (off == buf.length || buf[off] != '}') throw par.error("expected '}'", off);
+				par.off = off+1;
+				return object;
+			}
+
+			case '[': {
+				off++;
+
+				while (off < buf.length) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				if (off == buf.length) throw par.error("expected value or ']'", off);
+				if (buf[off] == ']') {
+					par.off = off+1;
+					return [];
+				}
+
+				var array: Dynamic[] = [];
+				for (;;) {
+					while (off < buf.length) {
+						switch (buf[off]) {
+							case '\t', '\n', '\r', ' ': off++; continue;
+						}
+						break;
+					}
+
+					par.off = off;
+					array[] = parse_value(par);
+					off = par.off;
+
+					while (off < buf.length) {
+						switch (buf[off]) {
+							case '\t', '\n', '\r', ' ': off++; continue;
+						}
+						break;
+					}
+
+					if (off == buf.length) throw par.error("expected ',' or ']'", off);
+					if (buf[off] == ',') {
+						off++;
+						continue;
+					}
+					break;
+				}
+				
+				if (off == buf.length || buf[off] != ']') throw par.error("expected ']'", off);
+				par.off = off+1;
+				return array;
+			}
+
+			case '"': {
+				var first_off = off;
+				var s = {""};
+				off++;
+				while (off < buf.length) {
+					c = buf[off++];
+					switch (c) {
+						case 0x20..0x21, 0x23..0x5B, 0x5D..0x10FFFF:
+							s[] = c;
+							continue;
+
+						case '\\':
+							if (off == buf.length) throw par.error("invalid escape sequence", off);
+							c = buf[off++];
+							switch (c) {
+								case '"', '\\', '/': s[] = c; break;
+								case 'b': s[] = 0x08; break;
+								case 'f': s[] = 0x0C; break;
+								case 'n': s[] = '\n'; break;
+								case 'r': s[] = '\r'; break;
+								case 't': s[] = '\t'; break;
+								
+								case 'u': {
+									var val = 0;
+									for (var i=0; i<4; i++) {
+										if (off == buf.length) throw par.error("invalid escape sequence", off);
+										c = buf[off++];
+										switch (c) {
+											case '0'..'9': val = (val << 4) | (c - '0'); break;
+											case 'a'..'f': val = (val << 4) | (c - 'a' + 10); break;
+											case 'A'..'F': val = (val << 4) | (c - 'A' + 10); break;
+											default: throw par.error("invalid escape sequence", off-1);
+										}
+									}
+									s[] = val;
+									break;
+								}
+
+								default:
+									throw par.error("invalid escape sequence", off-1);
+							}
+							continue;
+
+						case '"':
+							for (var i=0; i<s.length; i++) {
+								c = s[i];
+								if (c >= 0xDC00 && c <= 0xDFFF) {
+									s[i] = 0xFFFD;
+									continue;
+								}
+								if (c >= 0xD800 && c <= 0xDBFF) {
+									if (i+1 == s.length) {
+										s[i] = 0xFFFD;
+										break;
+									}
+									var hi = c - 0xD800;
+									c = s[i+1];
+									if (c < 0xDC00 || c > 0xDFFF) {
+										s[i] = 0xFFFD;
+										continue;
+									}
+									var lo = c - 0xDC00;
+									s[i] = 0x10000 + ((hi << 10) | lo);
+									s.remove(i+1);
+									continue;
+								}
+							}
+							par.off = off;
+							return s;
+					}
+					break;
+				}
+				throw par.error("invalid string", first_off);
+			}
+
+			case '0'..'9', '-': {
+				var start = off;
+				var double_number = false;
+				if (c == '-') {
+					if (++off == buf.length) throw par.error("expected number", off);
+					c = buf[off];
+					if (c < '0' || c > '9') throw par.error("expected number", off);
+				}
+				if (c == '0') {
+					if (++off == buf.length) return 0;
+					c = buf[off];
+					if (c >= '0' && c <= '9') throw par.error("leading zeros in number", off);
+				}
+				else {
+					while (c >= '0' && c <= '9') {
+						if (++off == buf.length) break;
+						c = buf[off];
+					}
+				}
+				if (c == '.') {
+					double_number = true;
+					if (++off == buf.length) throw par.error("expected number", off);
+					c = buf[off];
+					if (c < '0' || c > '9') throw par.error("invalid number", off);
+					while (c >= '0' && c <= '9') {
+						if (++off == buf.length) break;
+						c = buf[off];
+					}
+				}
+				if (c == 'e' || c == 'E') {
+					double_number = true;
+					if (++off == buf.length) throw par.error("expected number", off);
+					c = buf[off];
+					if (c == '+' || c == '-') {
+						if (++off == buf.length) throw par.error("expected number", off);
+						c = buf[off];
+					}
+					while (c >= '0' && c <= '9') {
+						if (++off == buf.length) break;
+						c = buf[off];
+					}
+				}
+				par.off = off;
+				if (!double_number && off - start > 17) {
+					double_number = true;
+				}
+				if (!double_number) {
+					var (lo, hi) = @string_parse_long(buf, start, off-start);
+					if (!is_int(hi)) throw hi;
+					if (hi < MIN_INTEGER_HI) {
+						double_number = true;
+					}
+					else if (hi > MAX_INTEGER_HI || (hi == MAX_INTEGER_HI && lo != 0)) {
+						double_number = true;
+					}
+					else {
+						if (hi == (lo >> 31)) {
+							return lo;
+						}
+						else {
+							return JSONLong::create(lo, hi);
+						}
+					}
+				}
+				if (double_number) {
+					var (lo, hi) = @string_parse_double(buf, start, off-start);
+					if (!is_int(hi)) throw hi;
+					var float_value = fconv(lo, hi);
+					var (lo2, hi2) = fconv(float_value);
+					if (lo2 == lo && hi2 == hi) {
+						return float_value;
+					}
+					return JSONDouble::create(lo, hi, buf.substring(start, off));
+				}
+				break;
+			}
+
+			case 't':
+				if (off+3 < buf.length && buf[off+1] == 'r' && buf[off+2] == 'u' && buf[off+3] == 'e') {
+					par.off = off + 4;
+					return value_true#0;
+				}
+				break;
+
+			case 'f':
+				if (off+4 < buf.length && buf[off+1] == 'a' && buf[off+2] == 'l' && buf[off+3] == 's' && buf[off+4] == 'e') {
+					par.off = off + 5;
+					return value_false#0;
+				}
+				break;
+		
+			case 'n':
+				if (off+3 < buf.length && buf[off+1] == 'u' && buf[off+2] == 'l' && buf[off+3] == 'l') {
+					par.off = off + 4;
+					return value_null#0;
+				}
+				break;
+		}
+
+		// compatibility with using identifiers as object keys (non-standard JSON):
+
+		if (!par.strict) {
+			switch (c) {
+				case 'A'..'Z', 'a'..'z', '_', '$', 0x80..0x10FFFF: {
+					var start = off++;
+					while (off < buf.length) {
+						switch (buf[off]) {
+							case 'A'..'Z', 'a'..'z', '_', '$', 0x80..0x10FFFF, '0'..'9':
+								off++;
+								continue;
+						}
+						break;
+					}
+					par.off = off;
+					return buf.substring(start, off);
+				}
+			}
+		}
+
+		var char = {"?"};
+		char[0] = c;
+		throw par.error("unexpected character '"+char+"'", off);
+	}
+
+	function get(key): JSON
+	{
+		if (is_array(this)) {
+			if (length(this as Dynamic) > 0) {
+				var first = (this as Dynamic)[0];
+				if (first === JSONLong::dump_to_string#1) {
+					throw error("not an array or object");
+				}
+				if (first === JSONDouble::dump_to_string#1) {
+					throw error("not an array or object");
+				}
+			}
+			return (this as Dynamic[])[key];
+		}
+		if (is_hash(this)) {
+			var value = hash_get(this as Dynamic, key, no_value#0);
+			if (value === no_value#0) {
+				throw error("key "+key+" not found in object");
+			}
+			return value;
+		}
+		throw error("not an array or object");
+	}
+
+	function get(key, default_value): JSON
+	{
+		if (is_array(this)) {
+			if (!is_int(key)) {
+				return default_value;
+			}
+			var len = length(this as Dynamic);
+			if (key < 0) return default_value;
+			if (key >= len) return default_value;
+			if (len > 0) {
+				var first = (this as Dynamic)[0];
+				if (first === JSONLong::dump_to_string#1) {
+					return default_value;
+				}
+				if (first === JSONDouble::dump_to_string#1) {
+					return default_value;
+				}
+			}
+			return (this as Dynamic[])[key];
+		}
+		if (is_hash(this)) {
+			if (!is_string(key)) {
+				return default_value;
+			}
+			return hash_get(this as Dynamic, key, default_value);
+		}
+		return default_value;
+	}
+
+	function opt(key): JSON
+	{
+		if (!initialized) {
+			init();
+		}
+		return get(key, no_value#0);
+	}
+
+	function length(): Integer
+	{
+		if (is_array(this)) {
+			var len = length(this as Dynamic);
+			if (len > 0) {
+				var first = (this as Dynamic)[0];
+				if (first === JSONLong::dump_to_string#1) {
+					throw error("not an array or object");
+				}
+				if (first === JSONDouble::dump_to_string#1) {
+					throw error("not an array or object");
+				}
+			}
+			return len;
+		}
+		if (is_hash(this)) {
+			return length(this as Dynamic);
+		}
+		if (this === no_value#0) return 0;
+		throw error("not an array or object");
+	}
+
+	function get_keys(): String[]
+	{
+		if (is_hash(this)) {
+			return hash_keys(this as Dynamic);
+		}
+		if (this === no_value#0) return [];
+		throw error("not an object");
+	}
+
+	function has_value(): Boolean
+	{
+		return this !== no_value#0;
+	}
+
+	function is_null(): Boolean
+	{
+		return this === value_null#0;
+	}
+
+	function is_boolean(): Boolean
+	{
+		if (this === value_true#0) return true;
+		if (this === value_false#0) return true;
+		return false;
+	}
+
+	function is_int(): Boolean
+	{
+		return is_int(this);
+	}
+
+	function is_long(): Boolean
+	{
+		return JSONLong::is_instance(this);
+	}
+
+	function is_float(): Boolean
+	{
+		return is_float(this);
+	}
+
+	function is_double(): Boolean
+	{
+		return JSONDouble::is_instance(this);
+	}
+
+	function is_string(): Boolean
+	{
+		return is_string(this);
+	}
+
+	function is_array(): Boolean
+	{
+		if (is_array(this)) {
+			var len = length(this as Dynamic);
+			if (len > 0) {
+				var first = (this as Dynamic)[0];
+				if (first === JSONLong::dump_to_string#1) {
+					return false;
+				}
+				if (first === JSONDouble::dump_to_string#1) {
+					return false;
+				}
+			}
+			return true;
+		}
+		return false;
+	}
+
+	function is_object(): Boolean
+	{
+		return is_hash(this);
+	}
+
+	function as_boolean(): Boolean
+	{
+		if (this === value_true#0) return true;
+		if (this === value_false#0) return false;
+		if (this === no_value#0) return false;
+		throw error("not a boolean");
+	}
+
+	function as_boolean(default_value: Boolean): Boolean
+	{
+		if (this === value_true#0) return true;
+		if (this === value_false#0) return false;
+		return default_value;
+	}
+
+	function as_int(): Integer
+	{
+		if (is_int(this)) {
+			return this as Integer;
+		}
+		if (JSONLong::is_instance(this)) {
+			var lo = (this as JSONLong).lo;
+			var hi = (this as JSONLong).hi;
+			if ((lo >> 31) != hi) {
+				throw error("integer overflow");
+			}
+			return lo;
+		}
+		if (this === no_value#0) return 0;
+		throw error("not an integer");
+	}
+
+	function as_int(default_value: Integer): Integer
+	{
+		if (is_int(this)) {
+			return this as Integer;
+		}
+		if (JSONLong::is_instance(this)) {
+			var lo = (this as JSONLong).lo;
+			var hi = (this as JSONLong).hi;
+			if ((lo >> 31) != hi) {
+				return default_value;
+			}
+			return lo;
+		}
+		return default_value;
+	}
+	
+	function as_long(): Long
+	{
+		if (is_int(this)) {
+			return Long::create(this as Integer);
+		}
+		if (JSONLong::is_instance(this)) {
+			return Long::create((this as JSONLong).lo, (this as JSONLong).hi);
+		}
+		if (this === no_value#0) return Long::create();
+		throw error("not a long or integer");
+	}
+	
+	function as_long(default_value: Long): Long
+	{
+		if (is_int(this)) {
+			return Long::create(this as Integer);
+		}
+		if (JSONLong::is_instance(this)) {
+			return (this as JSONLong).to_long();
+		}
+		return default_value;
+	}
+
+	function as_float(): Float
+	{
+		if (is_int(this)) {
+			return float(this as Integer);
+		}
+		if (is_float(this)) {
+			return this as Float;
+		}
+		if (JSONDouble::is_instance(this)) {
+			return (this as JSONDouble).to_float();
+		}
+		if (this === no_value#0) return 0.0;
+		throw error("not a float or integer");
+	}
+
+	function as_float(default_value: Float): Float
+	{
+		if (is_int(this)) {
+			return float(this as Integer);
+		}
+		if (is_float(this)) {
+			return this as Float;
+		}
+		if (JSONDouble::is_instance(this)) {
+			return (this as JSONDouble).to_float();
+		}
+		return default_value;
+	}
+
+	function as_double(): Double
+	{
+		if (is_int(this)) {
+			return Double::from_int(this as Integer);
+		}
+		if (is_float(this)) {
+			return Double::create(this as Float);
+		}
+		if (JSONDouble::is_instance(this)) {
+			return (this as JSONDouble).to_double();
+		}
+		if (this === no_value#0) return Double::create();
+		throw error("not a double or integer");
+	}
+
+	function as_double(default_value: Double): Double
+	{
+		if (is_int(this)) {
+			return Double::from_int(this as Integer);
+		}
+		if (is_float(this)) {
+			return Double::create(this as Float);
+		}
+		if (JSONDouble::is_instance(this)) {
+			return (this as JSONDouble).to_double();
+		}
+		return default_value;
+	}
+
+	function as_string(): String
+	{
+		if (is_string(this)) {
+			return this as String;
+		}
+		if (this === no_value#0) return {""};
+		throw error("not a string");
+	}
+
+	function as_string(default_value: String): String
+	{
+		if (is_string(this)) {
+			return this as String;
+		}
+		return default_value;
+	}
+
+	function as_array(): JSON[]
+	{
+		if (is_array(this)) {
+			if (length(this as Dynamic) > 0) {
+				var first = (this as Dynamic)[0];
+				if (first === JSONLong::dump_to_string#1) {
+					throw error("not an array or object");
+				}
+				if (first === JSONDouble::dump_to_string#1) {
+					throw error("not an array or object");
+				}
+			}
+			return this as JSON[];
+		}
+		if (this === no_value#0) return [];
+		throw error("not an array");
+	}
+
+	function as_object(): JSON[String]
+	{
+		if (is_hash(this)) {
+			return this as JSON[String];
+		}
+		if (this === no_value#0) return {};
+		throw error("not an object");
+	}
+}
+
+function @value_null_to_string(value): String
+{
+	return "json:null";
+}
+
+function @value_true_to_string(value): String
+{
+	return "json:true";
+}
+
+function @value_false_to_string(value): String
+{
+	return "json:false";
+}
+
+function @no_value_to_string(value): String
+{
+	return "(no value)";
+}
+
+function @init()
+{
+	initialized = true;
+	Object::set_to_string(value_null#0, value_null_to_string#1);
+	Object::set_to_string(value_true#0, value_true_to_string#1);
+	Object::set_to_string(value_false#0, value_false_to_string#1);
+	Object::set_to_string(no_value#0, no_value_to_string#1);
+}

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/task";</code>
+</p>
+
+<h2>ParentRef class</h2>
+
+<p>
+ParentRef allows to access references in parent heap when using the
+<a href="compute_task.html#run_parallel">ComputeTask::run_parallel</a> function.
+If not used from compute tasks the current heap is used instead to allow code
+that works in both modes the same.
+</p>
+
+<p>
+Internally the references are just the integer portion of the reference. Therefore
+the references are weak: you must make sure that there exists a strong reference
+to such objects. It also allows to embed the references directly in shared arrays.
+</p>
+
+<p>
+<b>Security implications</b>: this class allows to access arbitrary objects in the
+current heap. This may be an issue for specific usages (eg. native code that has some
+hidden objects in the heap that are normally not accessible and reading them has
+security implications or if they contain shared arrays as these are writable). You
+can protect such objects using the <code>fixscript_set_protected</code> function.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(obj): ParentRef
+	</code></dt>
+	<dd>
+		Creates a new reference to parent heap. This just converts the integer
+		part of the reference to a pure integer. The same can be achieved
+		by using <code>(obj as Integer)|0</code>. Additionally it checks for
+		floats so it leaves them as is so you should use this constructor in
+		general case (also for better readibility).
+	</dd>
+	<dt><code>function <b>length</b>(): Integer</code></dt>
+	<dd>
+		Returns the length of the array or hash.
+	</dd>
+	<dt><code>function <b>array_get</b>(idx: Integer): ParentRef</code></dt>
+	<dd>
+		Returns the reference (or integer/float value) at given index in an array.
+	</dd>
+	<dt><code>
+		function <b>is_array</b>(): Boolean<br>
+		function <b>is_string</b>(): Boolean<br>
+		function <b>is_hash</b>(): Boolean<br>
+		function <b>is_shared</b>(): Boolean<br>
+		function <b>is_funcref</b>(): Boolean<br>
+		function <b>is_weakref</b>(): Boolean<br>
+		function <b>is_handle</b>(): Boolean<br>
+	</code></dt>
+	<dd>
+		Returns whether the reference is one of these types. You should use normal
+		<code>is_float</code> for detecting floats as these are passed directly.
+		Integers can't be tested for.
+	</dd>
+	<dt><code>
+		function <b>get</b>(): Dynamic<br>
+		function <b>clone</b>(): Dynamic<br>
+	</code></dt>
+	<dd>
+		Returns the deep clone of the reference. The <code>get</code> function caches
+		the clone so it will always return the same cloned reference.
+	</dd>
+	<dt><code>function <b>get_shared_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the number of referenced heaps for given shared array.
+	</dd>
+	<dt><code>function <b>get_element_size</b>(): Integer</code></dt>
+	<dd>
+		Returns the (current) element size of the array.
+	</dd>
+	<dt><code>function <b>copy_to</b>(dest, dest_off: Integer, src_off: Integer, count: Integer)</code></dt>
+	<dd>
+		Copies the deep cloned values (each value independently) from the array reference.
+	</dd>
+	<dt><code>function <b>extract</b>(off: Integer, count: Integer): Dynamic</code></dt>
+	<dd>
+		Extracts the portion of the array (each value is deep cloned independently).
+	</dd>
+	<dt><code>function <b>weakref_get</b>(): ParentRef</code></dt>
+	<dd>
+		Returns the target reference of this weak reference.
+	</dd>
+	<dt><code>function <b>hash_get</b>(key, default_value): ParentRef</code></dt>
+	<dd>
+		Returns the value for given key (the key is value in current heap) or the
+		provided default value in case the key is not found.
+	</dd>
+	<dt><code>function <b>hash_contains</b>(key): Boolean</code></dt>
+	<dd>
+		Returns true when the hash table contains the given key (the key is value in current heap).
+	</dd>
+	<dt><code>
+		function <b>to_string</b>(): String<br>
+		function <b>to_string</b>(newlines: Boolean): String<br>
+	</code></dt>
+	<dd>
+		Returns the string representation of the reference.
+	</dd>
+</dl>
+
+</body>
+</html>

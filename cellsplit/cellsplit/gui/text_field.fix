@@ -1,0 +1,180 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/font";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/text_field";
+import "cellsplit/gui/common";
+
+class GameTextField: SubTextField
+{
+	var @font: Font;
+	var @font_size: Float;
+	var @color: Integer;
+	var @cursor_timer: Timer;
+	var @cursor_blink: Boolean;
+	
+	constructor create()
+	{
+		font = get_normal_font();
+		font_size = DEFAULT_FONT_SIZE;
+		color = 0xFF000000;
+		cursor_timer = Timer::create(400, GameTextField::blink_cursor#1, weakref_create(this));
+	}
+
+	function set_font(font: Font)
+	{
+		this.font = font;
+	}
+
+	function get_font(): Font
+	{
+		return font;
+	}
+
+	function set_font_size(font_size: Float)
+	{
+		this.font_size = font_size;
+	}
+
+	function get_font_size(): Float
+	{
+		return font_size;
+	}
+
+	function set_color(color: Integer)
+	{
+		this.color = color;
+	}
+
+	function get_color(): Integer
+	{
+		return color;
+	}
+
+	override function paint_background(p: Painter)
+	{
+		var scale = get_scale();
+		var shape = Shape::round_rect(0, 0, get_width(), get_height(), 1*scale, 1*scale);
+		var shape2 = Shape::round_rect(1.0*scale, 1.0*scale, get_width()-2.0*scale, get_height()-2.0*scale, 0.5*scale, 0.5*scale);
+		var color = 0xFFFFFFFF;
+		p.fill_shape(shape, 0xFF404040);
+		p.fill_shape(shape2, color);
+	}
+
+	override function get_border_rect(): Rect
+	{
+		var scale = get_scale();
+		var border = iround(2 * scale);
+		return Rect(border, border, get_width()-border*2, get_height()-border*2);
+	}
+
+	override function get_text_rect(): Rect
+	{
+		var scale = get_scale();
+		var border_x = iround(4 * scale);
+		var border_y = iround(2 * scale);
+		return Rect(border_x, border_y, get_width()-border_x*2, get_height()-border_y);
+	}
+
+	override function get_text_position(s: String, off: Integer, len: Integer, x: Float): Integer
+	{
+		var font_size = this.font_size * get_scale();
+		return iround(font.get_string_position(s, off, len, x/font_size));
+	}
+
+	override function get_text_advance(s: String, off: Integer, len: Integer): Float
+	{
+		var font_size = this.font_size * get_scale();
+		return font.get_string_advance(s, off, len) * font_size;
+	}
+
+	override function draw_text(p: Painter, x: Float, s: String, off: Integer, len: Integer, selection: Boolean)
+	{
+		var scale = get_scale();
+		var font_size = this.font_size * scale;
+		var height = get_height()-iround(2*scale)*2;
+		x += font.get_string_advance(s, 0, off) * font_size;
+		if (selection) {
+			var start = iround(x);
+			var end = iround(x + font.get_string_advance(s, off, len) * font_size);
+			p.fill_rect(start, iround(2*scale), end-start, height-iround(2*scale)*2, 0xFF000040);
+		}
+		p.push();
+		p.set_subpixel_rendering(true);
+		p.set_blend_gamma(1.3);
+		p.fill_shape(font.get_string_shape(s, off, len, x, (height+font_size*0.65)/2.0, font_size, font_size), selection? 0xFFFFFFFF : color);
+		p.pop();
+	}
+
+	override function draw_cursor(p: Painter, x: Float, selection: Boolean)
+	{
+		if (!cursor_blink) {
+			var scale = get_scale();
+			var height = get_height()-iround(2*scale)*2;
+			p.push();
+			p.set_subpixel_rendering(true);
+			p.set_blend_gamma(1.3);
+			p.fill_shape(Shape::rect(iround(x), iround(2*scale), iround(1*scale), height-iround(2*scale)*2), selection? 0xFFFFFFFF : 0xFF000000);
+			p.pop();
+		}
+	}
+
+	static function @blink_cursor(weak): Boolean
+	{
+		var field = weakref_get(weak) as GameTextField;
+		if (!field) return false;
+		field.cursor_blink = !field.cursor_blink;
+		field.repaint();
+		return true;
+	}
+
+	override function reset_cursor_blink()
+	{
+		cursor_timer.restart();
+		cursor_blink = false;
+	}
+
+	override function stop_cursor_blink()
+	{
+		cursor_timer.stop();
+	}
+
+	override function show_text_cursor(show: Boolean)
+	{
+		set_cursor(show? CURSOR_TEXT : CURSOR_DEFAULT);
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		super.handle_focus_event(event);
+
+		if (event.get_type() == EVENT_FOCUS_LOST) {
+			set_cursor_position(get_cursor_position()); // TODO
+		}
+	}
+}

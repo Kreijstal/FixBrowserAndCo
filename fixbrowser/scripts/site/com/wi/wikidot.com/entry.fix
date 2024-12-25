@@ -1,0 +1,8 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "cloudfront.net")) return true;
+	if (domain_ends_with(dest, "wdfiles.com")) return true;
+	return false;
+}

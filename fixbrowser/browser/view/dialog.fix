@@ -1,0 +1,388 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/subview/text_field";
+import "gui/subview/scrollbar";
+import "gui/subview/scrollview";
+import "gui/pure/button";
+import "gui/pure/text_field";
+import "gui/pure/scrollview";
+import "gui/code_editor/view";
+import "gui/code_editor/syntax/fixscript";
+import "browser/view/model";
+import "browser/view/image";
+import "browser/view/scroller";
+
+var @background_texture: Image;
+
+class DialogView: SubView
+{
+	var @scroll: SmoothScrollView;
+	var @get_state_func;
+	var @set_state_func;
+
+	constructor create(dialog: Dialog)
+	{
+		switch (dialog.type) {
+			case DIALOG_UNKNOWN_CONTENT: {
+				var content_type = (dialog as UnknownContentDialog).content_type;
+				add(ErrorDialogView::create("Unknown content type: "+content_type));
+				break;
+			}
+
+			case DIALOG_IMAGE_VIEWER: {
+				var data = (dialog as ImageViewerDialog).get_data();
+				var viewer = ImageViewerDialogView::create(data);
+				get_state_func = ImageViewerDialogView::get_view_state#1;
+				set_state_func = ImageViewerDialogView::set_view_state#2;
+				scroll = SmoothScrollView::create(viewer);
+				viewer.update_size();
+				add(scroll);
+				break;
+			}
+
+			case DIALOG_TEXT_VIEWER: {
+				var content_type = (dialog as TextViewerDialog).content_type;
+				var text = (dialog as TextViewerDialog).text;
+				add(TextViewerDialogView::create(content_type, text));
+				get_state_func = TextViewerDialogView::get_view_state#1;
+				set_state_func = TextViewerDialogView::set_view_state#2;
+				break;
+			}
+
+			default:
+				throw error("unknown dialog type: "+dialog.type);
+		}
+	}
+
+	override function handle_resize()
+	{
+		var view = get_child(0);
+		view.set_rect(0, 0, get_width(), get_height());
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		draw_children(p);
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		if (event.get_type() == EVENT_FOCUS_GAINED) {
+			if (scroll) {
+				scroll.get_content().focus();
+			}
+			else {
+				get_child(0).focus();
+			}
+		}
+	}
+
+	function get_view_state(): Dynamic
+	{
+		if (get_state_func) {
+			var view = scroll? scroll.get_content() : get_child(0);
+			return get_state_func(view);
+		}
+		return null;
+	}
+
+	function set_view_state(state)
+	{
+		if (set_state_func) {
+			var view = scroll? scroll.get_content() : get_child(0);
+			set_state_func(view, state);
+		}
+	}
+}
+
+class @ErrorDialogView: SubView
+{
+	var @label: Label;
+	var @msg: String;
+
+	constructor create(msg: String)
+	{
+		this.msg = msg;
+		set_rect(0, 0, 200, 100);
+		label = Label::create(msg);
+		add(label);
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		p.fill_rect(0, 0, get_width(), get_height(), 0xFFFF00FF);
+		draw_children(p);
+	}
+}
+
+class @ImageViewerState
+{
+	var scroll_x: Integer;
+	var scroll_y: Integer;
+	var fill_area: Boolean;
+}
+
+class @ImageViewerDialogView: SubView
+{
+	var @img: WebImage;
+	var @fill_area: Boolean;
+
+	constructor create(data: Byte[])
+	{
+		var (r, e) = WebImage::create(data);
+		if (e) {
+			dump(e);
+		}
+		else {
+			img = r;
+			set_rect(0, 0, img.get_width(), img.get_height());
+
+			if (img.is_animated()) {
+				Timer::run_once(img.get_delay(), ImageViewerDialogView::update_anim#1, weakref_create(this));
+			}
+
+			set_cursor(CURSOR_MOVE);
+
+			if (!background_texture) {
+				background_texture = Image::create(32, 32);
+				var p = Painter::create(background_texture);
+				p.fill_rect(0, 0, 32, 32, 0xFF999999);
+				p.fill_rect(0, 0, 16, 16, 0xFF777777);
+				p.fill_rect(16, 16, 16, 16, 0xFF777777);
+			}
+		}
+
+		fill_area = true;
+	}
+
+	function @update_anim()
+	{
+		var ref = this;
+		this = weakref_get(ref);
+		if (!this) return;
+		
+		img.update();
+
+		if (fill_area) {
+			repaint();
+		}
+		else {
+			var x = max(0, (get_width() - img.get_width()) / 2);
+			var y = max(0, (get_height() - img.get_height()) / 2);
+			repaint(x, y, img.get_width(), img.get_height());
+		}
+
+		if (img.is_animated()) {
+			Timer::run_once(img.get_delay(), ImageViewerDialogView::update_anim#1, ref);
+		}
+	}
+
+	function update_size()
+	{
+		var scroll = SubScrollView::get_scroll_view(this);
+		if (img) {
+			if (fill_area) {
+				scroll.set_content_size(0, 0);
+			}
+			else {
+				scroll.set_content_size(img.get_width(), img.get_height());
+			}
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		if (!img) {
+			draw_children(p);
+			return;
+		}
+
+		var tr = Transform::create();
+		tr.translate(-get_x(), -get_y());
+		p.fill_rect(0, 0, get_width(), get_height(), Shader {
+			replace(sample_nearest(background_texture, tr));
+		});
+
+		if (fill_area) {
+			var scale = fmin(fmin(float(max(1, get_width())) / float(img.get_width()), float(max(1, get_height())) / float(img.get_height())), 1.0);
+			var width = iround(img.get_width() * scale);
+			var height = iround(img.get_height() * scale);
+			var x = max(0, (get_width() - width)/2);
+			var y = max(0, (get_height() - height)/2);
+			img.draw(p, x, y, scale);
+		}
+		else {
+			var x = max(0, (get_width() - img.get_width()) / 2);
+			var y = max(0, (get_height() - img.get_height()) / 2);
+			img.draw(p, x, y, 1.0);
+		}
+		draw_children(p);
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			var zoom_x = 0, zoom_y = 0;
+			if (fill_area) {
+				var scale = fmin(fmin(float(max(1, get_width())) / float(img.get_width()), float(max(1, get_height())) / float(img.get_height())), 1.0);
+				var width = iround(img.get_width() * scale);
+				var height = iround(img.get_height() * scale);
+				var x = max(0, (get_width() - width)/2);
+				var y = max(0, (get_height() - height)/2);
+				zoom_x = iround((event.get_x() - x) / scale);
+				zoom_y = iround((event.get_y() - y) / scale);
+			}
+			fill_area = !fill_area;
+			update_size();
+			if (!fill_area) {
+				var scroll = SubScrollView::get_scroll_view(this);
+				var horiz = scroll.get_horizontal_scrollbar();
+				if (horiz) {
+					horiz.set_value(zoom_x - event.get_x());
+				}
+				var vert = scroll.get_vertical_scrollbar();
+				if (vert) {
+					vert.set_value(zoom_y - event.get_y());
+				}
+			}
+			return true;
+		}
+		return false;
+	}
+
+	function get_view_state(): ImageViewerState
+	{
+		var state = new ImageViewerState;
+		var scroll = SubScrollView::get_scroll_view(this);
+		var pos = scroll.get_scroll_position();
+		state.scroll_x = pos[0];
+		state.scroll_y = pos[1];
+		state.fill_area = fill_area;
+		return state;
+	}
+
+	function set_view_state(state: ImageViewerState)
+	{
+		var scroll = SubScrollView::get_scroll_view(this);
+		fill_area = state.fill_area;
+		update_size();
+		scroll.set_scroll_position(state.scroll_x, state.scroll_y);
+	}
+}
+
+class @TextViewerState
+{
+	var scroll_x: Integer;
+	var scroll_y: Integer;
+	var cursor_x: Integer;
+	var cursor_y: Integer;
+}
+
+class @TextViewerDialogView: CodeEditor
+{
+	constructor create(content_type: String, text: String)
+	{
+		// TODO: replace with proper syntaxes based on content type
+		set_syntax(FixScriptSyntax::create());
+
+		set_text(text);
+		set_editable(false);
+
+		// TODO: why is this needed?
+		set_cursor_position(0, 0);
+	}
+
+	override function create_scroll_view(content: SubView, popup: Boolean): SubScrollView
+	{
+		var scroll = SmoothScrollView::create(content);
+		scroll.set_border(false);
+		return scroll;
+	}
+
+	function get_view_state(): TextViewerState
+	{
+		var state = new TextViewerState;
+		var scroll = get_scroll_view();
+		if (scroll) {
+			var pos = scroll.get_scroll_position();
+			state.scroll_x = pos[0];
+			state.scroll_y = pos[1];
+		}
+		else {
+			state.scroll_x = 0;
+			state.scroll_y = 0;
+		}
+		var pos = get_cursor_position();
+		state.cursor_x = pos[0];
+		state.cursor_y = pos[1];
+		return state;
+	}
+
+	function set_view_state(state: TextViewerState)
+	{
+		var scroll = get_scroll_view();
+		set_cursor_position(state.cursor_x, state.cursor_y);
+		if (scroll) {
+			scroll.set_scroll_position(state.scroll_x, state.scroll_y);
+		}
+	}
+}
+
+class @Label: PureTextField
+{
+	constructor create(label: String)
+	{
+		super::create();
+		set_text(label);
+		set_read_only(true);
+		var rect = get_text_rect();
+		var text_width = iceil(get_text_advance(get_text(), 0, length(get_text())));
+		set_rect(0, 0, rect.x1 + (get_width() - rect.x2) + text_width, iround(get_font().get_size() * 2.0));
+	}
+	
+	/*
+	override function get_border_rect(): Rect
+	{
+		return Rect::create(0, 0, get_width(), get_height());
+	}
+	*/
+
+	/*
+	override function get_text_rect(): Rect
+	{
+		return Rect::create(0, 0, get_width(), get_height());
+	}
+	*/
+
+	override function paint_background(p: Painter)
+	{
+	}
+}

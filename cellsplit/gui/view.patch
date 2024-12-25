@@ -1,0 +1,76 @@
+--- view.fix.orig	2024-10-12 04:57:25.000000000 +0200
++++ view.fix	2024-11-09 09:38:28.438642592 +0100
+@@ -24,6 +24,7 @@
+ import "image/image";
+ import "image/rect";
+ import "gui/event";
++import "gui/gtk_clipboard";
+ 
+ const {
+ 	WIN_RESIZABLE = 0x01,
+@@ -588,8 +589,63 @@
+ 
+ class Clipboard
+ {
+-	static function set_text(text: String);
+-	static function get_text(): String;
++	static function set_text(text: String)
++	{
++		var (r1, e1) = @windows_is_present();
++		if (r1) {
++			var num_new_lines = 0;
++			for (var i=0; i<text.length; i++) {
++				if (text[i] == '\n') {
++					num_new_lines++;
++				}
++			}
++			var new_text = {""};
++			new_text.set_length(text.length + num_new_lines);
++			for (var i=0, j=0; i<text.length; i++) {
++				var c = text[i];
++				if (c == '\n') {
++					new_text[j++] = '\r';
++				}
++				new_text[j++] = c;
++			}
++			@clipboard_set_text(new_text);
++			return;
++		}
++
++		var (r2, e2) = @gtk_is_present();
++		if (r2) {
++			gtk_clipboard_set(text);
++			return;
++		}
++
++		@clipboard_set_text(text);
++	}
++	
++	static function get_text(): String
++	{
++		var (r1, e1) = @windows_is_present();
++		if (r1) {
++			var text = @clipboard_get_text() as String;
++			var new_text = {""};
++			new_text.set_length(text.length);
++			var j=0;
++			for (var i=0; i<text.length; i++) {
++				var c = text[i];
++				if (c != '\r') {
++					new_text[j++] = c;
++				}
++			}
++			new_text.set_length(j);
++			return new_text;
++		}
++
++		var (r2, e2) = @gtk_is_present();
++		if (r2) {
++			return gtk_clipboard_get();
++		}
++
++		return @clipboard_get_text() as String;
++	}
+ }
+ 
+ const {

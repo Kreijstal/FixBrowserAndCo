@@ -1,0 +1,795 @@
+/*
+ * FixBuild v0.6 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/file";
+import "io/process";
+import "util/string";
+import "util/long";
+
+const @function_register_task_2 = "";
+const @function_register_task_3 = "";
+const @function_run_task_1 = "";
+
+class @Task
+{
+	var @func;
+	var @desc: String;
+	var @deps: String[];
+	var @processed: Boolean;
+
+	constructor @create(func, desc: String)
+	{
+		this.func = func;
+		this.desc = desc;
+		this.deps = [];
+	}
+}
+
+var @builds: Dynamic[String][String];
+var @exec: String;
+var @args: String[];
+var @tasks: Task[String];
+var @default_task: String;
+
+function get_builds(): Dynamic[String][String]
+{
+	if (!builds) {
+		builds = {};
+	}
+	return builds;
+}
+
+function get_executable(): String
+{
+	if (!exec) {
+		exec = {""};
+	}
+	return exec;
+}
+
+function get_arguments(): String[]
+{
+	if (!args) {
+		args = [];
+	}
+	return args;
+}
+
+function get_current_target(): String
+{
+	return get_fixbuild_current_target();
+}
+
+function get_available_targets(): String[]
+{
+	return get_fixbuild_targets();
+}
+
+function @init_tasks()
+{
+	tasks = {
+		"build": Task::create(null, "build project"),
+		"clean": Task::create(null, "clean any generated files"),
+		"dist": Task::create(null, "create distribution files")
+	};
+}
+
+function register_task(name: String, func)
+{
+	register_task(name, func, null, null);
+}
+
+function register_task(name: String, func, desc: String)
+{
+	register_task(name, func, desc, null);
+}
+
+function register_task(name: String, func, desc: String, deps: String[])
+{
+	if (!tasks) {
+		init_tasks();
+	}
+	var prev_task = tasks.get(name, null);
+	var prev_desc: String;
+	if (prev_task) {
+		prev_desc = prev_task.desc;
+	}
+	var task = Task::create(func, prev_desc);
+	if (desc) {
+		task.desc = {desc};
+	}
+	if (deps) {
+		task.deps.append(clone_deep(deps));
+	}
+	tasks[name] = task;
+}
+
+function get_task_list(): String[]
+{
+	if (!tasks) {
+		init_tasks();
+	}
+	var list = [];
+	foreach (var name, task in tasks) {
+		list[] = {name};
+	}
+	return list;
+}
+
+function get_task_description(name: String): String
+{
+	if (!tasks) {
+		init_tasks();
+	}
+	return clone(tasks[name].desc);
+}
+
+function set_task_description(name: String, desc: String)
+{
+	if (!tasks) {
+		init_tasks();
+	}
+	tasks[name].desc = clone(desc);
+}
+
+function get_task_dependencies(name: String): String[]
+{
+	if (!tasks) {
+		init_tasks();
+	}
+	return tasks[name].deps;
+}
+
+function get_default_task(): String
+{
+	if (!default_task) {
+		default_task = "build";
+	}
+	return {default_task};
+}
+
+function set_default_task(name: String)
+{
+	if (!tasks) {
+		init_tasks();
+	}
+	if (!tasks.contains(name)) {
+		throw error("unknown task");
+	}
+	default_task = {name};
+}
+
+function run_task(name: String): Boolean
+{
+	return run_task(name, false);
+}
+
+function run_task(name: String, force: Boolean): Boolean
+{
+	if (!tasks) {
+		init_tasks();
+	}
+	var task = tasks.get(name, null);
+	if (!task) return false;
+	if (!force && task.processed) {
+		return true;
+	}
+	foreach (var dep in task.deps) {
+		run_task(dep, false);
+	}
+	if (name == "build") {
+		task_build();
+	}
+	else if (name == "clean") {
+		task_clean();
+	}
+	else if (name == "dist") {
+		task_dist();
+	}
+	if (task.func) {
+		(task.func)();
+	}
+	task.processed = true;
+	return true;
+}
+
+function show_help()
+{
+	log("FixBuild v"+get_fixbuild_version()+" - https://www.fixscript.org/\n");
+	log("Usage: "+get_executable()+" [tasks]\n");
+	log("Available tasks:");
+	var list = get_task_list();
+	var max_len = 0;
+	foreach (var name in list) {
+		if (get_task_description(name) == "") continue;
+		max_len = max(max_len, name.length);
+	}
+	var tasks_newline = {"\n      "};
+	for (var i=0; i<max_len; i++) {
+		tasks_newline[] = ' ';
+	}
+	var default_task = get_default_task();
+	foreach (var name in list) {
+		var desc = get_task_description(name);
+		if (desc == "") continue;
+		var s = {"    ", name, "  "};
+		for (var i=name.length; i<max_len; i++) {
+			s[] = ' ';
+		}
+		if (desc) {
+			s += desc.replace_string("\n", tasks_newline);
+			if (name == default_task) {
+				s[] = ' ';
+			}
+		}
+		if (name == default_task) {
+			s += "[default]";
+		}
+		log(s);
+	}
+}
+
+function @list_find(list: String[], search: String): Integer
+{
+	for (var i=0; i<list.length; i++) {
+		if (list[i] == search) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+function @get_targets(list: String[]): String[]
+{
+	var targets = get_fixbuild_targets();
+	if (!list || list.length == 0) return targets;
+	if (list[0].length == 0 || list[0][0] != '-') {
+		targets.clear();
+	}
+	foreach (var value in list) {
+		if (value.length > 0 && value[0] == '-') {
+			var idx = list_find(targets, value.substring(1));
+			if (idx != -1) {
+				targets.remove(idx);
+			}
+		}
+		else {
+			if (list_find(targets, value) == -1) {
+				targets[] = value;
+			}
+		}
+	}
+	return targets;
+}
+
+function @append_excludes(params: String[], dir: Path)
+{
+	var files = dir.get_files();
+	foreach (var file in files) {
+		if (file.get_file_name() == "build.fix") {
+			params[] = "-ex";
+			params[] = dir.to_string();
+			return;
+		}
+	}
+	foreach (var file in files) {
+		if (file.is_directory()) {
+			append_excludes(params, file);
+		}
+	}
+}
+
+function build(values: Dynamic[String])
+{
+	var params = [get_fixbuild_path()];
+	if (values.get("sources", ".") == ".") {
+		params[] = "-ex";
+		params[] = "build.fix";
+		foreach (var file in Path(".").get_files()) {
+			if (file.is_directory()) {
+				append_excludes(params, file);
+			}
+		}
+	}
+	if (values.get("verbose", false)) {
+		params[] = "-v";
+	}
+	if (!values.get("processors", true)) {
+		params[] = "-np";
+	}
+	if (!values.get("compress", true)) {
+		params[] = "-nc";
+	}
+	var exclude = values.get("exclude", null);
+	if (exclude) {
+		foreach (var value in exclude) {
+			params[] = "-ex";
+			params[] = value;
+		}
+	}
+	var sources = values.get("sources", null);
+	if (sources) {
+		params[] = "-src";
+		params[] = sources;
+	}
+	var resources = values.get("resources", null);
+	if (resources) {
+		params[] = "-res";
+		params[] = resources;
+	}
+	var main = values.get("main", null);
+	if (main) {
+		if (is_string(main)) {
+			params[] = "-m";
+			params[] = main;
+		}
+		else {
+			foreach (var script in main as String[]) {
+				params[] = "-m";
+				params[] = script;
+			}
+		}
+	}
+	else {
+		throw error("main script name is required");
+	}
+	var targets = values.get("targets", null) as String[];
+	if (targets) {
+		targets = get_targets(targets);
+	}
+	else {
+		targets = get_fixbuild_targets();
+	}
+	var binary = values.get("binary", null);
+	var binary_pos = -1;
+	if (binary && targets.length == 1) {
+		params[] = "-o";
+		binary_pos = params.length;
+		params[] = binary;
+	}
+	if (values.get("gui", false)) {
+		params[] = "-g";
+	}
+	var icon = values.get("icon", null);
+	if (icon) {
+		foreach (var value in icon) {
+			params[] = "-icon";
+			params[] = value;
+		}
+	}
+	if (values.get("wasm_raw", false)) {
+		params[] = "-wasm_raw";
+	}
+	var common_params = params;
+	foreach (var target in targets) {
+		params = [];
+		params.append(common_params);
+		params[] = "-t";
+		params[] = target;
+		var platform_binary = values.get("binary_"+target, null);
+		if (platform_binary) {
+			if (binary_pos >= 0) {
+				params[binary_pos] = platform_binary;
+			}
+			else {
+				params[] = "-o";
+				params[] = platform_binary;
+			}
+			if (targets.length != 1) {
+				log("Building "+platform_binary+"...");
+			}
+		}
+		else {
+			if (binary && targets.length != 1) {
+				params[] = "-o";
+				params[] = binary+"_"+target;
+				log("Building "+get_binary_name(binary+"_"+target, target)+"...");
+			}
+		}
+		run(params);
+	}
+}
+
+function @get_paths(name_or_list: String or String[]): Path[]
+{
+	if (is_string(name_or_list)) {
+		return [Path(name_or_list)];
+	}
+	else {
+		var list = [];
+		foreach (var name in name_or_list) {
+			list[] = Path(name);
+		}
+		return list;
+	}
+}
+
+function needs_update(dest: String or String[], src: String or String[]): Boolean
+{
+	var dest_time: Long;
+	foreach (var path in get_paths(dest)) {
+		if (!path.exists()) return true;
+		var time = path.get_modification_time();
+		if (!dest_time || time.cmp(dest_time) < 0) {
+			dest_time = time;
+		}
+	}
+	if (!dest_time) {
+		return false;
+	}
+
+	var src_time: Long;
+	foreach (var path in get_paths(src)) {
+		if (path.exists()) {
+			var time = path.get_modification_time();
+			if (!src_time || time.cmp(src_time) > 0) {
+				src_time = time;
+			}
+		}
+	}
+	if (!src_time) {
+		return false;
+	}
+
+	return dest_time.cmp(src_time) < 0;
+}
+
+function makedir(name_or_list: String or String[])
+{
+	foreach (var path in get_paths(name_or_list)) {
+		path.create_directories();
+	}
+}
+
+function removedir(name_or_list: String or String[])
+{
+	foreach (var path in get_paths(name_or_list)) {
+		if (path.exists()) {
+			path.delete_directory();
+		}
+	}
+}
+
+function remove(name_or_list: String or String[])
+{
+	foreach (var path in get_paths(name_or_list)) {
+		if (path.exists()) {
+			path.delete_file();
+		}
+	}
+}
+
+function touch(name_or_list: String or String[])
+{
+	foreach (var path in get_paths(name_or_list)) {
+		if (path.exists()) {
+			var file = File::open(path, FILE_OPEN_EXISTING);
+			if (file.get_length().is_zero()) {
+				file.close();
+				path.delete_file();
+				file = File::open(path, FILE_OPEN_NEW);
+				file.close();
+			}
+			else {
+				var buf = Array::create_shared(1, 1);
+				file.read(buf);
+				file.seek_set(0);
+				file.write(buf);
+				file.close();
+			}
+		}
+		else {
+			var file = File::open(path, FILE_OPEN_NEW);
+			file.close();
+		}
+	}
+}
+
+function basename(name: String): String
+{
+	var idx = name.rev_search_char('/');
+	if (idx != -1) {
+		return name.substring(idx+1);
+	}
+	return name;
+}
+
+function @real_copy(src: String, dest: String)
+{
+	var src_file = File::open(src, FILE_READ);
+	var dest_file = File::open(dest, FILE_OPEN_NEW);
+	var buf = Array::create_shared(4096, 1);
+	for (;;) {
+		var read = src_file.read_part(buf, 0, buf.length);
+		if (read < 0) break;
+		dest_file.write(buf, 0, read);
+	}
+	src_file.close();
+	dest_file.close();
+}
+
+function copy(src: String, dest: String)
+{
+	if (dest == ".") {
+		dest = basename(src);
+	}
+	else if (dest.ends_with("/")) {
+		dest = dest + basename(src);
+	}
+	if (src == dest) return;
+
+	var (r, e) = real_copy(src, dest);
+	if (e) {
+		heap_collect();
+		throw error("failed to copy '"+src+"' to '"+dest+"'");
+	}
+}
+
+function matches(pattern: String, value: String): Boolean
+{
+	return matches(pattern, 0, value, 0, value.length);
+}
+
+function matches_dir(pattern: String, value: String): Boolean
+{
+	var patterns = pattern.split('/');
+	var values = value.split('/');
+	if (patterns.length != values.length) {
+		return false;
+	}
+	for (var i=0; i<patterns.length; i++) {
+		if (!matches(patterns[i], values[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function @matches(pattern: String, pattern_off: Integer, value: String, off: Integer, end: Integer): Boolean
+{
+	var j = off;
+	for (var i=pattern_off; i<pattern.length; i++) {
+		var c = pattern[i];
+		switch (c) {
+			case '*': {
+				var min_len = 0;
+				for (var k=i+1; k<pattern.length; k++) {
+					if (pattern[k] != '*') {
+						min_len++;
+					}
+				}
+				var remaining = end - j - min_len;
+				for (var k=remaining; k>=0; k--) {
+					if (matches(pattern, i+1, value, j+k, end)) return true;
+				}
+				return false;
+			}
+
+			case '?':
+				if (j++ >= end) return false;
+				continue;
+
+			default:
+				if (j >= end) return false;
+				if (value[j++] != c) return false;
+				continue;
+		}
+	}
+	return j == end;
+}
+
+/*
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_matches()
+{
+	assert(matches("", ""), true);
+	assert(matches("", "a"), false);
+	assert(matches("*", ""), true);
+	assert(matches("*", "a"), true);
+	assert(matches("*", "abc"), true);
+	assert(matches("aaa", "aaa"), true);
+	assert(matches("aaaa", "aaa"), false);
+	assert(matches("aaa", "aaaa"), false);
+	assert(matches("a?a", "aaa"), true);
+	assert(matches("a?a", "aba"), true);
+	assert(matches("a*", "a"), true);
+	assert(matches("a*", "aa"), true);
+	assert(matches("a*", "aaa"), true);
+	assert(matches("a*a", "aa"), true);
+	assert(matches("a*a", "aba"), true);
+	assert(matches("a*a", "abba"), true);
+	assert(matches("a*a", "ababa"), true);
+	assert(matches("a*a*a", "aba"), false);
+	assert(matches("a*a*a", "abba"),false);
+	assert(matches("a*a*a", "ababa"), true);
+	assert(matches("a*a*a", "aaba"), true);
+	assert(matches("a*a*a", "abbaa"), true);
+	assert(matches("a*aaaa", "aa"), false);
+	assert(matches("a*aaaa", "aaaa"), false);
+	assert(matches("a*aaaa", "aaaaa"), true);
+	assert(matches("a*aaaa", "abaaaa"), true);
+	assert(matches("a*aaaa", "abbaaaa"), true);
+	assert(matches("?", "a"), true);
+	assert(matches("??", "aa"), true);
+	assert(matches("??", ""), false);
+	assert(matches("???", "aaa"), true);
+	assert(matches("???", "aa"), false);
+
+	assert(matches_dir("aa/*b/ccc", "aaa/bbb/ccc"), false);
+	assert(matches_dir("aaa/*b/ccc", "aaa/bbb/ccc"), true);
+	assert(matches_dir("aaa/*b/ccc", "aaa/bbb/bbb/ccc"), false);
+}
+*/
+
+function find(pattern: String): String[]
+{
+	return find(pattern, ".", null);
+}
+
+function find(pattern: String, dir: String): String[]
+{
+	return find(pattern, dir, null);
+}
+
+function find(pattern: String, dir: String, excludes: String[]): String[]
+{
+	var list = [];
+	if (!excludes) {
+		excludes = [];
+	}
+	find(pattern, Path(dir), excludes, list, "");
+	return list;
+}
+
+function @find(pattern: String, path: Path, excludes: String[], list: String[], prefix: String)
+{
+	foreach (var file in path.get_files()) {
+		var full_name = prefix+file.get_file_name();
+		var found = false;
+		foreach (var exclude in excludes) {
+			if (matches_dir(exclude, full_name)) {
+				found = true;
+				break;
+			}
+		}
+		if (found) {
+			continue;
+		}
+		if (file.is_directory()) {
+			find(pattern, file, excludes, list, full_name+"/");
+		}
+		else {
+			var name = file.get_file_name();
+			if (matches(pattern, name)) {
+				list[] = file.to_string();
+			}
+		}
+	}
+}
+
+function run(command: String or String[])
+{
+	if (is_string(command)) {
+		command = (command as String).split(' ', true);
+	}
+	if (Process::run(command) != 0) {
+		throw error("command '"+String::join(command, " ")+"' failed");
+	}
+}
+
+function run(command: String or String[], dir: String)
+{
+	if (is_string(command)) {
+		command = (command as String).split(' ', true);
+	}
+	if (Process::run(command, null, dir) != 0) {
+		throw error("command '"+String::join(command, " ")+"' failed");
+	}
+}
+
+function is_windows(): Boolean
+{
+	return get_fixbuild_current_target().starts_with("windows");
+}
+
+function is_linux(): Boolean
+{
+	var target = get_fixbuild_current_target();
+	if (target.starts_with("linux")) return true;
+	if (target.starts_with("raspi")) return true;
+	return false;
+}
+
+function is_macos(): Boolean
+{
+	return get_fixbuild_current_target() == "macos";
+}
+
+function is_haiku(): Boolean
+{
+	return get_fixbuild_current_target().starts_with("haiku");
+}
+
+function is_wasm(): Boolean
+{
+	return get_fixbuild_current_target() == "wasm";
+}
+
+function @get_binary_name(name: String, target: String): String
+{
+	if (!target) {
+		target = get_fixbuild_current_target();
+	}
+	if (target == "windows32" || target == "windows64") {
+		return name+".exe";
+	}
+	return name;
+}
+
+function @task_build()
+{
+	foreach (var name, values in get_builds()) {
+		values = clone(values);
+		values["targets"] = [get_fixbuild_current_target()];
+		build(values);
+	}
+}
+
+function @task_clean()
+{
+	foreach (var name, values in get_builds()) {
+		var binary = values["binary"];
+		var (r, e) = Path(get_binary_name(binary, null)).delete_file();
+		var targets = get_targets(values.get("targets", null));
+		if (targets.length != 1) {
+			foreach (var target in targets) {
+				var platform_binary = values.get("binary_"+target, null);
+				if (platform_binary) {
+					var (r2, e2) = Path(platform_binary).delete_file();
+				}
+				else {
+					var (r2, e2) = Path(get_binary_name(binary+"_"+target, target)).delete_file();
+				}
+			}
+		}
+	}
+}
+
+function @task_dist()
+{
+	foreach (var name, values in get_builds()) {
+		build(values);
+	}
+}
+
+function get_fixbuild_version(): String;
+function get_fixbuild_path(): String;
+function @get_fixbuild_targets(): String[];
+function @get_fixbuild_current_target(): String;

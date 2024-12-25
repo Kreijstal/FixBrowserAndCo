@@ -1,0 +1,119 @@
+#!/bin/bash
+set -e
+
+# Please do not strip the unofficial tag from the version either in a binary
+# or a source form if you redistribute it. Doing so would just lead to
+# an incompatibility and user confusion. Thank you.
+#
+# Replace the unofficial tag with your own branding if you have one, for example
+# Linux distributions can use their name or an abbreviation (in lowercase).
+
+VERSION=0.6-unofficial
+SRCS="fixbuild.c fixio.c fixtask.c fiximage.c fixnative.c fixutil.c"
+CFLAGS="-DFIXBUILD_VERSION=$VERSION -DFIXBUILD_BINCOMPAT -DFIXIO_SQLITE -Wall -O3 -Isqlite"
+WINDOWS_LIBS="-lws2_32 -lmswsock -lwinmm"
+LINUX_LIBS="-lm -lrt -lpthread -ldl"
+MACOS_LIBS="-lm"
+HAIKU_LIBS="-lm -lnetwork"
+
+HAIKU32_ROOT="/opt/haiku32"
+HAIKU32_HEADERS="$HAIKU32_ROOT/system/headers"
+HAIKU32_CFLAGS="-I$HAIKU32_HEADERS -I$HAIKU32_HEADERS/posix -I$HAIKU32_HEADERS/os -I$HAIKU32_HEADERS/os/support"
+HAIKU32_LIBS="-L$HAIKU32_ROOT/system/lib -B$HAIKU32_ROOT/system/lib"
+
+HAIKU64_ROOT="/opt/haiku64"
+HAIKU64_HEADERS="$HAIKU64_ROOT/system/headers"
+HAIKU64_CFLAGS="-I$HAIKU64_HEADERS -I$HAIKU64_HEADERS/posix -I$HAIKU64_HEADERS/os -I$HAIKU64_HEADERS/os/support"
+HAIKU64_LIBS="-L$HAIKU64_ROOT/system/lib -B$HAIKU64_ROOT/system/lib"
+
+RPI32_PREFIX="/opt/arm-bcm2708hardfp-linux-gnueabi/bin/arm-bcm2708hardfp-linux-gnueabi"
+RPI32_CFLAGS="-march=armv6 -mfloat-abi=hard -mfpu=vfp"
+
+WASM_CFLAGS="-D__wasi__ -Os -Iwasm-support --target=wasm32 -mcpu=mvp"
+WASM_LIBS="wasm-support.c -nostdlib -Wl,-z,stack-size=262144 -Wl,--no-entry -Wl,--export-table -Wl,--strip-all"
+
+echo -e "\nPacking data..."
+
+cp wasm.html bin/
+gcc -Wall -O0 -o fixembed fixembed.c -lm -lrt
+./fixembed -nc classes classes.h classes_script
+./fixembed -nc build build.h build_scripts
+./fixembed -bin common scripts.h common_scripts
+./fixembed -bin bin binaries.h exec_binaries
+./fixembed -bin icon icon.h icon_files
+sed -i -e 's/import \\"/import \\"build:/g' build.h
+
+echo -e "\n[ Windows 32bit ]\n"
+DIST="dist/fixscript-sdk-windows32-$VERSION"
+mkdir -p $DIST
+i686-w64-mingw32-gcc $CFLAGS -o $DIST/fixbuild.exe $SRCS sqlite/windows32/sqlite3.o $WINDOWS_LIBS
+i686-w64-mingw32-strip $DIST/fixbuild.exe
+chmod -x $DIST/fixbuild.exe
+
+echo -e "\n[ Windows 64bit ]\n"
+DIST="dist/fixscript-sdk-windows64-$VERSION"
+mkdir -p $DIST
+x86_64-w64-mingw32-gcc $CFLAGS -o $DIST/fixbuild.exe $SRCS sqlite/windows64/sqlite3.o $WINDOWS_LIBS
+x86_64-w64-mingw32-strip $DIST/fixbuild.exe
+chmod -x $DIST/fixbuild.exe
+
+echo -e "\n[ Linux 32bit ]\n"
+DIST="dist/fixscript-sdk-linux32-$VERSION"
+mkdir -p $DIST
+gcc -m32 -I/usr/i686-linux-gnu/include $CFLAGS -o $DIST/fixbuild $SRCS sqlite/linux32/sqlite3.o $LINUX_LIBS
+strip $DIST/fixbuild
+
+echo -e "\n[ Linux 64bit ]\n"
+DIST="dist/fixscript-sdk-linux64-$VERSION"
+mkdir -p $DIST
+gcc $CFLAGS -fno-optimize-strlen -o $DIST/fixbuild $SRCS sqlite/linux64/sqlite3.o $LINUX_LIBS
+strip $DIST/fixbuild
+
+echo -e "\n[ Mac OS ]\n"
+DIST="dist/fixscript-sdk-macos-$VERSION"
+mkdir -p $DIST
+/root/osxcross/target/bin/o64-clang $CFLAGS -o $DIST/fixbuild $SRCS sqlite/macos/sqlite3.o $MACOS_LIBS
+/root/osxcross/target/bin/x86_64-apple-darwin10-strip $DIST/fixbuild
+
+echo -e "\n[ Haiku 32bit ]\n"
+DIST="dist/fixscript-sdk-haiku32-$VERSION"
+mkdir -p $DIST
+$HAIKU32_ROOT/bin/i586-pc-haiku-gcc $CFLAGS $HAIKU32_CFLAGS -o $DIST/fixbuild $SRCS sqlite/haiku32/sqlite3.o $HAIKU_LIBS $HAIKU32_LIBS
+$HAIKU32_ROOT/bin/i586-pc-haiku-strip $DIST/fixbuild
+
+echo -e "\n[ Haiku 64bit ]\n"
+DIST="dist/fixscript-sdk-haiku64-$VERSION"
+mkdir -p $DIST
+$HAIKU64_ROOT/bin/x86_64-unknown-haiku-gcc $CFLAGS $HAIKU64_CFLAGS -o $DIST/fixbuild $SRCS sqlite/haiku64/sqlite3.o $HAIKU_LIBS $HAIKU64_LIBS
+$HAIKU64_ROOT/bin/x86_64-unknown-haiku-strip $DIST/fixbuild
+
+echo -e "\n[ Raspberry Pi 32bit ]\n"
+DIST="dist/fixscript-sdk-raspi32-$VERSION"
+mkdir -p $DIST
+$RPI32_PREFIX-gcc $CFLAGS $RPI32_CFLAGS -o $DIST/fixbuild $SRCS sqlite/raspi32/sqlite3.o $LINUX_LIBS
+$RPI32_PREFIX-strip $DIST/fixbuild
+
+echo -e "\n[ WebAssembly ]\n"
+DIST="dist/fixscript-sdk-wasm-$VERSION"
+mkdir -p $DIST
+chroot /bookworm /bin/bash -c "cd /root/fixbuild && clang-14 ${CFLAGS/-DFIXIO_SQLITE/} $WASM_CFLAGS -o $DIST/fixbuild.wasm $SRCS $WASM_LIBS"
+chmod -x "$DIST/fixbuild.wasm"
+
+echo -e "\nCreating ZIP files..."
+
+for i in dist/*; do
+	cp -R --preserve=mode dist-root/* $i/
+done
+
+rm -f *.zip
+cd dist
+for i in *; do
+	zip -r -8 -n "fixbuild:fixbuild.exe:fixbuild.wasm" ../$i.zip $i > /dev/null
+done
+for i in *; do
+	../shell/bindiff diff-fast ../fixscript-sdk-linux32-$VERSION.zip ../$i.zip ../$i.zip.bindiff
+	gzip -9 -n -f ../$i.zip.bindiff
+done
+cd ..
+
+echo -e "\nAll done!"

@@ -1,0 +1,5021 @@
+/*
+ * FixScript Classes v0.5 - http://www.fixscript.org/
+ * Copyright (c) 2019-2021 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+/*
+The processing is as lightweight as possible to make it reasonably fast for
+the interpreter. It uses these main techniques to achieve that:
+
+- uses macros instead of function calls for token parsing to minimize overhead
+- copies the tokens at bulk (in a deferred manner), individual token insertion
+  is done only where necessary
+- the parsing of expressions is converted to a loop instead of using traditional
+  multiple nested functions to handle the operator priorities
+- the expressions are parsed in descending order of the priorities and only
+  when the priority is increased it will do a recursion
+- the readibility is improved by using macros to organize the code
+- the irony is that the actual processing of macros for this file takes way more
+  time (unless preprocessed) than processing lot of classes, hopefully I will
+  improve the code to not use macros and/or make them (much) faster to apply
+*/
+
+use "macros";
+
+/*
+TODO:
+- add support for structs (packed data in array)
+- add support for enums
+*/
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	TYPE_DYNAMIC,
+	TYPE_VOID,
+	TYPE_INTEGER,
+	TYPE_FLOAT,
+	TYPE_BOOLEAN,
+	TYPE_STRING
+};
+
+const {
+	EXT_TYPE_CLASS,
+	EXT_TYPE_ARRAY,
+	EXT_TYPE_HASH
+};
+
+const {
+	@CLASS_ext_type,
+	@CLASS_name,
+	@CLASS_compat_name,
+	@CLASS_method_prefix,
+	@CLASS_private,
+	@CLASS_parent,
+	@CLASS_fields,
+	@CLASS_functions,
+	@CLASS_virtual,
+	@CLASS_supers,
+	@CLASS_generate_to_string,
+	@CLASS_SIZE
+};
+
+const {
+	@ARRAY_ext_type,
+	@ARRAY_base_type,
+	@ARRAY_SIZE
+};
+
+const {
+	@HASH_ext_type,
+	@HASH_base_type,
+	@HASH_index_type,
+	@HASH_SIZE
+};
+
+const {
+	@FIELD_name,
+	@FIELD_compat_name,
+	@FIELD_private,
+	@FIELD_type,
+	@FIELD_SIZE
+};
+
+const {
+	@FUNC_name,
+	@FUNC_flags,
+	@FUNC_params,
+	@FUNC_return_type,
+	@FUNC_SIZE
+};
+
+const {
+	@LOCAL_name,
+	@LOCAL_private,
+	@LOCAL_type,
+	@LOCAL_SIZE
+};
+
+const {
+	@FUNC_FLAG_PRIVATE     = 0x01,
+	@FUNC_FLAG_STATIC      = 0x02,
+	@FUNC_FLAG_VIRTUAL     = 0x04,
+	@FUNC_FLAG_OVERRIDE    = 0x08,
+	@FUNC_FLAG_ABSTRACT    = 0x10,
+	@FUNC_FLAG_CONSTRUCTOR = 0x20
+};
+
+const {
+	@GEN_result_tokens,
+	@GEN_last_result_pos,
+	@GEN_func_tokens,
+	@GEN_last_func_pos,
+	@GEN_func_offsets_replacements,
+	@GEN_const_tokens,
+	@GEN_first_const,
+	@GEN_vars,
+	@GEN_var_stack,
+	@GEN_ret_type,
+	@GEN_cur_func,
+	@GEN_consts,
+	@GEN_cur_class,
+	@GEN_parse_classes,
+	@GEN_parse_funcs,
+	@GEN_fname,
+	@GEN_imported_classes,
+	@GEN_imported_functions,
+	@GEN_classes,
+	@GEN_functions,
+	@GEN_locals,
+	@GEN_custom_ctx,
+	@GEN_import_aliases,
+	@GEN_SIZE
+};
+
+const {
+	@PRIO_LOGICAL        = 0x10,
+	@PRIO_COMPARISON     = 0x21,
+	@PRIO_EQUALITY       = 0x22,
+	@PRIO_BITWISE        = 0x30,
+	@PRIO_ADDITIVE_ADD   = 0x41,
+	@PRIO_ADDITIVE_SUB   = 0x42,
+	@PRIO_MULTIPLICATIVE = 0x50,
+	@PRIO_PRIMARY        = 0x60
+};
+
+const {
+	@ET_HASH,
+	@ET_STRING,
+	@ET_FLOAT,
+	@ET_BLOCK
+};
+
+const {
+	@BT_NORMAL,
+	@BT_SINGLE,
+	@BT_EXPR
+};
+
+const {
+	@FO_ADD_SUB,
+	@FO_MUL_DIV
+};
+
+const {
+	@CTX_function_calls,
+	@CTX_function_calls_any,
+	@CTX_postprocess,
+	@CTX_gen,
+	@CTX_SIZE
+};
+
+const {
+	@FUNC_CALL_get_types_func,
+	@FUNC_CALL_adjust_call_func,
+	@FUNC_CALL_data,
+	@FUNC_CALL_SIZE
+};
+
+const {
+	@IMPORT_ALIAS_consts,
+	@IMPORT_ALIAS_locals,
+	@IMPORT_ALIAS_funcs,
+	@IMPORT_ALIAS_SIZE
+};
+
+const @class_ClassContext = "";
+const @class_ClassType = "";
+const @static_ClassContext_get_1 = "(String): ClassContext";
+const @method_ClassContext_register_function_call_5 = "(String, Dynamic, Dynamic, Dynamic): Void";
+const @method_ClassContext_register_postprocess_3 = "(Dynamic, Dynamic): Void";
+const @method_ClassContext_get_class_2 = "(String): ClassType";
+const @method_ClassContext_get_const_type_2 = "(String): ClassType";
+const @method_ClassContext_get_local_type_2 = "(String): ClassType";
+const @method_ClassContext_get_variable_type_2 = "(String): ClassType";
+const @static_ClassType_create_array_1 = "(ClassType): ClassType";
+const @static_ClassType_create_hash_2 = "(ClassType, ClassType): ClassType";
+const @method_ClassType_get_class_name_1 = "(): String";
+const @method_ClassType_get_parent_class_1 = "(): ClassType";
+const @method_ClassType_get_base_1 = "(): ClassType";
+const @method_ClassType_get_index_1 = "(): ClassType";
+const @method_ClassType_to_string_1 = "(): String";
+const @static_ClassType_dump_list_1 = "(ClassType[]): Void";
+
+var @classes, @functions, @locals;
+var @builtin_functions;
+var @tmp_cnt;
+var @contexts;
+
+var @initialized;
+var @has_object_script;
+var @fixide;
+
+// >>> API ---------------------------------------------------------------------
+
+function class_context_get(fname)
+{
+	if (!contexts) {
+		contexts = {};
+	}
+	var ctx = hash_get(contexts, fname, null);
+	if (!ctx) {
+		ctx = object_create(CTX_SIZE);
+		ctx->CTX_function_calls = {};
+		ctx->CTX_postprocess = [];
+		contexts{fname} = ctx;
+	}
+	return ctx;
+}
+
+// get_types(data, name, num_params, line)
+// adjust_call(data, name, types, tokens, src, start, end)
+function class_context_register_function_call(ctx, name, get_types_func, adjust_call_func, data)
+{
+	var list, register_to_all = false;
+
+	if (name) {
+		list = hash_get(ctx->CTX_function_calls, name, null);
+		if (!list) {
+			var function_calls_any = ctx->CTX_function_calls_any;
+			list = function_calls_any? clone(function_calls_any) : [];
+			ctx->CTX_function_calls{name} = list;
+		}
+	}
+	else {
+		list = ctx->CTX_function_calls_any;
+		if (!list) {
+			list = [];
+			ctx->CTX_function_calls_any = list;
+		}
+		register_to_all = true;
+	}
+
+	list[] = get_types_func;
+	list[] = adjust_call_func;
+	list[] = data;
+	
+	if (register_to_all) {
+		var function_calls = ctx->CTX_function_calls;
+		for (var i=0; i<length(function_calls); i++) {
+			var (k, v) = hash_entry(function_calls, i);
+			v[] = get_types_func;
+			v[] = adjust_call_func;
+			v[] = data;
+		}
+	}
+}
+
+// postprocess(data, fname, tokens, src)
+function class_context_register_postprocess(ctx, postprocess_func, data)
+{
+	ctx->CTX_postprocess[] = postprocess_func;
+	ctx->CTX_postprocess[] = data;
+}
+
+function class_context_get_class(ctx, name)
+{
+	return find_class(ctx->CTX_gen, name);
+}
+
+function class_context_get_const_type(ctx, name)
+{
+	return hash_get(ctx->CTX_gen->GEN_consts, name, -1);
+}
+
+function class_context_get_local_type(ctx, name)
+{
+	var local = hash_get(ctx->CTX_gen->GEN_locals, name, null);
+	if (local) {
+		return local->LOCAL_type;
+	}
+	return -1;
+}
+
+function class_context_get_variable_type(ctx, name)
+{
+	return hash_get(ctx->CTX_gen->GEN_vars, name, -1);
+}
+
+function class_type_create_array(base_type)
+{
+	return create_array_type(base_type);
+}
+
+function class_type_create_hash(base_type, index_type)
+{
+	return create_hash_type(base_type, index_type);
+}
+
+function class_type_get_class_name(type)
+{
+	return type->CLASS_name;
+}
+
+function class_type_get_parent_class(type)
+{
+	return type->CLASS_parent;
+}
+
+function class_type_get_base(type)
+{
+	switch (type[0]) {
+		case EXT_TYPE_ARRAY: return type->ARRAY_base_type;
+		case EXT_TYPE_HASH: return type->HASH_base_type;
+	}
+	return 0, error("bad type");
+}
+
+function class_type_get_index(type)
+{
+	switch (type[0]) {
+		case EXT_TYPE_HASH: return type->HASH_index_type;
+	}
+	return 0, error("bad type");
+}
+
+function class_type_to_string(type)
+{
+	return get_type_name(type);
+}
+
+function class_type_dump_list(list)
+{
+	var s = {"[\n"};
+	for (var i=0; i<length(list); i++) {
+		array_append(s, "  \"");
+		array_append(s, get_type_name(list[i]));
+		s[] = '"';
+		if (i < length(list)-1) {
+			s[] = ',';
+		}
+		s[] = '\n';
+	}
+	s[] = ']';
+	log(s);
+}
+
+// <<< API ---------------------------------------------------------------------
+
+macro @token_list(list) { list#_tokens, list#_src, list#_off }
+
+macro @token_list_declare(&list, tokens, src) { var list#_tokens = tokens, list#_src = src, list#_off = -4; }
+macro @token_list_reset(list) { list#_off = -4; }
+macro @token_next(list) { ((list#_off += TOK_SIZE) < length(list#_tokens)) }
+macro @token_next_nocheck(list) { list#_off += TOK_SIZE; }
+macro @token_back(list) { list#_off -= TOK_SIZE; }
+
+macro @token_get_pos(list) { (list#_off) }
+macro @token_set_pos(list, off) { list#_off = off; }
+
+macro @token_get_type(list) { (list#_tokens[list#_off]) }
+macro @token_set_type(list, type) { list#_tokens[list#_off] = type; }
+macro @token_get_offset(list) { (list#_tokens[list#_off+TOK_off]) }
+macro @token_set_offset(list, off) { list#_tokens[list#_off+TOK_off] = off; }
+macro @token_get_length(list) { (list#_tokens[list#_off+TOK_len]) }
+macro @token_set_length(list, len) { list#_tokens[list#_off+TOK_len] = len; }
+macro @token_get_line(list) { (list#_tokens[list#_off+TOK_line]) }
+macro @token_set_line(list, line) { list#_tokens[list#_off+TOK_line] = line; }
+macro @token_get_symbol1(list) { (list#_src[list#_tokens[list#_off+TOK_off]]) }
+macro @token_get_value(list) { array_extract(list#_src, list#_tokens[list#_off+TOK_off], list#_tokens[list#_off+TOK_len]) }
+macro @token_has_value(list, value) { (list#_tokens[list#_off+TOK_len] === length(value) && token_get_value(list) == (value)) }
+macro @token_is_ident(list, value) { (list#_tokens[list#_off] === TOK_IDENT && token_has_value(list, value)) }
+macro @token_is_symbol(list, c1) { (list#_tokens[list#_off] === (c1)) }
+macro @token_get_string_literal(list) { token_parse_string(list#_src, list#_tokens[list#_off+TOK_off], list#_tokens[list#_off+TOK_len]) }
+macro @token_get_number_literal(list) { string_parse_int(token_get_value(list)) }
+
+macro @token_set_do(list, line) { token_set(list, KW_DO, "do", line); }
+macro @token_set_for(list, line) { token_set(list, KW_FOR, "for", line); }
+macro @token_set_var(list, line) { token_set(list, KW_VAR, "var", line); }
+macro @token_set_use(list, line) { token_set(list, KW_USE, "use", line); }
+macro @token_set_else(list, line) { token_set(list, KW_ELSE, "else", line); }
+macro @token_set_case(list, line) { token_set(list, KW_CASE, "case", line); }
+macro @token_set_while(list, line) { token_set(list, KW_WHILE, "while", line); }
+macro @token_set_break(list, line) { token_set(list, KW_BREAK, "break", line); }
+macro @token_set_const(list, line) { token_set(list, KW_CONST, "const", line); }
+macro @token_set_return(list, line) { token_set(list, KW_RETURN, "return", line); }
+macro @token_set_import(list, line) { token_set(list, KW_IMPORT, "import", line); }
+macro @token_set_switch(list, line) { token_set(list, KW_SWITCH, "switch", line); }
+macro @token_set_default(list, line) { token_set(list, KW_DEFAULT, "default", line); }
+macro @token_set_function(list, line) { token_set(list, KW_FUNCTION, "function", line); }
+macro @token_set_continue(list, line) { token_set(list, KW_CONTINUE, "continue", line); }
+
+macro @token_set(list, type, value, line)
+{
+	list#_tokens[list#_off] = type;
+	list#_tokens[list#_off+TOK_off] = length(list#_src);
+	list#_tokens[list#_off+TOK_len] = length(value);
+	list#_tokens[list#_off+TOK_line] = line;
+	_tokens_array_append(list#_src, value);
+}
+
+macro @token_add_do(list, line) { token_add(list, KW_DO, "do", line); }
+macro @token_add_for(list, line) { token_add(list, KW_FOR, "for", line); }
+macro @token_add_var(list, line) { token_add(list, KW_VAR, "var", line); }
+macro @token_add_use(list, line) { token_add(list, KW_USE, "use", line); }
+macro @token_add_else(list, line) { token_add(list, KW_ELSE, "else", line); }
+macro @token_add_case(list, line) { token_add(list, KW_CASE, "case", line); }
+macro @token_add_while(list, line) { token_add(list, KW_WHILE, "while", line); }
+macro @token_add_break(list, line) { token_add(list, KW_BREAK, "break", line); }
+macro @token_add_const(list, line) { token_add(list, KW_CONST, "const", line); }
+macro @token_add_return(list, line) { token_add(list, KW_RETURN, "return", line); }
+macro @token_add_import(list, line) { token_add(list, KW_IMPORT, "import", line); }
+macro @token_add_switch(list, line) { token_add(list, KW_SWITCH, "switch", line); }
+macro @token_add_default(list, line) { token_add(list, KW_DEFAULT, "default", line); }
+macro @token_add_function(list, line) { token_add(list, KW_FUNCTION, "function", line); }
+macro @token_add_continue(list, line) { token_add(list, KW_CONTINUE, "continue", line); }
+
+macro @token_add(list, type, value, line)
+{
+	list#_tokens[] = type;
+	list#_tokens[] = length(list#_src);
+	list#_tokens[] = length(value);
+	list#_tokens[] = line;
+	_tokens_array_append(list#_src, value);
+}
+
+macro @token_add_complex(list, type, value, line)
+{
+	var $value = value;
+	list#_tokens[] = type;
+	list#_tokens[] = length(list#_src);
+	list#_tokens[] = length($value);
+	list#_tokens[] = line;
+	_tokens_array_append(list#_src, $value);
+}
+
+macro @token_add_copy(list, src_list)
+{
+	var $off = src_list#_off;
+	list#_tokens[] = src_list#_tokens[$off++];
+	list#_tokens[] = src_list#_tokens[$off++];
+	list#_tokens[] = src_list#_tokens[$off++];
+	list#_tokens[] = src_list#_tokens[$off];
+}
+
+macro @token_add_copy_and_advance(list, src_list)
+{
+	list#_tokens[] = src_list#_tokens[src_list#_off++];
+	list#_tokens[] = src_list#_tokens[src_list#_off++];
+	list#_tokens[] = src_list#_tokens[src_list#_off++];
+	list#_tokens[] = src_list#_tokens[src_list#_off++];
+}
+
+macro @token_add_copy_full(list, src_list)
+{
+	token_add_copy(list, src_list);
+	var $off = length(list#_tokens) - TOK_SIZE;
+	tokens[$off+TOK_off] = length(list#_src);
+	_tokens_array_append(list#_src, src_list#_src, src_list#_tokens[src_list#_off+TOK_off], src_list#_tokens[src_list#_off+TOK_len]);
+}
+
+macro @_tokens_array_append(arr, other)
+{
+	var $off = length(arr);
+	array_set_length(arr, $off + length(other));
+	array_copy(arr, $off, other, 0, length(other));
+}
+
+macro @_tokens_array_insert_range(arr, idx, cnt)
+{
+	array_set_length(arr, length(arr) + cnt);
+	array_copy(arr, idx+cnt, arr, idx, length(arr) - idx);
+}
+
+function @token_type_to_string(type)
+{
+	switch (type) {
+		case TOK_IDENT:        return "TOK_IDENT";
+		case TOK_FUNC_REF:     return "TOK_FUNC_REF";
+		case TOK_NUMBER:       return "TOK_NUMBER";
+		case TOK_HEX_NUMBER:   return "TOK_HEX_NUMBER";
+		case TOK_FLOAT_NUMBER: return "TOK_FLOAT_NUMBER";
+		case TOK_CHAR:         return "TOK_CHAR";
+		case TOK_STRING:       return "TOK_STRING";
+		case TOK_UNKNOWN:      return "TOK_UNKNOWN";
+
+		case KW_DO:       return "KW_DO";
+		case KW_IF:       return "KW_IF";
+		case KW_FOR:      return "KW_FOR";
+		case KW_VAR:      return "KW_VAR";
+		case KW_USE:      return "KW_USE";
+		case KW_ELSE:     return "KW_ELSE";
+		case KW_CASE:     return "KW_CASE";
+		case KW_WHILE:    return "KW_WHILE";
+		case KW_BREAK:    return "KW_BREAK";
+		case KW_CONST:    return "KW_CONST";
+		case KW_RETURN:   return "KW_RETURN";
+		case KW_IMPORT:   return "KW_IMPORT";
+		case KW_SWITCH:   return "KW_SWITCH";
+		case KW_DEFAULT:  return "KW_DEFAULT";
+		case KW_FUNCTION: return "KW_FUNCTION";
+		case KW_CONTINUE: return "KW_CONTINUE";
+	}
+
+	var c0 = type & 0xFF;
+	var c1 = (type >>> 8) & 0xFF;
+	var c2 = (type >>> 16) & 0xFF;
+	var c3 = (type >>> 24) & 0xFF;
+	var s = {""};
+	s[] = c0;
+	if (c1) {
+		s[] = c1;
+		if (c2) {
+			s[] = c2;
+			if (c3) {
+				s[] = c3;
+			}
+		}
+	}
+	return s;
+}
+
+function @_tokens_get_desc(type)
+{
+	switch (type) {
+		case TOK_IDENT:        return "identifier";
+		case TOK_FUNC_REF:     return "function reference";
+		case TOK_NUMBER:       return "number literal";
+		case TOK_HEX_NUMBER:   return "hex number literal";
+		case TOK_FLOAT_NUMBER: return "float number literal";
+		case TOK_CHAR:         return "character literal";
+		case TOK_STRING:       return "string literal";
+		case TOK_UNKNOWN:      return "unknown";
+
+		case KW_DO:       return "keyword 'do'";
+		case KW_IF:       return "keyword 'if'";
+		case KW_FOR:      return "keyword 'for'";
+		case KW_VAR:      return "keyword 'var'";
+		case KW_USE:      return "keyword 'use'";
+		case KW_ELSE:     return "keyword 'else'";
+		case KW_CASE:     return "keyword 'case'";
+		case KW_WHILE:    return "keyword 'while'";
+		case KW_BREAK:    return "keyword 'break'";
+		case KW_CONST:    return "keyword 'const'";
+		case KW_RETURN:   return "keyword 'return'";
+		case KW_IMPORT:   return "keyword 'import'";
+		case KW_SWITCH:   return "keyword 'switch'";
+		case KW_DEFAULT:  return "keyword 'default'";
+		case KW_FUNCTION: return "keyword 'function'";
+		case KW_CONTINUE: return "keyword 'continue'";
+	}
+	return {"symbol '", token_type_to_string(type), "'"};
+}
+
+function @_tokens_char(c)
+{
+	var s = {" "};
+	s[0] = c;
+	return s;
+}
+
+macro @token_expect_next(list)
+{
+	if (!token_next(list)) {
+		return 0, error("unexpected end of file");
+	}
+}
+
+macro @token_expect_type(list, type)
+{
+	if (!token_next(list)) {
+		return 0, error("unexpected end of file");
+	}
+	if (list#_tokens[list#_off] !== type) {
+		return 0, error({script_line(list#_tokens[list#_off+TOK_line]), ": expected ", _tokens_get_desc(type)});
+	}
+}
+
+macro @token_expect_symbol(list, c1)
+{
+	if (!token_next(list)) {
+		return 0, error("unexpected end of file");
+	}
+	if (list#_tokens[list#_off] !== c1) {
+		return 0, error({script_line(list#_tokens[list#_off+TOK_line]), ": expected symbol '", _tokens_char(c1), "'"});
+	}
+}
+
+macro @token_expect_expression(list)
+{
+	var $level = 0;
+	list#_off += TOK_SIZE;
+	for (; list#_off < length(list#_tokens); list#_off += TOK_SIZE) {
+		switch (list#_tokens[list#_off]) {
+			case '(', '{', '[':
+				$level++;
+				continue;
+			case ')', '}', ']':
+				if (!$level) break;
+				$level--;
+				continue;
+			case ',', ';':
+				if (!$level) break;
+				continue;
+			default:
+				continue;
+		}
+		break;
+	}
+	list#_off -= TOK_SIZE;
+}
+
+macro @token_expect_statement(list)
+{
+	token_expect_next(list);
+	if (token_get_type(list) === '{') {
+		for (;;) {
+			token_expect_expression(list);
+			token_expect_next(list);
+			if (token_is_symbol(list, '}')) break;
+			token_back(list);
+		}
+		token_expect_symbol(list, '}');
+	}
+	else {
+		token_expect_expression(list);
+		token_expect_symbol(list, ';');
+	}
+}
+
+macro @token_dump(list)
+{
+	log({"type=", token_type_to_string(token_get_type(list)), " value='", token_get_value(list), "' line=", token_get_line(list)});
+}
+
+macro @token_list_dump(list) { _token_list_dump(list#_tokens, list#_src); }
+
+function @_token_list_dump(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		var len = length(s);
+		array_set_length(s, len + tokens[i+TOK_len]);
+		array_copy(s, len, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+macro @_copy_tokens(name, gen, list)
+{
+	var $tokens = gen->GEN_#name#_tokens;
+	var $off = length($tokens);
+	var $cnt = list#_off - gen->GEN_last_#name#_pos;
+	array_set_length($tokens, $off + $cnt);
+	array_copy($tokens, $off, list#_tokens, gen->GEN_last_#name#_pos, $cnt);
+	gen->GEN_last_#name#_pos = list#_off;
+}
+
+macro @_insert_tokens(name, gen, list, off, cnt, &tokens, &pos)
+{
+	var tokens = gen->GEN_#name#_tokens;
+	var pos = length(tokens) - TOK_SIZE;
+	var $cmp_off = off >= 0? list#_tokens[off+TOK_off] : tokens[-off+TOK_off];
+	while (tokens[pos+TOK_off] !== $cmp_off) {
+		pos -= TOK_SIZE;
+	}
+	pos += TOK_SIZE;
+	var $off = length(tokens);
+	var $cnt = (cnt) * TOK_SIZE;
+	array_set_length(tokens, $off+$cnt);
+	array_copy(tokens, pos+$cnt, tokens, pos, $off-pos);
+}
+
+macro @insert_token(tokens, pos, type, off, len, line)
+{
+	tokens[pos++] = type;
+	tokens[pos++] = off;
+	tokens[pos++] = len;
+	tokens[pos++] = line;
+}
+
+macro @append_token(tokens, type, off, len, line)
+{
+	tokens[] = type;
+	tokens[] = off;
+	tokens[] = len;
+	tokens[] = line;
+}
+
+macro @append_source(src, content, &off)
+{
+	var off = length(src);
+	array_set_length(src, off + length(content));
+	array_copy(src, off, content, 0, length(content));
+}
+
+macro @_set_copy_start(name, gen, list)
+{
+	gen->GEN_last_#name#_pos = list#_off;
+}
+
+macro @copy_result_tokens(gen, list) { _copy_tokens(result, gen, list); }
+macro @set_result_copy_start(gen, list) { _set_copy_start(result, gen, list); }
+
+macro @copy_func_tokens(gen, list) { _copy_tokens(func, gen, list); }
+macro @insert_func_tokens(gen, list, off, cnt, &tokens, &pos) { _insert_tokens(func, gen, list, off, cnt, &tokens, &pos); }
+macro @set_func_copy_start(gen, list) { _set_copy_start(func, gen, list); }
+
+function @replace_array(dest, src)
+{
+	array_set_length(dest, length(src));
+	array_copy(dest, 0, src, 0, length(src));
+}
+
+function process_tokens(fname, tokens, src)
+{
+	if (!initialized) {
+		initialized = true;
+		classes = {};
+		functions = {};
+		locals = {};
+		init_builtin_functions();
+		var (r1, e1) = script_query("object", null, null, null, null);
+		var (r2, e2) = @fixide_is_present();
+		has_object_script = !e1;
+		fixide = r2;
+	}
+
+	token_list_declare(&list, tokens, src);
+	if (has_object_script && fname != "object.fix") {
+		token_expect_expression(list);
+		token_expect_symbol(list, ';');
+
+		while (token_next(list)) {
+			if (token_get_type(list) == KW_USE) {
+				token_expect_type(list, TOK_STRING);
+				for (;;) {
+					token_expect_expression(list);
+					if (!token_next(list)) break;
+					if (token_is_symbol(list, ';')) {
+						token_back(list);
+						break;
+					}
+				}
+				token_expect_symbol(list, ';');
+				continue;
+			}
+			break;
+		}
+		if (has_object_script) {
+			array_insert_array(tokens, token_get_pos(list), tokens_parse([], src, "import \"object\";", token_get_line(list)));
+			token_back(list);
+		}
+	}
+
+	var gen = object_create(GEN_SIZE);
+	gen->GEN_result_tokens = [];
+	gen->GEN_func_tokens = [];
+	gen->GEN_func_offsets_replacements = {};
+	gen->GEN_const_tokens = [];
+	gen->GEN_vars = {};
+	gen->GEN_var_stack = [];
+	gen->GEN_consts = {};
+	gen->GEN_parse_classes = [];
+	gen->GEN_parse_funcs = [];
+	gen->GEN_fname = fname;
+	gen->GEN_imported_classes = {};
+	gen->GEN_imported_functions = {};
+	gen->GEN_classes = {};
+	gen->GEN_functions = {};
+	if (contexts) {
+		var ctx = hash_get(contexts, fname, null);
+		if (ctx) {
+			hash_remove(contexts, fname);
+			ctx->CTX_gen = gen;
+			gen->GEN_custom_ctx = ctx;
+		}
+	}
+	classes{fname} = gen->GEN_classes;
+	functions{fname} = gen->GEN_functions;
+
+	var parse_locals = null;
+
+	//heap_collect();
+	//perf_reset();
+	while (token_next(list)) {
+		switch (token_get_type(list)) {
+			case KW_IMPORT: {
+				token_expect_type(list, TOK_STRING);
+				var script_name = token_parse_string(token_get_value(list));
+				var script_alias = null;
+				token_expect_next(list);
+				if (token_is_symbol(list, ':')) {
+					token_expect_type(list, TOK_IDENT);
+					script_alias = token_get_value(list);
+				}
+				else {
+					token_back(list);
+				}
+				var import_fname = {""};
+				var consts = {};
+				if (script_alias) {
+					var locals = [];
+					var funcs = [];
+					script_query(script_name, import_fname, consts, locals, funcs);
+					var consts_map = {};
+					for (var i=0; i<length(consts); i++) {
+						var (k, v) = hash_entry(consts, i);
+						if (k[0] == '@') continue;
+						if (is_array(v)) {
+							v = v[0];
+						}
+						var type = TYPE_DYNAMIC;
+						if (is_int(v)) {
+							type = TYPE_INTEGER;
+						}
+						else if (is_float(v)) {
+							type = TYPE_FLOAT;
+						}
+						else if (is_string(v)) {
+							type = TYPE_STRING;
+						}
+						consts_map{k} = type;
+					}
+					var locals_set = {};
+					for (var i=0; i<length(locals); i++) {
+						locals_set{locals[i]} = true;
+					}
+					var funcs_set = {};
+					for (var i=0; i<length(funcs); i++) {
+						var name = funcs[i];
+						funcs_set{name} = true;
+						name = {name};
+						for (var j=length(name)-1; j>=0; j--) {
+							if (name[j] == '#') {
+								array_set_length(name, j);
+								break;
+							}
+						}
+						funcs_set{name} = true;
+					}
+					var ia = object_create(IMPORT_ALIAS_SIZE);
+					ia->IMPORT_ALIAS_consts = consts_map;
+					ia->IMPORT_ALIAS_locals = locals_set;
+					ia->IMPORT_ALIAS_funcs = funcs_set;
+					if (!gen->GEN_import_aliases) {
+						gen->GEN_import_aliases = {};
+					}
+					gen->GEN_import_aliases{script_alias} = ia;
+				}
+				else {
+					script_query(script_name, import_fname, consts, null, null);
+				}
+				var import_classes = hash_get(classes, import_fname, null);
+				if (import_classes) {
+					for (var i=0; i<length(import_classes); i++) {
+						var (k, v) = hash_entry(import_classes, i);
+						if (!v->CLASS_private && !hash_contains(gen->GEN_imported_classes, k)) {
+							gen->GEN_imported_classes{k} = v;
+						}
+					}
+					for (var i=0; i<length(consts); i++) {
+						var (k, v) = hash_entry(consts, i);
+						if (k[0] == '@') continue;
+						if (!hash_contains(gen->GEN_consts, k)) {
+							if (is_array(v)) {
+								v = v[0];
+							}
+							gen->GEN_consts{k} = is_string(v)? TYPE_STRING : is_float(v)? TYPE_FLOAT : TYPE_INTEGER;
+						}
+					}
+				}
+				else {
+					var class_attribs = null;
+					var funcs = null;
+					for (var i=0; i<length(consts); i++) {
+						var (k, v) = hash_entry(consts, i);
+						if (k[0] == '@') {
+							if (length(k) > 7 && k[1] == 'c' && k[2] == 'l' && k[3] == 'a' && k[4] == 's' && k[5] == 's' && k[6] == '_') {
+								var cls_name = array_extract(k, 7, length(k)-7);
+								class_attribs = parse_class_attrib(gen, import_fname, cls_name, v, class_attribs);
+							}
+							if (length(k) > 8 && k[1] == 'g' && k[2] == 'l' && k[3] == 'o' && k[4] == 'b' && k[5] == 'a' && k[6] == 'l' && k[7] == '_') {
+								var func_name = array_extract(k, 8, length(k)-8);
+								for (var j=length(func_name)-1; j>=0; j--) {
+									if (func_name[j] == '_') {
+										func_name[j] = '#';
+										break;
+									}
+								}
+								if (!funcs) {
+									funcs = [];
+									script_query(script_name, null, null, null, funcs);
+								}
+								parse_method_attrib(gen, null, func_name, v, null, true, funcs);
+							}
+							continue;
+						}
+						if (!hash_contains(gen->GEN_consts, k)) {
+							if (is_array(v)) {
+								v = v[0];
+							}
+							gen->GEN_consts{k} = is_string(v)? TYPE_STRING : is_float(v)? TYPE_FLOAT : TYPE_INTEGER;
+						}
+					}
+					if (class_attribs) {
+						if (!funcs) {
+							funcs = [];
+							script_query(script_name, null, null, null, funcs);
+						}
+						class_attribs = finish_class_attribs(gen, class_attribs, consts, funcs);
+						for (var i=0; i<length(consts); i++) {
+							var (k, v) = hash_entry(consts, i);
+							if (k[0] == '@') {
+								if (length(k) > 7 && k[1] == 'f' && k[2] == 'i' && k[3] == 'e' && k[4] == 'l' && k[5] == 'd' && k[6] == '_') {
+									var cls_name = null;
+									var field_name = array_extract(k, 7, length(k)-7);
+									for (var j=0; j<length(class_attribs); j++) {
+										var (name, map) = hash_entry(class_attribs, j);
+										if (length(name)+1 < length(field_name)) {
+											if (array_extract(field_name, 0, length(name)) == name && field_name[length(name)] == '_') {
+												cls_name = name;
+												array_remove(field_name, 0, length(name)+1);
+												break;
+											}
+										}
+									}
+									if (cls_name) {
+										parse_field_attrib(gen, cls_name, field_name, v, class_attribs);
+									}
+								}
+								else if (length(k) > 8 && ((k[1] == 'm' && k[2] == 'e' && k[3] == 't' && k[4] == 'h' && k[5] == 'o' && k[6] == 'd' && k[7] == '_') || (k[1] == 's' && k[2] == 't' && k[3] == 'a' && k[4] == 't' && k[5] == 'i' && k[6] == 'c' && k[7] == '_'))) {
+									var is_static = (k[1] == 's');
+									var cls_name = null;
+									var method_name = array_extract(k, 8, length(k)-8);
+									for (var j=0; j<length(class_attribs); j++) {
+										var (name, map) = hash_entry(class_attribs, j);
+										if (length(name)+1 < length(method_name)) {
+											if (array_extract(method_name, 0, length(name)) == name && method_name[length(name)] == '_') {
+												cls_name = name;
+												array_remove(method_name, 0, length(name)+1);
+												break;
+											}
+										}
+									}
+									if (cls_name) {
+										for (var j=length(method_name)-1; j>=0; j--) {
+											if (method_name[j] == '_') {
+												method_name[j] = '#';
+												break;
+											}
+										}
+										parse_method_attrib(gen, cls_name, method_name, v, class_attribs, is_static, null);
+									}
+								}
+							}
+						}
+					}
+				}
+				var import_functions = hash_get(functions, import_fname, null);
+				if (import_functions) {
+					for (var i=0; i<length(import_functions); i++) {
+						var (k, v) = hash_entry(import_functions, i);
+						if ((v->FUNC_flags & FUNC_FLAG_PRIVATE == 0) && !hash_contains(gen->GEN_imported_functions, k)) {
+							gen->GEN_imported_functions{k} = v;
+						}
+					}
+				}
+				var import_locals = hash_get(locals, import_fname, null);
+				if (import_locals) {
+					for (var i=0; i<length(import_locals); i++) {
+						var (k, v) = hash_entry(import_locals, i);
+						if (!v->LOCAL_private) {
+							if (!gen->GEN_locals) {
+								gen->GEN_locals = {};
+							}
+							if (!hash_contains(gen->GEN_locals, k)) {
+								gen->GEN_locals{k} = v;
+							}
+						}
+					}
+				}
+				break;
+			}
+
+			case KW_CONST: {
+				token_expect_next(list);
+				if (token_is_symbol(list, '@')) {
+					token_expect_next(list);
+				}
+				if (token_get_type(list) == TOK_IDENT) {
+					var name = token_get_value(list);
+					token_expect_symbol(list, '=');
+					token_expect_next(list);
+					if (token_get_type(list) == TOK_IDENT) {
+						var alias = token_get_value(list);
+						token_expect_next(list);
+						if (token_is_symbol(list, ':')) {
+							var ia = gen->GEN_import_aliases? hash_get(gen->GEN_import_aliases, alias, null) : null;
+							if (!ia) {
+								return 0, error({script_line(token_get_line(list)), ": unknown import alias"});
+							}
+							token_expect_type(list, TOK_IDENT);
+							var type = hash_get(ia->IMPORT_ALIAS_consts, token_get_value(list), -1);
+							if (type == -1) {
+								return 0, error({script_line(token_get_line(list)), ": unknown constant name"});
+							}
+							gen->GEN_consts{name} = type;
+						}
+						else {
+							token_back(list);
+							var type = hash_get(gen->GEN_consts, token_get_value(list), -1);
+							if (type == -1) {
+								return 0, error({script_line(token_get_line(list)), ": unknown constant name"});
+							}
+							gen->GEN_consts{name} = type;
+						}
+					}
+					else if (token_get_type(list) == TOK_STRING) {
+						gen->GEN_consts{name} = TYPE_STRING;
+					}
+					else if (token_get_type(list) == TOK_FLOAT_NUMBER) {
+						gen->GEN_consts{name} = TYPE_FLOAT;
+					}
+					else {
+						gen->GEN_consts{name} = TYPE_INTEGER;
+					}
+				}
+				else if (token_is_symbol(list, '{')) {
+					for (;;) {
+						token_expect_next(list);
+						if (!token_is_symbol(list, '@')) {
+							token_back(list);
+						}
+						token_expect_type(list, TOK_IDENT);
+						var name = token_get_value(list);
+						gen->GEN_consts{name} = TYPE_INTEGER;
+						while (token_next(list)) {
+							if (token_is_symbol(list, ',')) break;
+							if (token_is_symbol(list, '}')) break;
+						}
+						if (token_is_symbol(list, '}')) break;
+					}
+				}
+				token_expect_symbol(list, ';');
+				break;
+			}
+
+			case KW_VAR: {
+				if (!parse_locals) {
+					parse_locals = [];
+				}
+				for (;;) {
+					var local = object_create(LOCAL_SIZE);
+					token_expect_next(list);
+					if (token_is_symbol(list, '@')) {
+						local->LOCAL_private = true;
+					}
+					else {
+						token_back(list);
+					}
+					token_expect_type(list, TOK_IDENT);
+					local->LOCAL_name = token_get_value(list);
+					token_expect_next(list);
+					if (token_is_symbol(list, ':')) {
+						copy_result_tokens(gen, list);
+						local->LOCAL_type = [];
+						var start = token_get_pos(list) + TOK_SIZE;
+						var level = 0;
+						for (;;) {
+							token_expect_next(list);
+							switch (token_get_type(list)) {
+								case '{', '(', '[': level++; continue;
+								case '}', ')', ']': level--; continue;
+								case ',', ';': if (level == 0) break; continue;
+								default: continue;
+							}
+							break;
+						}
+						var end = token_get_pos(list);
+						if (end-start == 0) {
+							return 0, error({script_line(token_get_line(list)), ": missing type"});
+						}
+						array_append(local->LOCAL_type, list_tokens, start, end-start);
+						set_result_copy_start(gen, list);
+					}
+					parse_locals[] = local;
+					if (token_is_symbol(list, ',')) continue;
+					break;
+				}
+				token_back(list);
+				token_expect_symbol(list, ';');
+				break;
+			}
+
+			case TOK_IDENT:
+				if (token_has_value(list, "class")) {
+					token_set_pos(list, skip_class(gen, token_list(list)));
+					continue;
+				}
+				break;
+
+			case KW_FUNCTION: {
+				copy_result_tokens(gen, list);
+				token_back(list);
+				token_set_pos(list, skip_function(gen, token_list(list), null, 0));
+				token_next_nocheck(list);
+				set_result_copy_start(gen, list);
+				token_back(list);
+				continue;
+			}
+		}
+	}
+
+	if (parse_locals) {
+		for (var i=0; i<length(parse_locals); i++) {
+			parse_local(gen, src, parse_locals[i]);
+		}
+	}
+	
+	copy_result_tokens(gen, list);
+
+	var parse_classes = gen->GEN_parse_classes;
+	for (var i=0; i<length(parse_classes); i+=2) {
+		token_set_pos(list, parse_classes[i]);
+		parse_class(gen, token_list(list), parse_classes[i+1]);
+	}
+
+	var parse_funcs = gen->GEN_parse_funcs;
+	for (var i=0; i<length(parse_funcs); i+=3) {
+		token_set_pos(list, parse_funcs[i]);
+		parse_function(gen, token_list(list), parse_funcs[i+1], parse_funcs[i+2]);
+	}
+
+	replace_array(tokens, gen->GEN_result_tokens);
+	token_list_reset(list);
+	var inserted = false;
+	while (token_next(list)) {
+		switch (token_get_type(list)) {
+			case KW_VAR, KW_FUNCTION:
+				array_insert_array(tokens, token_get_pos(list), gen->GEN_const_tokens);
+				inserted = true;
+				break;
+		}
+		if (inserted) break;
+	}
+	if (!inserted) {
+		array_append(tokens, gen->GEN_const_tokens);
+	}
+
+	array_append(tokens, gen->GEN_func_tokens);
+	//perf_log("reparsing");
+
+	if (gen->GEN_custom_ctx) {
+		var postprocess = gen->GEN_custom_ctx->CTX_postprocess;
+		for (var i=length(postprocess)-2; i>=0; i-=2) {
+			postprocess[i+0](postprocess[i+1], fname, tokens, src);
+		}
+	}
+
+	//if (gen->GEN_custom_ctx) {
+	//token_list_dump(list);
+	//dump(gen->GEN_consts);
+	//return 0, 1;
+	//}
+}
+
+function @parse_class_attrib(gen, import_fname, name, value, class_attribs)
+{
+	if (!class_attribs) {
+		class_attribs = {};
+	}
+
+	var map = {};
+	var parts = string_split(value, ',');
+	for (var i=0; i<length(parts); i++) {
+		var parts2 = string_split(parts[i], '=');
+		if (length(parts2) != 2) {
+			return 0, error("invalid attribute");
+		}
+		map{parts2[0]} = parts2[1];
+	}
+
+	var class = object_create(CLASS_SIZE);
+	class->CLASS_ext_type = EXT_TYPE_CLASS;
+	class->CLASS_name = name;
+	class->CLASS_fields = {};
+	class->CLASS_functions = {};
+
+	var class_map = hash_get(classes, import_fname, null);
+	if (!class_map) {
+		class_map = {};
+		classes{import_fname} = class_map;
+	}
+	class_map{name} = class;
+
+	var prefix = hash_get(map, "prefix", null);
+	class->CLASS_method_prefix = prefix? {prefix, "_"} : get_method_prefix(class->CLASS_name);
+
+	var struct = hash_get(map, "struct", null);
+	class->CLASS_compat_name = struct? struct : get_class_compat_name(prefix? prefix : class->CLASS_name);
+
+	gen->GEN_imported_classes{class->CLASS_name} = class;
+
+	map{0} = class;
+	class_attribs{class->CLASS_name} = map;
+	return class_attribs;
+}
+
+function @finish_class_attribs(gen, class_attribs, consts, funcs)
+{
+	var sorted = [];
+
+	for (var i=0; i<length(class_attribs); i++) {
+		var (name, map) = hash_entry(class_attribs, i);
+		var class = map{0};
+
+		var extend = hash_get(map, "extend", null);
+		if (extend) {
+			class->CLASS_parent = find_class(gen, extend);
+		}
+
+		var struct = {class->CLASS_compat_name, "_"};
+		for (var j=0; j<length(consts); j++) {
+			var (k, v) = hash_entry(consts, j);
+			if (k[0] == '@') continue;
+			
+			if (length(k) > length(struct) && array_extract(k, 0, length(struct)) == struct) {
+				var field_name = array_extract(k, length(struct), length(k)-length(struct));
+				if (field_name == "SIZE") continue;
+
+				var field = object_create(FIELD_SIZE);
+				field->FIELD_name = field_name;
+				field->FIELD_compat_name = k;
+				field->FIELD_type = TYPE_DYNAMIC;
+				class->CLASS_fields{field_name} = field;
+			}
+		}
+
+		var static = hash_get(map, "static", null);
+		var static_funcs = {};
+		if (static) {
+			var list = string_split(static, ':');
+			for (var j=0; j<length(list); j++) {
+				static_funcs{list[j]} = true;
+			}
+		}
+
+		var prefix = class->CLASS_method_prefix;
+		for (var j=0; j<length(funcs); j++) {
+			var func_name = funcs[j];
+			if (length(func_name) > length(prefix) && array_extract(func_name, 0, length(prefix)) == prefix) {
+				func_name = array_extract(func_name, length(prefix), length(func_name)-length(prefix));
+				var func_name2;
+				var num_params = 0;
+				for (var k=length(func_name)-1; k>=0; k--) {
+					if (func_name[k] == '#') {
+						func_name2 = array_extract(func_name, 0, k);
+						num_params = string_parse_int(func_name, k+1, length(func_name)-k-1);
+						break;
+					}
+				}
+
+				var func = object_create(FUNC_SIZE);
+				func->FUNC_name = func_name2;
+				func->FUNC_flags = hash_contains(static_funcs, func_name)? FUNC_FLAG_STATIC : 0;
+				func->FUNC_params = {};
+				for (var k=0; k<num_params; k++) {
+					func->FUNC_params{{"p", k}} = TYPE_DYNAMIC;
+				}
+				func->FUNC_return_type = TYPE_DYNAMIC;
+
+				class->CLASS_functions{func_name} = func;
+			}
+		}
+
+		var inserted = false;
+		for (var j=0; j<length(sorted); j++) {
+			if (length(name) > length(sorted[j])) {
+				array_insert(sorted, j, name);
+				inserted = true;
+				break;
+			}
+		}
+		if (!inserted) {
+			sorted[] = name;
+		}
+	}
+
+	var new_attribs = {};
+	for (var i=0; i<length(sorted); i++) {
+		var name = sorted[i];
+		new_attribs{name} = class_attribs{name};
+	}
+
+	return new_attribs;
+}
+
+function @parse_field_attrib(gen, cls_name, field_name, value, class_attribs)
+{
+	var src = {""};
+	var tokens = tokens_parse([], src, value, 0);
+	token_list_declare(&list, tokens, src);
+	var (type, pos) = parse_type_func(gen, token_list(list), false);
+	if (is_array(pos)) return 0, pos;
+	if (pos != length(tokens)) {
+		return 0, error({"parse type error for field attribute ", field_name, " in ", cls_name});
+	}
+	var class = class_attribs{cls_name}{0};
+	var field = hash_get(class->CLASS_fields, field_name, null);
+	if (!field) {
+		return 0, error({"no field found for attribute ", field_name, " in ", cls_name});
+	}
+	field->FIELD_type = type;
+}
+
+function @parse_method_attrib(gen, cls_name, method_name, value, class_attribs, is_static, funcs)
+{
+	var src = {""};
+	var tokens = tokens_parse([], src, value, 0);
+	token_list_declare(&list, tokens, src);
+
+	var param_types = [];
+	var ret_type = TYPE_DYNAMIC;
+	
+	token_expect_symbol(list, '(');
+	token_expect_next(list);
+	if (!token_is_symbol(list, ')')) {
+		token_back(list);
+		for (;;) {
+			var (type, pos) = parse_type_func(gen, token_list(list), false);
+			if (is_array(pos)) return 0, pos;
+			token_set_pos(list, pos);
+			param_types[] = type;
+
+			token_expect_next(list);
+			if (token_is_symbol(list, ')')) break;
+			if (token_is_symbol(list, ',')) {
+				continue;
+			}
+			if (cls_name) {
+				return 0, error({"parse type error for method attribute ", method_name, " in ", cls_name});
+			}
+			else {
+				return 0, error({"parse type error for global function attribute ", method_name});
+			}
+		}
+	}
+	if (token_next(list)) {
+		token_back(list);
+		token_expect_symbol(list, ':');
+
+		var (type, pos) = parse_type_func(gen, token_list(list), true);
+		if (is_array(pos)) return 0, pos;
+		token_set_pos(list, pos);
+		ret_type = type;
+	}
+
+	if (token_get_pos(list) != length(tokens)) {
+		if (cls_name) {
+			return 0, error({"parse type error for method attribute ", method_name, " in ", cls_name});
+		}
+		else {
+			return 0, error({"parse type error for global function attribute ", method_name});
+		}
+	}
+
+	var func;
+
+	if (cls_name) {
+		var class = class_attribs{cls_name}{0};
+		func = hash_get(class->CLASS_functions, method_name, null);
+		if (!func) {
+			return 0, error({"no method found for attribute ", method_name, " in ", cls_name});
+		}
+	}
+	else {
+		var found = false;
+		for (var i=0; i<length(funcs); i++) {
+			if (method_name == funcs[i]) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			return 0, error({"no global function found for attribute ", method_name});
+		}
+		func = object_create(FUNC_SIZE);
+		func->FUNC_params = {};
+		if (!hash_contains(gen->GEN_imported_functions, method_name)) {
+			gen->GEN_imported_functions{method_name} = func;
+		}
+	}
+
+	if (is_static) {
+		func->FUNC_flags |= FUNC_FLAG_STATIC;
+	}
+	if ((func->FUNC_flags & FUNC_FLAG_STATIC) == 0) {
+		array_insert(param_types, 0, TYPE_DYNAMIC);
+	}
+	if (cls_name && length(param_types) != length(func->FUNC_params)) {
+		return 0, error({"incorrent number of parameters for method attribute ", method_name, " in ", cls_name});
+	}
+	for (var i=0; i<length(param_types); i++) {
+		func->FUNC_params{{"p", i}} = param_types[i];
+	}
+	func->FUNC_return_type = ret_type;
+}
+
+function @string_split(s, c)
+{
+	var result = [];
+	var last = 0;
+	for (var i=0; i<length(s); i++) {
+		if (s[i] == c) {
+			result[] = array_extract(s, last, i-last);
+			last = i+1;
+		}
+	}
+	if (last < length(s)) {
+		result[] = array_extract(s, last, length(s)-last);
+	}
+	return result;
+}
+
+function @get_class_compat_name(name)
+{
+	var s = {""};
+	for (var i=0; i<length(name); i++) {
+		var c = name[i];
+		switch (c) {
+			case 'a'..'z':
+				s[] = c - 'a' + 'A';
+				continue;
+			default:
+				s[] = c;
+				continue;
+		}
+	}
+	return s;
+}
+
+function @get_method_prefix(name)
+{
+	var s = {""};
+	for (var i=0; i<length(name); i++) {
+		var c = name[i];
+		switch (c) {
+			case 'A'..'Z':
+				if (i > 0) {
+					if ((i+1 < length(name) && name[i+1] >= 'a' && name[i+1] <= 'z')) {
+						var c1 = i >= 2? name[i-2] : 0;
+						var c2 = i >= 1? name[i-1] : 0;
+						var match1 = (c1 == 0 || (c1 >= 'a' && c1 <= 'z'));
+						var match2 = (c2 >= 'A' && c2 <= 'Z');
+						if (!match1 || !match2) {
+							s[] = '_';
+						}
+					}
+					else if ((name[i-1] >= 'a' && name[i-1] <= 'z')) {
+						s[] = '_';
+					}
+				}
+				s[] = c - 'A' + 'a'; 
+				break;
+
+			default:
+				s[] = c;
+				break;
+		}
+	}
+	s[] = '_';
+	return s;
+}
+
+function @find_class(gen, name)
+{
+	var cls = hash_get(gen->GEN_classes, name, null);
+	if (!cls) {
+		cls = hash_get(gen->GEN_imported_classes, name, null);
+	}
+	return cls;
+}
+
+function @find_function(gen, name)
+{
+	var func = hash_get(gen->GEN_functions, name, null);
+	if (!func) {
+		func = hash_get(gen->GEN_imported_functions, name, null);
+		if (!func) {
+			func = hash_get(builtin_functions, name, null);
+		}
+	}
+	return func;
+}
+
+macro @_parse_type(&ret, list, allow_void)
+{
+	token_expect_type(list, TOK_IDENT);
+	var ($ret, $pos) = parse_type_inner(gen, token_list(list), allow_void);
+	if (is_array($pos)) return 0, $pos;
+	token_set_pos(list, $pos);
+	ret = $ret;
+}
+
+macro @parse_type(&ret, list)
+{
+	_parse_type(&ret, list, false);
+}
+
+macro @parse_type_with_void(&ret, list)
+{
+	_parse_type(&ret, list, true);
+}
+
+function @parse_type_func(gen, token_list(list), allow_void)
+{
+	token_expect_type(list, TOK_IDENT);
+	var (ret, pos) = parse_type_inner(gen, token_list(list), allow_void);
+	return ret, pos;
+}
+
+function @parse_type_inner(gen, token_list(list), allow_void)
+{
+	var name = token_get_value(list);
+	var line = token_get_line(list);
+	var type = -1;
+
+	switch (length(name)) {
+		case 4:
+			if (name == "Void") {
+				if (!allow_void) {
+					return 0, error({script_line(line), ": type Void not allowed"});
+				}
+				type = TYPE_VOID;
+				break;
+			}
+			if (name == "Byte") { type = TYPE_INTEGER; break; }
+			break;
+
+		case 5:
+			if (name == "Float") { type = TYPE_FLOAT; break; }
+			if (name == "Short") { type = TYPE_INTEGER; break; }
+			break;
+
+		case 6:
+			if (name == "String") { type = TYPE_STRING; break; }
+			break;
+
+		case 7:
+			if (name == "Integer") { type = TYPE_INTEGER; break; }
+			if (name == "Dynamic") { type = TYPE_DYNAMIC; break; }
+			if (name == "Boolean") { type = TYPE_BOOLEAN; break; }
+			break;
+	}
+	if (type == -1) {
+		type = find_class(gen, name);
+		if (!type) {
+			return 0, error({script_line(line), ": can't find class ", name});
+		}
+	}
+
+	while (token_next(list)) {
+		if (token_get_type(list) == '[') {
+			token_expect_next(list);
+			if (token_is_symbol(list, ']')) {
+				if (type == TYPE_VOID) {
+					return 0, error({script_line(line), ": can't create array of Void"});
+				}
+				type = create_array_type(type);
+				continue;
+			}
+			token_back(list);
+			if (type == TYPE_VOID) {
+				return 0, error({script_line(line), ": can't create hash table with Void type"});
+			}
+			var index_type;
+			parse_type(&index_type, list);
+			token_expect_symbol(list, ']');
+			type = create_hash_type(type, index_type);
+			continue;
+		}
+		token_back(list);
+		break;
+	}
+	
+	return type, token_get_pos(list);
+}
+
+function @create_array_type(base_type)
+{
+	var array = object_create(ARRAY_SIZE);
+	array->ARRAY_ext_type = EXT_TYPE_ARRAY;
+	array->ARRAY_base_type = base_type;
+	return array;
+}
+
+function @create_hash_type(base_type, index_type)
+{
+	var hash = object_create(HASH_SIZE);
+	hash->HASH_ext_type = EXT_TYPE_HASH;
+	hash->HASH_base_type = base_type;
+	hash->HASH_index_type = index_type;
+	return hash;
+}
+
+function @parse_local(gen, src, local)
+{
+	if (local->LOCAL_type) {
+		token_list_declare(&list, local->LOCAL_type, src);
+		parse_type(&local->LOCAL_type, list);
+		if (token_get_pos(list) != length(list_tokens)) {
+			return 0, error({script_line(token_get_line(list)), ": invalid type declaration"});
+		}
+	}
+	else {
+		local->LOCAL_type = TYPE_DYNAMIC;
+	}
+	if (!gen->GEN_locals) {
+		gen->GEN_locals = {};
+		locals{gen->GEN_fname} = gen->GEN_locals;
+	}
+	gen->GEN_locals{local->LOCAL_name} = local;
+	
+	var list = hash_get(locals, gen->GEN_fname, null);
+	if (!list) {
+		list = {};
+		locals{gen->GEN_fname} = list;
+	}
+	list{local->LOCAL_name} = local;
+}
+
+function @skip_class(gen, token_list(list))
+{
+	copy_result_tokens(gen, list);
+	var start_pos = token_get_pos(list);
+
+	var class = object_create(CLASS_SIZE);
+	class->CLASS_ext_type = EXT_TYPE_CLASS;
+	class->CLASS_fields = {};
+	class->CLASS_functions = {};
+
+	token_expect_next(list);
+	if (token_is_symbol(list, '@')) {
+		class->CLASS_private = true;
+	}
+	else {
+		token_back(list);
+	}
+	token_expect_type(list, TOK_IDENT);
+	class->CLASS_name = token_get_value(list);
+	class->CLASS_compat_name = get_class_compat_name(class->CLASS_name);
+	class->CLASS_method_prefix = get_method_prefix(class->CLASS_name);
+
+	gen->GEN_classes{class->CLASS_name} = class;
+
+	gen->GEN_parse_classes[] = token_get_pos(list);
+	gen->GEN_parse_classes[] = class;
+
+	var level = 0;
+
+	while (token_next(list)) {
+		var type = token_get_type(list);
+		if (type == TOK_IDENT && token_get_length(list) == 5 && token_get_symbol1(list) == 's' && token_get_value(list) == "super") {
+			token_expect_next(list);
+			if (!token_is_symbol(list, ':')) {
+				token_back(list);
+				var line = token_get_line(list);
+				token_expect_symbol(list, '.');
+				token_expect_type(list, TOK_IDENT);
+				var func_name = token_get_value(list);
+				token_expect_symbol(list, '(');
+				token_expect_next(list);
+
+				var num_params = 0;
+				if (token_is_symbol(list, ')')) {
+					token_back(list);
+				}
+				else {
+					token_back(list);
+					for (;;) {
+						num_params++;
+						token_expect_expression(list);
+						token_expect_next(list);
+						if (token_is_symbol(list, ',')) continue;
+						token_back(list);
+						break;
+					}
+				}
+				token_expect_symbol(list, ')');
+
+				var name = {func_name, "#", num_params+1};
+
+				if (!class->CLASS_supers) {
+					class->CLASS_supers = {};
+				}
+				if (!hash_contains(class->CLASS_supers, name)) {
+					class->CLASS_supers{name} = line;
+				}
+				continue;
+			}
+			token_back(list);
+		}
+
+		switch (token_get_type(list)) {
+			case '{':
+				level++;
+				continue;
+
+			case '}':
+				if (--level == 0) break;
+				continue;
+
+			default:
+				continue;
+		}
+		break;
+	}
+
+	token_next_nocheck(list);
+	set_result_copy_start(gen, list);
+	token_back(list);
+	return token_get_pos(list);
+}
+
+function @parse_class(gen, token_list(list), class)
+{
+	var line = token_get_line(list);
+
+	token_expect_next(list);
+	if (token_is_symbol(list, ':')) {
+		var type;
+		parse_type(&type, list);
+		class->CLASS_parent = type;
+		if (type->CLASS_generate_to_string) {
+			class->CLASS_generate_to_string = true;
+		}
+		else if (has_object_script && type->CLASS_name == "Object") {
+			class->CLASS_generate_to_string = true;
+		}
+	}
+	else {
+		token_back(list);
+	}
+
+	//log({"class=", class});
+
+	token_list_declare(&const_list, gen->GEN_const_tokens, list_src);
+	token_add_const(const_list, line);
+	token_add(const_list, '{', "{", line);
+	gen->GEN_first_const = (class->CLASS_parent !== null);
+
+	token_expect_symbol(list, '{');
+	token_set_pos(list, parse_class_body(gen, token_list(list), class));
+	//token_expect_symbol(list, '}');
+
+	var supers = class->CLASS_supers;
+	if (supers) {
+		for (var i=0; i<length(supers); i++) {
+			var (name, v) = hash_entry(supers, i);
+			var adj_name = {""};
+			for (var j=0; j<length(name); j++) {
+				if (name[j] == '#') {
+					adj_name[] = '_';
+					adj_name[] = '_';
+					continue;
+				}
+				adj_name[] = name[j];
+			}
+			var const_name = {class->CLASS_compat_name, "__super__", adj_name};
+			token_add(const_list, TOK_IDENT, const_name, line);
+			if (gen->GEN_first_const) {
+				token_add(const_list, '=', "=", line);
+				token_add_complex(const_list, TOK_IDENT, {class->CLASS_parent->CLASS_compat_name, "_SIZE"}, line);
+				gen->GEN_first_const = false;
+			}
+			token_add(const_list, ',', ",", line);
+		}
+	}
+
+	token_add_complex(const_list, TOK_IDENT, {class->CLASS_compat_name, "_SIZE"}, line);
+	if (gen->GEN_first_const) {
+		token_add(const_list, '=', "=", line);
+		token_add_complex(const_list, TOK_IDENT, {class->CLASS_parent->CLASS_compat_name, "_SIZE"}, line);
+	}
+	token_add(const_list, '}', "}", line);
+	token_add(const_list, ';', ";", line);
+
+	if (class->CLASS_generate_to_string) {
+		var func = hash_get(class->CLASS_functions, "to_string#1", null);
+		if (func) {
+			class->CLASS_generate_to_string = false;
+		}
+		else {
+			func = object_create(FUNC_SIZE);
+			func->FUNC_name = "to_string";
+			func->FUNC_flags = FUNC_FLAG_VIRTUAL | FUNC_FLAG_OVERRIDE;
+			func->FUNC_params = {"this": class};
+			func->FUNC_return_type = TYPE_STRING;
+			class->CLASS_functions{"to_string#1"} = func;
+			class->CLASS_virtual = true;
+			
+			var short_name = {class->CLASS_method_prefix, func->FUNC_name};
+			var func_name = {short_name, "__vfunc"};
+			tokens_parse(gen->GEN_const_tokens, list_src, {"const @function_", short_name, "_", length(func->FUNC_params), " = \"\";"}, line);
+			tokens_parse(gen->GEN_const_tokens, list_src, {"const @function_", func_name, "_", length(func->FUNC_params), " = \"", class->CLASS_name, ".", func->FUNC_name, "\";"}, line);
+
+			var prefix = {class->CLASS_compat_name, "_"};
+			var s = {"function @", func_name, "(this) {"};
+			var fields = class->CLASS_fields;
+			if (length(fields) > 0) {
+				array_append(s, {"var s = {\"", class->CLASS_name, " {\\n  \"};"});
+				for (var i=0; i<length(fields); i++) {
+					var (name, field) = hash_entry(fields, i);
+					var priv = field->FIELD_private? "@":"";
+					array_append(s, {"array_append(s, \"", priv, name, ": \");"});
+					var type = field->FIELD_type;
+					if (is_int(type)) {
+						switch (type) {
+							case TYPE_DYNAMIC:
+								array_append(s, {"array_append(s, __classes_insert_prefix(to_string(this->", prefix, name, ", true), \"  \"));"});
+								break;
+
+							case TYPE_INTEGER:
+								array_append(s, {"array_append(s, {this->", prefix, name, "});"});
+								break;
+
+							case TYPE_FLOAT:
+								array_append(s, {"array_append(s, {{this->", prefix, name, " * 1.0}});"});
+								break;
+
+							case TYPE_BOOLEAN:
+								array_append(s, {"array_append(s, this->", prefix, name, "? \"true\":\"false\");"});
+								break;
+
+							case TYPE_STRING:
+								array_append(s, {"array_append(s, this->", prefix, name, "? @to_string(this->", prefix, name, ") : \"null\");"});
+								break;
+
+							default:
+								return 0, error("unknown type");
+						}
+					}
+					else {
+						array_append(s, {"array_append(s, this->", prefix, name, "? __classes_insert_prefix(to_string(this->", prefix, name, ", true), \"  \") : \"null\");"});
+					}
+					if (i < length(fields)-1) {
+						array_append(s, "array_append(s, \",\\n  \");");
+					}
+				}
+				array_append(s, "array_append(s, \"\\n}\");");
+				array_append(s, "return s;");
+			}
+			else {
+				array_append(s, {"return \"", class->CLASS_name, " {}\";"});
+			}
+			array_append(s, "}");
+			tokens_parse(gen->GEN_func_tokens, list_src, s, line);
+		}
+	}
+
+	if (class->CLASS_virtual) {
+		append_vfunc_object_create(gen, list_src, class, line, false);
+		if (class->CLASS_parent) {
+			append_vfunc_object_create(gen, list_src, class, line, true);
+		}
+	}
+
+	return token_get_pos(list);
+}
+
+function @append_vfunc_object_create(gen, list_src, class, line, extend)
+{
+	token_list_declare(&func_list, gen->GEN_func_tokens, list_src);
+	token_add_function(func_list, line);
+	token_add(func_list, '@', "@", line);
+	if (extend) {
+		token_add_complex(func_list, TOK_IDENT, {"vfunc__", class->CLASS_method_prefix, "_object_extend"}, line);
+	}
+	else {
+		token_add_complex(func_list, TOK_IDENT, {"vfunc__", class->CLASS_method_prefix, "_object_create"}, line);
+	}
+	token_add(func_list, '(', "(", line);
+	if (extend) {
+		token_add(func_list, TOK_IDENT, "obj", line);
+	}
+	token_add(func_list, ')', ")", line);
+	token_add(func_list, '{', "{", line);
+	if (!extend) {
+		token_add_var(func_list, line);
+	}
+	token_add(func_list, TOK_IDENT, "obj", line);
+	token_add(func_list, '=', "=", line);
+	if (extend) {
+		token_add(func_list, TOK_IDENT, "object_extend", line);
+	}
+	else {
+		token_add(func_list, TOK_IDENT, "object_create", line);
+	}
+	token_add(func_list, '(', "(", line);
+	if (extend) {
+		token_add(func_list, TOK_IDENT, "obj", line);
+		token_add(func_list, ',', ",", line);
+	}
+	token_add_complex(func_list, TOK_IDENT, {class->CLASS_compat_name, "_SIZE"}, line);
+	token_add(func_list, ')', ")", line);
+	token_add(func_list, ';', ";", line);
+	var supers = class->CLASS_supers;
+	if (supers && extend) {
+		for (var i=0; i<length(supers); i++) {
+			var (func_name, usage_line) = hash_entry(supers, i);
+			var func_class = class;
+			var func = null;
+			for (;;) {
+				func_class = func_class->CLASS_parent;
+				if (!func_class) {
+					var adj_name = {func_name};
+					for (var j=length(adj_name)-1; j>=0; j--) {
+						if (adj_name[j] == '#') {
+							array_set_length(adj_name, j);
+							break;
+						}
+					}
+					return 0, error({script_line(usage_line), ": virtual function ", adj_name, " not found in super classes"});
+				}
+
+				func = hash_get(func_class->CLASS_functions, func_name, null);
+				if (func && (func->FUNC_flags & (FUNC_FLAG_VIRTUAL | FUNC_FLAG_OVERRIDE)) == FUNC_FLAG_VIRTUAL) {
+					break;
+				}
+			}
+			tokens_parse(func_list_tokens, func_list_src, {
+				"obj->", class->CLASS_compat_name, "__super__", func->FUNC_name, "__", length(func->FUNC_params), " = ",
+				"obj->", func_class->CLASS_compat_name, "__vfunc__", func->FUNC_name, "__", length(func->FUNC_params), ";"
+			}, line);
+		}
+	}
+	var funcs = class->CLASS_functions;
+	for (var i=0; i<length(funcs); i++) {
+		var (k, func) = hash_entry(funcs, i);
+		if ((func->FUNC_flags & (FUNC_FLAG_VIRTUAL | FUNC_FLAG_ABSTRACT)) == FUNC_FLAG_VIRTUAL) {
+			var base_class = class;
+			var base_func = func;
+			if (func->FUNC_flags & FUNC_FLAG_OVERRIDE) {
+				var name = {func->FUNC_name, "#", length(func->FUNC_params)};
+				base_class = base_class->CLASS_parent;
+				base_func = null;
+				while (base_class) {
+					var f = hash_get(base_class->CLASS_functions, name, null);
+					if (f && (f->FUNC_flags & FUNC_FLAG_VIRTUAL) && !(f->FUNC_flags & FUNC_FLAG_OVERRIDE)) {
+						base_func = f;
+						break;
+					}
+					base_class = base_class->CLASS_parent;
+				}
+				if (!base_func) {
+					return 0, error({script_line(line), ": can't find base function"});
+				}
+			}
+			token_add(func_list, TOK_IDENT, "obj", line);
+			token_add(func_list, '->', "->", line);
+			token_add_complex(func_list, TOK_IDENT, {base_class->CLASS_compat_name, "__vfunc__", base_func->FUNC_name, "__", length(base_func->FUNC_params)}, line);
+			token_add(func_list, '=', "=", line);
+			token_add_complex(func_list, TOK_FUNC_REF, {class->CLASS_method_prefix, func->FUNC_name, "__vfunc#", length(func->FUNC_params)}, line);
+			token_add(func_list, ';', ";", line);
+		}
+	}
+	token_add_return(func_list, line);
+	token_add(func_list, TOK_IDENT, "obj", line);
+	token_add(func_list, ';', ";", line);
+	token_add(func_list, '}', "}", line);
+}
+
+function @parse_class_body(gen, token_list(list), class)
+{
+	token_list_declare(&const_list, gen->GEN_const_tokens, list_src);
+
+	while (token_next(list)) {
+		switch (token_get_type(list)) {
+			case KW_VAR: {
+				var field = object_create(FIELD_SIZE);
+				token_expect_next(list);
+				var line = token_get_line(list);
+				if (token_is_symbol(list, '@')) {
+					field->FIELD_private = true;
+					token_add(const_list, '@', "@", line);
+				}
+				else {
+					token_back(list);
+				}
+				token_expect_type(list, TOK_IDENT);
+				field->FIELD_name = token_get_value(list);
+				field->FIELD_compat_name = {class->CLASS_compat_name, "_", field->FIELD_name};
+				token_add_complex(const_list, TOK_IDENT, field->FIELD_compat_name, line);
+				if (gen->GEN_first_const) {
+					token_add(const_list, '=', "=", line);
+					token_add_complex(const_list, TOK_IDENT, {class->CLASS_parent->CLASS_compat_name, "_SIZE"}, line);
+					gen->GEN_first_const = false;
+				}
+				token_add(const_list, ',', ",", line);
+
+				token_expect_next(list);
+				if (token_is_symbol(list, ':')) {
+					parse_type(&field->FIELD_type, list);
+				}
+				else {
+					token_back(list);
+				}
+				token_expect_symbol(list, ';');
+				class->CLASS_fields{field->FIELD_name} = field;
+				continue;
+			}
+
+			case TOK_IDENT: {
+				var line = token_get_line(list);
+				var ident = token_get_value(list);
+				var flags = 0;
+				if (ident == "static") {
+					flags = FUNC_FLAG_STATIC;
+				}
+				else if (ident == "virtual") {
+					flags = FUNC_FLAG_VIRTUAL;
+				}
+				else if (ident == "override") {
+					flags = FUNC_FLAG_VIRTUAL | FUNC_FLAG_OVERRIDE;
+				}
+				else if (ident == "constructor") {
+					flags = FUNC_FLAG_STATIC | FUNC_FLAG_CONSTRUCTOR;
+				}
+				if (flags) {
+					if (!(flags & FUNC_FLAG_CONSTRUCTOR)) {
+						token_expect_type(list, KW_FUNCTION);
+						token_back(list);
+					}
+					token_set_pos(list, skip_function(gen, token_list(list), class, flags));
+					if (flags & FUNC_FLAG_VIRTUAL) {
+						var (k, func) = hash_entry(class->CLASS_functions, length(class->CLASS_functions)-1);
+						class->CLASS_virtual = true;
+
+						if (!(flags & FUNC_FLAG_OVERRIDE)) {
+							var const_name = {class->CLASS_compat_name, "__vfunc__", func->FUNC_name, "__", length(func->FUNC_params)};
+							token_add(const_list, TOK_IDENT, const_name, line);
+							if (gen->GEN_first_const) {
+								token_add(const_list, '=', "=", line);
+								token_add_complex(const_list, TOK_IDENT, {class->CLASS_parent->CLASS_compat_name, "_SIZE"}, line);
+								gen->GEN_first_const = false;
+							}
+							token_add(const_list, ',', ",", line);
+
+							token_list_declare(&func_list, gen->GEN_func_tokens, list_src);
+							token_add_function(func_list, line);
+							if (func->FUNC_flags & FUNC_FLAG_PRIVATE) {
+								token_add(func_list, '@', "@", line);
+							}
+							token_add_complex(func_list, TOK_IDENT, {class->CLASS_method_prefix, func->FUNC_name}, line);
+							token_add(func_list, '(', "(", line);
+							var params = func->FUNC_params;
+							for (var i=0; i<length(params); i++) {
+								if (i > 0) {
+									token_add(func_list, ',', ",", line);
+								}
+								token_add_complex(func_list, TOK_IDENT, {"p", i}, line);
+							}
+							token_add(func_list, ')', ")", line);
+							token_add(func_list, '{', "{", line);
+							token_add_return(func_list, line);
+							token_add(func_list, TOK_IDENT, "p0", line);
+							token_add(func_list, '->', "->", line);
+							token_add(func_list, TOK_IDENT, const_name, line);
+							token_add(func_list, '(', "(", line);
+							for (var i=0; i<length(params); i++) {
+								if (i > 0) {
+									token_add(func_list, ',', ",", line);
+								}
+								token_add_complex(func_list, TOK_IDENT, {"p", i}, line);
+							}
+							token_add(func_list, ')', ")", line);
+							token_add(func_list, ';', ";", line);
+							token_add(func_list, '}', "}", line);
+						}
+					}
+					continue;
+				}
+				break;
+			}
+
+			case KW_FUNCTION: {
+				token_back(list);
+				token_set_pos(list, skip_function(gen, token_list(list), class, 0));
+				continue;
+			}
+		}
+
+		if (token_get_type(list) == '}') {
+			token_back(list);
+			break;
+		}
+
+		return 0, error({script_line(token_get_line(list)), ": expected variable or function declaration"});
+	}
+	return token_get_pos(list);
+}
+
+function @skip_function(gen, token_list(list), class, flags)
+{
+	var func = object_create(FUNC_SIZE);
+	func->FUNC_params = {};
+	func->FUNC_flags = flags;
+
+	if (!(flags & FUNC_FLAG_CONSTRUCTOR)) {
+		token_expect_type(list, KW_FUNCTION);
+	}
+	token_expect_next(list);
+	if (token_is_symbol(list, '@')) {
+		func->FUNC_flags |= FUNC_FLAG_PRIVATE;
+	}
+	else {
+		token_back(list);
+	}
+	token_expect_type(list, TOK_IDENT);
+	func->FUNC_name = token_get_value(list);
+
+	token_expect_symbol(list, '(');
+
+	if (class && !(flags & FUNC_FLAG_STATIC)) {
+		func->FUNC_params{"this"} = class;
+	}
+
+	token_expect_next(list);
+	if (!token_is_symbol(list, ')')) {
+		token_back(list);
+		for (;;) {
+			token_expect_type(list, TOK_IDENT);
+			var name = token_get_value(list);
+
+			var type = null;
+			token_expect_next(list);
+			if (token_is_symbol(list, ':')) {
+				parse_type(&type, list);
+			}
+			else {
+				token_back(list);
+			}
+
+			func->FUNC_params{name} = type;
+
+			token_expect_next(list);
+			if (token_is_symbol(list, ',')) {
+				continue;
+			}
+			token_back(list);
+			break;
+		}
+		token_expect_symbol(list, ')');
+	}
+
+	token_expect_next(list);
+	if (token_is_symbol(list, ':')) {
+		if (flags & FUNC_FLAG_CONSTRUCTOR) {
+			return 0, error({script_line(token_get_line(list)), ": can't set return type for constructors"});
+		}
+		parse_type_with_void(&func->FUNC_return_type, list);
+	}
+	else {
+		token_back(list);
+		if (flags & FUNC_FLAG_CONSTRUCTOR) {
+			func->FUNC_return_type = class;
+		}
+	}
+
+	var name = {func->FUNC_name, "#", length(func->FUNC_params)};
+	if (class) {
+		if (hash_contains(class->CLASS_functions, name)) {
+			return 0, error({script_line(token_get_line(list)), ": duplicate function"});
+		}
+		class->CLASS_functions{name} = func;
+	}
+	else {
+		func->FUNC_flags |= FUNC_FLAG_STATIC;
+		if (hash_contains(gen->GEN_functions, name)) {
+			return 0, error({script_line(token_get_line(list)), ": duplicate function"});
+		}
+		gen->GEN_functions{name} = func;
+	}
+
+	var level = 0;
+
+	var parse_funcs = gen->GEN_parse_funcs;
+	parse_funcs[] = token_get_pos(list);
+	parse_funcs[] = class;
+	parse_funcs[] = func;
+
+	token_expect_next(list);
+	if (token_is_symbol(list, ';')) {
+		if (flags & FUNC_FLAG_VIRTUAL) {
+			if (flags & FUNC_FLAG_OVERRIDE) {
+				return 0, error({script_line(token_get_line(list)), ": empty override function"});
+			}
+			func->FUNC_flags |= FUNC_FLAG_ABSTRACT;
+		}
+		return token_get_pos(list);
+	}
+	token_back(list);
+	
+	while (token_next(list)) {
+		switch (token_get_type(list)) {
+			case '{':
+				level++;
+				continue;
+
+			case '}':
+				if (--level == 0) break;
+				continue;
+
+			default:
+				continue;
+		}
+		break;
+	}
+
+	return token_get_pos(list);
+}
+
+function @parse_function(gen, token_list(list), class, func)
+{
+	var line = token_get_line(list);
+	var out = (func->FUNC_flags & FUNC_FLAG_ABSTRACT) == 0;
+
+	token_list_declare(&func_list, gen->GEN_func_tokens, list_src);
+
+	if (out) {
+		token_add_function(func_list, line);
+	}
+
+	if (func->FUNC_flags & FUNC_FLAG_VIRTUAL) {
+		if (out) {
+			token_add(func_list, '@', "@", line);
+		}
+		var short_name = {class->CLASS_method_prefix, func->FUNC_name};
+		var func_name = {short_name, "__vfunc"};
+		if (out) {
+			token_add_complex(func_list, TOK_IDENT, func_name, line);
+		}
+		tokens_parse(gen->GEN_const_tokens, list_src, {"const @function_", short_name, "_", length(func->FUNC_params), " = \"\";"}, line);
+		tokens_parse(gen->GEN_const_tokens, list_src, {"const @function_", func_name, "_", length(func->FUNC_params), " = \"", class->CLASS_name, ".", func->FUNC_name, "\";"}, line);
+	}
+	else {
+		if (func->FUNC_flags & FUNC_FLAG_PRIVATE) {
+			token_add(func_list, '@', "@", line);
+		}
+		if (class) {
+			var func_name = {class->CLASS_method_prefix, func->FUNC_name};
+			token_add_complex(func_list, TOK_IDENT, func_name, line);
+			if (func->FUNC_flags & FUNC_FLAG_STATIC) {
+				tokens_parse(gen->GEN_const_tokens, list_src, {"const @function_", func_name, "_", length(func->FUNC_params), " = \"", class->CLASS_name, "::", func->FUNC_name, "\";"}, line);
+			}
+			else {
+				tokens_parse(gen->GEN_const_tokens, list_src, {"const @function_", func_name, "_", length(func->FUNC_params), " = \"", class->CLASS_name, ".", func->FUNC_name, "\";"}, line);
+			}
+		}
+		else {
+			token_add_complex(func_list, TOK_IDENT, func->FUNC_name, line);
+		}
+	}
+
+	if (out) {
+		token_add(func_list, '(', "(", line);
+	}
+
+	hash_clear(gen->GEN_vars);
+	var params = func->FUNC_params;
+	for (var i=0; i<length(params); i++) {
+		var (k, v) = hash_entry(params, i);
+		if (i > 0) {
+			if (out) {
+				token_add(func_list, ',', ",", line);
+			}
+		}
+		if (out) {
+			token_add_complex(func_list, TOK_IDENT, k, line);
+		}
+		gen->GEN_vars{k} = v;
+	}
+
+	if (out) {
+		token_add(func_list, ')', ")", line);
+	}
+
+	gen->GEN_cur_func = func;
+	gen->GEN_cur_class = class;
+
+	token_expect_next(list);
+	if (token_is_symbol(list, ';')) {
+		if (out) {
+			set_func_copy_start(gen, list);
+		}
+		else {
+			token_next_nocheck(list);
+			set_func_copy_start(gen, list);
+			token_back(list);
+		}
+	}
+	else {
+		token_back(list);
+	
+		token_expect_symbol(list, '{');
+		set_func_copy_start(gen, list);
+		if (func->FUNC_flags & FUNC_FLAG_CONSTRUCTOR) {
+			var parent = class->CLASS_parent;
+			if (parent) {
+				token_expect_next(list);
+				if (token_is_ident(list, "super")) {
+					line = token_get_line(list);
+					copy_func_tokens(gen, list);
+					token_expect_symbol(list, ':');
+					token_expect_symbol(list, ':');
+					token_expect_type(list, TOK_IDENT);
+					var name = token_get_value(list);
+					token_expect_symbol(list, '(');
+					var pos = length(gen->GEN_func_tokens) - TOK_SIZE;
+					if (class->CLASS_virtual) {
+						tokens_parse(gen->GEN_func_tokens, list_src, {"var this = vfunc__", class->CLASS_method_prefix, "_object_extend(", parent->CLASS_method_prefix, name}, line);
+					}
+					else {
+						tokens_parse(gen->GEN_func_tokens, list_src, {"var this = object_extend(", parent->CLASS_method_prefix, name}, line);
+					}
+					set_func_copy_start(gen, list);
+
+					var params_off = token_get_pos(list);
+					token_expect_next(list);
+				
+					var num_params = 0;
+					if (token_is_symbol(list, ')')) {
+						token_back(list);
+					}
+					else {
+						token_back(list);
+						for (;;) {
+							num_params++;
+							token_expect_expression(list);
+							token_expect_next(list);
+							if (token_is_symbol(list, ',')) continue;
+							token_back(list);
+							break;
+						}
+					}
+					token_expect_symbol(list, ')');
+
+					var func_name = {name, "#", num_params};
+					var super_func = hash_get(parent->CLASS_functions, func_name, null);
+					if (!super_func || !(super_func->FUNC_flags & FUNC_FLAG_STATIC)) {
+						return 0, error({script_line(token_get_line(list)), ": static method ", func_name, " not found in ", parent->CLASS_name});
+					}
+				
+					token_set_pos(list, params_off);
+					for (var i=0; i<num_params; i++) {
+						if (i > 0) {
+							token_expect_symbol(list, ',');
+						}
+						var (param_name, param_type) = hash_entry(super_func->FUNC_params, i);
+						var param_start_pos = token_get_pos(list);
+						token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+						append_type_conv(gen, token_list(list), param_start_pos, param_type, gen->GEN_ret_type);
+					}
+					token_expect_symbol(list, ')');
+					copy_func_tokens(gen, list);
+					if (class->CLASS_virtual) {
+						tokens_parse(gen->GEN_func_tokens, list_src, ")); {var __classes_padding", line); // TODO
+					}
+					else {
+						tokens_parse(gen->GEN_func_tokens, list_src, {"), ", class->CLASS_compat_name, "_SIZE); {var __classes_padding"}, line); // TODO
+					}
+					token_expect_symbol(list, ';');
+					set_func_copy_start(gen, list);
+				}
+				else {
+					token_back(list);
+					var super_func = hash_get(parent->CLASS_functions, "create#0", null);
+					if (!super_func || !(super_func->FUNC_flags & FUNC_FLAG_STATIC)) {
+						return 0, error({script_line(token_get_line(list)), ": default constructor not found in ", parent->CLASS_name});
+					}
+					if (class->CLASS_virtual) {
+						tokens_parse(gen->GEN_func_tokens, list_src, {"{var this = vfunc__", class->CLASS_method_prefix, "_object_extend(", parent->CLASS_method_prefix, "create());"}, line);
+					}
+					else {
+						tokens_parse(gen->GEN_func_tokens, list_src, {"{var this = object_extend(", parent->CLASS_method_prefix, "create(), ", class->CLASS_compat_name, "_SIZE);"}, line);
+					}
+				}
+			}
+			else {
+				if (class->CLASS_virtual) {
+					tokens_parse(gen->GEN_func_tokens, list_src, {"{var this=vfunc__", class->CLASS_method_prefix, "_object_create();"}, line);
+				}
+				else {
+					tokens_parse(gen->GEN_func_tokens, list_src, {"{var this=object_create(", class->CLASS_compat_name, "_SIZE);"}, line);
+				}
+			}
+			gen->GEN_vars{"this"} = class;
+		}
+		token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+	}
+
+	gen->GEN_cur_func = null;
+	gen->GEN_cur_class = null;
+
+	token_next_nocheck(list);
+	copy_func_tokens(gen, list);
+
+	if (func->FUNC_flags & FUNC_FLAG_CONSTRUCTOR) {
+		var pos = length(gen->GEN_func_tokens) - TOK_SIZE;
+		line = gen->GEN_func_tokens[pos+TOK_line];
+		//array_set_length(gen->GEN_func_tokens, pos);
+		tokens_parse(gen->GEN_func_tokens, list_src, "return this; }", line);
+	}
+
+	if (func->FUNC_flags & FUNC_FLAG_CONSTRUCTOR) {
+		hash_remove(gen->GEN_vars, "this");
+	}
+
+	token_back(list);
+	return token_get_pos(list);
+}
+
+function @parse_block(gen, token_list(list), block_type)
+{
+	var stack_pos = length(gen->GEN_var_stack);
+	var type = -1;
+
+	for (;;) {
+		if (block_type == BT_SINGLE && type != -1) {
+			return token_get_pos(list);
+		}
+
+		if (!token_next(list)) break;
+		type = token_get_type(list);
+
+		switch (type) {
+			case '{': {
+				token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+				continue;
+			}
+
+			case '}': {
+				for (var i=length(gen->GEN_var_stack)-1; i>=stack_pos; i--) {
+					hash_remove(gen->GEN_vars, gen->GEN_var_stack[i]);
+				}
+				array_set_length(gen->GEN_var_stack, stack_pos);
+				return token_get_pos(list);
+			}
+
+			case '(': {
+				if (token_next(list) && token_get_type(list) == TOK_IDENT) {
+					if (token_next(list) && token_is_symbol(list, ',')) {
+						token_expect_type(list, TOK_IDENT);
+						token_expect_symbol(list, ')');
+						token_expect_symbol(list, '=');
+						token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+						token_expect_symbol(list, ';');
+						continue;
+					}
+					else {
+						token_back(list);
+						token_back(list);
+					}
+				}
+				else {
+					token_back(list);
+				}
+				break;
+			}
+
+			case '=': {
+				if (block_type == BT_EXPR) {
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					token_expect_symbol(list, '}');
+					for (var i=length(gen->GEN_var_stack)-1; i>=stack_pos; i--) {
+						hash_remove(gen->GEN_vars, gen->GEN_var_stack[i]);
+					}
+					array_set_length(gen->GEN_var_stack, stack_pos);
+					return token_get_pos(list);
+				}
+				break;
+			}
+
+			case KW_VAR: {
+				if (block_type == BT_SINGLE) {
+					return 0, error({script_line(token_get_line(list)), ": declaring variables is not allowed in single statement"});
+				}
+				if (token_next(list) && token_is_symbol(list, '(')) {
+					token_expect_type(list, TOK_IDENT);
+
+					var var1 = token_get_value(list);
+					if (hash_contains(gen->GEN_vars, var1)) {
+						return 0, error({script_line(token_get_line(list)), ": duplicate variable"});
+					}
+					var var1_type = -1;
+					token_expect_next(list);
+					if (token_is_symbol(list, ':')) {
+						copy_func_tokens(gen, list);
+						parse_type(&var1_type, list);
+						token_expect_next(list);
+						set_func_copy_start(gen, list);
+					}
+					token_back(list);
+
+					token_expect_symbol(list, ',');
+					token_expect_type(list, TOK_IDENT);
+
+					var var2 = token_get_value(list);
+					if (hash_contains(gen->GEN_vars, var2)) {
+						return 0, error({script_line(token_get_line(list)), ": duplicate variable"});
+					}
+					var var2_type = TYPE_DYNAMIC;
+					token_expect_next(list);
+					if (token_is_symbol(list, ':')) {
+						copy_func_tokens(gen, list);
+						parse_type(&var2_type, list);
+						token_expect_next(list);
+						set_func_copy_start(gen, list);
+					}
+					token_back(list);
+
+					token_expect_symbol(list, ')');
+					token_expect_symbol(list, '=');
+					var start_pos = token_get_pos(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					append_type_conv(gen, token_list(list), start_pos, var1_type, gen->GEN_ret_type);
+					if (var1_type == -1) {
+						var1_type = gen->GEN_ret_type;
+					}
+					token_expect_symbol(list, ';');
+
+					gen->GEN_vars{var1} = var1_type;
+					gen->GEN_vars{var2} = var2_type;
+					gen->GEN_var_stack[] = var1;
+					gen->GEN_var_stack[] = var2;
+					continue;
+				}
+				else {
+					token_back(list);
+				}
+				for (;;) {
+					token_expect_type(list, TOK_IDENT);
+					var var_name = token_get_value(list);
+
+					var var_type = -1;
+					token_expect_next(list);
+					if (token_is_symbol(list, ':')) {
+						copy_func_tokens(gen, list);
+						parse_type(&var_type, list);
+						token_expect_next(list);
+						set_func_copy_start(gen, list);
+					}
+					if (token_is_symbol(list, '=')) {
+						//log("---");
+						var start_pos = token_get_pos(list);
+						token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+						append_type_conv(gen, token_list(list), start_pos, var_type, gen->GEN_ret_type);
+						token_expect_next(list);
+						if (var_type == -1) {
+							var_type = gen->GEN_ret_type;
+						}
+					}
+					if (var_type == -1) {
+						var_type = TYPE_DYNAMIC;
+					}
+
+					if (hash_contains(gen->GEN_vars, var_name)) {
+						return 0, error({script_line(token_get_line(list)), ": duplicate variable"});
+					}
+					gen->GEN_vars{var_name} = var_type;
+					gen->GEN_var_stack[] = var_name;
+
+					if (token_is_symbol(list, ',')) {
+						continue;
+					}
+					token_back(list);
+					break;
+				}
+
+				token_expect_symbol(list, ';');
+				continue;
+			}
+
+			case KW_RETURN: {
+				var ret_type = gen->GEN_cur_func->FUNC_return_type;
+				token_expect_next(list);
+				if (token_is_symbol(list, ';')) {
+					if (gen->GEN_cur_func->FUNC_flags & FUNC_FLAG_CONSTRUCTOR) {
+						copy_func_tokens(gen, list);
+						tokens_parse(gen->GEN_func_tokens, list_src, "this", token_get_line(list));
+						set_func_copy_start(gen, list);
+						continue;
+					}
+					if (ret_type != TYPE_DYNAMIC && ret_type != TYPE_VOID) {
+						return 0, error({script_line(token_get_line(list)), ": function requires value to return"});
+					}
+					continue;
+				}
+				if (gen->GEN_cur_func->FUNC_flags & FUNC_FLAG_CONSTRUCTOR) {
+					return 0, error({script_line(token_get_line(list)), ": cannot return values in constructors"});
+				}
+				if (ret_type == TYPE_VOID) {
+					return 0, error({script_line(token_get_line(list)), ": cannot return value in void function"});
+				}
+				token_back(list);
+				var start_pos = token_get_pos(list);
+				token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				append_type_conv(gen, token_list(list), start_pos, ret_type, gen->GEN_ret_type);
+				token_expect_next(list);
+				if (token_is_symbol(list, ',')) {
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				}
+				else {
+					token_back(list);
+				}
+				token_expect_symbol(list, ';');
+				continue;
+			}
+
+			case KW_IF: {
+				token_expect_symbol(list, '(');
+				var start_pos = token_get_pos(list);
+				token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				if (gen->GEN_ret_type == TYPE_INTEGER || gen->GEN_ret_type == TYPE_FLOAT) {
+					return 0, error({script_line(token_get_line(list)), ": can't use integer or float in condition"});
+				}
+				token_expect_symbol(list, ')');
+				token_expect_next(list);
+				if (token_is_symbol(list, '{')) {
+					token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+					token_expect_next(list);
+					if (token_get_type(list) == KW_ELSE) {
+						token_expect_next(list);
+						if (token_is_symbol(list, '{')) {
+							token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+						}
+						else {
+							token_back(list);
+							token_set_pos(list, parse_block(gen, token_list(list), BT_SINGLE));
+						}
+					}
+					else {
+						token_back(list);
+					}
+				}
+				else {
+					token_back(list);
+					token_set_pos(list, parse_block(gen, token_list(list), BT_SINGLE));
+				}
+				continue;
+			}
+
+			case KW_WHILE: {
+				token_expect_symbol(list, '(');
+				var start_pos = token_get_pos(list);
+				token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				if (gen->GEN_ret_type == TYPE_INTEGER || gen->GEN_ret_type == TYPE_FLOAT) {
+					return 0, error({script_line(token_get_line(list)), ": can't use integer or float in condition"});
+				}
+				token_expect_symbol(list, ')');
+				token_expect_next(list);
+				if (token_is_symbol(list, '{')) {
+					token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+				}
+				else {
+					token_back(list);
+					token_set_pos(list, parse_block(gen, token_list(list), BT_SINGLE));
+				}
+				continue;
+			}
+
+			case KW_DO: {
+				token_expect_symbol(list, '{');
+				token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+				token_expect_type(list, KW_WHILE);
+				token_expect_symbol(list, '(');
+				var start_pos = token_get_pos(list);
+				token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				if (gen->GEN_ret_type == TYPE_INTEGER || gen->GEN_ret_type == TYPE_FLOAT) {
+					return 0, error({script_line(token_get_line(list)), ": can't use integer or float in condition"});
+				}
+				token_expect_symbol(list, ')');
+				token_expect_symbol(list, ';');
+				continue;
+			}
+
+			case KW_FOR: {
+				var for_stack_pos = length(gen->GEN_var_stack);
+				token_expect_symbol(list, '(');
+				token_expect_next(list);
+				if (!token_is_symbol(list, ';')) {
+					if (token_get_type(list) == KW_VAR) {
+						for (;;) {
+							token_expect_type(list, TOK_IDENT);
+							var var_name = token_get_value(list);
+
+							var var_type = -1;
+							token_expect_next(list);
+							if (token_is_symbol(list, ':')) {
+								copy_func_tokens(gen, list);
+								parse_type(&var_type, list);
+								token_expect_next(list);
+								set_func_copy_start(gen, list);
+							}
+							if (token_is_symbol(list, '=')) {
+								//log("---");
+								var start_pos = token_get_pos(list);
+								token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+								append_type_conv(gen, token_list(list), start_pos, var_type, gen->GEN_ret_type);
+								token_expect_next(list);
+								if (var_type == -1) {
+									var_type = gen->GEN_ret_type;
+								}
+							}
+							if (var_type == -1) {
+								var_type = TYPE_DYNAMIC;
+							}
+
+							if (hash_contains(gen->GEN_vars, var_name)) {
+								return 0, error({script_line(token_get_line(list)), ": duplicate variable"});
+							}
+							gen->GEN_vars{var_name} = var_type;
+							gen->GEN_var_stack[] = var_name;
+
+							if (token_is_symbol(list, ',')) {
+								continue;
+							}
+							token_back(list);
+							break;
+						}
+					}
+					else {
+						token_back(list);
+						for (;;) {
+							token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+							token_expect_next(list);
+							if (token_is_symbol(list, ',')) continue;
+							token_back(list);
+							break;
+						}
+					}
+				}
+				else {
+					token_back(list);
+				}
+				token_expect_symbol(list, ';');
+
+				token_expect_next(list);
+				if (!token_is_symbol(list, ';')) {
+					token_back(list);
+					var start_pos = token_get_pos(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					if (gen->GEN_ret_type == TYPE_INTEGER || gen->GEN_ret_type == TYPE_FLOAT) {
+						return 0, error({script_line(token_get_line(list)), ": can't use integer or float in condition"});
+					}
+				}
+				else {
+					token_back(list);
+				}
+				token_expect_symbol(list, ';');
+
+				token_expect_next(list);
+				if (!token_is_symbol(list, ')')) {
+					token_back(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				}
+				else {
+					token_back(list);
+				}
+
+				token_expect_symbol(list, ')');
+				token_expect_next(list);
+				if (token_is_symbol(list, '{')) {
+					token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+				}
+				else {
+					token_back(list);
+					token_set_pos(list, parse_block(gen, token_list(list), BT_SINGLE));
+				}
+
+				for (var i=length(gen->GEN_var_stack)-1; i>=for_stack_pos; i--) {
+					hash_remove(gen->GEN_vars, gen->GEN_var_stack[i]);
+				}
+				array_set_length(gen->GEN_var_stack, for_stack_pos);
+				continue;
+			}
+
+			case KW_SWITCH: {
+				token_expect_symbol(list, '(');
+				var start_pos = token_get_pos(list);
+				token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				append_type_conv(gen, token_list(list), start_pos, TYPE_INTEGER, gen->GEN_ret_type);
+				token_expect_symbol(list, ')');
+				token_expect_symbol(list, '{');
+
+				var end = false;
+				while (!end) {
+					token_expect_next(list);
+					switch (token_get_type(list)) {
+						case KW_CASE: {
+							// TODO: add support for class constants
+							do {
+								token_expect_next(list); // constant
+								var name = token_get_value(list);
+								token_expect_next(list);
+								if (token_is_symbol(list, ':') && gen->GEN_import_aliases && hash_contains(gen->GEN_import_aliases, name)) {
+									token_expect_next(list);
+									token_expect_next(list);
+								}
+								if (token_get_type(list) == '..') {
+									token_expect_next(list); // constant
+									name = token_get_value(list);
+									token_expect_next(list);
+									if (token_is_symbol(list, ':') && gen->GEN_import_aliases && hash_contains(gen->GEN_import_aliases, name)) {
+										token_expect_next(list);
+										token_expect_next(list);
+									}
+								}
+							}
+							while (token_is_symbol(list, ','));
+							token_back(list);
+							token_expect_symbol(list, ':');
+							break;
+						}
+
+						case KW_DEFAULT: {
+							token_expect_symbol(list, ':');
+							break;
+						}
+
+						default: {
+							if (token_is_symbol(list, '}')) {
+								end = true;
+								break;
+							}
+							if (token_is_symbol(list, '{')) {
+								token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+							}
+							else {
+								token_back(list);
+								token_set_pos(list, parse_block(gen, token_list(list), BT_SINGLE));
+							}
+							break;
+						}
+					}
+				}
+				continue;
+			}
+
+			case KW_BREAK, KW_CONTINUE: {
+				token_expect_symbol(list, ';');
+				continue;
+			}
+
+			case TOK_IDENT: {
+				if (token_has_value(list, "throw")) {
+					var line = token_get_line(list);
+					copy_func_tokens(gen, list);
+					token_expect_next(list);
+					set_func_copy_start(gen, list);
+
+					append_source(list_src, "return0,", &src_off);
+					append_token(gen->GEN_func_tokens, KW_RETURN, src_off, 6, line);
+					append_token(gen->GEN_func_tokens, TOK_NUMBER, src_off+6, 1, line);
+					append_token(gen->GEN_func_tokens, ',', src_off+7, 1, line);
+
+					token_back(list);
+					gen->GEN_func_offsets_replacements{token_get_pos(list)} = -(length(gen->GEN_func_tokens)-TOK_SIZE);
+					var expr_start_pos = token_get_pos(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					append_type_conv(gen, token_list(list), expr_start_pos, TYPE_DYNAMIC, gen->GEN_ret_type);
+				
+					token_expect_symbol(list, ';');
+					continue;
+				}
+				if (token_has_value(list, "foreach")) {
+					var line = token_get_line(list);
+					copy_func_tokens(gen, list);
+					token_expect_symbol(list, '(');
+					token_expect_type(list, KW_VAR);
+
+					token_expect_type(list, TOK_IDENT);
+					var var1 = token_get_value(list), var2 = null;
+					var type1 = -1, type2 = -1;
+					token_expect_next(list);
+					if (token_is_symbol(list, ':')) {
+						parse_type(&type1, list);
+						token_expect_next(list);
+					}
+
+					if (token_is_symbol(list, ',')) {
+						token_expect_type(list, TOK_IDENT);
+						var2 = token_get_value(list);
+
+						token_expect_next(list);
+						if (token_is_symbol(list, ':')) {
+							parse_type(&type2, list);
+						}
+						else {
+							token_back(list);
+						}
+					}
+					else {
+						token_back(list);
+					}
+
+					token_expect_type(list, TOK_IDENT);
+					if (!token_has_value(list, "in")) {
+						return 0, error({script_line(line), ": expected 'in'"});
+					}
+
+					var iter_var = {"__classes_tmp_", tmp_cnt++};
+					var arr_var = {"__classes_tmp_", tmp_cnt++};
+
+					tokens_parse(gen->GEN_func_tokens, list_src, {"for (var ", iter_var, "=0, ", arr_var, "="}, line);
+
+					gen->GEN_func_offsets_replacements{token_get_pos(list)} = -(length(gen->GEN_func_tokens)-TOK_SIZE);
+					token_next_nocheck(list);
+					set_func_copy_start(gen, list);
+					token_back(list);
+
+					var expr_start_pos = token_get_pos(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					if (gen->GEN_ret_type != TYPE_DYNAMIC) {
+						var arr_type = get_type_array_or_hash(gen->GEN_ret_type);
+						if (var2) {
+							if (!arr_type || arr_type[0] != EXT_TYPE_HASH) {
+								return 0, error({script_line(line), ": must be a hash table"});
+							}
+							if (type1 == -1) type1 = arr_type->HASH_index_type;
+							if (type2 == -1) type2 = arr_type->HASH_base_type;
+						}
+						else {
+							if (!arr_type || arr_type[0] != EXT_TYPE_ARRAY) {
+								return 0, error({script_line(line), ": must be an array"});
+							}
+							if (type1 == -1) type1 = arr_type->ARRAY_base_type;
+						}
+					}
+					else {
+						if (type1 == -1) type1 = TYPE_DYNAMIC;
+						if (type2 == -1) type2 = TYPE_DYNAMIC;
+					}
+					append_type_conv(gen, token_list(list), expr_start_pos, TYPE_DYNAMIC, gen->GEN_ret_type);
+
+					token_expect_symbol(list, ')');
+					copy_func_tokens(gen, list);
+					token_expect_symbol(list, '{');
+
+					if (var2) {
+						tokens_parse(gen->GEN_func_tokens, list_src, {"; ", iter_var, "<length(", arr_var, "); ", iter_var, "++) { var (", var1, ", ", var2, ") = hash_entry(", arr_var, ", ", iter_var, ");"}, line);
+					}
+					else {
+						tokens_parse(gen->GEN_func_tokens, list_src, {", ", var1, "; ", iter_var, "<length(", arr_var, "); ", iter_var, "++) { ", var1, " = ", arr_var, "[", iter_var, "];"}, line);
+					}
+
+					gen->GEN_func_offsets_replacements{token_get_pos(list)} = -(length(gen->GEN_func_tokens)-TOK_SIZE);
+					token_next_nocheck(list);
+					set_func_copy_start(gen, list);
+					token_back(list);
+
+					var for_stack_pos = length(gen->GEN_var_stack);
+
+					if (hash_contains(gen->GEN_vars, var1)) {
+						return 0, error({script_line(line), ": duplicate variable"});
+					}
+					gen->GEN_vars{var1} = type1;
+					gen->GEN_var_stack[] = var1;
+
+					if (var2) {
+						if (hash_contains(gen->GEN_vars, var2)) {
+							return 0, error({script_line(line), ": duplicate variable"});
+						}
+						gen->GEN_vars{var2} = type2;
+						gen->GEN_var_stack[] = var2;
+					}
+
+					token_set_pos(list, parse_block(gen, token_list(list), BT_NORMAL));
+
+					for (var i=length(gen->GEN_var_stack)-1; i>=for_stack_pos; i--) {
+						hash_remove(gen->GEN_vars, gen->GEN_var_stack[i]);
+					}
+					array_set_length(gen->GEN_var_stack, for_stack_pos);
+					continue;
+				}
+				break;
+			}
+		}
+
+		token_back(list);
+		token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+		token_expect_symbol(list, ';');
+		//return 0, error({script_line(token_get_line(list)), ": unexpected token"});
+	}
+
+	token_back(list);
+	return 0, error({script_line(token_get_line(list)), ": unexpected EOF"});
+}
+
+macro @expression_unary_detect()
+{
+	switch (token_get_type(list)) {
+		case '~', '!', '+', '-':
+			token_expect_next(list);
+			continue;
+
+		case '++', '--':
+			token_expect_next(list);
+			continue;
+	}
+}
+
+macro @expression_unary_process()
+{
+	switch (list_tokens[unary_off+TOK_type]) {
+		case '!':
+			if (type == TYPE_INTEGER || type == TYPE_FLOAT) {
+				return 0, error({script_line(token_get_line(list)), ": can't use integer or float in logical negation"});
+			}
+			type = TYPE_BOOLEAN;
+			break;
+		
+		case '~':
+			if (type != TYPE_DYNAMIC && type != TYPE_INTEGER) {
+				return 0, error({script_line(token_get_line(list)), ": bitwise negation is supported only for integers"});
+			}
+			type = TYPE_INTEGER;
+			break;
+			
+		case '+':
+			if (type == TYPE_FLOAT) {
+				token_back(list);
+				copy_func_tokens(gen, list);
+				token_next_nocheck(list);
+				set_func_copy_start(gen, list);
+				break;
+			}
+			if (type != TYPE_DYNAMIC && type != TYPE_INTEGER) {
+				return 0, error({script_line(token_get_line(list)), ": unary plus is supported only for integers and floats"});
+			}
+			type = TYPE_INTEGER;
+			break;
+
+		case '-':
+			if (type == TYPE_FLOAT) {
+				token_next_nocheck(list);
+				copy_func_tokens(gen, list);
+				token_back(list);
+				wrap_float_unary_op(gen, token_list(list), unary_off - TOK_SIZE);
+				break;
+			}
+			if (type != TYPE_DYNAMIC && type != TYPE_INTEGER) {
+				return 0, error({script_line(token_get_line(list)), ": unary minus is supported only for integers and floats"});
+			}
+			type = TYPE_INTEGER;
+			break;
+		
+		case '++', '--':
+			if (type != TYPE_DYNAMIC && type != TYPE_INTEGER) {
+				return 0, error({script_line(token_get_line(list)), ": pre increment/decrement is supported only for integers"});
+			}
+			type = TYPE_INTEGER;
+			break;
+	}
+}
+
+macro @expression_primary()
+{
+	switch (token_get_type(list)) {
+		case '(': {
+			token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+			type = gen->GEN_ret_type;
+			token_expect_symbol(list, ')');
+			break;
+		}
+
+		case '[': {
+			token_expect_next(list);
+			if (token_is_symbol(list, ']')) {
+				type = TYPE_DYNAMIC;
+				break;
+			}
+			else {
+				token_back(list);
+			}
+			for (;;) {
+				token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				token_expect_next(list);
+				if (token_is_symbol(list, ',')) continue;
+				break;
+			}
+			token_back(list);
+			token_expect_symbol(list, ']');
+			type = TYPE_DYNAMIC;
+			break;
+		}
+
+		case '{': {
+			token_expect_next(list);
+			if (token_is_symbol(list, '}')) {
+				type = TYPE_DYNAMIC;
+				break;
+			}
+			if (token_is_symbol(list, '=')) {
+				token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+				type = gen->GEN_ret_type;
+				token_expect_symbol(list, '}');
+				break;
+			}
+			token_back(list);
+			var pos = token_get_pos(list);
+			var ext_type = -1, level = 0;
+			while (token_next(list)) {
+				switch (token_get_type(list)) {
+					case '(':
+					case '{':
+					case '[':
+						level++;
+						continue;
+
+					case ')':
+					case '}':
+					case ']':
+						if (--level < 0) break;
+						if (level == 0 && token_get_type(list) == '}') {
+							if (token_next(list) && token_is_symbol(list, '=')) {
+								ext_type = ET_BLOCK;
+								break;
+							}
+							else {
+								token_back(list);
+							}
+						}
+						continue;
+
+					case '+':
+					case '-':
+					case '*':
+					case '/':
+					case '<':
+					case '>':
+						if (level == 0 && ext_type == -1) {
+							ext_type = ET_FLOAT;
+						}
+						continue;
+
+					case ':':
+						if (level == 0 && ext_type == -1) {
+							ext_type = ET_HASH;
+						}
+						continue;
+
+					case ',':
+						if (level == 0 && (ext_type == -1 || ext_type == ET_FLOAT)) {
+							ext_type = ET_STRING;
+						}
+						continue;
+
+					case ';':
+						if (level == 0) {
+							if (token_next(list) && token_is_symbol(list, '=')) {
+								ext_type = ET_BLOCK;
+								break;
+							}
+							else {
+								token_back(list);
+							}
+						}
+						continue;
+	
+					case '<=':
+					case '>=':
+					case '==':
+					case '!=':
+						if (level == 0 && ext_type == -1) {
+							ext_type = ET_FLOAT;
+						}
+						continue;
+	
+					case TOK_NUMBER:
+					case TOK_FLOAT_NUMBER:
+						if (level == 0 && token_get_symbol1(list) == '-' && ext_type == -1) {
+							ext_type = ET_FLOAT;
+						}
+						continue;
+
+					default:
+						continue;
+				}
+				break;
+			}
+			if (ext_type == -1) {
+				ext_type = ET_STRING;
+			}
+			token_set_pos(list, pos);
+			if (ext_type == ET_BLOCK) {
+				token_set_pos(list, parse_block(gen, token_list(list), BT_EXPR));
+				type = gen->GEN_ret_type;
+				break;
+			}
+			if (ext_type == ET_FLOAT) {
+				var float_op = -1;
+				for (;;) {
+					token_set_pos(list, parse_primary_expression(gen, token_list(list)));
+					token_expect_next(list);
+					var fop = -1;
+					var tok_type = token_get_type(list);
+					if (tok_type >= ' ') {
+						if (tok_type == '}' && float_op != -1) break;
+						switch (tok_type) {
+							case '+', '-': fop = FO_ADD_SUB; break;
+							case '*', '/': fop = FO_MUL_DIV; break;
+						}
+					}
+					else if ((tok_type == TOK_NUMBER || tok_type == TOK_FLOAT_NUMBER) && token_get_symbol1(list) == '-') {
+						fop = FO_ADD_SUB;
+						token_back(list);
+					}
+					if (fop == -1 || (float_op != -1 && fop != float_op)) {
+						return 0, error({script_line(token_get_line(list)), ": expected float operator"});
+					}
+					float_op = fop;
+				}
+				type = TYPE_FLOAT;
+				break;
+			}
+			if (ext_type == ET_HASH) {
+				for (;;) {
+					token_expect_next(list);
+					if (token_is_symbol(list, '}')) break;
+					token_back(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					token_expect_symbol(list, ':');
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					token_expect_next(list);
+					if (token_is_symbol(list, ',')) continue;
+					token_back(list);
+					token_expect_symbol(list, '}');
+					break;
+				}
+				type = TYPE_DYNAMIC;
+				break;
+			}
+			if (ext_type == ET_STRING) {
+				for (;;) {
+					token_expect_next(list);
+					if (token_is_symbol(list, '}')) break;
+					token_back(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					token_expect_next(list);
+					if (token_is_symbol(list, ',')) continue;
+					token_back(list);
+					token_expect_symbol(list, '}');
+					break;
+				}
+				type = TYPE_STRING;
+				break;
+			}
+			return 0, error({script_line(token_get_line(list)), ": internal error: invalid extended operator"});
+		}
+
+		case '@': {
+			token_expect_type(list, TOK_IDENT);
+			token_expect_symbol(list, '(');
+			token_expect_next(list);
+			if (!token_is_symbol(list, ')')) {
+				token_back(list);
+				for (;;) {
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					token_expect_next(list);
+					if (token_is_symbol(list, ',')) continue;
+					token_back(list);
+					break;
+				}
+				token_expect_symbol(list, ')');
+			}
+			type = TYPE_DYNAMIC;
+			break;
+		}
+
+		case TOK_NUMBER, TOK_HEX_NUMBER, TOK_CHAR:
+			type = TYPE_INTEGER;
+			break;
+
+		case TOK_FLOAT_NUMBER:
+			type = TYPE_FLOAT;
+			break;
+
+		case TOK_STRING:
+			type = TYPE_STRING;
+			break;
+
+		case TOK_FUNC_REF:
+			type = TYPE_DYNAMIC;
+			break;
+
+		case TOK_IDENT: {
+			var var_name = token_get_value(list);
+			if (var_name == "new") {
+				var line = token_get_line(list);
+				copy_func_tokens(gen, list);
+				token_expect_type(list, TOK_IDENT);
+				var class_name = token_get_value(list);
+				var class = find_class(gen, class_name);
+				if (!class) {
+					return 0, error({script_line(token_get_line(list)), ": unknown class ", class_name});
+				}
+				if (class !== hash_get(gen->GEN_classes, class->CLASS_name, null)) {
+					return 0, error({script_line(token_get_line(list)), ": can't use new on class ", class_name, " from other script"});
+				}
+				token_expect_next(list);
+				var extend = false;
+				if (token_is_symbol(list, ':')) {
+					extend = true;
+					if (!class->CLASS_parent) {
+						return 0, error({script_line(token_get_line(list)), ": class ", class_name, " has no parent"});
+					}
+				}
+				else {
+					token_back(list);
+				}
+				token_next_nocheck(list);
+				set_func_copy_start(gen, list);
+				token_back(list);
+
+				if (extend) {
+					if (class->CLASS_virtual) {
+						var name = {"vfunc__", class->CLASS_method_prefix, "_object_extend"};
+						append_source(list_src, name, &src_off);
+						append_source(list_src, "()", &src_off2);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off, length(name), line);
+
+						append_token(gen->GEN_func_tokens, '(', src_off2, 1, line);
+
+						var expr_start_pos = token_get_pos(list);
+						token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+						append_type_conv(gen, token_list(list), expr_start_pos, class->CLASS_parent, gen->GEN_ret_type);
+
+						token_next_nocheck(list);
+						copy_func_tokens(gen, list);
+						token_back(list);
+
+						append_token(gen->GEN_func_tokens, ')', src_off2+1, 1, line);
+					}
+					else {
+						append_source(list_src, "object_extend(,)", &src_off);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off, 13, line);
+						append_token(gen->GEN_func_tokens, '(', src_off+13, 1, line);
+
+						var expr_start_pos = token_get_pos(list);
+						token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+						append_type_conv(gen, token_list(list), expr_start_pos, class->CLASS_parent, gen->GEN_ret_type);
+
+						token_next_nocheck(list);
+						copy_func_tokens(gen, list);
+						token_back(list);
+
+						append_token(gen->GEN_func_tokens, ',', src_off+14, 1, line);
+
+						var size_const = {class->CLASS_compat_name, "_SIZE"};
+						append_source(list_src, size_const, &src_off2);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off2, length(size_const), line);
+
+						append_token(gen->GEN_func_tokens, ')', src_off+15, 1, line);
+					}
+				}
+				else {
+					if (class->CLASS_virtual) {
+						var name = {"vfunc__", class->CLASS_method_prefix, "_object_create"};
+						append_source(list_src, name, &src_off);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off, length(name), line);
+
+						append_source(list_src, "()", &src_off2);
+						append_token(gen->GEN_func_tokens, '(', src_off2, 1, line);
+						append_token(gen->GEN_func_tokens, ')', src_off2+1, 1, line);
+					}
+					else {
+						append_source(list_src, "object_create()", &src_off);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off, 13, line);
+						append_token(gen->GEN_func_tokens, '(', src_off+13, 1, line);
+
+						var size_const = {class->CLASS_compat_name, "_SIZE"};
+						append_source(list_src, size_const, &src_off2);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off2, length(size_const), line);
+
+						append_token(gen->GEN_func_tokens, ')', src_off+14, 1, line);
+					}
+				}
+				
+				type = class;
+				break;
+			}
+			else if (var_name == "super") {
+				var line = token_get_line(list);
+				var class = gen->GEN_cur_class;
+				if (!class) {
+					return 0, error({script_line(token_get_line(list)), ": must be used in class"});
+				}
+				if (gen->GEN_cur_func->FUNC_flags & FUNC_FLAG_STATIC) {
+					return 0, error({script_line(token_get_line(list)), ": must be used in instance method"});
+				}
+				token_expect_symbol(list, '.');
+				token_expect_type(list, TOK_IDENT);
+				var func_name = token_get_value(list);
+
+				token_back(list);
+				token_back(list);
+				copy_func_tokens(gen, list);
+				token_next_nocheck(list);
+				token_next_nocheck(list);
+
+				token_expect_symbol(list, '(');
+				set_func_copy_start(gen, list);
+				var params_off = token_get_pos(list);
+				token_expect_next(list);
+
+				var num_params = 0;
+				if (token_is_symbol(list, ')')) {
+					token_back(list);
+				}
+				else {
+					token_back(list);
+					for (;;) {
+						num_params++;
+						token_expect_expression(list);
+						token_expect_next(list);
+						if (token_is_symbol(list, ',')) continue;
+						token_back(list);
+						break;
+					}
+				}
+				token_expect_symbol(list, ')');
+				
+				tokens_parse(gen->GEN_func_tokens, list_src, {"this->", gen->GEN_cur_class->CLASS_compat_name, "__super__", func_name, "__", num_params+1}, line);
+
+				var name = {func_name, "#", num_params+1};
+				var func = null;
+				for (;;) {
+					class = class->CLASS_parent;
+					if (!class) {
+						return 0, error({script_line(token_get_line(list)), ": virtual function ", func_name, " not found in super classes"});
+					}
+
+					func = hash_get(class->CLASS_functions, name, null);
+					if (func && (func->FUNC_flags & (FUNC_FLAG_VIRTUAL | FUNC_FLAG_OVERRIDE)) == FUNC_FLAG_VIRTUAL) {
+						break;
+					}
+				}
+
+				token_set_pos(list, params_off);
+				for (var i=0; i<num_params; i++) {
+					if (i > 0) {
+						token_expect_symbol(list, ',');
+					}
+					var (param_name, param_type) = hash_entry(func->FUNC_params, i+1);
+					var param_start_pos = token_get_pos(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					append_type_conv(gen, token_list(list), param_start_pos, param_type, gen->GEN_ret_type);
+				}
+				token_expect_symbol(list, ')');
+
+				copy_func_tokens(gen, list);
+				if (num_params > 0) {
+					append_source(list_src, "this,", &src_off);
+					insert_func_tokens(gen, list, params_off, 2, &func_tokens, &func_pos);
+					insert_token(func_tokens, func_pos, TOK_IDENT, src_off, 4, line);
+					insert_token(func_tokens, func_pos, ',', src_off+4, 1, line);
+				}
+				else {
+					append_source(list_src, "this", &src_off);
+					insert_func_tokens(gen, list, params_off, 1, &func_tokens, &func_pos);
+					insert_token(func_tokens, func_pos, TOK_IDENT, src_off, 4, line);
+				}
+
+				type = func->FUNC_return_type;
+				break;
+			}
+			if (token_next(list)) {
+				if (token_is_symbol(list, ':')) {
+					if (token_next(list)) {
+						if (token_is_symbol(list, ':')) {
+							token_expect_next(list);
+							if (token_get_type(list) == TOK_FUNC_REF) {
+								token_back(list);
+								token_back(list);
+								token_back(list);
+								var cls_name = token_get_value(list);
+								var class = find_class(gen, cls_name);
+								if (!class) {
+									return 0, error({script_line(token_get_line(list)), ": unknown class ", cls_name});
+								}
+								copy_func_tokens(gen, list);
+								token_next_nocheck(list);
+								token_next_nocheck(list);
+								token_next_nocheck(list);
+								set_func_copy_start(gen, list);
+								var func_name = token_get_value(list);
+								var func = hash_get(class->CLASS_functions, func_name, null);
+								if (!func) {
+									return 0, error({script_line(token_get_line(list)), ": unknown method ", func_name, " in ", cls_name});
+								}
+								var func_ref = {class->CLASS_method_prefix, func_name};
+								append_source(list_src, func_ref, &src_off);
+								list_tokens[list_off+TOK_off] = src_off;
+								list_tokens[list_off+TOK_len] = length(func_ref);
+								type = TYPE_DYNAMIC;
+								break;
+							}
+							else if (token_get_type(list) != TOK_IDENT) {
+								return 0, error({script_line(token_get_line(list)), ": expected identifier or function reference"});
+							}
+							var line = token_get_line(list);
+							var func_name = token_get_value(list);
+							//log({"obj=", var_name, " func=", func_name});
+							var class = find_class(gen, var_name);
+							if (!class) {
+								return 0, error({script_line(token_get_line(list)), ": unknown class ", var_name});
+							}
+
+							token_back(list);
+							token_back(list);
+							token_back(list);
+							copy_func_tokens(gen, list);
+							token_next_nocheck(list);
+							token_next_nocheck(list);
+							token_next_nocheck(list);
+
+							token_expect_symbol(list, '(');
+							set_func_copy_start(gen, list);
+							var params_off = token_get_pos(list);
+							token_expect_next(list);
+							var num_params = 0;
+							if (token_is_symbol(list, ')')) {
+								token_back(list);
+							}
+							else {
+								token_back(list);
+								for (;;) {
+									num_params++;
+									token_expect_expression(list);
+									token_expect_next(list);
+									if (token_is_symbol(list, ',')) continue;
+									token_back(list);
+									break;
+								}
+							}
+							token_expect_symbol(list, ')');
+
+							var name = {func_name, "#", num_params};
+							var func = hash_get(class->CLASS_functions, name, null);
+							if (func && (!(func->FUNC_flags & FUNC_FLAG_STATIC) || ((func->FUNC_flags & FUNC_FLAG_PRIVATE) && class !== hash_get(gen->GEN_classes, class->CLASS_name, null)))) {
+								func = null;
+							}
+							if (!func) {
+								return 0, error({script_line(line), ": static function ", name, " not found in class ", class->CLASS_name});
+							}
+
+							var full_name = {class->CLASS_method_prefix, func->FUNC_name};
+							append_source(list_src, full_name, &src_off);
+							append_token(gen->GEN_func_tokens, TOK_IDENT, src_off, length(full_name), line);
+
+							token_set_pos(list, params_off);
+							for (var i=0; i<num_params; i++) {
+								if (i > 0) {
+									token_expect_symbol(list, ',');
+								}
+								var (param_name, param_type) = hash_entry(func->FUNC_params, i);
+								var param_start_pos = token_get_pos(list);
+								token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+								append_type_conv(gen, token_list(list), param_start_pos, param_type, gen->GEN_ret_type);
+							}
+							token_expect_symbol(list, ')');
+
+							type = func->FUNC_return_type;
+							break;
+						}
+						else if (token_get_type(list) == TOK_IDENT || token_get_type(list) == TOK_FUNC_REF) {
+							token_back(list);
+							token_back(list);
+							var alias = token_get_value(list);
+							token_next_nocheck(list);
+							token_next_nocheck(list);
+							var ia = gen->GEN_import_aliases? hash_get(gen->GEN_import_aliases, alias, null) : null;
+							if (ia) {
+								var name = token_get_value(list);
+								var const_type = hash_get(ia->IMPORT_ALIAS_consts, name, -1);
+								if (const_type != -1) {
+									type = const_type;
+									break;
+								}
+								if (hash_contains(ia->IMPORT_ALIAS_locals, name)) {
+									type = TYPE_DYNAMIC;
+									break;
+								}
+								if (hash_contains(ia->IMPORT_ALIAS_funcs, name)) {
+									if (token_get_type(list) == TOK_FUNC_REF) {
+										type = TYPE_DYNAMIC;
+										break;
+									}
+									token_expect_symbol(list, '(');
+									token_expect_next(list);
+									if (!token_is_symbol(list, ')')) {
+										token_back(list);
+										for (;;) {
+											token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+											token_expect_next(list);
+											if (token_is_symbol(list, ',')) continue;
+											token_back(list);
+											break;
+										}
+										token_expect_symbol(list, ')');
+									}
+									type = TYPE_DYNAMIC;
+									break;
+								}
+								return 0, error({script_line(token_get_line(list)), ": constant, local variable or function not found in script with import alias '", alias, "'"});
+							}
+							else {
+								token_back(list);
+								token_back(list);
+							}
+						}
+						else {
+							token_back(list);
+							token_back(list);
+						}
+					}
+					else {
+						token_back(list);
+						token_back(list);
+					}
+				}
+				else {
+					token_back(list);
+				}
+			}
+			else {
+				token_back(list);
+			}
+			type = hash_get(gen->GEN_consts, var_name, -1);
+			if (type == -1) {
+				switch (length(var_name)) {
+					case 4:
+						if (var_name == "null") { type = TYPE_DYNAMIC; break; }
+						if (var_name == "true") { type = TYPE_BOOLEAN; break; }
+						break;
+
+					case 5:
+						if (var_name == "false") { type = TYPE_BOOLEAN; break; }
+						break;
+				}
+			}
+			if (type == -1) {
+				type = hash_get(gen->GEN_vars, var_name, -1);
+			}
+			if (type == -1) {
+				var class = gen->GEN_cur_class;
+				while (class) {
+					var field = hash_get(class->CLASS_fields, var_name, null);
+					if (field && (!field->FIELD_private || class === hash_get(gen->GEN_classes, class->CLASS_name, null))) {
+						if ((gen->GEN_cur_func->FUNC_flags & (FUNC_FLAG_STATIC | FUNC_FLAG_CONSTRUCTOR)) == FUNC_FLAG_STATIC) {
+							return 0, error({script_line(token_get_line(list)), ": can't reference instance fields"});
+						}
+						copy_func_tokens(gen, list);
+						var line = token_get_line(list);
+						append_source(list_src, {"this->", field->FIELD_compat_name}, &src_off);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off, 4, line);
+						append_token(gen->GEN_func_tokens, '->', src_off+4, 2, line);
+						append_token(gen->GEN_func_tokens, TOK_IDENT, src_off+6, length(field->FIELD_compat_name), line);
+						gen->GEN_func_offsets_replacements{token_get_pos(list)} = -(length(gen->GEN_func_tokens)+TOK_SIZE);
+						token_next(list);
+						set_func_copy_start(gen, list);
+						token_back(list);
+						type = field->FIELD_type;
+						break;
+					}
+					class = class->CLASS_parent;
+				}
+			}
+			if (type == -1 && gen->GEN_locals) {
+				var local = hash_get(gen->GEN_locals, var_name, null);
+				if (local) {
+					type = local->LOCAL_type;
+				}
+			}
+			if (type == -1) {
+				if (token_next(list)) {
+					if (token_is_symbol(list, '(')) {
+						token_back(list);
+						var line = token_get_line(list);
+						var func_name = token_get_value(list);
+						token_next_nocheck(list);
+						var params_off = token_get_pos(list);
+						token_expect_next(list);
+
+						var num_params = 0;
+						if (token_is_symbol(list, ')')) {
+							token_back(list);
+						}
+						else {
+							token_back(list);
+							for (;;) {
+								num_params++;
+								token_expect_expression(list);
+								token_expect_next(list);
+								if (token_is_symbol(list, ',')) continue;
+								token_back(list);
+								break;
+							}
+						}
+						token_expect_symbol(list, ')');
+
+						var name = {func_name, "#", num_params};
+						if (gen->GEN_cur_class) {
+							var class = gen->GEN_cur_class;
+							var func, orig_class = class;
+							var instance_name = {func_name, "#", num_params+1};
+
+							while (class) {
+								func = hash_get(class->CLASS_functions, instance_name, null);
+								if (func) {
+									if (!(func->FUNC_flags & FUNC_FLAG_STATIC) && !(func->FUNC_flags & FUNC_FLAG_OVERRIDE) && (!(func->FUNC_flags & FUNC_FLAG_PRIVATE) || class === hash_get(gen->GEN_classes, class->CLASS_name, null))) {
+										if ((gen->GEN_cur_func->FUNC_flags & (FUNC_FLAG_STATIC | FUNC_FLAG_CONSTRUCTOR)) == FUNC_FLAG_STATIC) {
+											return 0, error({script_line(token_get_line(list)), ": can't reference instance methods"});
+										}
+										break;
+									}
+									func = null;
+								}
+								class = class->CLASS_parent;
+							}
+							if (!func) {
+								class = orig_class;
+								while (class) {
+									func = hash_get(class->CLASS_functions, name, null);
+									if (func) {
+										if ((func->FUNC_flags & FUNC_FLAG_STATIC) && (!(func->FUNC_flags & FUNC_FLAG_PRIVATE) || class === hash_get(gen->GEN_classes, class->CLASS_name, null))) {
+											break;
+										}
+										func = null;
+									}
+									class = class->CLASS_parent;
+								}
+								if (!func) {
+									func = find_function(gen, name);
+								}
+							}
+							/*
+							if (!func) {
+								return 0, error({script_line(line), ": function ", name, " not found in class ", orig_class->CLASS_name});
+							}
+							*/
+
+							token_set_pos(list, params_off);
+							if (func) {
+								for (var i=0; i<num_params; i++) {
+									if (i > 0) {
+										token_expect_symbol(list, ',');
+									}
+									var (param_name, param_type) = hash_entry(func->FUNC_params, (func->FUNC_flags & FUNC_FLAG_STATIC)? i : i+1);
+									var param_start_pos = token_get_pos(list);
+									token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+									append_type_conv(gen, token_list(list), param_start_pos, param_type, gen->GEN_ret_type);
+								}
+							}
+							else {
+								var ctx = gen->GEN_custom_ctx;
+								var func_call_list = null, func_call_idx, func_types = null, call_start_pos;
+								if (ctx) {
+									var func_list = hash_get(ctx->CTX_function_calls, func_name, ctx->CTX_function_calls_any);
+									if (func_list) {
+										for (var i=0; i<length(func_list); i+=FUNC_CALL_SIZE) {
+											func_types = func_list[i+FUNC_CALL_get_types_func](func_list[i+FUNC_CALL_data], func_name, num_params, token_get_line(list));
+											if (func_types) {
+												if (length(func_types) != num_params+1) {
+													return 0, error({"improper number of function types returned by other token processor at ", script_line(token_get_line(list))});
+												}
+												token_next_nocheck(list);
+												copy_func_tokens(gen, list);
+												token_back(list);
+												call_start_pos = length(gen->GEN_func_tokens);
+												func_call_list = func_list;
+												func_call_idx = i;
+												break;
+											}
+										}
+									}
+								}
+								for (var i=0; i<num_params; i++) {
+									if (i > 0) {
+										token_expect_symbol(list, ',');
+									}
+									var param_start_pos = token_get_pos(list);
+									token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+									if (func_types) {
+										if (func_types[i+1] == TYPE_DYNAMIC) {
+											func_types[i+1] = gen->GEN_ret_type;
+										}
+										else {
+											append_type_conv(gen, token_list(list), param_start_pos, func_types[i+1], gen->GEN_ret_type);
+										}
+									}
+								}
+								if (func_types) {
+									token_expect_symbol(list, ')');
+									token_next_nocheck(list);
+									copy_func_tokens(gen, list);
+									token_back(list);
+									token_back(list);
+									var end_pos = func_call_list[func_call_idx+FUNC_CALL_adjust_call_func](func_call_list[func_call_idx+FUNC_CALL_data], func_name, func_types, gen->GEN_func_tokens, list_src, call_start_pos - TOK_SIZE*2, length(gen->GEN_func_tokens));
+									if (end_pos != length(gen->GEN_func_tokens)) {
+										return 0, error({"invalid end position returned by other token processor at ", script_line(token_get_line(list))});
+									}
+									type = func_types[0];
+								}
+							}
+							token_expect_symbol(list, ')');
+
+							token_next_nocheck(list);
+							copy_func_tokens(gen, list);
+							token_back(list);
+
+							if (func) {
+								if (class) {
+									var full_name = {class->CLASS_method_prefix, func->FUNC_name};
+									append_source(list_src, full_name, &src_off);
+									var search_off = list_tokens[params_off-TOK_SIZE+TOK_off];
+									var func_tokens = gen->GEN_func_tokens;
+									for (var idx=length(func_tokens)-TOK_SIZE; ; idx-=TOK_SIZE) {
+										if (func_tokens[idx+TOK_off] == search_off) {
+											func_tokens[idx+TOK_type] = TOK_IDENT;
+											func_tokens[idx+TOK_off] = src_off;
+											func_tokens[idx+TOK_len] = length(full_name);
+											break;
+										}
+									}
+								}
+
+								if (!(func->FUNC_flags & FUNC_FLAG_STATIC)) {
+									if (num_params > 0) {
+										append_source(list_src, "this,", &src2_off);
+										insert_func_tokens(gen, list, params_off, 2, &func_tokens2, &func_pos);
+										insert_token(func_tokens2, func_pos, TOK_IDENT, src2_off, 4, line);
+										insert_token(func_tokens2, func_pos, ',', src2_off+4, 1, line);
+									}
+									else {
+										append_source(list_src, "this", &src2_off);
+										insert_func_tokens(gen, list, params_off, 1, &func_tokens2, &func_pos);
+										insert_token(func_tokens2, func_pos, TOK_IDENT, src2_off, 4, line);
+									}
+								}
+
+								type = func->FUNC_return_type;
+							}
+						}
+						else {
+							var func = find_function(gen, name);
+							token_set_pos(list, params_off);
+							if (func) {
+								for (var i=0; i<num_params; i++) {
+									if (i > 0) {
+										token_expect_symbol(list, ',');
+									}
+									var (param_name, param_type) = hash_entry(func->FUNC_params, i);
+									var param_start_pos = token_get_pos(list);
+									token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+									append_type_conv(gen, token_list(list), param_start_pos, param_type, gen->GEN_ret_type);
+								}
+								type = func->FUNC_return_type;
+							}
+							else {
+								var ctx = gen->GEN_custom_ctx;
+								var func_call_list = null, func_call_idx, func_types = null, call_start_pos;
+								if (ctx) {
+									var func_list = hash_get(ctx->CTX_function_calls, func_name, ctx->CTX_function_calls_any);
+									if (func_list) {
+										for (var i=0; i<length(func_list); i+=FUNC_CALL_SIZE) {
+											func_types = func_list[i+FUNC_CALL_get_types_func](func_list[i+FUNC_CALL_data], func_name, num_params, token_get_line(list));
+											if (func_types) {
+												if (length(func_types) != num_params+1) {
+													return 0, error({"improper number of function types returned by other token processor at ", script_line(token_get_line(list))});
+												}
+												token_next_nocheck(list);
+												copy_func_tokens(gen, list);
+												token_back(list);
+												call_start_pos = length(gen->GEN_func_tokens);
+												func_call_list = func_list;
+												func_call_idx = i;
+												break;
+											}
+										}
+									}
+								}
+								for (var i=0; i<num_params; i++) {
+									if (i > 0) {
+										token_expect_symbol(list, ',');
+									}
+									var param_start_pos = token_get_pos(list);
+									token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+									if (func_types) {
+										if (func_types[i+1] == TYPE_DYNAMIC) {
+											func_types[i+1] = gen->GEN_ret_type;
+										}
+										else {
+											append_type_conv(gen, token_list(list), param_start_pos, func_types[i+1], gen->GEN_ret_type);
+										}
+									}
+								}
+								if (func_types) {
+									token_expect_symbol(list, ')');
+									token_next_nocheck(list);
+									copy_func_tokens(gen, list);
+									token_back(list);
+									token_back(list);
+									var end_pos = func_call_list[func_call_idx+FUNC_CALL_adjust_call_func](func_call_list[func_call_idx+FUNC_CALL_data], func_name, func_types, gen->GEN_func_tokens, list_src, call_start_pos - TOK_SIZE*2, length(gen->GEN_func_tokens));
+									if (end_pos != length(gen->GEN_func_tokens)) {
+										return 0, error({"invalid end position returned by other token processor at ", script_line(token_get_line(list))});
+									}
+									type = func_types[0];
+								}
+							}
+							token_expect_symbol(list, ')');
+						}
+					}
+					else {
+						token_back(list);
+					}
+				}
+			}
+			//log({"var ", var_name, " type=", type});
+			if (type == -1) {
+				type = TYPE_DYNAMIC;
+				//return 0, error({script_line(token_get_line(list)), ": unknown variable ", var_name});
+			}
+			break;
+		}
+	}
+}
+
+function @export_class(class)
+{
+	for (var i=0; i<length(class->CLASS_fields); i++) {
+		var (name, field) = hash_entry(class->CLASS_fields, i);
+		@fixide_add_completion(name);
+	}
+	for (var i=0; i<length(class->CLASS_functions); i++) {
+		var (name, func) = hash_entry(class->CLASS_functions, i);
+		@fixide_add_completion(name);
+	}
+}
+
+macro @expression_primary_suffix()
+{
+	switch (token_get_type(list)) {
+		case '.': {
+			var class = get_type_class(type);
+			if (!class) {
+				return 0, error({script_line(token_get_line(list)), ": must be class type"});
+			}
+			if (fixide) {
+				token_expect_next(list);
+				if (token_get_symbol1(list) == '$') {
+					export_class(class);
+				}
+			}
+			token_expect_type(list, TOK_IDENT);
+			var line = token_get_line(list);
+			var name = token_get_value(list);
+			//log({"name=", name, " type=", class->CLASS_name});
+			token_expect_next(list);
+			if (token_is_symbol(list, '(')) {
+				token_back(list);
+				token_back(list);
+				copy_func_tokens(gen, list);
+				token_next_nocheck(list);
+				token_next_nocheck(list);
+				var params_off = token_get_pos(list);
+				token_expect_next(list);
+				set_func_copy_start(gen, list);
+				
+				var num_params = 1;
+				if (token_is_symbol(list, ')')) {
+					token_back(list);
+				}
+				else {
+					token_back(list);
+					append_source(list_src, ",", &src_off);
+					append_token(gen->GEN_func_tokens, ',', src_off, 1, line);
+					for (;;) {
+						num_params++;
+						token_expect_expression(list);
+						token_expect_next(list);
+						if (token_is_symbol(list, ',')) continue;
+						token_back(list);
+						break;
+					}
+				}
+				token_expect_symbol(list, ')');
+
+				name = {name, "#", num_params};
+				var func, orig_class = class;
+				while (class) {
+					func = hash_get(class->CLASS_functions, name, null);
+					if (func) {
+						if (!(func->FUNC_flags & FUNC_FLAG_STATIC) && !(func->FUNC_flags & FUNC_FLAG_OVERRIDE) && (!(func->FUNC_flags & FUNC_FLAG_PRIVATE) || class === hash_get(gen->GEN_classes, class->CLASS_name, null))) {
+							break;
+						}
+						func = null;
+					}
+					class = class->CLASS_parent;
+				}
+				if (!func) {
+					return 0, error({script_line(line), ": function ", name, " not found in class ", orig_class->CLASS_name});
+				}
+
+				var real_name = {class->CLASS_method_prefix, func->FUNC_name};
+				append_source(list_src, {real_name, "("}, &src_off);
+				var adj_off = max(off, unary_off);
+				adj_off = hash_get(gen->GEN_func_offsets_replacements, adj_off, adj_off);
+				insert_func_tokens(gen, list, adj_off, 2, &func_tokens, &func_pos);
+				insert_token(func_tokens, func_pos, TOK_IDENT, src_off, length(real_name), line);
+				insert_token(func_tokens, func_pos, '(', src_off+length(real_name), 1, line);
+
+				var save_off = length(gen->GEN_func_tokens) - TOK_SIZE;
+				var save_val = gen->GEN_func_tokens[save_off+TOK_off];
+				gen->GEN_func_tokens[save_off+TOK_off] = list_tokens[params_off+TOK_off];
+
+				token_set_pos(list, params_off);
+				for (var i=1; i<num_params; i++) {
+					if (i > 1) {
+						token_expect_symbol(list, ',');
+					}
+					var (param_name, param_type) = hash_entry(func->FUNC_params, i);
+					var param_start_pos = token_get_pos(list);
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					append_type_conv(gen, token_list(list), param_start_pos, param_type, gen->GEN_ret_type);
+				}
+				token_expect_symbol(list, ')');
+
+				gen->GEN_func_tokens[save_off+TOK_off] = save_val;
+
+				type = func->FUNC_return_type;
+			}
+			else {
+				var field, orig_class = class;
+				while (class) {
+					field = hash_get(class->CLASS_fields, name, null);
+					if (field) {
+						if (!field->FIELD_private || class === hash_get(gen->GEN_classes, class->CLASS_name, null)) {
+							break;
+						}
+						field = null;
+					}
+					class = class->CLASS_parent;
+				}
+				if (!field) {
+					token_back(list);
+					return 0, error({script_line(line), ": can't find field '", name, "' in class ", orig_class->CLASS_name});
+				}
+				token_back(list);
+				token_back(list);
+				copy_func_tokens(gen, list);
+				append_source(list_src, {"->", field->FIELD_compat_name}, &src_off);
+				append_token(gen->GEN_func_tokens, '->', src_off, 2, line);
+				append_token(gen->GEN_func_tokens, TOK_IDENT, src_off+2, length(field->FIELD_compat_name), line);
+				token_next_nocheck(list);
+				token_next_nocheck(list);
+				set_func_copy_start(gen, list);
+				token_back(list);
+				type = field->FIELD_type;
+			}
+			continue;
+		}
+
+		case '[': {
+			token_next(list);
+			if (token_is_symbol(list, ']')) {
+				token_back(list);
+				break;
+			}
+			token_back(list);
+			var base_type = TYPE_DYNAMIC;
+			var index_type = TYPE_INTEGER;
+			var array = get_type_array_or_hash(type);
+			var is_hash = false;
+			if (array) {
+				if (array[0] == EXT_TYPE_HASH) {
+					base_type = array->HASH_base_type;
+					index_type = array->HASH_index_type;
+					is_hash = true;
+				}
+				else {
+					base_type = array->ARRAY_base_type;
+				}
+			}
+			else if (type == TYPE_STRING) {
+				base_type = TYPE_INTEGER;
+			}
+			else if (type != TYPE_DYNAMIC) {
+				return 0, error({script_line(token_get_line(list)), ": must be array or hash table"});
+			}
+			var off1 = token_get_offset(list);
+			var expr_start_pos = token_get_pos(list);
+			token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+			append_type_conv(gen, token_list(list), expr_start_pos, index_type, gen->GEN_ret_type);
+			token_expect_symbol(list, ']');
+			var off2 = token_get_offset(list);
+			if (is_hash) {
+				token_next_nocheck(list);
+				copy_func_tokens(gen, list);
+				token_back(list);
+				append_source(list_src, "{}", &src_off);
+				var func_tokens = gen->GEN_func_tokens;
+				for (var i=length(func_tokens)-TOK_SIZE; ; i-=TOK_SIZE) {
+					var foff = func_tokens[i+TOK_off];
+					if (foff == off2) {
+						func_tokens[i+TOK_type] = '}';
+						func_tokens[i+TOK_off] = src_off+1;
+						continue;
+					}
+					if (foff == off1) {
+						func_tokens[i+TOK_type] = '{';
+						func_tokens[i+TOK_off] = src_off;
+						break;
+					}
+				}
+			}
+			type = base_type;
+			continue;
+		}
+
+		case '{': {
+			var expr_start_pos = token_get_pos(list);
+			token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+			append_type_conv(gen, token_list(list), expr_start_pos, TYPE_DYNAMIC, gen->GEN_ret_type);
+			token_expect_symbol(list, '}');
+			type = TYPE_DYNAMIC;
+			continue;
+		}
+
+		case '(':
+			token_expect_next(list);
+			if (!token_is_symbol(list, ')')) {
+				token_back(list);
+				for (;;) {
+					token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+					token_expect_next(list);
+					if (token_is_symbol(list, ',')) continue;
+					token_back(list);
+					break;
+				}
+				token_expect_symbol(list, ')');
+			}
+			type = TYPE_DYNAMIC;
+			continue;
+
+		case '->':
+			token_expect_type(list, TOK_IDENT);
+			type = TYPE_DYNAMIC;
+			continue;
+	}
+}
+
+macro @expression_operators(last_pos)
+{
+	switch (prio) {
+		case PRIO_ADDITIVE_ADD, PRIO_ADDITIVE_SUB, PRIO_MULTIPLICATIVE: {
+			//log({"type1=", prev_type, " type2=", type});
+			if (prio == PRIO_ADDITIVE_ADD && (prev_type == TYPE_STRING || type == TYPE_STRING)) {
+				token_next_nocheck(list);
+				copy_func_tokens(gen, list);
+				token_back(list);
+				wrap_concat_op(gen, token_list(list), start_pos, off);
+				type = TYPE_STRING;
+				break;
+			}
+			if (prev_type == TYPE_FLOAT && type != TYPE_FLOAT) {
+				if (type != TYPE_INTEGER) {
+					return 0, error({script_line(token_get_line(list)), ": not an Integer or Float"});
+				}
+				token_next_nocheck(list);
+				wrap_with_float_conv(gen, token_list(list), off, -1);
+				token_back(list);
+				if (token_get_type(list) == TOK_NUMBER && token_get_symbol1(list) == '-') {
+					var line = token_get_line(list);
+					insert_func_tokens(gen, list, off, 1, &func_tokens, &func_pos);
+					append_source(list_src, "+", &src_off);
+					insert_token(func_tokens, func_pos, '+', src_off, 1, line);
+				}
+				type = TYPE_FLOAT;
+			}
+			else if (type == TYPE_FLOAT && prev_type != TYPE_FLOAT) {
+				if (prev_type != TYPE_INTEGER) {
+					return 0, error({script_line(token_get_line(list)), ": not an Integer or Float"});
+				}
+				token_next_nocheck(list);
+				var adj_last_pos = hash_get(gen->GEN_func_offsets_replacements, last_pos, last_pos);
+				wrap_with_float_conv(gen, token_list(list), start_pos, adj_last_pos);
+				token_back(list);
+			}
+
+			if (type == TYPE_FLOAT) {
+				token_next_nocheck(list);
+				copy_func_tokens(gen, list);
+				token_back(list);
+				wrap_float_op(gen, token_list(list), start_pos);
+			}
+			break;
+		}
+
+		case PRIO_BITWISE: {
+			if (prev_type != TYPE_DYNAMIC && prev_type != TYPE_INTEGER) {
+				return 0, error({script_line(token_get_line(list)), ": not an Integer"});
+			}
+			if (type != TYPE_DYNAMIC && type != TYPE_INTEGER) {
+				return 0, error({script_line(token_get_line(list)), ": not an Integer"});
+			}
+			type = TYPE_INTEGER;
+			break;
+		}
+
+		case PRIO_LOGICAL: {
+			if (prev_type != TYPE_DYNAMIC && prev_type != TYPE_BOOLEAN) {
+				return 0, error({script_line(token_get_line(list)), ": not an Boolean"});
+			}
+			if (type != TYPE_DYNAMIC && type != TYPE_BOOLEAN) {
+				return 0, error({script_line(token_get_line(list)), ": not an Boolean"});
+			}
+			type = TYPE_BOOLEAN;
+			break;
+		}
+
+		case PRIO_COMPARISON: {
+			if (prev_type == TYPE_INTEGER && type != TYPE_FLOAT) {
+				// ok
+			}
+			else if (prev_type != TYPE_FLOAT && type == TYPE_INTEGER) {
+				// ok
+			}
+			else if (prev_type == TYPE_INTEGER && type == TYPE_INTEGER) {
+				// ok
+			}
+			else if (prev_type == TYPE_FLOAT && type == TYPE_FLOAT) {
+				token_next_nocheck(list);
+				copy_func_tokens(gen, list);
+				token_back(list);
+				wrap_float_op(gen, token_list(list), start_pos);
+			}
+			else {
+				return 0, error({script_line(token_get_line(list)), ": cannot compare incompatible types"});
+			}
+			type = TYPE_BOOLEAN;
+			break;
+		}
+
+		case PRIO_EQUALITY: {
+			if (prev_type == TYPE_FLOAT && type != TYPE_FLOAT) {
+				if (type != TYPE_INTEGER) {
+					return 0, error({script_line(token_get_line(list)), ": not an Integer or Float"});
+				}
+				token_next_nocheck(list);
+				wrap_with_float_conv(gen, token_list(list), off, -1);
+				wrap_float_op(gen, token_list(list), start_pos);
+				token_back(list);
+			}
+			else if (type == TYPE_FLOAT && prev_type != TYPE_FLOAT) {
+				if (prev_type != TYPE_INTEGER) {
+					return 0, error({script_line(token_get_line(list)), ": not an Integer or Float"});
+				}
+				token_next_nocheck(list);
+				wrap_with_float_conv(gen, token_list(list), start_pos, last_pos);
+				wrap_float_op(gen, token_list(list), start_pos);
+				token_back(list);
+			}
+			type = TYPE_BOOLEAN;
+			break;
+		}
+	}
+}
+
+macro @expression_assignment()
+{
+	var assignment = 0;
+	switch (token_get_type(list)) {
+		case '=': assignment = 2; break;
+		case '[':
+			token_expect_next(list);
+			if (token_is_symbol(list, ']')) {
+				assignment = 1;
+				token_expect_symbol(list, '=');
+				break;
+			}
+			else {
+				token_back(list);
+			}
+			break;
+
+		case '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=':
+			assignment = 3;
+			break;
+
+		case '<<=', '>>=', '>>>=':
+			assignment = 3;
+			break;
+	}
+
+	if (assignment) {
+		if (prev_type != -1) {
+			return 0, error({script_line(token_get_line(list)), ": invalid assignment"});
+		}
+		var value_pos = token_get_pos(list);
+		prev_type = type;
+		token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+		type = gen->GEN_ret_type;
+
+		if (assignment >= 2) {
+			token_next_nocheck(list);
+			copy_func_tokens(gen, list);
+			token_back(list);
+			//log({"prev=", prev_type, " type=", type});
+			if (assignment == 3 && (prev_type == TYPE_FLOAT || type == TYPE_FLOAT)) {
+				return 0, error({script_line(token_get_line(list)), ": arithmetic with floats cannot be done in shorthand assignment"});
+			}
+			append_type_conv(gen, token_list(list), value_pos, prev_type, type);
+		}
+		break;
+	}
+	else {
+		token_back(list);
+	}
+}
+
+macro @expression_ternary()
+{
+	while (token_next(list) && token_is_symbol(list, '?')) {
+		if (type == TYPE_INTEGER || type == TYPE_FLOAT) {
+			return 0, error({script_line(token_get_line(list)), ": can't use integer or float in condition"});
+		}
+		token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+		var type1 = gen->GEN_ret_type;
+		token_expect_symbol(list, ':');
+		token_set_pos(list, parse_expression(gen, token_list(list), -1, token_get_pos(list), PRIO_PRIMARY));
+		var type2 = gen->GEN_ret_type;
+		if (type1 == TYPE_DYNAMIC) {
+			type1 = type2;
+		}
+		if (type2 == TYPE_DYNAMIC) {
+			type2 = type1;
+		}
+		if (!is_same_type(type1, type2)) {
+			return 0, error({script_line(token_get_line(list)), ": both values in ternary operator must have the same type"});
+		}
+		type = type1;
+	}
+	token_back(list);
+}
+
+macro @expression_next_priority()
+{
+	switch (token_get_type(list)) {
+		case '*', '/', '%': next_prio = PRIO_MULTIPLICATIVE; break;
+		case '+':           next_prio = PRIO_ADDITIVE_ADD; break;
+		case '-':           next_prio = PRIO_ADDITIVE_SUB; break;
+		case '&', '|', '^': next_prio = PRIO_BITWISE; break;
+		case '<', '>':      next_prio = PRIO_COMPARISON; break;
+		case '<<', '>>':    next_prio = PRIO_BITWISE; break;
+		case '&&', '||':    next_prio = PRIO_LOGICAL; break;
+		case '<=', '>=':    next_prio = PRIO_COMPARISON; break;
+		case '==', '!=':    next_prio = PRIO_EQUALITY; break;
+		case '===', '!==':  next_prio = PRIO_EQUALITY; break;
+		case '>>>':         next_prio = PRIO_BITWISE; break;
+
+		case TOK_NUMBER:
+		case TOK_FLOAT_NUMBER: {
+			if (token_get_symbol1(list) == '-') {
+				next_prio = PRIO_ADDITIVE_ADD;
+				token_back(list);
+				break;
+			}
+			break;
+		}
+	}
+}
+
+function @parse_expression(gen, token_list(list), prev_type, start_pos, prio)
+{
+	var outer = (prev_type == -1);
+	var last_pos = token_get_pos(list) - TOK_SIZE;
+
+	for (;;) {
+		var type = -1;
+		var off = token_get_pos(list);
+		var unary_off = off;
+
+		token_expect_next(list);
+
+		for (;;) {
+			expression_unary_detect();
+			unary_off = token_get_pos(list) - TOK_SIZE;
+			break;
+		}
+		
+		expression_primary();
+
+		if (type == -1) {
+			return 0, error({script_line(token_get_line(list)), ": expected value"});
+		}
+
+		while (token_next(list)) {
+			expression_primary_suffix();
+			token_back(list);
+			break;
+		}
+
+		while (unary_off > off) {
+			expression_unary_process();
+			unary_off -= TOK_SIZE;
+		}
+
+		if (token_next(list)) {
+			var has_postincdec = false;
+			switch (token_get_type(list)) {
+				case '++', '--':
+					has_postincdec = true;
+					break;
+			}
+			if (has_postincdec) {
+				if (type != TYPE_DYNAMIC && type != TYPE_INTEGER) {
+					return 0, error({script_line(token_get_line(list)), ": post increment/decrement is supported only for integers"});
+				}
+			}
+			else if (token_is_ident(list, "as")) {
+				copy_func_tokens(gen, list);
+				parse_type(&type, list);
+				token_expect_next(list);
+				set_func_copy_start(gen, list);
+				token_back(list);
+			}
+			else {
+				token_back(list);
+			}
+		}
+
+		if (token_next(list)) {
+			expression_assignment();
+		}
+
+		var prev_last_pos = last_pos;
+		last_pos = token_get_pos(list);
+		if (!token_next(list)) {
+			prev_type = type;
+			break;
+		}
+
+		var next_prio = -1;
+		expression_next_priority();
+		if (next_prio == -1) {
+			token_back(list);
+			expression_operators(prev_last_pos);
+			if (outer) {
+				expression_ternary();
+			}
+			prev_type = type;
+			break;
+		}
+
+		if ((next_prio >> 4) > (prio >> 4)) {
+			token_set_pos(list, parse_expression(gen, token_list(list), type, off, next_prio));
+			type = gen->GEN_ret_type;
+			if (prev_type != -1) {
+				expression_operators(prev_last_pos);
+				expression_ternary();
+			}
+			if (token_next(list)) {
+				next_prio = -1;
+				expression_next_priority();
+				token_back(list);
+				if (next_prio == -1) {
+					prev_type = type;
+					break;
+				}
+			}
+		}
+		else {
+			token_back(list);
+			expression_operators(prev_last_pos);
+			expression_ternary();
+			token_next_nocheck(list);
+		}
+
+		prio = next_prio;
+		prev_type = type;
+	}
+
+	gen->GEN_ret_type = prev_type;
+	return token_get_pos(list);
+}
+
+function @parse_primary_expression(gen, token_list(list))
+{
+	var type = -1;
+	var off = token_get_pos(list);
+	var unary_off = off;
+
+	token_expect_next(list);
+		
+	expression_primary();
+
+	if (type == -1) {
+		return 0, error({script_line(token_get_line(list)), ": expected value"});
+	}
+
+	while (token_next(list)) {
+		expression_primary_suffix();
+		token_back(list);
+		break;
+	}
+
+	if (token_next(list)) {
+		if (token_is_ident(list, "as")) {
+			copy_func_tokens(gen, list);
+			parse_type(&type, list);
+			token_expect_next(list);
+			set_func_copy_start(gen, list);
+			token_back(list);
+		}
+		else {
+			token_back(list);
+		}
+	}
+
+	gen->GEN_ret_type = type;
+	return token_get_pos(list);
+}
+
+function @wrap_with_float_conv(gen, token_list(list), start_pos, end_pos)
+{
+	var line = token_get_line(list);
+	copy_func_tokens(gen, list);
+	insert_func_tokens(gen, list, start_pos, 2, &func_tokens, &func_pos);
+	append_source(list_src, "float()", &src_off);
+	insert_token(func_tokens, func_pos, TOK_IDENT, src_off, 5, line);
+	insert_token(func_tokens, func_pos, '(', src_off+5, 1, line);
+	if (end_pos != -1) {
+		insert_func_tokens(gen, list, end_pos, 1, &func_tokens2, &func_pos2);
+		insert_token(func_tokens2, func_pos2, ')', src_off+6, 1, line);
+	}
+	else {
+		append_token(func_tokens, ')', src_off+6, 1, line);
+	}
+}
+
+function @wrap_float_op(gen, token_list(list), start_pos)
+{
+	var line = token_get_line(list);
+	insert_func_tokens(gen, list, start_pos, 1, &func_tokens, &func_pos);
+	append_source(list_src, "{}", &src_off);
+	insert_token(func_tokens, func_pos, '{', src_off, 1, line);
+	append_token(func_tokens, '}', src_off+1, 1, line);
+}
+
+function @wrap_float_unary_op(gen, token_list(list), start_pos)
+{
+	var line = token_get_line(list);
+	insert_func_tokens(gen, list, start_pos, 2, &func_tokens, &func_pos);
+	append_source(list_src, "{0.0}", &src_off);
+	insert_token(func_tokens, func_pos, '{', src_off, 1, line);
+	insert_token(func_tokens, func_pos, TOK_FLOAT_NUMBER, src_off+1, 3, line);
+	append_token(func_tokens, '}', src_off+4, 1, line);
+}
+
+function @wrap_concat_op(gen, token_list(list), start_pos, operator_pos)
+{
+	var line = token_get_line(list);
+	insert_func_tokens(gen, list, start_pos, 1, &func_tokens, &func_pos);
+	append_source(list_src, "{},", &src_off);
+	insert_token(func_tokens, func_pos, '{', src_off, 1, line);
+	append_token(func_tokens, '}', src_off+1, 1, line);
+
+	var off = list_tokens[operator_pos+TOK_off];
+	for (var i=length(func_tokens)-TOK_SIZE; ; i-=TOK_SIZE) {
+		if (func_tokens[i+TOK_off] == off) {
+			func_tokens[i+TOK_type] = ',';
+			func_tokens[i+TOK_off] = src_off+2;
+			break;
+		}
+	}
+}
+
+function @append_type_conv(gen, token_list(list), start_pos, dest_type, src_type)
+{
+	if (dest_type == -1) {
+		dest_type = TYPE_DYNAMIC;
+	}
+	if (dest_type == src_type) {
+		return;
+	}
+
+	//log({"dest_type=", dest_type, " src_type=", src_type});
+	if (dest_type == TYPE_FLOAT) {
+		if (src_type == TYPE_FLOAT) return;
+		if (src_type != TYPE_INTEGER) {
+			return 0, error({script_line(token_get_line(list)), ": not an Integer or Float"});
+		}
+
+		token_next_nocheck(list);
+		copy_func_tokens(gen, list);
+		wrap_with_float_conv(gen, token_list(list), start_pos, -1);
+		token_back(list);
+		return;
+	}
+
+	if (src_type == TYPE_STRING && is_integer_array(dest_type)) {
+		return;
+	}
+
+	var dest_class = get_type_class(dest_type);
+	var src_class = get_type_class(src_type);
+	if (dest_class && src_class) {
+		while (src_class) {
+			if (src_class === dest_class) {
+				return;
+			}
+			src_class = src_class->CLASS_parent;
+		}
+	}
+
+	if (dest_type != TYPE_DYNAMIC && src_type != TYPE_DYNAMIC) {
+		return 0, error({script_line(token_get_line(list)), ": cannot implicitly convert from ", get_type_name(src_type), " to ", get_type_name(dest_type)});
+	}
+}
+
+function @get_type_name(type)
+{
+	if (is_array(type)) {
+		switch (type[0]) {
+			case EXT_TYPE_CLASS: return type->CLASS_name;
+			case EXT_TYPE_ARRAY: return {get_type_name(type->ARRAY_base_type), "[]"};
+			case EXT_TYPE_HASH: return {get_type_name(type->HASH_base_type), "[", get_type_name(type->HASH_index_type), "]"};
+		}
+		return "???";
+	}
+	switch (type) {
+		case TYPE_DYNAMIC: return "Dynamic";
+		case TYPE_VOID:    return "Void";
+		case TYPE_INTEGER: return "Integer";
+		case TYPE_FLOAT:   return "Float";
+		case TYPE_BOOLEAN: return "Boolean";
+		case TYPE_STRING:  return "String";
+	}
+	return "???";
+}
+
+function @is_same_type(type1, type2)
+{
+	if (type1 == type2) return true;
+	return false;
+}
+
+function @get_type_class(type)
+{
+	if (is_array(type) && type[0] == EXT_TYPE_CLASS) {
+		return type;
+	}
+	return null;
+}
+
+function @get_type_array_or_hash(type)
+{
+	if (is_array(type)) {
+		switch (type[0]) {
+			case EXT_TYPE_ARRAY:
+			case EXT_TYPE_HASH:
+				return type;
+		}
+	}
+	return null;
+}
+
+function @is_integer_array(type)
+{
+	return (is_array(type) && type[0] == EXT_TYPE_ARRAY && type->ARRAY_base_type == TYPE_INTEGER);
+}
+
+function @init_builtin_functions()
+{
+	builtin_functions = {};
+
+	var I = TYPE_INTEGER;
+	var F = TYPE_FLOAT;
+	var D = TYPE_DYNAMIC;
+	var B = TYPE_BOOLEAN;
+	var S = TYPE_STRING;
+	var V = TYPE_VOID;
+	var _ = create_params([]);
+	var _I = create_params([I]);
+	var _F = create_params([F]);
+	var _FF = create_params([F, F]);
+	var _FFF = create_params([F, F, F]);
+	var _D = create_params([D]);
+	var _II = create_params([I, I]);
+	var _III = create_params([I, I, I]);
+	var _IIII = create_params([I, I, I, I]);
+	var _IIIIII = create_params([I, I, I, I, I, I]);
+	var _IIF = create_params([I, I, F]);
+	var _IIFF = create_params([I, I, F, F]);
+	var _DI = create_params([D, I]);
+	var _DD = create_params([D, D]);
+	var _DDII = create_params([D, D, I, I]);
+	var _DII = create_params([D, I, I]);
+	var _DID = create_params([D, I, D]);
+	var _DDD = create_params([D, D, D]);
+	var _DIDII = create_params([D, I, D, I, I]);
+	var _DIID = create_params([D, I, I, D]);
+	var _DIIDII = create_params([D, I, I, D, I, I]);
+	var _SDSI = create_params([S, D, S, I]);
+	var _DSSI = create_params([D, S, S, I]);
+	var _DSSIII = create_params([D, S, S, I, I, I]);
+	var _DB = create_params([D, B]);
+	var _SSDDD = create_params([S, S, D, D, D]);
+	var _S = create_params([S]);
+	var _SI = create_params([S, I]);
+	var _SII = create_params([S, I, I]);
+	var _SIII = create_params([S, I, I, I]);
+	var _SIIII = create_params([S, I, I, I, I]);
+	var _SF = create_params([S, F]);
+	var _SD = create_params([S, D]);
+	var _SIIF = create_params([S, I, I, F]);
+	var _SDII = create_params([S, D, I, I]);
+
+	add_builtin_function("length",     I,   _D);
+	add_builtin_function("min",        I,   _II);
+	add_builtin_function("max",        I,   _II);
+	add_builtin_function("clamp",      I,   _III);
+	add_builtin_function("abs",        I,   _I);
+	add_builtin_function("add32",      I,   _II);
+	add_builtin_function("add32",      I,I, _II);
+	add_builtin_function("add32",      I,   _III);
+	add_builtin_function("add32",      I,I, _III);
+	add_builtin_function("sub32",      I,   _II);
+	add_builtin_function("sub32",      I,I, _II);
+	add_builtin_function("sub32",      I,   _III);
+	add_builtin_function("sub32",      I,I, _III);
+	add_builtin_function("mul32",      I,   _II);
+	add_builtin_function("add64",      I,I, _IIII);
+	add_builtin_function("sub64",      I,I, _IIII);
+	add_builtin_function("mul64",      I,I, _II);
+	add_builtin_function("umul64",     I,I, _II);
+	add_builtin_function("mul64",      I,I, _IIII);
+	add_builtin_function("div64",      I,I, _IIII);
+	add_builtin_function("udiv64",     I,I, _IIII);
+	add_builtin_function("rem64",      I,I, _IIII);
+	add_builtin_function("urem64",     I,I, _IIII);
+	add_builtin_function("float",      F,   _I);
+	add_builtin_function("float",      I,I, _II);
+	add_builtin_function("int",        I,   _F);
+	add_builtin_function("int",        I,I, _II);
+	add_builtin_function("fconv",      I,I, _F);
+	add_builtin_function("fconv",      F,   _II);
+	add_builtin_function("fadd",       I,I, _IIF);
+	add_builtin_function("fadd",       I,I, _IIII);
+	add_builtin_function("fsub",       I,I, _IIF);
+	add_builtin_function("fsub",       I,I, _IIII);
+	add_builtin_function("fmul",       I,I, _IIF);
+	add_builtin_function("fmul",       I,I, _IIII);
+	add_builtin_function("fdiv",       I,I, _IIF);
+	add_builtin_function("fdiv",       I,I, _IIII);
+	add_builtin_function("fcmp_lt",    B,   _IIF);
+	add_builtin_function("fcmp_lt",    B,   _IIII);
+	add_builtin_function("fcmp_le",    B,   _IIF);
+	add_builtin_function("fcmp_le",    B,   _IIII);
+	add_builtin_function("fcmp_gt",    B,   _IIF);
+	add_builtin_function("fcmp_gt",    B,   _IIII);
+	add_builtin_function("fcmp_ge",    B,   _IIF);
+	add_builtin_function("fcmp_ge",    B,   _IIII);
+	add_builtin_function("fcmp_eq",    B,   _IIF);
+	add_builtin_function("fcmp_eq",    B,   _IIII);
+	add_builtin_function("fcmp_ne",    B,   _IIF);
+	add_builtin_function("fcmp_ne",    B,   _IIII);
+	add_builtin_function("fabs",       F,   _F);
+	add_builtin_function("fabs",       I,I, _II);
+	add_builtin_function("fmin",       F,   _FF);
+	add_builtin_function("fmin",       I,I, _IIF);
+	add_builtin_function("fmin",       I,I, _IIII);
+	add_builtin_function("fmax",       F,   _FF);
+	add_builtin_function("fmax",       I,I, _IIF);
+	add_builtin_function("fmax",       I,I, _IIII);
+	add_builtin_function("fclamp",     F,   _FFF);
+	add_builtin_function("fclamp",     I,I, _IIFF);
+	add_builtin_function("fclamp",     I,I, _IIIIII);
+	add_builtin_function("floor",      F,   _F);
+	add_builtin_function("floor",      I,I, _II);
+	add_builtin_function("ifloor",     I,   _F);
+	add_builtin_function("ifloor",     I,I, _II);
+	add_builtin_function("ceil",       F,   _F);
+	add_builtin_function("ceil",       I,I, _II);
+	add_builtin_function("iceil",      I,   _F);
+	add_builtin_function("iceil",      I,I, _II);
+	add_builtin_function("round",      F,   _F);
+	add_builtin_function("round",      I,I, _II);
+	add_builtin_function("iround",     I,   _F);
+	add_builtin_function("iround",     I,I, _II);
+	add_builtin_function("pow",        F,   _FF);
+	add_builtin_function("pow",        I,I, _IIF);
+	add_builtin_function("pow",        I,I, _IIII);
+	add_builtin_function("sqrt",       F,   _F);
+	add_builtin_function("sqrt",       I,I, _II);
+	add_builtin_function("cbrt",       F,   _F);
+	add_builtin_function("cbrt",       I,I, _II);
+	add_builtin_function("exp",        F,   _F);
+	add_builtin_function("exp",        I,I, _II);
+	add_builtin_function("ln",         F,   _F);
+	add_builtin_function("ln",         I,I, _II);
+	add_builtin_function("log2",       F,   _F);
+	add_builtin_function("log2",       I,I, _II);
+	add_builtin_function("log10",      F,   _F);
+	add_builtin_function("log10",      I,I, _II);
+	add_builtin_function("sin",        F,   _F);
+	add_builtin_function("sin",        I,I, _II);
+	add_builtin_function("cos",        F,   _F);
+	add_builtin_function("cos",        I,I, _II);
+	add_builtin_function("asin",       F,   _F);
+	add_builtin_function("asin",       I,I, _II);
+	add_builtin_function("acos",       F,   _F);
+	add_builtin_function("acos",       I,I, _II);
+	add_builtin_function("tan",        F,   _F);
+	add_builtin_function("tan",        I,I, _II);
+	add_builtin_function("atan",       F,   _F);
+	add_builtin_function("atan",       I,I, _II);
+	add_builtin_function("atan2",      F,   _FF);
+	add_builtin_function("atan2",      I,I, _IIII);
+	add_builtin_function("is_int",     B,   _D);
+	add_builtin_function("is_float",   B,   _D);
+	add_builtin_function("is_array",   B,   _D);
+	add_builtin_function("is_string",  B,   _D);
+	add_builtin_function("is_hash",    B,   _D);
+	add_builtin_function("is_shared",  B,   _D);
+	add_builtin_function("is_funcref", B,   _D);
+	add_builtin_function("is_weakref", B,   _D);
+	add_builtin_function("is_handle",  B,   _D);
+
+	add_builtin_function("clone",                  D, _D);
+	add_builtin_function("clone_deep",             D, _D);
+	add_builtin_function("array_create",           D, _I);
+	add_builtin_function("array_create",           D, _II);
+	add_builtin_function("array_create_shared",    D, _II);
+	add_builtin_function("array_get_shared_count", I, _D);
+	add_builtin_function("array_get_element_size", I, _D);
+	add_builtin_function("array_set_length",       V, _DI);
+	add_builtin_function("array_copy",             V, _DIDII);
+	add_builtin_function("array_fill",             V, _DD);
+	add_builtin_function("array_fill",             V, _DIID);
+	add_builtin_function("array_extract",          D, _DII);
+	add_builtin_function("array_insert",           V, _DID);
+	add_builtin_function("array_insert_array",     V, _DID);
+	add_builtin_function("array_insert_array",     V, _DIDII);
+	add_builtin_function("array_append",           V, _DD);
+	add_builtin_function("array_append",           V, _DDII);
+	add_builtin_function("array_replace_range",    V, _DIID);
+	add_builtin_function("array_replace_range",    V, _DIIDII);
+	add_builtin_function("array_remove",           V, _DI);
+	add_builtin_function("array_remove",           V, _DII);
+	add_builtin_function("string_parse_int",       I, _S);
+	add_builtin_function("string_parse_int",       I, _SI);
+	add_builtin_function("string_parse_int",       I, _SII);
+	add_builtin_function("string_parse_int",       I, _SIII);
+	add_builtin_function("string_parse_float",     F, _S);
+	add_builtin_function("string_parse_float",     F, _SF);
+	add_builtin_function("string_parse_float",     F, _SII);
+	add_builtin_function("string_parse_float",     F, _SIIF);
+	add_builtin_function("string_parse_long",      I,I, _S);
+	add_builtin_function("string_parse_long",      I,I, _SII);
+	add_builtin_function("string_parse_long",      I,I, _SIIII);
+	add_builtin_function("string_parse_double",    I,I, _S);
+	add_builtin_function("string_parse_double",    I,I, _SII);
+	add_builtin_function("string_parse_double",    I,I, _SIIII);
+	add_builtin_function("string_from_long",       S, _II);
+	add_builtin_function("string_from_long",       S, _SII);
+	add_builtin_function("string_from_double",     S, _II);
+	add_builtin_function("string_from_double",     S, _SII);
+	add_builtin_function("string_from_utf8",       S, _D);
+	add_builtin_function("string_from_utf8",       S, _SD);
+	add_builtin_function("string_from_utf8",       S, _DII);
+	add_builtin_function("string_from_utf8",       S, _SDII);
+	add_builtin_function("string_to_utf8",         D, _D);
+	add_builtin_function("string_to_utf8",         D, _DD);
+	add_builtin_function("string_to_utf8",         D, _DII);
+	add_builtin_function("string_to_utf8",         D, _DDII);
+	add_builtin_function("object_create",          D, _I);
+	add_builtin_function("object_extend",          D, _DI);
+	add_builtin_function("weakref_create",         D, _D);
+	add_builtin_function("weakref_create",         D, _DD);
+	add_builtin_function("weakref_create",         D, _DDD);
+	add_builtin_function("weakref_get",            D, _D);
+	add_builtin_function("hash_get",               D, _DDD);
+	add_builtin_function("hash_entry",             D,D, _DI);
+	add_builtin_function("hash_contains",          B, _DD);
+	add_builtin_function("hash_remove",            D, _DD);
+	add_builtin_function("hash_keys",              D, _D);
+	add_builtin_function("hash_values",            D, _D);
+	add_builtin_function("hash_pairs",             D, _D);
+	add_builtin_function("hash_clear",             V, _D);
+	add_builtin_function("error",                  D, _D);
+	add_builtin_function("log",                    V, _D);
+	add_builtin_function("dump",                   V, _D);
+	add_builtin_function("to_string",              S, _D);
+	add_builtin_function("to_string",              S, _DB);
+	add_builtin_function("heap_collect",           V, _);
+	add_builtin_function("heap_size",              I, _);
+	add_builtin_function("perf_reset",             V, _);
+	add_builtin_function("perf_log",               V, _D);
+	add_builtin_function("serialize",              D, _D);
+	add_builtin_function("serialize",              D, _DD);
+	add_builtin_function("unserialize",            D, _D);
+	add_builtin_function("unserialize",            D, _DII);
+	add_builtin_function("unserialize",            D, _DD);
+	add_builtin_function("script_query",           V, _SSDDD);
+	add_builtin_function("script_line",            S, _I);
+	add_builtin_function("script_line",            S, _SDSI);
+	add_builtin_function("tokens_parse",           D, _DSSI);
+	add_builtin_function("tokens_parse",           D, _DSSIII);
+	add_builtin_function("token_parse_string",     S, _S);
+	add_builtin_function("token_parse_string",     S, _SII);
+	add_builtin_function("token_escape_string",    S, _S);
+}
+
+function @create_params(param_types)
+{
+	var params = {};
+	for (var i=0; i<length(param_types); i++) {
+		params{{"p", i}} = param_types[i];
+	}
+	return params;
+}
+
+function @add_builtin_function(name, ret_type, params)
+{
+	var func = object_create(FUNC_SIZE);
+	func->FUNC_name = name;
+	func->FUNC_return_type = ret_type;
+	func->FUNC_flags = FUNC_FLAG_STATIC;
+	func->FUNC_params = params;
+	builtin_functions{{name, "#", length(params)}} = func;
+}
+
+function @add_builtin_function(name, ret_type1, ret_type2, param_types)
+{
+	// TODO
+}

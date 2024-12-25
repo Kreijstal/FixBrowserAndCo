@@ -1,0 +1,11 @@
+import "util/common";
+
+function get_archive_org_link(request, url)
+{
+	return make_same_domain_link(request, {"https://web.archive.org/web/*/", url});
+}
+
+function get_archive_today_link(request, url)
+{
+	return make_same_domain_link(request, link_with_params("https://archive.fo/search/", {"q": url}));
+}

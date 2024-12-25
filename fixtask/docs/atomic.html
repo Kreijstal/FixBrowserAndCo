@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/atomic";</code>
+</p>
+
+<h2>Atomic class</h2>
+
+<p>
+Atomic class allows to do atomic operations on shared arrays.
+</p>
+
+<p>
+You must not mix different kinds of operations as these can use different mechanisms
+to achieve the atomicity (native atomic instructions or emulation using small number
+of mutexes selected semi-randomly based on the native pointer value). You can mix
+get/set/add/cas operations of the same size.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	
+	<dt><code>
+		static function <b>get32</b>(arr: Integer[], idx: Integer): Integer<br>
+		static function <b>get64</b>(arr: Integer[], idx: Integer): Integer, Integer<br>
+	</code></dt>
+	<dd>
+		Gets the 32bit or 64bit value atomically. The 64bit version returns the
+		value as two integer values.
+	</dd>
+	<dt><code>
+		static function <b>set32</b>(arr: Integer[], idx: Integer, value: Integer)<br>
+		static function <b>set64</b>(arr: Integer[], idx: Integer, lo: Integer, hi: Integer)<br>
+	</code></dt>
+	<dd>
+		Sets the 32bit or 64bit value atomically.
+	</dd>
+	<dt><code>
+		static function <b>add32</b>(arr: Integer[], idx: Integer, value: Integer): Integer<br>
+		static function <b>add64</b>(arr: Integer[], idx: Integer, lo: Integer, hi: Integer): Integer, Integer<br>
+	</code></dt>
+	<dd>
+		Adds the 32bit or 64bit value atomically and returns the previous value. The
+		64bit version returns the value as two integer values.
+	</dd>
+	<dt><code>
+		static function <b>cas32</b>(arr: Integer[], idx: Integer, expected_value: Integer, new_value: Integer): Integer<br>
+		static function <b>cas64</b>(arr: Integer[], idx: Integer, expected_lo: Integer, expected_hi: Integer, new_lo: Integer, new_hi: Integer): Integer, Integer<br>
+	</code></dt>
+	<dd>
+		Does a conditional atomic set of 32bit or 64bit value. The value is set only when the
+		previous value is the same as expected. The previous value is returned. The 64bit
+		version returns the value as two integer values.
+	</dd>
+	<dt><code>static function <b>run</b>(arr: Integer[], idx: Integer, func, data): Dynamic</code></dt>
+	<dd>
+		Runs the provided function while locking the index of the given array
+		(the array can be <code>null</code>, in that case only the index is used
+		for the locking and can have any value including the negative numbers). The
+		function must not do more locking otherwise a dead-lock can occur. Returns
+		the returned value from the function.
+	</dd>
+</dl>
+
+</body>
+</html>

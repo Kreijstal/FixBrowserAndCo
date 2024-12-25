@@ -1,0 +1,187 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/view";
+import "gui/font";
+import "gui/subview";
+import "gui/event";
+
+var @current_tooltip: TooltipView;
+var @timer: Timer;
+var @last_mouse_x: Integer;
+var @last_mouse_y: Integer;
+var @last_show_func;
+var @last_show_data;
+
+class Tooltip
+{
+	static function show(parent: SubView, x: Integer, y: Integer, text: String, owner: Dynamic)
+	{
+		if (!text) {
+			hide_global();
+			return;
+		}
+		show_view(parent, x, y, TextView::create(text), owner);
+	}
+
+	static function show_view(parent: SubView, x: Integer, y: Integer, view: SubView, owner: Dynamic)
+	{
+		var tooltip = TooltipView::create(view, owner);
+
+		var point = [x, y];
+		var top = parent.point_to_top(point);
+		x = point[0];
+		y = point[1];
+		var width = tooltip.get_width();
+		var height = tooltip.get_height();
+		var top_width = top.get_width();
+		var top_height = top.get_height();
+
+		if (y - height >= 0) {
+			y -= height;
+		}
+		else {
+			y += 16;
+		}
+
+		if (x + width > top_width) {
+			x = top_width - width;
+		}
+		if (x < 0) {
+			x = 0;
+		}
+
+		tooltip.set_rect(x, y, width, height);
+		top.add(tooltip);
+
+		if (current_tooltip) {
+			current_tooltip.remove_self();
+		}
+		current_tooltip = tooltip;
+	}
+	
+	static function hide_global()
+	{
+		if (current_tooltip) {
+			current_tooltip.remove_self();
+			current_tooltip = null;
+		}
+		if (timer) {
+			timer.stop();
+			last_show_func = null;
+			last_show_data = null;
+		}
+	}
+
+	static function hide(owner: Dynamic)
+	{
+		if (current_tooltip != null && current_tooltip.owner === owner) {
+			current_tooltip.remove_self();
+			current_tooltip = null;
+		}
+		if (timer) {
+			timer.stop();
+			last_show_func = null;
+			last_show_data = null;
+		}
+	}
+
+	static function show_delayed(x: Integer, y: Integer, show_func, show_data)
+	{
+		last_mouse_x = x;
+		last_mouse_y = y;
+		last_show_func = show_func;
+		last_show_data = show_data;
+
+		if (!timer) {
+			timer = Timer::create(500, Tooltip::handle_timer#1, null);
+		}
+		timer.restart();
+	}
+
+	static function @handle_timer(data): Boolean
+	{
+		if (last_show_func) {
+			var show_func = last_show_func;
+			var show_data = last_show_data;
+			last_show_func = null;
+			last_show_data = null;
+			show_func(show_data, last_mouse_x, last_mouse_y);
+		}
+		return false;
+	}
+}
+
+class @TooltipView: SubView
+{
+	var @view: SubView;
+	var @owner: Dynamic;
+
+	constructor create(view: SubView, owner: Dynamic)
+	{
+		this.view = view;
+		this.owner = owner;
+		add(view);
+		set_rect(0, 0, view.get_width()+2, view.get_height()+2);
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		p.fill_rect(0, 0, get_width(), get_height(), 0xFFFFFFEE);
+		p.fill_rect(0, 0, get_width(), 1, 0xFF000000);
+		p.fill_rect(0, get_height()-1, get_width(), 1, 0xFF000000);
+		p.fill_rect(0, 0, 1, get_height(), 0xFF000000);
+		p.fill_rect(get_width()-1, 0, 1, get_height(), 0xFF000000);
+		draw_children(p);
+	}
+
+	override function handle_resize()
+	{
+		view.set_rect(1, 1, get_width()-2, get_height()-2);
+	}
+
+	override function accept_mouse_event(event: MouseEvent): Boolean
+	{
+		return false;
+	}
+}
+
+class @TextView: SubView
+{
+	var @font: SystemFont;
+	var @text: String;
+
+	constructor create(text: String)
+	{
+		this.font = SystemFont::create("Tahoma", 11, FONT_NORMAL);
+		this.text = text;
+		set_rect(0, 0, font.get_string_advance(text)+4, font.get_height()+2);
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		font.draw_string(p, 2, 1+font.get_ascent(), text, 0xFF000000);
+		draw_children(p);
+	}
+}

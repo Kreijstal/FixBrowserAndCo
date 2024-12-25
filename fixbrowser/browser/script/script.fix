@@ -1,0 +1,334 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/script/element_funcs";
+import "browser/script/request_funcs";
+import "browser/script/http_funcs";
+import "browser/script/url_funcs";
+import "browser/script/util_funcs";
+import "browser/script/handle_types";
+import "browser/script/request";
+import "util/string";
+
+const @CACHE_TIMEOUT = 60;
+
+var @heap;
+
+function @create_heap()
+{
+	heap = script_create_heap();
+	register_element_funcs(heap);
+	register_request_funcs(heap);
+	register_http_funcs(heap);
+	register_url_funcs(heap);
+	register_util_funcs(heap);
+}
+
+function is_same_domain(domain1, domain2)
+{
+	if (domain1 == domain2) {
+		return true;
+	}
+
+	var key = ["cache.is_same_domain", domain1, domain2];
+	var result = global_get(key, -1);
+	if (result != -1) {
+		global_set(key, result, CACHE_TIMEOUT);
+		return result;
+	}
+	
+	var parts1 = split_domain(domain1);
+	var parts2 = split_domain(domain2);
+	if (!parts1 || !parts2) {
+		global_set(key, false, CACHE_TIMEOUT);
+		return false;
+	}
+
+	var len1 = get_domain_suffix_length(parts1);
+	var len2 = get_domain_suffix_length(parts2);
+
+	result = plain_is_same_domain(parts1, parts2, len1, len2);
+	if (!result) {
+		result = script_is_same_domain(parts1, parts2, len1, len2);
+	}
+
+	global_set(key, result, CACHE_TIMEOUT);
+	return result;
+}
+
+function @plain_is_same_domain(parts1, parts2, len1, len2)
+{
+	var off1 = length(parts1) - len1;
+	var off2 = length(parts2) - len2;
+
+	if (len1 != len2) return false;
+	if (off1 < 1 || off2 < 1) return false;
+	if (parts1[off1-1] != parts2[off2-1]) return false;
+
+	for (var i=0; i<len1; i++) {
+		if (parts1[off1+i] != parts2[off2+i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function @split_domain(domain)
+{
+	var parts = string_split(domain, '.');
+	for (var i=0; i<length(parts); i++) {
+		var s = parts[i];
+		if (length(s) == 0) return null;
+		for (var j=0; j<length(s); j++) {
+			switch (s[j]) {
+				case 'A'..'Z': s[j] = s[j] - 'A' + 'a'; break;
+				case 'a'..'z': break;
+				case '0'..'9', '-': break;
+				default:
+					return null;
+			}
+		}
+	}
+	return parts;
+}
+
+function @get_domain_suffix_length(parts)
+{
+	if (!heap) {
+		create_heap();
+	}
+	return script_run(heap, "domain_suffix", "get_domain_suffix_length#1", [parts]);
+}
+
+function @get_site_script_dir(domain)
+{
+	var idx = string_rev_search_char(domain, '.');
+	if (idx == -1) {
+		return {"site/_toplevel/", domain, "/"};
+	}
+
+	var s = {"site/", string_substring(domain, idx+1), "/"};
+	string_append(s, domain, 0, (domain[1] == '.'? 1 : 2));
+	s[] = '/';
+	string_append(s, domain);
+	s[] = '/';
+	return s;
+}
+
+function @script_is_same_domain(parts1, parts2, len1, len2)
+{
+	len1++;
+	if (len1 > length(parts1)) return false;
+
+	var domain1 = string_join(parts1, ".");
+	var domain2 = string_join(parts2, ".");
+
+	var s = {""};
+	for (var i=length(parts1)-len1; i<length(parts1); i++) {
+		if (length(s) > 0) s[] = '.';
+		string_append(s, parts1[i]);
+	}
+	var script_name = {get_site_script_dir(s), "entry"};
+
+	if (!heap) {
+		create_heap();
+	}
+	return script_run_optional(heap, script_name, "is_same_domain#2", [domain1, domain2]);
+}
+
+function script_run_domain_handle_request(request)
+{
+	if (!heap) {
+		create_heap();
+	}
+	return script_run_domain(heap, request_get_domain(request), "entry", "handle_request#1", [request_to_handle(request)]);
+}
+
+function @document_to_handle(doc)
+{
+	return script_create_handle(HANDLE_TYPE_ELEMENT, doc);
+}
+
+function script_run_domain_adjust_document(request, document)
+{
+	if (!heap) {
+		create_heap();
+	}
+	script_run_domain(heap, request_get_domain(request), "entry", "adjust_document#2", [request_to_handle(request), document_to_handle(document)]);
+}
+
+function script_run_global_adjust_document(request, document)
+{
+	if (!heap) {
+		create_heap();
+	}
+	
+	var params = [request_to_handle(request), document_to_handle(document)];
+
+	var (result, e) = script_run(heap, "dispatch", "dispatch_adjust_document#2", params);
+	if (e) {
+		log("site script error (dispatch):");
+		dump(e);
+		return;
+	}
+
+	if (result) {
+		for (var i=0; i<length(result); i++) {
+			var (result2, e2) = script_run(heap, result[i], "adjust_document#2", params);
+			if (e2) {
+				log({"site script error (", result[i], "):"});
+				dump(e2);
+			}
+		}
+	}
+}
+
+function script_run_domain_handle_redirect(request, new_url)
+{
+	if (!heap) {
+		create_heap();
+	}
+	return script_run_domain(heap, request_get_domain(request), "entry", "handle_redirect#2", [request_to_handle(request), new_url]);
+}
+
+function script_run_global_handle_redirect(request, new_url)
+{
+	if (!heap) {
+		create_heap();
+	}
+	
+	var params = [request_to_handle(request), new_url];
+
+	var (result, e) = script_run(heap, "dispatch", "dispatch_handle_redirect#2", params);
+	if (e) {
+		log("site script error (dispatch):");
+		dump(e);
+		return;
+	}
+
+	if (result) {
+		var (result2, e2) = script_run(heap, result, "handle_redirect#2", params);
+		if (e2) {
+			log({"site script error (", result, "):"});
+			dump(e2);
+		}
+		return result2;
+	}
+}
+
+function @script_run_domain(heap, domain, domain_script_name, func_name, params)
+{
+	var parts = split_domain(domain);
+	if (!parts) return null;
+
+	var len = get_domain_suffix_length(parts) + 1;
+	if (len > length(parts)) return null;
+
+	var s = {""};
+	for (var i=length(parts)-len; i<length(parts); i++) {
+		if (length(s) > 0) s[] = '.';
+		string_append(s, parts[i]);
+	}
+	var script_name = {get_site_script_dir(s), domain_script_name};
+
+	if (!heap) {
+		create_heap();
+	}
+	return script_run_optional(heap, script_name, func_name, params);
+}
+
+function @script_run_optional(heap, script_name, func_name, params)
+{
+	var (has_func, e1) = script_has_function(heap, script_name, func_name);
+	if (e1) {
+		log({"site script error (", script_name, "):"});
+		dump(e1);
+		return 0, e1;
+	}
+	if (!has_func) {
+		return null;
+	}
+	var (result, e2) = script_run(heap, script_name, func_name, params);
+	if (e2) {
+		log({"site script error (", script_name, "):"});
+		dump(e2);
+		return 0, e2;
+	}
+	return result;
+}
+
+function script_collect_heap()
+{
+	if (heap) {
+		script_collect_heap(heap);
+	}
+}
+
+function check_scripts()
+{
+	create_heap();
+	check_scripts("");
+	heap = null;
+}
+
+function @check_scripts(dir)
+{
+	var list = file_list({"scripts/", dir});
+	for (var i=0; i<length(list); i++) {
+		var fname = list[i];
+		if (fname[length(fname)-1] == '/') {
+			if (!check_scripts({dir, fname})) return false;
+			continue;
+		}
+		if (string_ends_with(fname, ".fix")) {
+			var script_name = {dir, string_substring(fname, 0, length(fname)-4)};
+			var (has_func, e) = script_has_function(heap, script_name, "");
+			if (e) {
+				log({"site script error (", script_name, "):"});
+				dump(e);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_script()
+{
+	assert(get_domain_suffix_length(["example", "com"]), 1);
+	assert(get_domain_suffix_length(["example", "co", "uk"]), 2);
+	assert(get_domain_suffix_length(["example", "uk"]), 1);
+	assert(get_domain_suffix_length(["some", "example", "sch", "uk"]), 3);
+
+	assert(is_same_domain("example.com", "other.com"), false);
+	assert(is_same_domain("example.com", "some.example.com"), true);
+	assert(is_same_domain("example.other.uk", "other.other.uk"), true);
+	assert(is_same_domain("example.other.uk", "some.example.other.uk"), true);
+	assert(is_same_domain("example.co.uk", "other.co.uk"), false);
+	assert(is_same_domain("example.co.uk", "some.example.co.uk"), true);
+}

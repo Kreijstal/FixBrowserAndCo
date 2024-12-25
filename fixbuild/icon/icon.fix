@@ -1,0 +1,90 @@
+/*
+ * FixBuild v0.6 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "io/file";
+import "image/image";
+import "util/sort";
+
+class Icon
+{
+	var size: Integer;
+	var img: Image;
+}
+
+function compare_icons(data, icon1: Icon, icon2: Icon): Boolean
+{
+	return icon1.size < icon2.size;
+}
+
+function get_icon(icons: Icon[], size: Integer): Image
+{
+	if (icons.length == 0) {
+		return null;
+	}
+	foreach (var icon in icons) {
+		if (icon.size < size) continue;
+		return icon.img;
+	}
+	return icons[icons.length-1].img;
+}
+
+function get_image(icons: Icon[], size: Integer): Image
+{
+	var img = get_icon(icons, size);
+	if (!img) {
+		throw error("no icon found for size "+size);
+	}
+	while (min(img.get_width(), img.get_height()) >= size*2) {
+		img = img.downscale();
+	}
+	if (img.get_width() != size || img.get_height() != size) {
+		var new_img = Image::create(size, size);
+		var p = Painter::create(new_img);
+		var tr = Transform::create();
+		tr.scale(float(size) / float(img.get_width()), float(size) / float(img.get_height()));
+		p.fill_rect(0, 0, size, size, Shader {
+			replace(sample_bilinear(img, tr));
+		});
+		img = new_img;
+	}
+	return img;
+}
+
+function load_icons(files: String[])
+{
+	var icons: Icon[] = [];
+	foreach (var fname in files) {
+		var img = Image::load(File::read_whole(fname));
+		var icon = new Icon;
+		icon.size = max(img.get_width(), img.get_height());
+		icon.img = img;
+		icons[] = icon;
+	}
+	array_sort_custom(icons, compare_icons#3, null);
+	var images: Image[] = [];
+	foreach (var size in [16, 32, 48, 256]) {
+		images[] = get_image(icons, size);
+	}
+	return images;
+}

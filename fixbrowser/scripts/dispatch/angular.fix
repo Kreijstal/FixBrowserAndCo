@@ -1,0 +1,6 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	element_remove_class(element_query(document, "body"), "ng-cloak");
+}

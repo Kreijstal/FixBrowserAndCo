@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/console";</code>
+</p>
+
+<h2>PromptHandler class</h2>
+
+<p>
+PromptHandler is used for providing dynamic functionality in console <a href="global_console.html#prompt">prompts</a>.
+</p>
+
+<p>
+Implementations of prompts can access the internal properties using the <a href="prompt_handler_impl.html">PromptHandlerImpl</a> class.
+</p>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): PromptHandler<br>
+		static function <b>create</b>(max_history_size: Integer): PromptHandler<br>
+	</code></dt>
+	<dd>
+		Creates a new prompt handler. You can optionally set the maximum history size (default is 100).
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>set_replacement_char</b>(char: Integer)</code></dt>
+	<dd>
+		Sets the replacement character. This is used when entering a password. You can also use <code>0</code>
+		to disable showing the length of the password. The default value is <code>-1</code>. When this
+		feature is used <a href="global_console.html#prompt_password">special security precautions</a> are used.
+	</dd>
+	<dt><code>function <b>get_replacement_char</b>(): Integer</code></dt>
+	<dd>
+		Returns the replacement character.
+	</dd>
+	<dt><code>function <b>set_max_length</b>(size: Integer)</code></dt>
+	<dd>
+		Sets the maximum length. The default value is <code>0x7FFFFFFF</code> (the maximum length).
+	</dd>
+	<dt><code>function <b>get_max_length</b>(): Integer</code></dt>
+	<dd>
+		Returns the maximum length.
+	</dd>
+	<dt><code>function <b>set_search_label</b>(label: String)</code></dt>
+	<dd>
+		Sets the search label that is displayed in search mode. You can put <code>%s</code> at the
+		place where you want to show the current search text. Use <code>%%</code> to display a single
+		<code>%</code> character.
+	</dd>
+	<dt><code>function <b>get_search_label</b>(): String</code></dt>
+	<dd>
+		Returns the search label.
+	</dd>
+	<dt><code>function <b>is_done</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the prompt was closed using Ctrl+D. This allow to distinguish between
+		an individual prompt cancel and finishing entering of more values.
+	</dd>
+	<dt><code>
+		function <b>set_text</b>(text: String)<br>
+		function <b>set_text</b>(text: String, cursor: Integer)<br>
+		function <b>set_cursor</b>(cursor: Integer)<br>
+	</code></dt>
+	<dd>
+		Sets the current text and cursor position. Setting the cursor to a negative number puts
+		the cursor after the end of the text. It can be either set before using the prompt to
+		set the initial value, during handling of a completion or handling of an event.
+	</dd>
+	<dt><code>
+		function <b>get_text</b>(): String<br>
+		function <b>get_cursor</b>(): Integer<br>
+	</code></dt>
+	<dd>
+		Gets the current text and cursor position. It is used during the handling of a completion,
+		handling of an event or after the prompt has finished.
+	</dd>
+	<dt><code>function <b>get_choice</b>(cnt: Integer): Integer</code></dt>
+	<dd>
+		Returns the choice for given number of completions. The returned value is a floor remainder
+		of the internal choice number divided by the count.
+	</dd>
+</dl>
+
+<h3 id="methods">Methods</h3>
+
+<dl>
+	<dt><code>
+		virtual function <b>get_history_size</b>(): Integer<br>
+		virtual function <b>get_history_value</b>(idx: Integer): String<br>
+		virtual function <b>add_history_value</b>(value: String)<br>
+	</code></dt>
+	<dd>
+		Provides access to the history. When adding it should remove an identical previous entry
+		from the history to prevent duplicates. The default implementation uses an internal array
+		but can be changed to use another source of data.
+	</dd>
+	<dt><code>virtual function <b>get_completion</b>(input: String): String</code></dt>
+	<dd>
+		Provides a completion for given input. The choice property is incremented or decremented every
+		time the user presses the TAB key for the same completion attempt. Use the <code>get_choice</code>
+		method to obtain the current choice based on the number of valid choices. The returned value is the
+		whole input string including the completion. You can also return <code>null</code> in case there
+		are no completion choices available.
+	</dd>
+	<dt><code>virtual function <b>handle_completion</b>(): Boolean</code></dt>
+	<dd>
+		The more advanced completion variant. By default it just calls the simpler <code>get_completion</code>
+		method. Allows more control about the completion: it can change the whole text and move the cursor at
+		any position. Returns true when a completion was provided.
+	</dd>
+	<dt><code>virtual function <b>handle_event</b>(event: <a href="console_event.html">ConsoleEvent</a>): Boolean</code></dt>
+	<dd>
+		Handles an event before it is processed. Returns true when it was handled and the changes to the
+		text or cursor needs to be applied. The handler is not called during completion or in search mode.
+	</dd>
+</dl>
+
+</body>
+</html>

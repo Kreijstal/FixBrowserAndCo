@@ -1,0 +1,542 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/view";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/subview/scrollbar";
+import "gui/native/windows";
+import "gui/pure/common";
+import "gui/pure/button";
+
+//XXX
+const {
+	@SCROLL_HORIZ,
+	@SCROLL_VERT
+};
+
+const {
+	@ACTION_SCROLL_HERE,
+	@ACTION_TOP,
+	@ACTION_BOTTOM,
+	@ACTION_PAGE_UP,
+	@ACTION_PAGE_DOWN,
+	@ACTION_SCROLL_UP,
+	@ACTION_SCROLL_DOWN
+};
+
+const {
+	@SBP_ARROWBTN = 1,
+	@SBP_THUMBBTNHORZ = 2,
+	@SBP_THUMBBTNVERT = 3,
+	@SBP_LOWERTRACKHORZ = 4,
+	@SBP_UPPERTRACKHORZ = 5,
+	@SBP_LOWERTRACKVERT = 6,
+	@SBP_UPPERTRACKVERT = 7,
+	@SBP_GRIPPERHORZ = 8,
+	@SBP_GRIPPERVERT = 9,
+	@SBP_SIZEBOX = 10
+};
+
+const {
+	@ABS_UPNORMAL = 1,
+	@ABS_UPHOT = 2,
+	@ABS_UPPRESSED = 3,
+	@ABS_UPDISABLED = 4,
+	@ABS_DOWNNORMAL = 5,
+	@ABS_DOWNHOT = 6,
+	@ABS_DOWNPRESSED = 7,
+	@ABS_DOWNDISABLED = 8,
+	@ABS_LEFTNORMAL = 9,
+	@ABS_LEFTHOT = 10,
+	@ABS_LEFTPRESSED = 11,
+	@ABS_LEFTDISABLED = 12,
+	@ABS_RIGHTNORMAL = 13,
+	@ABS_RIGHTHOT = 14,
+	@ABS_RIGHTPRESSED = 15,
+	@ABS_RIGHTDISABLED = 16,
+	@ABS_UPHOVER = 17,
+	@ABS_DOWNHOVER = 18,
+	@ABS_LEFTHOVER = 19,
+	@ABS_RIGHTHOVER = 20
+};
+
+const {
+	@SCRBS_NORMAL = 1,
+	@SCRBS_HOT = 2,
+	@SCRBS_PRESSED = 3,
+	@SCRBS_DISABLED = 4,
+	@SCRBS_HOVER = 5
+};
+
+const {
+	@TS_MIN = 0,
+	@TS_TRUE = 1,
+	@TS_DRAW = 2
+};
+
+const @TMT_CONTENTMARGINS = 3602;
+
+class PureScrollBar: SubScrollBar
+{
+	var @here_coord: Integer;
+
+	constructor create(type: Integer)
+	{
+		super::create(type);
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_UP && event.get_button() == MOUSE_BUTTON_RIGHT && get_maximum() > 0) {
+			var type = get_type();
+			here_coord = (type == SCROLL_VERT? event.get_y() : event.get_x());
+
+			var menu = Menu::create();
+			menu.add_item("Scroll Here", PureScrollBar::handle_popup_menu#2, this, ACTION_SCROLL_HERE);
+			menu.add_separator();
+			if (type == SCROLL_VERT) {
+				menu.add_item("Top", PureScrollBar::handle_popup_menu#2, this, ACTION_TOP);
+				menu.add_item("Bottom", PureScrollBar::handle_popup_menu#2, this, ACTION_BOTTOM);
+			}
+			else {
+				menu.add_item("Left Edge", PureScrollBar::handle_popup_menu#2, this, ACTION_TOP);
+				menu.add_item("Right Edge", PureScrollBar::handle_popup_menu#2, this, ACTION_BOTTOM);
+			}
+			menu.add_separator();
+			if (type == SCROLL_VERT) {
+				menu.add_item("Page Up", PureScrollBar::handle_popup_menu#2, this, ACTION_PAGE_UP);
+				menu.add_item("Page Down", PureScrollBar::handle_popup_menu#2, this, ACTION_PAGE_DOWN);
+			}
+			else {
+				menu.add_item("Page Left", PureScrollBar::handle_popup_menu#2, this, ACTION_PAGE_UP);
+				menu.add_item("Page Right", PureScrollBar::handle_popup_menu#2, this, ACTION_PAGE_DOWN);
+			}
+			menu.add_separator();
+			if (type == SCROLL_VERT) {
+				menu.add_item("Scroll Up", PureScrollBar::handle_popup_menu#2, this, ACTION_SCROLL_UP);
+				menu.add_item("Scroll Down", PureScrollBar::handle_popup_menu#2, this, ACTION_SCROLL_DOWN);
+			}
+			else {
+				menu.add_item("Scroll Left", PureScrollBar::handle_popup_menu#2, this, ACTION_SCROLL_UP);
+				menu.add_item("Scroll Right", PureScrollBar::handle_popup_menu#2, this, ACTION_SCROLL_DOWN);
+			}
+			menu.show(this, event.get_x(), event.get_y());
+			return true;
+		}
+		return super.handle_mouse_event(event);
+	}
+
+	function @handle_popup_menu(action: Integer)
+	{
+		switch (action) {
+			case ACTION_SCROLL_HERE: scroll_at(here_coord); break;
+			case ACTION_TOP:         do_action(SBA_START); break;
+			case ACTION_BOTTOM:      do_action(SBA_END); break;
+			case ACTION_PAGE_UP:     do_action(SBA_PAGE_PREV); break;
+			case ACTION_PAGE_DOWN:   do_action(SBA_PAGE_NEXT); break;
+			case ACTION_SCROLL_UP:   do_action(SBA_PREV); break;
+			case ACTION_SCROLL_DOWN: do_action(SBA_NEXT); break;
+		}
+	}
+
+	override function get_default_size(scale: Float): Integer
+	{
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC:
+				return iround(16*scale);
+
+			case THEME_WINDOWS: {
+				var size = [iround(16*scale), iround(16*scale)];
+				Windows::get_theme_size("SCROLLBAR", SBP_ARROWBTN, ABS_UPNORMAL, TS_TRUE, size);
+				return max(size[0], size[1]);
+			}
+
+			case THEME_CUSTOM: {
+				return iround(18*scale);
+			}
+		}
+		return iround(20*scale);
+	}
+
+	override function get_slider_min_size(): Integer
+	{
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC:
+				return iround(8*get_scale());
+
+			case THEME_WINDOWS: {
+				var size = [iround(8*get_scale()), iround(8*get_scale())];
+				Windows::get_theme_size("SCROLLBAR", get_type() == SCROLL_HORIZ? SBP_THUMBBTNHORZ : SBP_THUMBBTNVERT, SCRBS_NORMAL, TS_MIN, size);
+				return get_type() == SCROLL_HORIZ? size[0] : size[1];
+			}
+
+			case THEME_CUSTOM: {
+				return iround(8*get_scale());
+			}
+		}
+		return iround(10*get_scale());
+	}
+
+	override function paint_background(p: Painter)
+	{
+		switch (get_theme_type()) {
+			case THEME_CUSTOM: {
+				p.clear_rect(0, 0, get_width(), get_height(), 0xFFEEEEEE);
+				break;
+			}
+		}
+	}
+
+	override function paint_track(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, type: Integer, state: Integer)
+	{
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				var color1 = Windows::get_system_color(COLOR_BTNFACE);
+				var color2 = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+				if ((state & BUTTON_PRESSED) != 0) {
+					color1 = Windows::get_system_color(COLOR_WINDOWFRAME);
+					color2 = Windows::get_system_color(COLOR_3DDKSHADOW);
+				}
+				draw_pattern(p, 0, 0, x, y, width, height, color1, color2);
+				break;
+			}
+			
+			case THEME_WINDOWS: {
+				var theme_state = SCRBS_NORMAL;
+				if (get_maximum() == 0) {
+					theme_state = SCRBS_DISABLED;
+				}
+				else if ((state & BUTTON_PRESSED) != 0) {
+					theme_state = SCRBS_PRESSED;
+				}
+				else if ((state & BUTTON_HOVER) != 0) {
+					theme_state = SCRBS_HOT;
+				}
+				var theme_part: Integer;
+				if (get_type() == SCROLL_HORIZ) {
+					theme_part = type == SCROLL_TRACK_LEFT? SBP_UPPERTRACKHORZ : SBP_LOWERTRACKHORZ;
+				}
+				else {
+					theme_part = type == SCROLL_TRACK_UP? SBP_UPPERTRACKVERT : SBP_LOWERTRACKVERT;
+				}
+				Windows::draw_theme_background(p, x, y, width, height, "SCROLLBAR", theme_part, theme_state);
+				break;
+			}
+
+			case THEME_CUSTOM: {
+				break;
+			}
+
+			default: {
+				var color = 0xFFCCCCCC;
+				p.clear_rect(x, y, width, height, color);
+				break;
+			}
+		}
+	}
+
+	override function paint_button(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, type: Integer, state: Integer)
+	{
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				if (get_maximum() == 0) {
+					state = 0;
+				}
+
+				var face_color = Windows::get_system_color(COLOR_BTNFACE);
+				var highlight_color = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+				var light_color = Windows::get_system_color(COLOR_3DLIGHT);
+				var shadow_color = Windows::get_system_color(COLOR_BTNSHADOW);
+				var dark_shadow_color = Windows::get_system_color(COLOR_3DDKSHADOW);
+				var border_color = Windows::get_system_color(COLOR_WINDOWFRAME);
+
+				if ((state & BUTTON_PRESSED) != 0) {
+					p.clear_rect(x, y, width, height, face_color);
+					draw_rect(p, x, y, width, height, shadow_color);
+				}
+				else {
+					p.clear_rect(x, y, width, height, face_color);
+					draw_highlight_rect(p, x, y, width, height, face_color, dark_shadow_color, face_color);
+					draw_highlight_rect(p, x+1, y+1, width-2, height-2, highlight_color, shadow_color, face_color);
+				}
+
+				if (get_maximum() == 0) {
+					var color1 = Windows::get_system_color(COLOR_BTNSHADOW);
+					var color2 = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+					paint_classic_button_arrow(p, x+1, y+1, width, height, type, color2);
+					paint_classic_button_arrow(p, x, y, width, height, type, color1);
+				}
+				else {
+					var color = Windows::get_system_color(COLOR_BTNTEXT);
+					if ((state & BUTTON_PRESSED) != 0) {
+						x++;
+						y++;
+					}
+					paint_classic_button_arrow(p, x, y, width, height, type, color);
+				}
+				break;
+			}
+			
+			case THEME_WINDOWS: {
+				var theme_state = ABS_UPNORMAL;
+				if (get_maximum() == 0) {
+					theme_state = ABS_UPDISABLED;
+				}
+				else if ((state & BUTTON_PRESSED) != 0) {
+					theme_state = ABS_UPPRESSED;
+				}
+				else if ((state & BUTTON_HOVER) != 0) {
+					theme_state = ABS_UPHOT;
+				}
+				switch (type) {
+					case SCROLL_BUTTON_UP:    theme_state += ABS_UPNORMAL - ABS_UPNORMAL; break;
+					case SCROLL_BUTTON_DOWN:  theme_state += ABS_DOWNNORMAL - ABS_UPNORMAL; break;
+					case SCROLL_BUTTON_LEFT:  theme_state += ABS_LEFTNORMAL - ABS_UPNORMAL; break;
+					case SCROLL_BUTTON_RIGHT: theme_state += ABS_RIGHTNORMAL - ABS_UPNORMAL; break;
+				}
+				Windows::draw_theme_background(p, x, y, width, height, "SCROLLBAR", SBP_ARROWBTN, theme_state);
+				break;
+			}
+
+			case THEME_CUSTOM: {
+				var color = 0xFFEEEEEE;
+				if ((state & BUTTON_PRESSED) != 0) {
+					color = 0xFFAAAAAA;
+				}
+				else if ((state & BUTTON_HOVER) != 0) {
+					color = 0xFFDDDDDD;
+				}
+				p.clear_rect(x, y, width, height, color);
+
+				var shape = Shape::create();
+				var center_x = x + width*0.5;
+				var center_y = y + height*0.5;
+				var size = min(width, height) * 0.5;
+				switch (type) {
+					case SCROLL_BUTTON_UP: {
+						var bottom = center_y + size*0.25;
+						var fract = bottom - floor(bottom);
+						center_y = center_y + (1.0 - fract);
+						shape.move_to(center_x, center_y - size*0.25);
+						shape.line_to(center_x + size*0.5, center_y + size*0.25);
+						shape.line_to(center_x - size*0.5, center_y + size*0.25);
+						shape.close_path();
+						break;
+					}
+					case SCROLL_BUTTON_DOWN: {
+						var top = center_y - size*0.25;
+						var fract = top - floor(top);
+						center_y = center_y - fract;
+						shape.move_to(center_x - size*0.5, center_y - size*0.25);
+						shape.line_to(center_x + size*0.5, center_y - size*0.25);
+						shape.line_to(center_x, center_y + size*0.25);
+						shape.close_path();
+						break;
+					}
+					case SCROLL_BUTTON_LEFT: {
+						var right = center_x + size*0.25;
+						var fract = right - floor(right);
+						center_x = center_x + (1.0 - fract);
+						shape.move_to(center_x - size*0.25, center_y);
+						shape.line_to(center_x + size*0.25, center_y - size*0.5);
+						shape.line_to(center_x + size*0.25, center_y + size*0.5);
+						shape.close_path();
+						break;
+					}
+					case SCROLL_BUTTON_RIGHT: {
+						var left = center_x - size*0.25;
+						var fract = left - floor(left);
+						center_x = center_x - fract;
+						shape.move_to(center_x - size*0.25, center_y - size*0.5);
+						shape.line_to(center_x + size*0.25, center_y);
+						shape.line_to(center_x - size*0.25, center_y + size*0.5);
+						shape.close_path();
+						break;
+					}
+				}
+				p.fill_shape(shape, 0xFF000000);
+				break;
+			}
+
+			default: {
+				var color = 0xFFFF00FF;
+				if ((state & BUTTON_PRESSED) != 0) {
+					color = 0xFFCC00CC;
+				}
+				else if ((state & BUTTON_HOVER) != 0) {
+					color = 0xFFFFAAFF;
+				}
+				p.clear_rect(x, y, width, height, color);
+				break;
+			}
+		}
+	}
+
+	function @paint_classic_button_arrow(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, type: Integer, color: Integer)
+	{
+		if (type == SCROLL_BUTTON_UP || type == SCROLL_BUTTON_DOWN) {
+			var size = (width/2-1)|1;
+			var size_alt = (height/2-1)|1;
+			var cx = x+width/4;
+			if (size_alt < size) {
+				cx += (size - size_alt)/2;
+				size = size_alt;
+			}
+			var cy = y+(height - (size+1)/2) / 2;
+			if (type == SCROLL_BUTTON_UP) {
+				cy += (size+1)/2-1;
+				while (size > 0) {
+					p.fill_rect(cx, cy, size, 1, color);
+					cx++;
+					cy--;
+					size -= 2;
+				}
+			}
+			else {
+				while (size > 0) {
+					p.fill_rect(cx, cy, size, 1, color);
+					cx++;
+					cy++;
+					size -= 2;
+				}
+			}
+		}
+		else {
+			var size = (height/2-1)|1;
+			var size_alt = (width/2-1)|1;
+			var cy = y+height/4;
+			if (size_alt < size) {
+				cy += (size - size_alt)/2;
+				size = size_alt;
+			}
+			var cx = x+(width - (size+1)/2) / 2;
+			if (type == SCROLL_BUTTON_LEFT) {
+				cx += (size+1)/2-2;
+				while (size > 0) {
+					p.fill_rect(cx, cy, 1, size, color);
+					cx--;
+					cy++;
+					size -= 2;
+				}
+			}
+			else {
+				while (size > 0) {
+					p.fill_rect(cx, cy, 1, size, color);
+					cx++;
+					cy++;
+					size -= 2;
+				}
+			}
+		}
+	}
+
+	override function paint_slider(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, state: Integer, state: Integer)
+	{
+		var hide_slider = false;
+		if (get_maximum() == 0) {
+			hide_slider = true;
+		}
+		else {
+			var size = get_type() == SCROLL_HORIZ? width : height;
+			if (size < get_slider_min_size()) {
+				hide_slider = true;
+			}
+		}
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				if (hide_slider) {
+					paint_track(p, x, y, width, height, 0, 0);
+					break;
+				}
+
+				var face_color = Windows::get_system_color(COLOR_BTNFACE);
+				var highlight_color = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+				var light_color = Windows::get_system_color(COLOR_3DLIGHT);
+				var shadow_color = Windows::get_system_color(COLOR_BTNSHADOW);
+				var dark_shadow_color = Windows::get_system_color(COLOR_3DDKSHADOW);
+				var border_color = Windows::get_system_color(COLOR_WINDOWFRAME);
+
+				p.clear_rect(x, y, width, height, face_color);
+				draw_highlight_rect(p, x, y, width, height, face_color, dark_shadow_color, face_color);
+				draw_highlight_rect(p, x+1, y+1, width-2, height-2, highlight_color, shadow_color, face_color);
+				break;
+			}
+
+			case THEME_WINDOWS: {
+				if (hide_slider) {
+					if (get_type() == SCROLL_HORIZ) {
+						var half = width/2;
+						Windows::draw_theme_background(p, x, y, half, height, "SCROLLBAR", SBP_UPPERTRACKHORZ, SCRBS_DISABLED);
+						Windows::draw_theme_background(p, x+half, y, width-half, height, "SCROLLBAR", SBP_LOWERTRACKHORZ, SCRBS_DISABLED);
+					}
+					else {
+						var half = height/2;
+						Windows::draw_theme_background(p, x, y, width, half, "SCROLLBAR", SBP_UPPERTRACKVERT, SCRBS_DISABLED);
+						Windows::draw_theme_background(p, x, y+half, width, height-half, "SCROLLBAR", SBP_LOWERTRACKVERT, SCRBS_DISABLED);
+					}
+					break;
+				}
+				
+				var theme_state = SCRBS_NORMAL;
+				if (get_maximum() == 0) {
+					theme_state = SCRBS_DISABLED;
+				}
+				else if ((state & BUTTON_PRESSED) != 0) {
+					theme_state = SCRBS_PRESSED;
+				}
+				else if ((state & BUTTON_HOVER) != 0) {
+					theme_state = SCRBS_HOT;
+				}
+				Windows::draw_theme_background(p, x, y, width, height, "SCROLLBAR", get_type() == SCROLL_HORIZ? SBP_THUMBBTNHORZ : SBP_THUMBBTNVERT, theme_state);
+				var content: Integer[] = [0, 0, 0, 0];
+				var size: Integer[] = [0, 0];
+				Windows::get_theme_margins("SCROLLBAR", get_type() == SCROLL_HORIZ? SBP_THUMBBTNHORZ : SBP_THUMBBTNVERT, SCRBS_NORMAL, TMT_CONTENTMARGINS, content);
+				Windows::get_theme_size("SCROLLBAR", get_type() == SCROLL_HORIZ? SBP_GRIPPERHORZ : SBP_GRIPPERVERT, SCRBS_NORMAL, TS_TRUE, size);
+				if ((size[0] <= (width - content[0] - content[2])) && (size[1] <= (height - content[1] - content[3]))) { //XXX
+					Windows::draw_theme_background(p, x, y, width, height, "SCROLLBAR", get_type() == SCROLL_HORIZ? SBP_GRIPPERHORZ : SBP_GRIPPERVERT, theme_state);
+				}
+				break;
+			}
+
+			case THEME_CUSTOM: {
+				custom_draw_slider(p, x, y, width, height, state, get_scale());
+				break;
+			}
+
+			default: {
+				var color = 0xFFFF00FF;
+				if ((state & BUTTON_PRESSED) != 0) {
+					color = 0xFFCC00CC;
+				}
+				else if ((state & BUTTON_HOVER) != 0) {
+					color = 0xFFFFAAFF;
+				}
+				p.clear_rect(x, y, width, height, color);
+				break;
+			}
+		}
+	}
+}

@@ -1,0 +1,14 @@
+--- common.fix.orig	2024-11-09 08:53:20.000000000 +0100
++++ common.fix	2024-11-09 08:54:02.175499680 +0100
+@@ -50,9 +50,11 @@
+ 			}
+ 			Windows::register_theme_change_notify(reset_theme#0);
+ 		}
++		/*
+ 		else if (Cocoa::is_present()) {
+ 			theme_type = THEME_COCOA_FLAT;
+ 		}
++		*/
+ 		else {
+ 			theme_type = THEME_CUSTOM;
+ 		}

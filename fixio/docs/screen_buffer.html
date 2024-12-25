@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/console/buffer";</code>
+</p>
+
+<h2>ScreenBuffer class</h2>
+
+<p>
+ScreenBuffer provides an off-screen buffer for easy drawing of characters and the associated
+attributes. It is then possible to put the content to the console in an optimized manner.
+</p>
+
+<p>
+The buffer is by default transparent (when the character is <code>'\00'</code>).
+</p>
+
+<p>
+The buffer can be shared between tasks, the drawing state is not shared.
+</p>
+
+<h3 id="constants">Constants</h3>
+
+<dl>
+	<dt><code style="display: block; line-height: normal;">
+		+------------+&nbsp;&nbsp;/-----------\&nbsp;&nbsp;&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;&nbsp;&nbsp;&#9556;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9559;<br>
+		| SIMPLE_BOX |&nbsp;&nbsp;| BEVEL_BOX |&nbsp;&nbsp;&#9474; SINGLE_BOX &#9474;&nbsp;&nbsp;&#9553; DOUBLE_BOX &#9553;<br>
+		+------------+&nbsp;&nbsp;\-----------/&nbsp;&nbsp;&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;&nbsp;&nbsp;&#9562;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9552;&#9565;<br>
+	</code></dt>
+	<dd>
+		The pre-defined box styles.
+	</dd>
+</dl>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(width: Integer, height: Integer): ScreenBuffer</code></dt>
+	<dd>
+		Creates a new screen buffer of given size.
+	</dd>
+	<dt><code>
+		function <b>get_view</b>(): ScreenBuffer<br>
+		function <b>get_view</b>(x: Integer, y: Integer, width: Integer, height: Integer): ScreenBuffer<br>
+	</code></dt>
+	<dd>
+		Returns a view of the screen buffer. The data is shared, but the drawing state is separate. It can
+		be also shared between tasks.
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>
+		function <b>get_width</b>(): Integer<br>
+		function <b>get_height</b>(): Integer<br>
+	</code></dt>
+	<dd>
+		Returns the width and height of the screen buffer.
+	</dd>
+</dl>
+
+<h3 id="state">State</h3>
+
+<dl>
+	<dt><code>function <b>reset</b>()</code></dt>
+	<dd>
+		Resets the drawing state (including the stack).
+	</dd>
+	<dt><code>function <b>push</b>()</code></dt>
+	<dd>
+		Pushes the current drawing state to the stack.
+	</dd>
+	<dt><code>function <b>pop</b>()</code></dt>
+	<dd>
+		Pops the drawing state from the stack, making it current.
+	</dd>
+	<dt><code>function <b>clip</b>(x: Integer, y: Integer, width: Integer, height: Integer)</code></dt>
+	<dd>
+		Clips the given rectangle against the current clip rectangle. The function can't
+		make the clip rectangle bigger.
+	</dd>
+	<dt><code>function <b>translate</b>(dx: Integer, dy: Integer)</code></dt>
+	<dd>
+		Translates the subsequent drawing.
+	</dd>
+</dl>
+
+<h3 id="drawing">Drawing</h3>
+
+<dl>
+	<dt><code>function <b>put_char</b>(x: Integer, y: Integer, background: Integer, foreground: Integer, char: Integer)</code></dt>
+	<dd>
+		Puts a character at a given position.
+	</dd>
+	<dt><code>
+		function <b>put_text</b>(x: Integer, y: Integer, background: Integer, foreground: Integer, text: String)<br>
+		function <b>put_text</b>(x: Integer, y: Integer, background: Integer, foreground: Integer, text: String, off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Puts a text (or portion of it) at a given position.
+	</dd>
+	<dt><code>
+		function <b>fill</b>(background: Integer, foreground: Integer, char: Integer)<br>
+		function <b>fill</b>(x: Integer, y: Integer, width: Integer, height: Integer, background: Integer, foreground: Integer, char: Integer)<br>
+	</code></dt>
+	<dd>
+		Fills the given rectangle (or the whole buffer) with the given color and character.
+	</dd>
+	<dt><code>function <b>draw_box</b>(x: Integer, y: Integer, width: Integer, height: Integer, background: Integer, foreground: Integer, box_chars: String)</code></dt>
+	<dd>
+		Draws a box at given rectangle. The box characters are given in a string of 8 characters. Going
+		from the top left to the bottom right (excluding the middle area).
+	</dd>
+	<dt><code>
+		function <b>draw_buffer</b>(x: Integer, y: Integer, buf: ScreenBuffer)<br>
+		function <b>draw_buffer</b>(dest_x: Integer, dest_y: Integer, src_x: Integer, src_y: Integer, width: Integer, height: Integer, buf: ScreenBuffer)<br>
+	</code></dt>
+	<dd>
+		Draws a buffer (or portion of it) at a given position.
+	</dd>
+</dl>
+
+<h3 id="console">Console update</h3>
+
+<dl>
+	<dt><code>
+		function <b>update_console</b>()<br>
+		function <b>update_console</b>(x: Integer, y: Integer)<br>
+		function <b>update_console</b>(dest_x: Integer, dest_y: Integer, src_x: Integer, src_y: Integer, width: Integer, height: Integer)<br>
+	</code></dt>
+	<dd>
+		Updates the console with the contents of the screen buffer.
+	</dd>
+</dl>
+
+</body>
+</html>

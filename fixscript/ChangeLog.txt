@@ -1,0 +1,149 @@
+Version 0.9 (2024/05/05):
+- Added ability to postprocess tokens after normal processing
+- Added ability to compile and run dynamic code in token processors
+- Added ability to create constant strings
+- Added ability to get auto suspend handler in C API
+- Added array_clear function
+- Added ability to compare values in C API
+- Added ability to call function references with parameters stored in array
+- Improved fixscript_resolve_existing to return existing scripts so it can be used in normal script loading
+- Improved performance of GC
+- Changed cloning to not make copies of constant strings
+- Changed object_extend function to give error when trying to make the object smaller
+- Fixed parsing of negative numbers in stack_trace_lines constant
+- Fixed memory leak when using tokens_parse function with improper parameters
+- Fixed importing of already compiled scripts when loading from files
+- Fixed internal reload script name not being replaced in stack traces
+- Fixed crash in JIT due to non-updating of embedded references at one place
+- Fixed parsing of integer constants followed by two dots to not be parsed as float constants
+- Fixed charset conversion in built-in log function on Windows
+- Fixed improper counting of instructions in asynchronous mode
+- Fixed infinite loop in script_line function
+- Fixed missing file name and line in errors for imports referencing non-existing scripts
+- Fixed allocation of extra unneeded memory during JIT compilation
+- Fixed limitation by stack size in array/hash literals and in string concatenations
+- Fixed parsing of ternary operator in extended operator
+- Fixed improper stack state for suspended native functions in asynchronous mode
+- Fixed error reporting using wrong heap at one place in fixembed
+
+Version 0.8 (2022/12/27):
+- Added support for optional asynchronous mode (suspendable native functions, auto suspend after processing number of instructions)
+- Added support for WebAssembly
+- Added passing of invalid tokens to token processors
+- Added filtering of control characters in logging functions
+- Improved performance of array functions
+- Changed syntax to allow multiple semicolons (empty statements)
+- Changed tokenization of numbers (leading plus/minus is separate token now)
+- Fixed passing of the whole source code to token processors
+- Fixed rejection of general arrays containing just integers when unserializing
+- Fixed checking for clear flags in arrays
+- Fixed integer overflow when working with array flags
+- Fixed issue with shared array types where different negative values resulted in different types in C API
+- Fixed disallowing of keywords in function references
+- Fixed parsing of float constants with exponent having leading plus
+- Fixed clearing of indirect references to variables in switch statement in JIT compiler
+- Fixed order of returned values in script_query function
+- Fixed integer overflow in UTF-8/16 string functions
+- Fixed conversion of floats to string using workaround due to non-existent locale variant in C library
+
+Version 0.7 (2022/03/14):
+- Added ability to get hash value using key from different heap in C API
+- Added ability to get element size of array in C API
+- Added ability to change stack size, also increased the default size
+- Added ability to check arrays for having references in C API
+- Added ability to protect references from native libraries that expose arbitrary references to scripts
+- Added JIT compiler for x86 and x86_64 CPU architectures
+- Improved C API to have easy ability to check for shared arrays, handles and function references
+- Improved locking of arrays to provide direct pointer for non-shared arrays in C API
+- Changed access parameter of fixscript_lock_array in C API
+- Fixed handling of overflow for external reference counts to values and shared arrays
+- Fixed crash on integer overflow in remainder operation
+- Fixed unneeded upgrading of arrays when locking in C API
+- Fixed parsing of extended operator with leading plus or minus sign
+- Fixed exact comparison that incorrectly compared integer portion only
+- Fixed integer overflow in string concatenation
+
+Version 0.6 (2021/10/03):
+- Added support for packed char literals
+- Added unused symbols to be directly available for token processing
+- Changed serialization format to be more compact
+- Changed symbols to be directly represented in token type
+- Removed unneeded extra symbol for appending to arrays (no syntax change)
+- Fixed counting of total heap size when cloning shared arrays
+- Fixed compatibility with Windows 2000
+- Fixed traversing of invalid symlinks in fixembed
+
+Version 0.5 (2021/05/12):
+- Added ability to set time limit for execution of scripts
+- Added ability to stop execution of scripts from another thread
+- Added ifloor, iceil, clamp, fclamp, add64 and sub64 intrinsic functions 
+- Added script_line function
+- Added non-heap references to shared arrays in C API
+- Added array_get_element_size function
+- Added ability to reload scripts in-place replacing previous functions
+- Added variant of array_fill function for the whole array
+- Added ability to retrieve list of functions from script
+- Improved error reporting of syntax errors produced by token processors
+- Changed to use full error when optional native function is called without obtaining the error
+- Changed heap_size function to return size in kilobytes
+- Changed tokens_parse function to return the reference of the tokens array
+- Changed the way compiler errors are handled (values instead of strings)
+- Changed and renamed fixscript_create_shared_array_from to be clear what it does
+- Removed trailing newlines in fixscript_to_string and in compiler errors
+- Fixed crash when calling non-existing functions when running token processors in fixembed
+- Fixed compression of scripts in fixembed
+- Fixed fixscript_dump_value to properly end line when newlines are not used
+- Fixed fixscript_set_heap_data to properly free data on all errors
+- Fixed comparison of unresolved function references
+- Fixed wrong clearing of temporary roots when native handlers invoke root clearing operation during GC
+- Fixed inadequate adding of shared arrays to temporary roots
+- Fixed crash on unclosed multiline comments
+- Fixed handling of strings that contain nulls when dumping and logging
+- Fixed small memory leak in perf_log function
+- Fixed missing string escaping in to_string and dump
+- Fixed too small precision when converting doubles to string
+- Fixed inability to catch stack overflow errors
+- Fixed crash when getting script name or function with no script provided in C API
+- Fixed writing of floats to shared arrays
+
+Version 0.4 (2020/10/13):
+- Added ability to change file name for specific lines in stack trace
+- Added ability to insert virtual functions into stack trace
+- Added escape sequence for 8-bit values in string and char literals
+- Added safeguard against recursive GC collection during freeing of native handles
+- Added ability to get native functions in C API
+- Added checking for misaligned pointers in fixscript_create_shared_array_from
+- Added fixscript_get_shared_array to get existing references to shared arrays
+- Changed weak references to not allow referencing another weak reference directly
+- Removed unneeded recursion limits for cloning and serialization
+- Removed recursion in cloning, serialization and GC marking phase
+- Fixed serialization of integers in arrays
+- Fixed stack overflow errors to include stack trace
+- Fixed parsing of floats to work with different locales
+- Fixed passing of parameters to scripts in 64-bit Windows
+
+Version 0.3 (2020/04/19):
+- Added ability to mark and clone references held on the native side
+- Added support for weak references
+- Changed native handle function signature to pass pointer to heap
+- Fixed reading of empty files in fixembed
+- Fixed bug in obtaining of directory list in fixembed on Windows
+- Fixed crash in script_query when querying constants that reference built-in constants
+- Fixed checking for uninitialized heap keys for user data
+- Fixed perf_log not working the first time on Windows
+
+Version 0.2 (2020/02/06):
+- Added compatibility with MSVC (ability to use switches instead of computed goto)
+- Added running of token processors in fixembed to speedup loading of scripts
+- Added compression in fixembed
+- Added ability to exclude files in fixembed
+- Added ability to embed binary files in fixembed
+- Added string_from_utf8 and string_to_utf8 functions
+- Changed free function signature for shared arrays with custom data
+- Fixed incorrect embedded script names in the root directory (fixembed)
+- Fixed wrong deallocation of user data attached to heap
+- Fixed checking for negative lengths in serialized format
+- Clarified how an empty array is serialized
+
+Version 0.1 (2019/12/26):
+- Initial release

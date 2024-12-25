@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixNative Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixNative Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "native/web";</code>
+</p>
+
+<h2>JSFunction class</h2>
+
+<p>
+This class allow to dynamically create JavaScript functions.
+</p>
+
+<h3>Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(src: String): JSFunction</code></dt>
+	<dd>
+		Creates a new JavaScript function with given source code. The function must read
+		any parameters from a given pointer and store any results using the pointer as well.
+		The functions are created permanently, never deallocated.
+	</dd>
+	<dt><code>function <b>call</b>(ptr: <a href="pointer.html">Pointer</a>)</code></dt>
+	<dd>
+		Calls the function using a pointer to pass any parameters and return values.
+	</dd>
+</dl>
+
+</body>
+</html>

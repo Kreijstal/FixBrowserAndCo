@@ -1,0 +1,1293 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "gui/worker";
+import "io/stream";
+import "io/tcp";
+import "io/time";
+import "io/file";
+import "io/async";
+import "task/task";
+import "task/global";
+import "task/channel";
+import "util/json";
+import "util/base64";
+import "util/long";
+import "util/sort";
+import "util/string";
+import "cellsplit/worker_comm";
+import "cellsplit/master_protocol";
+import "cellsplit/util/connection";
+import "cellsplit/util/vector";
+import "cellsplit/util/color";
+import "cellsplit/util/random";
+import "cellsplit/util/crypto";
+import "cellsplit/util/native";
+import "cellsplit/util/config";
+import "cellsplit/server/world";
+import "cellsplit/server/packets";
+import "cellsplit/server/cells";
+import "cellsplit/server/ban_list";
+import "cellsplit/server/record_comm";
+import "cellsplit/server/record_data";
+
+const @DEFAULT_MAP_SIZE = 14142.1356; // sqrt(200000000)
+const @MIN_PELLETS = 2000;
+const @MAX_PELLETS = 5000;
+const @MIN_VIRUSES = 50;
+const @PERF_LOG = 0;
+const @SERVER_DEBUG = 0;
+
+var @server: Server;
+var @local_server: Boolean;
+var @global_id_counter: Integer;
+var @master_task: Task;
+var @record_task: Task;
+var @replay_key: Byte[];
+var @bot_cookie: Byte[];
+var @pending_client_infos: Client[];
+var @max_heap_index: Integer;
+var @debug_heap: Boolean;
+var @debug_outgoing: Boolean;
+var @debug_coords: Boolean;
+var @map_size: Float;
+var @num_bots: Integer;
+var @max_players: Integer;
+var @server_rules: String[];
+
+class Client: Connection
+{
+	var @unique_id: Integer;
+	var @server: Server;
+	var @close_callback;
+	var @close_data;
+	var @view: View;
+	var @eject_cooldown: Integer;
+	var @nick: String;
+	var @account: String;
+	var @features: Integer;
+	var @permissions: Integer;
+	var @bot: Boolean;
+	var @incremented_player_count: Boolean;
+	var @destroyed: Boolean;
+	var @needs_cookie: Boolean;
+	var @replay_start_time: Long;
+	var @replay_end_time: Long;
+	var @replay_response: Byte[];
+	var @server_rules_confirmed: Boolean;
+
+	var @skin_images: Byte[][];
+	var @has_skin: Boolean;
+	var @skin_uploader: SkinUploader;
+
+	var @skip_packets: Integer;
+	var @packets_counter: Integer;
+	
+	constructor create(server: Server, conn: AsyncTCPConnection, close_callback, close_data)
+	{
+		super::create(conn, 32*1024, 512*1024);
+		this.unique_id = ++global_id_counter;
+		this.server = server;
+		this.close_callback = close_callback;
+		this.close_data = close_data;
+		this.bot = true;
+		this.needs_cookie = true;
+		this.skin_uploader = SkinUploader::create(this);
+		set_close_callback(Client::handle_close#3, this);
+	}
+
+	function @init()
+	{
+		view = View::create(server.world);
+		view.set_new_cell_in_view_callback(Client::handle_new_cell_in_view#2, this);
+		view.set_destroy_callback(Client::handle_cell_destroy#2, this);
+		respawn();
+	}
+
+	function @respawn()
+	{
+		var random = server.random;
+		var x = (random.next_float()-0.5) * map_size;
+		var y = (random.next_float()-0.5) * map_size;
+		PlayerCell::create(server.world, x, y, Cell::mass_to_size(10.0), generate_color(), account, nick, view);
+		if (!bot) {
+			log("* ["+account+"] "+nick+" respawned");
+		}
+	}
+
+	function update()
+	{
+		if (!view) return;
+
+		var avg_x = 0.0, avg_y = 0.0, total_size = 0.0;
+		var cells = view.get_cells();
+		foreach (var cell in cells) {
+			avg_x += cell.get_x();
+			avg_y += cell.get_y();
+			total_size += cell.get_size();
+		}
+		avg_x = avg_x / float(cells.length);
+		avg_y = avg_y / float(cells.length);
+
+		var basis = pow(fmin(64.0 / total_size, 1.0), 0.4);
+		var horiz = 1920.0 / basis * 0.5;
+		var vert = 1080.0 / basis * 0.5;
+		view.set_rect(avg_x - horiz, avg_y - vert, avg_x + horiz, avg_y + vert);
+
+		if (eject_cooldown > 0) {
+			eject_cooldown--;
+		}
+	}
+
+	function send_packets()
+	{
+		if (view) {
+			if (--packets_counter <= 0) {
+				if (get_outgoing_size() > 0) {
+					if (skip_packets < 50) {
+						skip_packets++;
+					}
+				}
+				else {
+					if (skip_packets > 0) {
+						skip_packets--;
+					}
+				}
+				packets_counter = 1+skip_packets;
+				view.send_packets(this);
+			}
+		}
+	}
+
+	function @request_client_info(cookie: Byte[])
+	{
+		if (!pending_client_infos) {
+			pending_client_infos = [];
+		}
+		var request_id = pending_client_infos.length;
+		pending_client_infos[] = this;
+		master_task.send([MSG_MASTER_GET_CLIENT_INFO, request_id, cookie]);
+	}
+
+	static function @client_info_obtained(request_id: Integer, info: ClientInfo)
+	{
+		var client = pending_client_infos[request_id];
+		pending_client_infos[request_id] = null;
+
+		while (pending_client_infos.length > 0 && pending_client_infos[pending_client_infos.length-1] == null) {
+			pending_client_infos.set_length(pending_client_infos.length-1);
+		}
+
+		if (client.destroyed) {
+			return;
+		}
+		
+		if (!info) {
+			client.close();
+			client.handle_close(client, error("wrong cookie"));
+			return;
+		}
+		if (client.server.ban_list.is_account_banned(info.account_id)) {
+			ErrorPacket::create("You have been kicked").send(client);
+			client.flush(Client::close_on_error#1, client);
+			return;
+		}
+		log("account_id="+info.account_id+" features="+info.features+" permissions="+info.permissions);
+		foreach (var other_client in client.server.clients) {
+			if (other_client.account == info.account_id) {
+				ErrorPacket::create("Only one connection per account is allowed").send(other_client);
+				other_client.flush(Client::close_on_error#1, other_client);
+			}
+		}
+		client.needs_cookie = false;
+		client.account = info.account_id.as_const();
+		client.features = info.features;
+		client.permissions = info.permissions;
+		client.init_cipher(info.session_secret, true);
+		ErrorPacket::create("").send(client);
+	}
+
+	override function receive_packet(stream: ArrayStream)
+	{
+		var packet = Packet::receive(this, stream);
+		//log("received type="+packet.get_type());
+
+		if (!view) {
+			switch (packet.get_type()) {
+				case PACKET_PRELOGIN: {
+					var prelogin = packet as PreLoginPacket;
+					if (prelogin.version < 1 || prelogin.version > 2) {
+						ErrorPacket::create("Incompatible version").send(this);
+						flush(Client::close_on_error#1, this);
+						break;
+					}
+					log("prelogin version="+prelogin.version);
+					bot = !prelogin.cookie || prelogin.cookie == bot_cookie;
+					if (!bot && server.num_players >= max_players) {
+						ErrorPacket::create("Server is full").send(this);
+						flush(Client::close_on_error#1, this);
+						break;
+					}
+					if (!local_server) {
+						if (!prelogin.cookie) {
+							throw error("no cookie present");
+						}
+						if (prelogin.cookie != bot_cookie) {
+							request_client_info(prelogin.cookie);
+							return;
+						}
+					}
+					needs_cookie = false;
+					init_cipher(Array::create(32, 1), true);
+					ErrorPacket::create("").send(this);
+					break;
+				}
+				
+				case PACKET_LOGIN: {
+					if (needs_cookie) {
+						ErrorPacket::create("Cookie not verified").send(this);
+						flush(Client::close_on_error#1, this);
+						break;
+					}
+					var login = packet as LoginPacket;
+					nick = login.nick;
+					if (nick == "Unnamed") {
+						var claimed: Boolean[String] = {};
+						foreach (var client in server.clients) {
+							if (client.nick != null && client.nick.starts_with("Unnamed (")) {
+								claimed[client.nick] = true;
+							}
+						}
+						for (var i=1; ; i++) {
+							if (!claimed.contains("Unnamed ("+i+")")) {
+								nick += " ("+i+")";
+								break;
+							}
+						}
+					}
+					if (!local_server) {
+						if (nick.length < 1) {
+							ErrorPacket::create("Nick not provided").send(this);
+							flush(Client::close_on_error#1, this);
+							break;
+						}
+						else if (nick.length > 32) {
+							ErrorPacket::create("Nick is too long").send(this);
+							flush(Client::close_on_error#1, this);
+							break;
+						}
+					}
+					server_rules_confirmed = true;
+					if (!bot) {
+						if (!incremented_player_count) {
+							server.num_players++;
+							incremented_player_count = true;
+						}
+						log("* ["+account+"] "+login.nick+" has joined (version="+login.version+", system="+system_type_to_string(login.system_type)+", flags="+system_flags_to_string(login.system_flags)+", num_players="+server.num_players+")");
+						server.send_chat(login.nick+" has joined", 0x01000088);
+						if (server_rules) {
+							if (get_version() == 1) {
+								ChatPacket::create(CHAT_GLOBAL, "Server rules:", 0x01CC0000).send(this);
+								foreach (var line in server_rules) {
+									ChatPacket::create(CHAT_GLOBAL, line, 0x01880000).send(this);
+								}
+							}
+							else {
+								ServerRulesPacket::create(server_rules).send(this);
+								server_rules_confirmed = false;
+							}
+						}
+					}
+					if (server_rules_confirmed) {
+						init();
+					}
+					break;
+				}
+
+				case PACKET_REPLAY_REQUEST: {
+					if (replay_key == null || replay_response != null) {
+						close();
+						handle_close(this, error("no replay active"));
+						return;
+					}
+
+					var request = packet as ReplayRequestPacket;
+					var challenge = get_random_bytes(32);
+
+					var msg = [];
+					msg.append(challenge);
+					append_int(msg, request.start_time.lo);
+					append_int(msg, request.start_time.hi);
+					append_int(msg, request.end_time.lo);
+					append_int(msg, request.end_time.hi);
+
+					replay_start_time = request.start_time;
+					replay_end_time = request.end_time;
+					replay_response = hmac_sha256(replay_key, msg);
+					
+					ReplayChallengePacket::create(challenge).send(this);
+					break;
+				}
+
+				case PACKET_REPLAY_CHALLENGE: {
+					if (replay_key == null || replay_response == null) {
+						close();
+						handle_close(this, error("no replay active"));
+						return;
+					}
+
+					var challenge = packet as ReplayChallengePacket;
+					if (challenge.data != replay_response) {
+						close();
+						handle_close(this, error("invalid replay challenge"));
+						return;
+					}
+
+					replay_response = null;
+					var (data, e) = get_replay_data(replay_start_time, replay_end_time);
+					if (e) {
+						dump(e);
+						close();
+						handle_close(this, error("failed to get replay data"));
+						return;
+					}
+					ReplayDataPacket::create(data).send(this);
+					break;
+				}
+
+				case PACKET_SERVER_INFO_REQUEST: {
+					if ((packet as ServerInfoRequestPacket).version == 1) {
+						var info = ServerInfoResponsePacket::create();
+						info.num_players = server.num_players;
+						info.max_players = max_players;
+						foreach (var client in server.clients) {
+							if (!client.view) continue;
+							if (client.bot) {
+								info.num_bots++;
+							}
+						}
+						info.send(this);
+					}
+					break;
+				}
+
+				case PACKET_CHAT: {
+					if (!nick) break;
+					handle_chat_packet(packet as ChatPacket);
+					break;
+				}
+
+				case PACKET_SKIN_DATA: {
+					if (!nick) break;
+					handle_skin_data_packet(packet as SkinDataPacket);
+					break;
+				}
+
+				case PACKET_SERVER_RULES_CONFIRM: {
+					if (!nick) break;
+					if (!server_rules_confirmed) {
+						server_rules_confirmed = true;
+						init();
+					}
+					break;
+				}
+			}
+			return;
+		}
+
+		switch (packet.get_type()) {
+			case PACKET_INPUT: {
+				var input = packet as InputPacket;
+				if (is_finite(input.x) && is_finite(input.y)) {
+					var x = fclamp(input.x, -map_size*2.0, map_size*2.0);
+					var y = fclamp(input.y, -map_size*2.0, map_size*2.0);
+					foreach (var cell in view.get_cells()) {
+						(cell as PlayerCell).target.set(x, y);
+					}
+				}
+				break;
+			}
+
+			case PACKET_ACTION: {
+				var action = (packet as ActionPacket).action;
+				switch (action) {
+					case ACTION_SPLIT: {
+						var cells = clone(view.get_cells()) as Cell[];
+						var num_cells = cells.length;
+						while (num_cells < 16) {
+							var max_size = 0.0;
+							var max_idx = -1;
+							for (var i=0; i<cells.length; i++) {
+								var size = cells[i].get_size();
+								if (size > max_size) {
+									max_size = size;
+									max_idx = i;
+								}
+							}
+							var mass = Cell::size_to_mass(max_size);
+							if (mass >= 36.0) {
+								var cell = cells[max_idx] as PlayerCell;
+								var diff = 0.0001;
+								var new_size = Cell::mass_to_size(mass * 0.5);
+								var new_cell = PlayerCell::create(cell.get_world(), cell.get_x(), cell.get_y(), new_size - diff, cell.get_color(), cell.get_account(), cell.get_nick(), view);
+								new_cell.boost = 80.0;
+								new_cell.target.set(cell.target);
+								new_cell.calc_time_to_merge();
+								cell.set_size(new_size + diff);
+								cell.calc_time_to_merge();
+								num_cells++;
+								cells.remove(max_idx);
+							}
+							else break;
+						}
+						break;
+					}
+
+					case ACTION_EJECT_MASS: {
+						if (eject_cooldown != 0) break;
+						var cells = view.get_cells() as PlayerCell[];
+						foreach (var cell in cells) {
+							var mass = cell.get_mass();
+							if (mass < 18.0) continue;
+							var vec = (cell.target - cell.get_position()).normalize();
+							var pos = cell.get_position() + vec * cell.get_size();
+							var new_cell = EjectedMass::create(cell.get_world(), pos.x, pos.y, cell.get_color(), vec);
+							cell.set_mass(mass - 18.0);
+						}
+						eject_cooldown = 3;
+						break;
+					}
+
+					case ACTION_INTERNAL_RESET:
+					case ACTION_INTERNAL_RESET_WITH_MASS: {
+						if (local_server && bot) {
+							var reset_mass = fclamp((packet as ActionPacket).mass, 10.0, 100000.0);
+							var avg_x = 0.0, avg_y = 0.0, total_mass = 0.0;
+							var cells = clone(view.get_cells()) as PlayerCell[];
+							if (cells.length == 0) break;
+							if (cells.length == 1) {
+								if (action == ACTION_INTERNAL_RESET_WITH_MASS) {
+									cells[0].set_mass(reset_mass);
+								}
+								return;
+							}
+							foreach (var cell in cells) {
+								avg_x += cell.get_x();
+								avg_y += cell.get_y();
+								total_mass += cell.get_mass();
+							}
+							avg_x = avg_x / float(cells.length);
+							avg_y = avg_y / float(cells.length);
+							if (action == ACTION_INTERNAL_RESET_WITH_MASS) {
+								total_mass = reset_mass;
+							}
+							var first_cell = cells[0];
+							PlayerCell::create(first_cell.get_world(), avg_x, avg_y, Cell::mass_to_size(total_mass), first_cell.get_color(), first_cell.get_account(), first_cell.get_nick(), view);
+							foreach (var cell in cells) {
+								cell.destroy();
+							}
+						}
+						break;
+					}
+				}
+				break;
+			}
+
+			case PACKET_CHAT: {
+				handle_chat_packet(packet as ChatPacket);
+				break;
+			}
+
+			case PACKET_SKIN_DATA: {
+				handle_skin_data_packet(packet as SkinDataPacket);
+				break;
+			}
+
+			case PACKET_KICK_PLAYER: {
+				var kick = packet as KickPlayerPacket;
+				foreach (var kick_client in server.clients) {
+					if (kick_client.account == kick.account_id) {
+						log((kick.ban? "* Banned " : "* Kicked ")+kick_client.account+" ("+kick_client.nick+") for: "+kick.reason+" by "+account+" ("+nick+")");
+						master_task.send([MSG_MASTER_MODERATION_ACTION, account, kick_client.account, kick_client.nick, kick.ban, kick.reason, kick.cookie]);
+						var chat = ChatPacket::create(CHAT_GLOBAL, (kick.ban? "Banned ":"Kicked ")+kick_client.nick, 0x01880000);
+						foreach (var client in server.clients) {
+							if (!client.view) continue;
+							if (client === kick_client) continue;
+							chat.send(client);
+						}
+						ErrorPacket::create("You have been kicked").send(kick_client);
+						kick_client.flush(Client::close_on_error#1, kick_client);
+						if (kick.ban) {
+							server.ban_list.add_ban(kick_client.account, ""); // TODO
+						}
+						break;
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	function @handle_chat_packet(chat: ChatPacket)
+	{
+		chat.account_id = account;
+		chat.nick = nick;
+		chat.message = filter_spaces(chat.message);
+		chat.style = (features & FEATURE_HIGHLIGHT) != 0? 0x01000000 : 0x00000000;
+		log("* ["+account+"] "+nick+": "+chat.message);
+		foreach (var client in server.clients) {
+			if (!client.nick) continue;
+			chat.send(client);
+		}
+	}
+
+	function @handle_skin_data_packet(skin_data: SkinDataPacket)
+	{
+		var level = skin_data.level;
+		if ((features & FEATURE_SKINS) != 0) {
+			var image: Byte[];
+			if (!skin_images) {
+				image = [];
+				skin_images = Array::create(level+1);
+				skin_images[level] = image;
+				has_skin = false;
+				server.skin_removed(account);
+			}
+			else {
+				image = skin_images[level];
+				if (!image) {
+					image = [];
+					skin_images[level] = image;
+				}
+				if (is_shared(image) || (level+1 < skin_images.length && !is_shared(skin_images[level+1]))) {
+					skin_images = null;
+					server.skin_removed(account);
+					return;
+				}
+			}
+
+			image.append(skin_data.data);
+			if (image.length > MAX_SKIN_SIZE) {
+				skin_images = null;
+				server.skin_removed(account);
+				return;
+			}
+
+			if (!skin_data.done) return;
+
+			var shared = Array::create_shared(image.length, 1);
+			Array::copy(shared, 0, image, 0, image.length);
+			image = shared;
+			skin_images[level] = shared;
+
+			if (!check_image_dimensions(image, MAX_SKIN_DIMENSION, MAX_SKIN_DIMENSION)) {
+				skin_images = null;
+				server.skin_removed(account);
+				return;
+			}
+			
+			if (level == 0) {
+				has_skin = true;
+				server.skin_updated(account);
+				if (view) {
+					var accounts: Boolean[String] = {};
+					foreach (var cell in view.get_cells()) {
+						var account = cell.get_account();
+						if (account) {
+							accounts[account] = true;
+						}
+					}
+					foreach (var account, value in accounts) {
+						foreach (var client in server.clients) {
+							if (client.bot) continue;
+							client.skin_uploader.transfer(this.account);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	function @close_on_error()
+	{
+		close();
+		handle_close(this, null);
+	}
+
+	function @handle_new_cell_in_view(cell: Cell)
+	{
+		if (bot) return;
+		if (server.need_to_send_skin(cell.get_account(), account)) {
+			skin_uploader.transfer(cell.get_account());
+		}
+	}
+	
+	function @handle_cell_destroy(cell: Cell)
+	{
+		var cells = view.get_cells();
+		if (cells.length == 0) {
+			respawn();
+		}
+	}
+
+	function @handle_close(conn, e)
+	{
+		destroyed = true;
+
+		if (view) {
+			view.destroy();
+		}
+
+		server.skin_removed(account);
+		server.skin_recipient_removed(account);
+
+		if (close_callback) {
+			close_callback(close_data, conn, e);
+		}
+	}
+}
+
+class Server
+{
+	var @tcp_server: AsyncTCPServer;
+	var @world: World;
+	var @clients: Client[];
+	var @num_players: Integer;
+	var @random: Random;
+	var @pellet_timer: Integer;
+	var @leaderboard_timer: Integer;
+	var @snapshot_timer: Integer;
+	var @skins_transferred: Boolean[String][String];
+	var @ban_list: BanList;
+
+	constructor create(port: Integer)
+	{
+		world = World::create(map_size, map_size);
+		clients = [];
+		tcp_server = AsyncTCPServer::create(port);
+		tcp_server.accept(Server::add_client#2, this);
+		random = Random::create(Monotonic::get_micro_time(), 0);
+		skins_transferred = {};
+		ban_list = BanList::create();
+	}
+
+	function @add_client(conn: AsyncTCPConnection)
+	{
+		tcp_server.accept(Server::add_client#2, this);
+
+		var client = Client::create(this, conn, Server::remove_client#3, this);
+		clients[] = client;
+		log("client #"+(client as Integer|0)+" connected");
+	}
+
+	function @remove_client(client: Client, error)
+	{
+		if (!client.bot) {
+			if (client.incremented_player_count) {
+				num_players--;
+				client.incremented_player_count = false;
+			}
+			client.bot = true; // TODO
+			log("* ["+client.account+"] "+client.nick+" has quit (num_players="+num_players+")");
+			send_chat(client.nick+" has quit", 0x01000088);
+		}
+		var s = "client #"+(client as Integer|0)+" disconnected";
+		if (error) {
+			s += ", with error:\n";
+			s += to_string(error, true);
+		}
+		log(s);
+
+		for (var i=0; i<clients.length; i++) {
+			if (clients[i] === client) {
+				clients.remove(i);
+				break;
+			}
+		}
+	}
+
+	function send_chat(msg: String, style: Integer)
+	{
+		var chat = ChatPacket::create(CHAT_GLOBAL, msg, style);
+		foreach (var client in clients) {
+			if (!client.view) continue;
+			chat.send(client);
+		}
+	}
+
+	function skin_updated(account_id: String)
+	{
+		skins_transferred[account_id] = {};
+	}
+
+	function skin_removed(account_id: String)
+	{
+		if (skins_transferred.contains(account_id)) {
+			skins_transferred.remove(account_id);
+		}
+	}
+
+	function skin_recipient_removed(account_id: String)
+	{
+		foreach (var key, set in skins_transferred) {
+			if (set.contains(account_id)) {
+				set.remove(account_id);
+			}
+		}
+	}
+
+	function need_to_send_skin(account_id: String, recipient_id: String): Boolean
+	{
+		var set = skins_transferred.get(account_id, null);
+		if (!set) {
+			return false;
+		}
+		return !set.contains(recipient_id);
+	}
+
+	function skin_sent(account_id: String, recipient_id: String)
+	{
+		var set = skins_transferred.get(account_id, null);
+		if (!set) {
+			return;
+		}
+		set[recipient_id] = true;
+	}
+
+	function update()
+	{
+		if (PERF_LOG != 0) {
+			log("---");
+			perf_reset();
+		}
+		for (var i=0; i<clients.length; i++) {
+			clients[i].update();
+		}
+		if (PERF_LOG != 0) perf_log("clients update");
+
+		world.update_cells();
+		if (PERF_LOG != 0) perf_log("cells update");
+
+		world.handle_collisions();
+		if (PERF_LOG != 0) perf_log("handle_collisions");
+
+		foreach (var client in clients) {
+			var (r, e) = client.send_packets();
+			if (e) dump(e);
+		}
+		if (PERF_LOG != 0) perf_log("send_packets");
+
+		var min_pellets = iround(MIN_PELLETS * (map_size / DEFAULT_MAP_SIZE));
+		var max_pellets = iround(MAX_PELLETS * (map_size / DEFAULT_MAP_SIZE));
+
+		var cnt = min_pellets - world.get_pellet_count();
+		for (var i=0; i<cnt; i++) {
+			var x = (random.next_float()-0.5) * map_size;
+			var y = (random.next_float()-0.5) * map_size;
+			var size = 10.0;
+			world.add_pellet(x, y, size, generate_pellet_color());
+		}
+
+		if (--pellet_timer <= 0) {
+			pellet_timer = 10;
+
+			cnt = clamp(max_pellets - world.get_pellet_count(), 0, 30);
+			for (var i=0; i<cnt; i++) {
+				var x = (random.next_float()-0.5) * map_size;
+				var y = (random.next_float()-0.5) * map_size;
+				var size = 10.0;
+				world.add_pellet(x, y, size, generate_pellet_color());
+			}
+			for (var i=0; i<50; i++) {
+				world.grow_random_pellet(random, 1.0, 20.0);
+			}
+		}
+
+		if (PERF_LOG != 0) perf_log("pellets");
+
+		var min_viruses = iround(MIN_VIRUSES * (map_size / DEFAULT_MAP_SIZE));
+		cnt = min_viruses - world.get_cell_count_for_type(CELL_VIRUS);
+		var colliding_cells: Cell[] = [];
+		for (var i=0; i<cnt; i++) {
+			var x = (random.next_float()-0.5) * map_size;
+			var y = (random.next_float()-0.5) * map_size;
+			colliding_cells.clear();
+			world.get_cells_in_radius(x, y, Cell::mass_to_size(100.0)*4.0, colliding_cells);
+			var collides = false;
+			foreach (var cell in colliding_cells) {
+				if (cell.get_type() == CELL_PLAYER) {
+					collides = true;
+					break;
+				}
+			}
+			if (!collides) {
+				VirusCell::create(world, x, y);
+			}
+		}
+		if (PERF_LOG != 0) perf_log("viruses");
+
+		if (--leaderboard_timer <= 0) {
+			leaderboard_timer = 2*25;
+
+			var sorted = [];
+			foreach (var client in clients) {
+				if (!client.view) continue;
+				var cells = client.view.get_cells();
+				var total_mass = 0.0;
+				foreach (var cell in cells) {
+					total_mass += cell.get_mass();
+				}
+				sorted[] = client;
+				sorted[] = total_mass;
+			}
+
+			quick_sort_algorithm(sorted, 0, sorted.length/2, null, {
+				= (array[index1*2+1] as Float) > (array[index2*2+1] as Float)
+			}, {
+				array_swap(array, index1*2+0, index2*2+0);
+				array_swap(array, index1*2+1, index2*2+1);
+			});
+
+			var top_players: String[] = [];
+			var styles: Integer[] = [];
+			for (var i=0, n=min(sorted.length/2, 10); i<n; i++) {
+				var client = sorted[i*2+0] as Client;
+				top_players[] = client.nick;
+				styles[] = (client.features & FEATURE_HIGHLIGHT) != 0? 0x01000000 : 0x00000000;
+			}
+
+			foreach (var client in clients) {
+				if (!client.view) continue;
+				var own_place = 0;
+				for (var i=0, n=sorted.length/2; i<n; i++) {
+					if (sorted[i*2+0] === client) {
+						own_place = i+1;
+						break;
+					}
+				}
+				LeaderboardPacket::create(top_players, styles, own_place, client.nick).send(client);
+			}
+		}
+
+		if (record_task) {
+			if (--snapshot_timer <= 0) {
+				snapshot_timer = 25;
+
+				var unique_ids: Integer[] = [];
+				var accounts: String[] = [];
+				var names: String[] = [];
+				var positions = [];
+				foreach (var client in clients) {
+					if (!client.view) continue;
+					var account_id = accounts.length;
+					unique_ids[] = client.unique_id;
+					accounts[] = client.account;
+					names[] = client.nick;
+					foreach (var cell in client.view.get_cells()) {
+						positions[] = account_id;
+						positions[] = cell.get_x();
+						positions[] = cell.get_y();
+						positions[] = cell.get_size();
+					}
+				}
+
+				foreach (var cell in world.get_environment_cells()) {
+					positions[] = -cell.get_id();
+					positions[] = cell.get_x();
+					positions[] = cell.get_y();
+					positions[] = cell.get_size();
+				}
+
+				record_task.send(Snapshot::create(unique_ids, accounts, names, positions));
+			}
+		}
+	}
+}
+
+class @SkinUploader
+{
+	var @client: Client;
+	var @packets: SkinDataPacket[];
+	var @sending: Boolean;
+	
+	constructor create(client: Client)
+	{
+		this.client = client;
+		this.packets = [];
+	}
+
+	function transfer(account_id: String)
+	{
+		var skin_images: Byte[][];
+		foreach (var client in client.server.clients) {
+			if (client.account == account_id) {
+				if (client.has_skin) {
+					skin_images = client.skin_images;
+				}
+				break;
+			}
+		}
+		if (skin_images != null) {
+			client.server.skin_sent(account_id, client.account);
+			for (var i=skin_images.length-1; i>=0; i--) {
+				var image = skin_images[i];
+				var max_size = min(1024, SkinDataPacket::get_max_size(account_id));
+				var off = 0;
+				while (off < image.length) {
+					var amount = min(image.length - off, max_size);
+					var done = (off + amount == image.length);
+					insert_packet(SkinDataPacket::create(i, done, account_id, image, off, amount));
+					off += amount;
+				}
+			}
+			if (!sending) {
+				handle_sending();
+			}
+		}
+	}
+
+	function @insert_packet(packet: SkinDataPacket)
+	{
+		var packets = this.packets;
+		var level = packet.level;
+		for (var i=packets.length-1; i>=0; i--) {
+			if (level <= packets[i].level) {
+				packets.insert(i+1, packet);
+				return;
+			}
+		}
+		packets.insert(0, packet);
+	}
+
+	function @handle_sending()
+	{
+		sending = false;
+		if (packets.length > 1) {
+			async_run_later(50, SkinUploader::handle_sending#1, this);
+			sending = true;
+		}
+
+		var packet = packets[0];
+		packets.remove(0);
+
+		packet.send(client);
+	}
+}
+
+class @BotSpawner
+{
+	var @port: Integer;
+	var @cnt: Integer;
+	
+	constructor create(port: Integer)
+	{
+		this.port = port;
+		async_run_later(2000, BotSpawner::check#1, this);
+	}
+
+	function @check()
+	{
+		async_run_later(2000, BotSpawner::check#1, this);
+
+		var cur_bots = 0;
+		var cur_players = 0;
+
+		foreach (var client in server.clients) {
+			if (!client.view) continue;
+			if (client.bot) {
+				cur_bots++;
+			}
+			else if (client.incremented_player_count) {
+				cur_players++;
+			}
+		}
+
+		var expected_num_bots = max(0, num_bots - cur_players);
+
+		if (expected_num_bots > cur_bots) {
+			log("spawning bot #"+(cnt+1));
+			Task::create("cellsplit/server/bot_task", "main#4", [(cnt++)+1, "example", port, bot_cookie]);
+		}
+		else if (expected_num_bots < cur_bots) {
+			foreach (var client in server.clients) {
+				if (!client.view) continue;
+				if (client.bot) {
+					ErrorPacket::create("Kicked bot").send(client);
+					client.flush(Client::close_on_error#1, client);
+					break;
+				}
+			}
+		}
+	}
+}
+
+function @append_int(arr: Byte[], value: Integer)
+{
+	arr[] = value & 0xFF;
+	arr[] = (value >>> 8) & 0xFF;
+	arr[] = (value >>> 16) & 0xFF;
+	arr[] = value >>> 24;
+}
+
+function @is_finite(value: Float): Boolean
+{
+	return ((value as Integer) & 0x7F800000) != 0x7F800000;
+}
+
+function @filter_spaces(s: String): String
+{
+	var out = {""};
+	var was_space = false;
+	foreach (var c in s) {
+		if (c == ' ') {
+			if (!was_space) {
+				out[] = c;
+			}
+			was_space = true;
+		}
+		else {
+			out[] = c;
+			was_space = false;
+		}
+	}
+	return out;
+}
+
+function @heap_report(data)
+{
+	async_run_later(10000, heap_report#1, null);
+
+	max_heap_index = max(max_heap_index, ([] as Integer)|0);
+
+	var prev_size = heap_size();
+	perf_reset();
+	heap_collect();
+	perf_log("heap = "+heap_size()+" KB ("+prev_size+" KB), max index = "+max_heap_index);
+}
+
+function @outgoing_report(server: Server)
+{
+	async_run_later(1000, outgoing_report#1, server);
+
+	var s = {""};
+	foreach (var client in server.clients) {
+		if (client.bot) continue;
+		s.clear();
+		s += client.nick+" = ";
+		if (debug_outgoing) {
+			s += "outgoing "+client.get_outgoing_size()+" bytes";
+		}
+		if (debug_coords) {
+			if (client.view) {
+				var avg_x = 0.0, avg_y = 0.0;
+				var cells = client.view.get_cells();
+				foreach (var cell in cells) {
+					avg_x = avg_x + cell.get_x();
+					avg_y = avg_y + cell.get_y();
+				}
+				avg_x = avg_x / float(cells.length);
+				avg_y = avg_y / float(cells.length);
+				if (debug_outgoing) {
+					s += ", ";
+				}
+				s += "coords x="+iround(avg_x)+" y="+iround(avg_y);
+			}
+		}
+		log(s);
+	}
+}
+
+function @custom_log(value)
+{
+	log("[server] "+value);
+}
+
+function run(control_channel: Channel)
+{
+	var (r, e) = main(false);
+	if (e) {
+		dump(e);
+		r = true;
+	}
+	if (master_task) {
+		var (r2, e2) = master_task.send([MSG_MASTER_QUIT_TASK]);
+		if (e2) {
+			dump(e2);
+		}
+	}
+	control_channel.send(r);
+}
+
+function main(_local_server: Boolean): Boolean
+{
+	local_server = _local_server;
+
+	var config: JSON;
+
+	if (local_server) {
+		set_log_function(custom_log#1);
+		config = {} as JSON;
+		bot_cookie = "bot";
+	}
+	else {
+		var path = Path(get_config_file("server.json"));
+		if (path.exists()) {
+			config = JSON::parse(File::read_whole(path));
+		}
+		else {
+			config = {
+				"port": 12345,
+				"map_size": DEFAULT_MAP_SIZE,
+				"bots": 50,
+				"max_players": 50,
+				"auto_restart": 30,
+				"exit_on_restart": JSONBoolean::get(false)
+			} as JSON;
+			File::write_whole(path, config.to_bytes());
+			log("The configuration file has been written to 'server.json', review it and run the server again.");
+			return false;
+		}
+		bot_cookie = get_random_bytes(128);
+	}
+
+	var port = config.get("port", 12345).as_int();
+	var auto_restart = config.get("auto_restart", 0).as_int() * 60*1000;
+	map_size = config.get("map_size", DEFAULT_MAP_SIZE).as_float();
+
+	if (!local_server) {
+		master_task = Task::create("cellsplit/master", "main#0", []);
+		master_task.send([MSG_MASTER_INIT_ACCOUNT]);
+
+		var key = config.opt("replay_key").as_string(null);
+		if (key) {
+			replay_key = Base64::decode(key);
+			record_task = Task::create("cellsplit/server/record_task", "main#0", []);
+		}
+	}
+
+	server = Server::create(port);
+	if (local_server) {
+		if (Worker::is_present()) {
+			Worker::send([MSG_SERVER_STARTED, port]);
+		}
+		else {
+			Task::send([MSG_SERVER_STARTED, port]);
+		}
+	}
+
+	if (SERVER_DEBUG != 0) {
+		DEBUG_CONNECTIONS = {};
+	}
+
+	num_bots = config.get("bots", 50).as_int();
+	max_players = config.get("max_players", 50).as_int();
+
+	var rules_lines = config.opt("rules");
+	if (rules_lines.has_value()) {
+		server_rules = [];
+		foreach (var line in rules_lines.as_array()) {
+			server_rules[] = line.as_string();
+		}
+	}
+
+	BotSpawner::create(port);
+
+	debug_heap = config.get("debug_heap", JSONBoolean::get(false)).as_boolean();
+	debug_outgoing = config.get("debug_outgoing", JSONBoolean::get(false)).as_boolean();
+	debug_coords = config.get("debug_coords", JSONBoolean::get(false)).as_boolean();
+
+	if (debug_heap) {
+		heap_report(null);
+	}
+	if (debug_outgoing || debug_coords) {
+		outgoing_report(server);
+	}
+
+	var first_time = Monotonic::get_time();
+	var last_time = Monotonic::get_time();
+	var stop_server = false;
+
+	while (!stop_server) {
+		async_process(10);
+
+		if (local_server) {
+			for (;;) {
+				var msg = Worker::is_present()? Worker::receive(0) : Task::receive_wait(0);
+				if (!msg) break;
+
+				if (is_array(msg) && length(msg) >= 1) {
+					if (msg[0] == MSG_SERVER_STOP) {
+						stop_server = true;
+					}
+				}
+			}
+		}
+		else {
+			var msg = master_task.receive_wait(0);
+			if (is_array(msg) && length(msg) >= 3) {
+				if (msg[0] == MSG_MASTER_CLIENT_INFO_OBTAINED) {
+					var (r, e) = Client::client_info_obtained(msg[1], msg[2]);
+					if (e) {
+						dump(e);
+					}
+				}
+			}
+		}
+
+		var time = Monotonic::get_time();
+		if (auto_restart != 0 && sub32(time, first_time) > auto_restart && server.num_players == 0) {
+			return true;
+		}
+		
+		var cnt = 1;
+		while (sub32(time, last_time) >= 40) {
+			if (cnt-- > 0) {
+				var time1;
+				if (SERVER_DEBUG != 0) {
+					time1 = Monotonic::get_time();
+				}
+				var (r, e) = server.update();
+				if (e) dump(e);
+				if (SERVER_DEBUG != 0) {
+					var time2 = Monotonic::get_time();
+					var delta = sub32(time2, time1);
+					var s = "update time = "+delta+" ms";
+					s[] = '\n';
+					s += @to_string(DEBUG_CONNECTIONS, true);
+					Global::set("server_debug", s);
+				}
+			}
+			last_time = add32(last_time, 40);
+		}
+	}
+
+	if (local_server) {
+		if (Worker::is_present()) {
+			Worker::send([MSG_SERVER_STOPPED]);
+		}
+		else {
+			Task::send([MSG_SERVER_STOPPED]);
+		}
+	}
+}

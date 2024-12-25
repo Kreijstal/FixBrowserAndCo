@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixScript Classes Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; line-height: 1.2; -moz-tab-size: 4; tab-size: 4; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+		table, td, th { border: 2px solid #ccc; border-collapse: collapse; }
+		td, th { padding: 2px 6px; }
+		th { background-color: #ccc; }
+		table.noborder, table.noborder > tbody > tr > td { border: none; padding: 0 5px 0 0; margin: 0; }
+	</style>
+</head>
+<body>
+
+<h1>FixScript Classes Documentation</h1>
+
+<ul>
+	<li>Version: 0.8</li>
+	<li><a href="https://www.fixscript.org/">Homepage</a> (<a href="http://fixscript.advel.cz/">mirror</a>)</li>
+	<li><a href="changelog.html">ChangeLog</a></li>
+</ul>
+
+<p>
+This token processor allows you to use classes and other syntax additions.
+</p>
+
+<p>
+<b>Features:</b>
+<ul>
+	<li>optional typing</li>
+	<li>single inheritance model</li>
+	<li>classes are separate from the underlying implementation type and thus can directly represent native handles, integers, hashes, etc.</li>
+ 	<li>extension methods for built-in types</li>
+ 	<li>operator overloading</li>
+ 	<li>structs (packed data in arrays)</li>
+ 	<li>foreach statement for easy traversal of arrays and hash tables</li>
+ 	<li>relaxed ordering of the top-level declarations</li>
+ 	<li>provides optional automatic generation of to_string() methods</li>
+ 	<li>provides API for other token processors for better integration (eg. to access type information)</li>
+	<li>licensed under ZLIB license (no attribution required in binary builds)</li>
+</ul>
+</p>
+
+<h2>Table of contents</h2>
+
+<p>
+<b>Table of contents:</b>
+<ul>
+	<li><a href="#types">Types</a>
+		<ul>
+			<li><a href="#return-type">Return type</a></li>
+			<li><a href="#builtin-functions">Built-in functions</a></li>
+			<li><a href="#extension-methods">Extension methods for built-in types</a></li>
+			<li><a href="#builtin-methods">List of methods for built-in types</a></li>
+		</ul>
+	</li>
+	<li><a href="#constructors">Constructors</a></li>
+	<li><a href="#object">Base object type</a></li>
+	<li><a href="#interfaces">Interfaces</a></li>
+	<li><a href="#operators">Operator overloading</a></li>
+	<li><a href="#structs">Structures</a></li>
+	<li><a href="#this">The <code>this</code> variable</a></li>
+	<li><a href="#field-offsets">Field offsets</a></li>
+	<li><a href="#class-definitions">Class definitions using private constants</a></li>
+	<li><a href="#api">API</a>
+		<ul>
+			<li><a href="#class-ClassContext">ClassContext class</a></li>
+			<li><a href="#class-ClassType">ClassType class</a></li>
+		</ul>
+	</li>
+</ul>
+</p>
+
+<h2 id="types">Types</h2>
+
+<p>
+The built-in types are:
+</p>
+
+<ul>
+	<li><code>Dynamic</code> - the dynamic type is the implicit type compatible with any other type (often omitted)</li>
+	<li><code>Void</code> - used only for return types to enforce that the function doesn't return anything</li>
+	<li><code>Byte</code> - just an alias for <code>Integer</code> for documentation of the intent</li>
+	<li><code>Short</code> - just an alias for <code>Integer</code> for documentation of the intent</li>
+	<li><code>Integer</code> - 32-bit signed integer (but can also refer to 8bit and 16bit unsigned integers in arrays)</li>
+	<li><code>Float</code> - 32-bit float</li>
+	<li><code>Boolean</code> - boolean type (zero = false, non-zero = true)</li>
+	<li><code>String</code> - string type</li>
+</ul>
+
+<p>
+You can also use array, hash and class types. Array types use brackets after the type,
+for example <code>Float[]</code> describes an array of floats. Hash types contains the type
+of the key in the brackets, for example <code>Integer[String]</code> describes a hash map
+with a <code>String</code> key and an <code>Integer</code> value.
+</p>
+
+<p>
+The parameters in functions, methods and constructors can use a multiple type. This is
+a list of allowed types for given parameter. The parameter is treated as having
+<code>Dynamic</code> type in the body of the function, you have to decide which type was
+passed at runtime (for example by using the intrinsic functions such as <code>is_int</code>,
+<code>is_string</code>, etc.). The types are delimited by <code>or</code> keyword, an example:
+<code>String or Integer or Float</code>. No implicit integer to float conversions are done.
+</p>
+
+<h3 id="return-type">Return type</h3>
+
+<p>
+The classes implementation allows to use code written in base FixScript syntax without any changes.
+When adding usage of types to such code there is an ambiguity in specifying the return type:
+omitting the return type can mean that it either returns a dynamic type or it has no return type.
+While you can specify it using the <code>Void</code> type explicitly it is ugly syntax-wise.
+</p>
+
+<p>
+There is a simple logic to aid this:
+</p>
+
+<ol>
+	<li>
+		When the function is inside a class it assumes no return type if not specified explicitly.
+	</li>
+	<li>
+		For standalone functions without parameters with specified types or explicit return type
+		it scans the first usage of <code>return</code> statement that returns either a single or
+		no value. When it finds that it returns a single value it assumes a dynamic return type
+		otherwise no return type.
+	</li>
+	<li>
+		When specifying required native functions (having no body) it assumes no return type
+		if not specified explicitly as the most common usage is for specifying the types and is
+		typically not migrated from base FixScript code.
+	</li>
+</ol>
+
+<h3 id="builtin-functions">Built-in functions</h3>
+
+<p>
+The built-in types for arrays, strings and hash tables can use the built-in functions
+(as well as the <code>length</code> property) in OOP way:
+</p>
+
+<pre class="code">
+<span class="keyword">var</span> shared <span class="symbol">=</span> Array<span class="symbol">::</span><span class="function">create_shared</span><span class="symbol">(</span>100<span class="symbol">,</span> 4<span class="symbol">);</span>
+shared<span class="symbol">.</span><span class="function">fill</span><span class="symbol">(-</span>1<span class="symbol">);</span>
+<span class="function">log</span><span class="symbol">(</span>shared<span class="symbol">.</span>length<span class="symbol">);</span>
+
+<span class="keyword">var</span> hash <span class="symbol">=</span> <span class="symbol">{};</span>
+<span class="function">log</span><span class="symbol">(</span><span class="string">"value="</span><span class="symbol">+</span>hash<span class="symbol">.</span><span class="function">get</span><span class="symbol">(</span><span class="string">"key"</span><span class="symbol">,</span> <span class="string">"(not found)"</span><span class="symbol">));</span>
+</pre>
+
+<h3 id="extension-methods">Extension methods for built-in types</h3>
+
+<p>
+You can also define additional methods for the built-in types (arrays, strings and hash tables). An example:
+</p>
+
+<pre class="code">
+<span class="keyword">static</span> <span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">create_filled</span><span class="symbol">(</span>len<span class="symbol">:</span> Integer<span class="symbol">,</span> value<span class="symbol">:</span> Value<span class="symbol">):</span> Value<span class="symbol">[]</span>
+<span class="symbol">{</span>
+	<span class="keyword">var</span> arr<span class="symbol">:</span> Value<span class="symbol">[]</span> <span class="symbol">=</span> Array<span class="symbol">::</span><span class="function">create</span><span class="symbol">(</span>len<span class="symbol">);</span>
+	arr<span class="symbol">.</span><span class="function">fill</span><span class="symbol">(</span>value<span class="symbol">);</span>
+	<span class="keyword">return</span> arr<span class="symbol">;</span>
+<span class="symbol">}</span>
+
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">get</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">,</span> default_value<span class="symbol">:</span> Value<span class="symbol">):</span> Value
+<span class="symbol">{</span>
+	<span class="keyword">var</span> value <span class="symbol">=</span> <span class="keyword">this</span><span class="symbol">[</span>idx<span class="symbol">];</span>
+	<span class="keyword">if</span> <span class="symbol">(</span>value <span class="symbol">==</span> null<span class="symbol">)</span> <span class="symbol">{</span>
+		<span class="keyword">return</span> default_value<span class="symbol">;</span>
+	<span class="symbol">}</span>
+	<span class="keyword">return</span> value<span class="symbol">;</span>
+<span class="symbol">}</span>
+</pre>
+
+<p>
+The names for the built-in types are <code>Array</code>, <code>String</code> and <code>Hash</code>.
+</p>
+
+<p>
+The methods can contain special generic types <code>Key</code> (for hash tables) and <code>Value</code>
+(for arrays and hash tables). These allow to precisely define the types. In the static methods the
+types for the generic types are obtained from the actual used types at the first parameter where
+it is used. It is then enforced to be the same in the following parameters and in the return type.
+</p>
+
+<p>
+In the instance methods the <code>this</code> variable must be referenced explicitly to be able to
+call other instance methods. Only methods defined in the current script and in the imported scripts
+are possible to use.
+</p>
+
+<h3 id="builtin-methods">List of methods for built-in types</h3>
+
+<pre class="code">
+<span class="keyword">static</span> <span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">create</span><span class="symbol">(</span>len<span class="symbol">:</span> Integer<span class="symbol">):</span> Dynamic<span class="symbol">[];</span>
+<span class="keyword">static</span> <span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">create</span><span class="symbol">(</span>len<span class="symbol">:</span> Integer<span class="symbol">,</span> element_size<span class="symbol">:</span> Integer<span class="symbol">):</span> Dynamic<span class="symbol">[];</span>
+<span class="keyword">static</span> <span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">create_shared</span><span class="symbol">(</span>len<span class="symbol">:</span> Integer<span class="symbol">,</span> element_size<span class="symbol">:</span> Integer<span class="symbol">):</span> Dynamic<span class="symbol">[];</span>
+<span class="keyword">static</span> <span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">copy</span><span class="symbol">(</span>dest<span class="symbol">:</span> Value<span class="symbol">[],</span> dest_off<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> Value<span class="symbol">[],</span> src_off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">get_shared_count</span><span class="symbol">():</span> Integer<span class="symbol">;</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">get_element_size</span><span class="symbol">():</span> Integer<span class="symbol">;</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">set_length</span><span class="symbol">(</span>len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">fill</span><span class="symbol">(</span>value<span class="symbol">:</span> Value<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">fill</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">,</span> value<span class="symbol">:</span> Value<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">extract</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> Value<span class="symbol">[];</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">insert</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">,</span> value<span class="symbol">:</span> Value<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">insert_array</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> Value<span class="symbol">[]);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">insert_array</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> Value<span class="symbol">[],</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">append</span><span class="symbol">(</span>src<span class="symbol">:</span> Value<span class="symbol">[]);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">append</span><span class="symbol">(</span>src<span class="symbol">:</span> Value<span class="symbol">[],</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">replace_range</span><span class="symbol">(</span>start<span class="symbol">:</span> Integer<span class="symbol">,</span> end<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> Value<span class="symbol">[]);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">replace_range</span><span class="symbol">(</span>start<span class="symbol">:</span> Integer<span class="symbol">,</span> end<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> Value<span class="symbol">[],</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">remove</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">remove</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> Array<span class="symbol">::</span><span class="function">clear</span><span class="symbol">();</span>
+
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_int</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">):</span> Integer<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_int</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">,</span> default_value<span class="symbol">:</span> Integer<span class="symbol">):</span> Integer<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_int</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> Integer<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_int</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">,</span> default_value<span class="symbol">:</span> Integer<span class="symbol">):</span> Integer<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_float</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">):</span> Float<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_float</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">,</span> default_value<span class="symbol">:</span> Float<span class="symbol">):</span> Float<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_float</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> Float<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">parse_float</span><span class="symbol">(</span>s<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">,</span> default_value<span class="symbol">:</span> Float<span class="symbol">):</span> Float<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">from_utf8</span><span class="symbol">(</span>arr<span class="symbol">:</span> Byte<span class="symbol">[]):</span> String<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">from_utf8</span><span class="symbol">(</span>arr<span class="symbol">:</span> Byte<span class="symbol">[],</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> String<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">from_utf8</span><span class="symbol">(</span>dest<span class="symbol">:</span> String<span class="symbol">,</span> arr<span class="symbol">:</span> Byte<span class="symbol">[]):</span> String<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">from_utf8</span><span class="symbol">(</span>dest<span class="symbol">:</span> String<span class="symbol">,</span> arr<span class="symbol">:</span> Byte<span class="symbol">[],</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> String<span class="symbol">;</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">to_utf8</span><span class="symbol">(</span>dest<span class="symbol">:</span> Byte<span class="symbol">[],</span> s<span class="symbol">:</span> String<span class="symbol">):</span> Byte<span class="symbol">[];</span>
+<span class="keyword">static</span> <span class="keyword">function</span> String<span class="symbol">::</span><span class="function">to_utf8</span><span class="symbol">(</span>dest<span class="symbol">:</span> Byte<span class="symbol">[],</span> s<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> Byte<span class="symbol">[];</span>
+
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">get_element_size</span><span class="symbol">():</span> Integer<span class="symbol">;</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">set_length</span><span class="symbol">(</span>len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">fill</span><span class="symbol">(</span>char<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">fill</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">,</span> char<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">extract</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> String<span class="symbol">;</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">insert</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> String<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">insert</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">insert_char</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">,</span> char<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">append</span><span class="symbol">(</span>src<span class="symbol">:</span> String<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">append</span><span class="symbol">(</span>src<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">replace_range</span><span class="symbol">(</span>start<span class="symbol">:</span> Integer<span class="symbol">,</span> end<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> String<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">replace_range</span><span class="symbol">(</span>start<span class="symbol">:</span> Integer<span class="symbol">,</span> end<span class="symbol">:</span> Integer<span class="symbol">,</span> src<span class="symbol">:</span> String<span class="symbol">,</span> off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">remove</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">remove</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">);</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">clear</span><span class="symbol">();</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">as_const</span><span class="symbol">():</span> String<span class="symbol">;</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">as_const</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> String<span class="symbol">;</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">to_utf8</span><span class="symbol">():</span> Byte<span class="symbol">[];</span>
+<span class="keyword">function</span> String<span class="symbol">::</span><span class="function">to_utf8</span><span class="symbol">(</span>off<span class="symbol">:</span> Integer<span class="symbol">,</span> len<span class="symbol">:</span> Integer<span class="symbol">):</span> Byte<span class="symbol">[];</span>
+
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">get</span><span class="symbol">(</span>key<span class="symbol">:</span> Key<span class="symbol">,</span> default_value<span class="symbol">:</span> Value<span class="symbol">):</span> Value<span class="symbol">;</span>
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">entry</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">):</span> Key<span class="symbol">,</span> Value<span class="symbol">;</span>
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">contains</span><span class="symbol">(</span>key<span class="symbol">:</span> Key<span class="symbol">):</span> Boolean<span class="symbol">;</span>
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">remove</span><span class="symbol">(</span>key<span class="symbol">:</span> Key<span class="symbol">):</span> Value<span class="symbol">;</span>
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">get_keys</span><span class="symbol">():</span> Key<span class="symbol">[];</span>
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">get_values</span><span class="symbol">():</span> Value<span class="symbol">[];</span>
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">get_pairs</span><span class="symbol">():</span> Dynamic<span class="symbol">[];</span>
+<span class="keyword">function</span> Hash<span class="symbol">::</span><span class="function">clear</span><span class="symbol">();</span>
+</pre>
+
+<h2 id="constructors">Constructors</h2>
+
+<p>
+The syntax for constructors is just a syntax sugar for static methods that create
+the object and return it. In case you need more flexibility when creating an
+object (eg. using a different underlying type) you can use static methods directly.
+</p>
+
+<p>
+You can also create a new instance using the "<code>new ClassName</code>" expression. This
+is used rarely because it doesn't call any constructors, just creates an empty object.
+Typically it is used in functions that behave like constructors (eg. when cloning) or for
+performance reasons. To limit misuse it can be used in the same script file only.
+</p>
+
+<p>
+There is also a variant that extends the existing instance of a parent class. The form
+is "<code>new ClassName: &lt;expression&gt;</code>". The normal form is just calling
+the built-in <code>object_create</code> function whereas the extending form is
+calling <code>object_extend</code> under the hood.
+</p>
+
+<h2 id="object">Base object type</h2>
+
+<p>
+Classes can either extend an existing class type or optionally extend a special common
+class type named <code>Object</code>. This class allows to provide automatic implementation
+of <code>to_string</code> methods. You can also provide your own implementations
+of this method for custom string representations.
+</p>
+
+<p>
+Some class types can't extend from Object, for example when they need serialization
+or are backed by other type than an array. In such cases you can also register
+a to_string method, albeit in a less efficient way. This is achieved by using the
+<code>Object::set_to_string(obj, func)</code> static method. It simply registers
+the provided function to a global (self-clearing) hash map with a weak reference key.
+</p>
+
+<p>
+Another alternative is to simply put a function reference as a first entry in an
+array, the function must take one argument and must end with <code>_to_string</code>
+suffix.
+</p>
+
+<p>
+You can then either call the <code>to_string</code> methods directly, or use
+<code>dump</code> or <code>to_string</code> (with newlines), these are automatically
+replaced with versions that know about class types. You can of course use the
+original functions by using <code>@dump</code> and <code>@to_string</code> functions.
+</p>
+
+<p>
+This functionality is completely optional. You have to put <code>object.fix</code>
+file in the root of the scripts and extend the class from the <code>Object</code> type.
+</p>
+
+<h2 id="interfaces">Interfaces</h2>
+
+<p>
+Interfaces provide common type for otherwise different classes. This is achieved
+by creating a wrapper class that contains reference to the original class and
+a set of function references specific to that class so it can be called in
+a common way.
+</p>
+
+<p>
+The original class contains some method, called <code>as_interface</code> (when
+the interface class is called <code>Interface</code>) that returns a new instance
+of this wrapper class. It can also cache it when desirable (using weak references
+if the same existing interface instance should be always used).
+</p>
+
+<p>
+Here is an example:
+</p>
+
+<pre class="code">
+<span class="keyword">class</span> Class1
+<span class="symbol">{</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>field1<span class="symbol">;</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>field2<span class="symbol">;</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>field3<span class="symbol">;</span>
+
+    <span class="keyword">function</span> <span class="function">as_some_interface</span><span class="symbol">():</span> SomeInterface
+    <span class="symbol">{</span>
+        <span class="keyword">return</span> SomeInterface<span class="symbol">::</span><span class="function">create</span><span class="symbol">(</span>this<span class="symbol">,</span> Class1<span class="symbol">::</span>common_method#1<span class="symbol">);</span>
+    <span class="symbol">}</span>
+
+    <span class="keyword">function</span> <span class="function">common_method</span><span class="symbol">()</span>
+    <span class="symbol">{</span>
+        <span class="function">log</span><span class="symbol">(</span><span class="string">"Class1"</span><span class="symbol">);</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+
+<span class="keyword">class</span> Class2
+<span class="symbol">{</span>
+    <span class="keyword">function</span> <span class="function">as_some_interface</span><span class="symbol">():</span> SomeInterface
+    <span class="symbol">{</span>
+        <span class="keyword">return</span> SomeInterface<span class="symbol">::</span><span class="function">create</span><span class="symbol">(</span>this<span class="symbol">,</span> Class2<span class="symbol">::</span>common_method#1<span class="symbol">);</span>
+    <span class="symbol">}</span>
+
+    <span class="keyword">function</span> <span class="function">common_method</span><span class="symbol">()</span>
+    <span class="symbol">{</span>
+        <span class="function">log</span><span class="symbol">(</span><span class="string">"Class2"</span><span class="symbol">);</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+
+<span class="keyword">class</span> SomeInterface
+<span class="symbol">{</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>data<span class="symbol">;</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>common_method_func<span class="symbol">;</span>
+
+    <span class="keyword">constructor</span> <span class="function">create</span><span class="symbol">(</span>data<span class="symbol">,</span> common_method_func<span class="symbol">)</span>
+    <span class="symbol">{</span>
+        <span class="keyword">this</span><span class="symbol">.</span>data <span class="symbol">=</span> data<span class="symbol">;</span>
+        <span class="keyword">this</span><span class="symbol">.</span>common_method_func <span class="symbol">=</span> common_method_func<span class="symbol">;</span>
+    <span class="symbol">}</span>
+
+    <span class="keyword">function</span> <span class="function">common_method</span><span class="symbol">()</span>
+    <span class="symbol">{</span>
+        <span class="function">common_method_func</span><span class="symbol">(</span>data<span class="symbol">);</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+</pre>
+
+<h2 id="operators">Operator overloading</h2>
+
+<p>
+Classes can provide implementations of operators. This makes the code much more
+readable for classes that represent numbers or something close enough. For example
+strings can be concatenated by adding. However a care must be taken to not misuse
+this feature.
+</p>
+
+<p>
+The operators are declared as special static methods with two parameters. At least
+one of the parameters must be the class itself. The implied return type is the
+class or a Boolean in case of comparison operators.
+</p>
+
+<p>
+For the in-place modification operators (<code>+=</code>, <code>-=</code>, etc.)
+the methods have just one parameter and are instance methods. The implied return
+type is the class itself. The implementation must return <code>this</code>.
+</p>
+
+<p>
+The special universal comparison operator <code>&lt;=&gt;</code> is used when a
+concrete comparison operator is not defined. The return value is an Integer (the
+result must be zero when the values are equal, less than zero if the left value is
+lesser than the right value or greater than zero if the left value is greater than
+the right value).
+</p>
+
+<p>
+Here is an example:
+</p>
+
+<pre class="code">
+<span class="keyword">class</span> IntRef
+<span class="symbol">{</span>
+	<span class="keyword">var</span> value<span class="symbol">:</span> Integer<span class="symbol">;</span>
+
+	<span class="keyword">constructor</span> <span class="function">create</span><span class="symbol">(</span>value<span class="symbol">:</span> Integer<span class="symbol">)</span>
+	<span class="symbol">{</span>
+		<span class="keyword">this</span><span class="symbol">.</span>value <span class="symbol">=</span> value<span class="symbol">;</span>
+	<span class="symbol">}</span>
+
+	<span class="keyword">operator</span> <span class="symbol">+</span> <span class="symbol">(</span>op1<span class="symbol">:</span> IntRef<span class="symbol">,</span> op2<span class="symbol">:</span> IntRef<span class="symbol">)</span>
+	<span class="symbol">{</span>
+		<span class="keyword">return</span> <span class="function">create</span><span class="symbol">(</span>op1<span class="symbol">.</span>value <span class="symbol">+</span> op2<span class="symbol">.</span>value<span class="symbol">);</span>
+	<span class="symbol">}</span>
+
+	<span class="keyword">operator</span> <span class="symbol">+</span> <span class="symbol">(</span>op1<span class="symbol">:</span> IntRef<span class="symbol">,</span> op2<span class="symbol">:</span> Integer<span class="symbol">)</span>
+	<span class="symbol">{</span>
+		<span class="keyword">return</span> <span class="function">create</span><span class="symbol">(</span>op1<span class="symbol">.</span>value <span class="symbol">+</span> op2<span class="symbol">);</span>
+	<span class="symbol">}</span>
+
+	<span class="keyword">operator</span> <span class="symbol">+</span> <span class="symbol">(</span>op1<span class="symbol">:</span> Integer<span class="symbol">,</span> op2<span class="symbol">:</span> IntRef<span class="symbol">)</span>
+	<span class="symbol">{</span>
+		<span class="keyword">return</span> <span class="function">create</span><span class="symbol">(</span>op1 <span class="symbol">+</span> op2<span class="symbol">.</span>value<span class="symbol">);</span>
+	<span class="symbol">}</span>
+
+	<span class="comment">// same for other operators and combinations
+</span><span class="symbol">}</span>
+</pre>
+
+<h2 id="structs">Structures</h2>
+
+<p>
+Structure is a special kind of a class that allow to store multiple packed instances
+in an array. This has an advantage for bulk data processing and multithreading
+(when used with shared arrays). Usage of shared arrays also avoids the GC overhead.
+</p>
+
+<p>
+Internally the reference to a structure is just an offset to the backing array.
+This offset is pointing just after the last field (end of the structure) to allow
+usage of zero offset as a <code>null</code> value. This also results into an
+error when the <code>null</code> is accessed because it will be out of the bounds
+of the backing array.
+</p>
+
+<p>
+The structure reference can be cast to <code>Integer</code> to get the offset
+at the beginning of the struct (internally the size will be subtracted). Doing
+the opposite (casting from <code>Integer</code>) will internally add the size.
+Casting between different sized struct references adjusts the offset so it points
+to the end of the new struct type. Comparing the structs uses the subtracted
+offset (the beginning of the structure). To get or set the raw value cast to
+<code>Dynamic</code> instead of <code>Integer</code>.
+</p>
+
+<p>
+You can also create a structure reference from an index with code like
+<code>SomeStruct(5)</code> to get the 6th element in a packed structure array.
+To get the index back use <code>some_struct.index</code>.
+</p>
+
+<p>
+The structures are declared in the same way as classes with the difference that
+the <code>struct</code> keyword is used instead of a <code>class</code>.
+</p>
+
+<p>
+Accessing of fields requires a reference to the backing array and uses this syntax:
+<code>array[some_struct].field</code>.
+</p>
+
+<p>
+You can have methods in structs, in the case of instance methods the <code>this</code>
+variable refers to the offset only so in most cases the instance methods are required
+to have the first parameter be an array or other object that contain a reference to
+such array. There is a direct syntax for calling the methods:
+<code>array[some_struct].method()</code> (the array is passed as the first parameter
+internally).
+</p>
+
+<p>
+The syntax for backing array type is <code>[Struct]</code> (or <code>[Dynamic]</code>
+in case it contains different kinds of structs). You can also use <code>Dynamic[]</code>
+or <code>Dynamic</code> to also allow arbitrary direct array access.
+</p>
+
+<p>
+The struct arrays have three properties: <code>length</code> to obtain the number
+of contained structs, <code>first</code> to get the first struct reference (may be
+out of bounds if the array is empty), <code>last</code> to get the last struct
+reference (may be also out of bounds).
+</p>
+
+<p>
+You can do pointer arithmetic on structs. Any addition or subtraction is multiplied
+by the size of the structure to allow processing of the adjacent entries.
+</p>
+
+<p>
+You can use <code>foreach</code> on struct arrays. In such case the value is the
+structure pointer.
+</p>
+
+<p>
+When using structs backed by a shared array there is a behavior (of shared arrays)
+where floats are stored with their raw value. This is not a problem on assign, but
+normally when retrieving you will get just the raw value as an integer instead of
+a float. The implementation of structs automatically handles it, the float is
+restored to the normal float type when obtained from the struct (by multiplying it
+with 1.0).
+</p>
+
+<p>
+You can also set or append the whole struct at once. This has the advantage of setting
+the unspecified fields with a zero value.
+</p>
+
+<p>
+Here is an example:
+</p>
+
+<pre class="code">
+<span class="keyword">struct</span> Base
+<span class="symbol">{</span>
+	<span class="keyword">var</span> base_field<span class="symbol">:</span> Integer<span class="symbol">;</span>
+<span class="symbol">}</span>
+
+<span class="keyword">struct</span> Test<span class="symbol">:</span> Base
+<span class="symbol">{</span>
+	<span class="keyword">var</span> <span class="symbol">@</span>parent<span class="symbol">:</span> Test<span class="symbol">;</span>
+	<span class="keyword">var</span> <span class="symbol">@</span>field1<span class="symbol">:</span> Integer<span class="symbol">;</span>
+	<span class="keyword">var</span> <span class="symbol">@</span>field2<span class="symbol">:</span> Integer<span class="symbol">;</span>
+
+	<span class="keyword">function</span> <span class="function">update</span><span class="symbol">(</span>owner<span class="symbol">:</span> TestOwner<span class="symbol">,</span> field1<span class="symbol">:</span> Integer<span class="symbol">,</span> field2<span class="symbol">:</span> Integer<span class="symbol">)</span>
+	<span class="symbol">{</span>
+		<span class="keyword">var</span> array <span class="symbol">=</span> owner<span class="symbol">.</span>array<span class="symbol">;</span>
+		array<span class="symbol">[</span><span class="keyword">this</span><span class="symbol">].</span>field1 <span class="symbol">=</span> field1<span class="symbol">;</span>
+		array<span class="symbol">[</span><span class="keyword">this</span><span class="symbol">].</span>field2 <span class="symbol">=</span> field2<span class="symbol">;</span>
+	<span class="symbol">}</span>
+
+	<span class="keyword">function</span> <span class="function">replace</span><span class="symbol">(</span>owner<span class="symbol">:</span> TestOwner<span class="symbol">,</span> field1<span class="symbol">:</span> Integer<span class="symbol">,</span> field2<span class="symbol">:</span> Integer<span class="symbol">)</span>
+	<span class="symbol">{</span>
+		<span class="keyword">var</span> array <span class="symbol">=</span> owner<span class="symbol">.</span>array<span class="symbol">;</span>
+		array<span class="symbol">[</span><span class="keyword">this</span><span class="symbol">]</span> <span class="symbol">=</span> <span class="symbol">{</span>
+			<span class="symbol">.</span>field1<span class="symbol">:</span> field1<span class="symbol">,</span>
+			<span class="symbol">.</span>field2<span class="symbol">:</span> field2
+		<span class="symbol">};</span>
+
+		<span class="comment">// you can also use explicit struct type like this:
+</span>		<span class="keyword">var</span> dynarr <span class="symbol">=</span> owner<span class="symbol">.</span>array as Dynamic<span class="symbol">;</span>
+		dynarr<span class="symbol">[</span><span class="keyword">this</span><span class="symbol">]</span> <span class="symbol">=</span> Test <span class="symbol">{</span>
+			<span class="symbol">.</span>field1<span class="symbol">:</span> field1<span class="symbol">,</span>
+			<span class="symbol">.</span>field2<span class="symbol">:</span> field2
+		<span class="symbol">};</span>
+	<span class="symbol">}</span>
+
+	<span class="keyword">function</span> <span class="function">to_string</span><span class="symbol">(</span>owner<span class="symbol">:</span> TestOwner<span class="symbol">)</span>
+	<span class="symbol">{</span>
+		<span class="keyword">var</span> array <span class="symbol">=</span> owner<span class="symbol">.</span>array<span class="symbol">;</span>
+		<span class="keyword">return</span> <span class="string">"Test(parent=#"</span><span class="symbol">+</span>array<span class="symbol">[</span><span class="keyword">this</span><span class="symbol">].</span>parent<span class="symbol">+</span><span class="string">")"</span><span class="symbol">;</span>
+	<span class="symbol">}</span>
+<span class="symbol">}</span>
+
+<span class="keyword">class</span> TestOwner
+<span class="symbol">{</span>
+	<span class="keyword">var</span> <span class="symbol">@</span>common<span class="symbol">:</span> Integer<span class="symbol">;</span>
+	<span class="keyword">var</span> <span class="symbol">@</span>array<span class="symbol">:</span> <span class="symbol">[</span>Test<span class="symbol">];</span>
+
+	<span class="keyword">function</span> <span class="function">create_test</span><span class="symbol">(</span>parent<span class="symbol">:</span> Test<span class="symbol">):</span> Test
+	<span class="symbol">{</span>
+		<span class="keyword">var</span> test <span class="symbol">=</span> <span class="function">length</span><span class="symbol">(</span>array as Dynamic<span class="symbol">[])</span> as Test<span class="symbol">;</span>
+		array<span class="symbol">[]</span> <span class="symbol">=</span> <span class="symbol">{</span>
+			<span class="symbol">.</span>base_field<span class="symbol">:</span> 123<span class="symbol">,</span>
+			<span class="symbol">.</span>parent<span class="symbol">:</span> parent
+		<span class="symbol">};</span>
+		<span class="keyword">return</span> test<span class="symbol">;</span>
+	<span class="symbol">}</span>
+
+	<span class="keyword">function</span> <span class="function">process_all</span><span class="symbol">()</span>
+	<span class="symbol">{</span>
+		<span class="keyword">for</span> <span class="symbol">(</span><span class="keyword">var</span> i<span class="symbol">=</span>0 as Test<span class="symbol">;</span> i<span class="symbol">&lt;</span><span class="function">length</span><span class="symbol">(</span>array as Dynamic<span class="symbol">[]);</span> i<span class="symbol">++)</span> <span class="symbol">{</span>
+			array<span class="symbol">[</span>i<span class="symbol">].</span>base_field <span class="symbol">=</span> 100<span class="symbol">;</span>
+			<span class="keyword">this</span><span class="symbol">[</span>i<span class="symbol">].</span><span class="function">update</span><span class="symbol">(</span>1<span class="symbol">,</span> 2<span class="symbol">);</span>
+		<span class="symbol">}</span>
+
+		<span class="comment">// better:</span>
+		<span class="keyword">for</span> <span class="symbol">(</span><span class="keyword">var</span> i<span class="symbol">=</span>array<span class="symbol">.</span>first<span class="symbol">;</span> i<span class="symbol">&lt;=</span>array<span class="symbol">.</span>last;</span> i<span class="symbol">++)</span> <span class="symbol">{</span>
+			array<span class="symbol">[</span>i<span class="symbol">].</span>base_field <span class="symbol">=</span> 100<span class="symbol">;</span>
+			<span class="keyword">this</span><span class="symbol">[</span>i<span class="symbol">].</span><span class="function">update</span><span class="symbol">(</span>1<span class="symbol">,</span> 2<span class="symbol">);</span>
+		<span class="symbol">}</span>
+
+		<span class="comment">// or just:</span>
+		<span class="keyword">foreach</span> <span class="symbol">(</span><span class="keyword">var</span> i <span class="keyword">in</span> array<span class="symbol">)</span> <span class="symbol">{</span>
+			array<span class="symbol">[</span>i<span class="symbol">].</span>base_field <span class="symbol">=</span> 100<span class="symbol">;</span>
+			<span class="keyword">this</span><span class="symbol">[</span>i<span class="symbol">].</span><span class="function">update</span><span class="symbol">(</span>1<span class="symbol">,</span> 2<span class="symbol">);</span>
+		<span class="symbol">}</span>
+
+		<span class="comment">// custom range:</span>
+		<span class="keyword">for</span> <span class="symbol">(</span><span class="keyword">var</span> i<span class="symbol">=</span><span class="function">Test</span><span class="symbol">(</span>2<span class="symbol">);</span> i<span class="symbol">&lt;</span><span class="function">Test</span><span class="symbol">(</span>5<span class="symbol">);</span> i<span class="symbol">++)</span> <span class="symbol">{</span>
+			array<span class="symbol">[</span>i<span class="symbol">].</span>base_field <span class="symbol">=</span> 100<span class="symbol">;</span>
+			<span class="keyword">this</span><span class="symbol">[</span>i<span class="symbol">].</span><span class="function">update</span><span class="symbol">(</span>1<span class="symbol">,</span> 2<span class="symbol">);</span>
+		<span class="symbol">}</span>
+	<span class="symbol">}</span>
+<span class="symbol">}</span>
+</pre>
+
+<h2 id="this">The <code>this</code> variable</h2>
+
+<p>
+The <code>this</code> variable used in instance functions and constructors is
+a normal variable. It can be assigned, or it can even contain a <code>null</code>
+value (in fact any kind of value). This is because the concept of classes is
+separated from the underlying implementation type.
+</p>
+
+<p>
+This can be used for various things, for example in callbacks you can pass
+an array of multiple values instead of just the object and unpack it in the
+code by assigning the object instance into the <code>this</code> variable.
+Another example is the usage of weak references (again typically in callbacks).
+</p>
+
+<p>
+Some methods can check explicitly for <code>null</code>s in <code>this</code>.
+For example comparison functions or <code>to_string</code> implementations.
+</p>
+
+<p>
+A slight downside of this approach is that when a <code>null</code> is passed
+to an instance method, there is no check at the time of method call, it will
+error only when the object is accessed in the method, for some methods it can
+even succeed if it's not accessed at all.
+</p>
+
+<h2 id="field-offsets">Field offsets</h2>
+
+<p>
+You can get the field offset with <code>SomeClass::field_name</code> and the
+size with <code>SomeClass::SIZE</code>. This is useful when working with
+the underlying array representation directly.
+</p>
+
+<p>
+You can also get references to methods with <code>SomeClass::method#1</code>.
+The number of arguments must count with the <code>this</code> parameter
+for instance methods.
+</p>
+
+<h2 id="class-definitions">Class definitions using private constants</h2>
+
+<p>
+Sometimes you may want to define classes without actually using the classes token
+processor. For example if you're not using classes (or want it optional) but
+still provide the comfort of using them. Another example is the ability to make
+multiple versions of classes token processor (or other token processors) to
+work together.
+</p>
+
+<p>
+The format is simple, to declare a class use a <code>@class_SomeClass</code>
+private constant with a string value (can be empty). The string can contain
+these attributes:
+</p>
+
+<ul>
+	<li><code>prefix</code> - function prefix (without the <code>_</code> at the end)</li>
+	<li><code>struct</code> - prefix for the constants (without the <code>_</code> at the end)</li>
+	<li><code>static</code> - specifies a list of methods that are static (the name includes a '<code>#</code>' followed by the number of parameters)</li>
+	<li><code>extend</code> - specifies a name of the super class</li>
+</ul>
+
+<p>
+The value is delimited by '<code>=</code>', multiple attributes are separated
+by '<code>,</code>' and when the attribute can contain multiple values they're
+separated by a '<code>:</code>'. No whitespace is allowed.
+</p>
+
+<p>
+You can define methods by declaring a <code>@method_SomeClass_method_name_1</code>
+private constant, where the last part is a number of parameters (including the
+implied '<code>this</code>' parameter). You can either specify static methods
+using the <code>static</code> attribute for the class, or just use <code>static</code>
+instead of <code>method</code> in the private constant name. Undefined methods
+are still recognized based on the prefix (all parameters and the return type are <code>Dynamic</code>
+in that case).
+</p>
+
+<p>
+You can define global functions by using a <code>@global_some_func_1</code> private constant
+to define a function named <code>some_func</code> with a single parameter.
+</p>
+
+<p>
+Every method uses the '<code>(SomeType, Integer, Float): Boolean</code>' format to specify
+the parameters. This means specifying the types of the parameters (the parameter for
+'<code>this</code>' is omitted for non-static methods), optionally followed by a return type.
+Whitespace is allowed.
+</p>
+
+<p>
+You can define operators by using a <code>@operator_SomeClass_add_1</code> private
+constant. The value is in the format '<code>method_name (Type1, Type2)</code>' (the
+<code>inplace</code> variants omit the first type as it is always the class type).
+The trailing number can have any value, it is used to allow multiple constants when
+there are multiple variants of the same operator. The names for the operators are
+as follows:
+</p>
+
+<table border="0" class="noborder">
+<tr valign="top">
+	<td>
+		<table border="1">
+		<tr><th>Symbol</th><th>Name</th></tr>
+		<tr><td align="center"><code>+</code></td><td align="center">add</td></tr>
+		<tr><td align="center"><code>-</code></td><td align="center">sub</td></tr>
+		<tr><td align="center"><code>*</code></td><td align="center">mul</td></tr>
+		<tr><td align="center"><code>/</code></td><td align="center">div</td></tr>
+		<tr><td align="center"><code>%</code></td><td align="center">rem</td></tr>
+		<tr><td align="center"><code>&amp;</code></td><td align="center">and</td></tr>
+		</table>
+	</td>
+	<td>
+		<table border="1">
+		<tr><th>Symbol</th><th>Name</th></tr>
+		<tr><td align="center"><code>|</code></td><td align="center">or</td></tr>
+		<tr><td align="center"><code>^</code></td><td align="center">xor</td></tr>
+		<tr><td align="center"><code>&lt;&lt;</code></td><td align="center">shl</td></tr>
+		<tr><td align="center"><code>&gt;&gt;</code></td><td align="center">shr</td></tr>
+		<tr><td align="center"><code>&gt;&gt;&gt;</code></td><td align="center">ushr</td></tr>
+		<tr><td align="center"><code>&lt;</code></td><td align="center">lt</td></tr>
+		</table>
+	</td>
+	<td>
+		<table border="1">
+		<tr><th>Symbol</th><th>Name</th></tr>
+		<tr><td align="center"><code>&gt;</code></td><td align="center">gt</td></tr>
+		<tr><td align="center"><code>&lt;=</code></td><td align="center">le</td></tr>
+		<tr><td align="center"><code>&gt;=</code></td><td align="center">ge</td></tr>
+		<tr><td align="center"><code>==</code></td><td align="center">eq</td></tr>
+		<tr><td align="center"><code>!=</code></td><td align="center">ne</td></tr>
+		<tr><td align="center"><code>&lt;=&gt;</code></td><td align="center">cmp</td></tr>
+		</table>
+	</td>
+	<td>
+		<table border="1">
+		<tr><th>Symbol</th><th>Name</th></tr>
+		<tr><td align="center"><code>+=</code></td><td align="center">add_inplace</td></tr>
+		<tr><td align="center"><code>-=</code></td><td align="center">sub_inplace</td></tr>
+		<tr><td align="center"><code>*=</code></td><td align="center">mul_inplace</td></tr>
+		<tr><td align="center"><code>/=</code></td><td align="center">div_inplace</td></tr>
+		<tr><td align="center"><code>%=</code></td><td align="center">rem_inplace</td></tr>
+		<tr><td align="center"><code>&amp;=</code></td><td align="center">and_inplace</td></tr>
+		</table>
+	</td>
+	<td>
+		<table border="1">
+		<tr><th>Symbol</th><th>Name</th></tr>
+		<tr><td align="center"><code>|=</code></td><td align="center">or_inplace</td></tr>
+		<tr><td align="center"><code>^=</code></td><td align="center">xor_inplace</td></tr>
+		<tr><td align="center"><code>&lt;&lt;=</code></td><td align="center">shl_inplace</td></tr>
+		<tr><td align="center"><code>&gt;&gt;=</code></td><td align="center">shr_inplace</td></tr>
+		<tr><td align="center"><code>&gt;&gt;&gt;=</code></td><td align="center">ushr_inplace</td></tr>
+		</table>
+	</td>
+</tr>
+</table>
+
+<p>
+This is an example how it can look:
+</p>
+
+<pre class="code">
+<span class="keyword">const</span> <span class="symbol">@</span>class_SomeClass <span class="symbol">=</span> <span class="string">"extend=BaseClass,prefix=somecls,struct=SCLS,static=create#2:static#0"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>field_SomeClass_field1 <span class="symbol">=</span> <span class="string">"Integer"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>field_SomeClass_field2 <span class="symbol">=</span> <span class="string">"Boolean"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>static_SomeClass_create_2 <span class="symbol">=</span> <span class="string">"(Integer, Boolean): SomeClass"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>method_SomeClass_instance_function_3 <span class="symbol">=</span> <span class="string">"(Integer, Boolean)"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>operator_SomeClass_add_1 <span class="symbol">=</span> <span class="string">"add (SomeClass, SomeClass)"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>operator_SomeClass_add_2 <span class="symbol">=</span> <span class="string">"add_int (SomeClass, Integer)"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>operator_SomeClass_add_inplace_1 <span class="symbol">=</span> <span class="string">"add_int_inplace (Integer)"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>global_some_func_2 <span class="symbol">=</span> <span class="string">"(SomeClass, Integer): Boolean"</span><span class="symbol">;</pre>
+</pre>
+
+<p>
+You can specify scripts that are automatically also imported when importing the script
+with the classes definitions. This is useful when classes are referenced from other
+scripts. An example:
+</p>
+
+<pre class="code">
+<span class="keyword">const</span> <span class="symbol">@</span>import_scripts <span class="symbol">=</span> <span class="string">"some/script,other"</span><span class="symbol">;</span>
+</pre>
+
+<h2 id="api">API</h2>
+
+<p>
+The API allows other token processors to integrate with classes processing. To
+get access to the API, just import <code>classes</code> script and obtain the
+context. Then you can register various hooks. The hooks are added based on actual
+needs.
+</p>
+
+<p>
+You can also use the API without classes, just use the prefixes <code>class_context_</code>
+and <code>class_type_</code> for the methods and pass the objects as a first parameter.
+</p>
+
+<pre class="code">
+<span class="keyword">const</span> <span class="symbol">{</span>
+	TYPE_DYNAMIC<span class="symbol">,</span>
+	TYPE_VOID<span class="symbol">,</span>
+	TYPE_INTEGER<span class="symbol">,</span>
+	TYPE_FLOAT<span class="symbol">,</span>
+	TYPE_BOOLEAN<span class="symbol">,</span>
+	TYPE_STRING
+<span class="symbol">};</span>
+
+<span class="keyword">const</span> <span class="symbol">{</span>
+	EXT_TYPE_CLASS<span class="symbol">,</span>
+	EXT_TYPE_ARRAY<span class="symbol">,</span>
+	EXT_TYPE_HASH<span class="symbol">,</span>
+	EXT_TYPE_STRUCT<span class="symbol">,</span>
+	EXT_TYPE_STRUCT_ARRAY<span class="symbol">,</span>
+	EXT_TYPE_MULTIPLE
+<span class="symbol">};</span>
+
+<span class="keyword">class</span> ClassContext
+<span class="symbol">{</span>
+	<span class="keyword">static</span> <span class="keyword">function</span> <span class="function">get</span><span class="symbol">(</span>fname<span class="symbol">:</span> String<span class="symbol">):</span> ClassContext<span class="symbol">;</span>
+	<span class="keyword">static</span> <span class="keyword">function</span> <span class="function">get</span><span class="symbol">(</span>fname<span class="symbol">:</span> String<span class="symbol">,</span> required<span class="symbol">:</span> Boolean<span class="symbol">):</span> ClassContext<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">register_function_call</span><span class="symbol">(</span>name<span class="symbol">:</span> String<span class="symbol">,</span> get_types_func<span class="symbol">,</span> adjust_call_func<span class="symbol">,</span> data<span class="symbol">);</span>
+	<span class="keyword">function</span> <span class="function">register_postprocess</span><span class="symbol">(</span>func<span class="symbol">,</span> data<span class="symbol">);</span>
+	<span class="keyword">function</span> <span class="function">get_class</span><span class="symbol">(</span>name<span class="symbol">:</span> String<span class="symbol">):</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_const_type</span><span class="symbol">(</span>name<span class="symbol">:</span> String<span class="symbol">):</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_local_type</span><span class="symbol">(</span>name<span class="symbol">:</span> String<span class="symbol">):</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_variable_type</span><span class="symbol">(</span>name<span class="symbol">:</span> String<span class="symbol">):</span> ClassType<span class="symbol">;</span>
+<span class="symbol">}</span>
+
+<span class="keyword">class</span> ClassType
+<span class="symbol">{</span>
+	<span class="keyword">static</span> <span class="keyword">function</span> <span class="function">create_array</span><span class="symbol">(</span>base<span class="symbol">:</span> ClassType<span class="symbol">):</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">static</span> <span class="keyword">function</span> <span class="function">create_hash</span><span class="symbol">(</span>base<span class="symbol">:</span> ClassType<span class="symbol">,</span> index<span class="symbol">:</span> ClassType<span class="symbol">):</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">is_class</span><span class="symbol">():</span> Boolean<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">is_array</span><span class="symbol">():</span> Boolean<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">is_hash</span><span class="symbol">():</span> Boolean<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">is_struct</span><span class="symbol">():</span> Boolean<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">is_struct_array</span><span class="symbol">():</span> Boolean<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">is_multiple</span><span class="symbol">():</span> Boolean<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">is_assignable_from</span><span class="symbol">(</span>other<span class="symbol">:</span> ClassType<span class="symbol">):</span> Boolean<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_class_name</span><span class="symbol">():</span> String<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_parent_class</span><span class="symbol">():</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_method_real_name</span><span class="symbol">(</span>name<span class="symbol">:</span> String<span class="symbol">,</span> types<span class="symbol">:</span> ClassType<span class="symbol">[],</span> is_static<span class="symbol">:</span> Boolean<span class="symbol">):</span> String
+	<span class="keyword">function</span> <span class="function">get_base</span><span class="symbol">():</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_index</span><span class="symbol">():</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_multiple_count</span><span class="symbol">():</span> Integer<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">get_multiple_type</span><span class="symbol">(</span>idx<span class="symbol">:</span> Integer<span class="symbol">):</span> ClassType<span class="symbol">;</span>
+	<span class="keyword">function</span> <span class="function">to_string</span><span class="symbol">():</span> String<span class="symbol">;</span>
+	<span class="keyword">static</span> <span class="keyword">function</span> <span class="function">dump_list</span><span class="symbol">(</span>list<span class="symbol">:</span> ClassType<span class="symbol">[]);</span>
+<span class="symbol">}</span>
+</pre>
+
+<p>
+The types are divided into two enumerations. The simple types are just integers
+and you can directly use them (cast from/to <code>ClassType</code>). The extended
+types are contained in an array and the first entry is the type.
+</p>
+
+<h3 id="class-ClassContext">ClassContext class</h3>
+
+<dl>
+	<dt><code>
+		static function <b>get</b>(fname: String): ClassContext<br>
+		static function <b>get</b>(fname: String, required: Boolean): ClassContext<br>
+	</code></dt>
+	<dd>
+		Obtains context for given script file name. The function register a check if given file is
+		using classes unless the <code>required</code> optional parameter is set to false. The file
+		name must correspond to the currently processed script.
+	</dd>
+	<dt><code>function <b>register_function_call</b>(name: String, get_types_func, adjust_call_func, data)</code></dt>
+	<dd>
+		Registers adjustment of function call to otherwise not defined function (the resolution is done
+		as last). Multiple registrations to the same name can be done. Provide a name of the function
+		(without parameter count, you can pass <code>null</code> to match all names) and the callbacks
+		with these signatures:<br>
+		<dl>
+			<dt><code>function <b>get_types</b>(data, name: String, num_params: Integer, line: Integer): ClassType[]</code></dt>
+			<dd>
+				Called when the function name is matched, provides number of the parameters. You
+				need to return an array of types (the first index is for the return type, the rest
+				is for the expected types of the parameters) or <code>null</code> if there is no
+				function for given number of parameters. The returned array is modified and passed
+				to the <code>adjust_call</code> callback.
+			</dd>
+			<dt><code>function <b>adjust_call</b>(data, name: String, types: ClassType[], tokens, src: String, start: Integer, end: Integer): Integer</code></dt>
+			<dd>
+				Called after the function call is generated with all type conversions. The types
+				(after any conversion) are provided in an array (the previously given array is
+				modified). You have also access to the generated tokens and the starting and
+				the ending index (exclusive). You need to return the new ending index after custom
+				adjustments.
+			</dd>
+		</dl>
+	</dd>
+	<dt><code>function <b>register_postprocess</b>(func, data)</code></dt>
+	<dd>
+		Registers function to be called after processing of classes. The registered functions are
+		called in a reversed order to allow wrapping behavior of different token processors. The
+		signature of the function is:
+		<dl>
+			<dt><code>function <b>postprocess</b>(data, fname: String, tokens, src: String)</code></dt>
+			<dd>
+				Called after processing of classes.
+			</dd>
+		</dl>
+	</dd>
+	<dt><code>function <b>get_class</b>(name: String): ClassType</code></dt>
+	<dd>
+		Returns class type for given name. Must be called within processing.
+	</dd>
+	<dt><code>function <b>get_const_type</b>(name: String): ClassType</code></dt>
+	<dd>
+		Returns the type for a constant. Returns <code>-1</code> if the constant
+		with given name is not defined. Must be called within processing.
+	</dd>
+	<dt><code>function <b>get_local_type</b>(name: String): ClassType</code></dt>
+	<dd>
+		Returns the type for a local variable. Returns <code>-1</code> if the
+		local variable with given name is not defined. Must be called within
+		processing.
+	</dd>
+	<dt><code>function <b>get_variable_type</b>(name: String): ClassType</code></dt>
+	<dd>
+		Returns the type for a variable. Returns <code>-1</code> if the variable
+		with given name is not defined. Must be called within processing.
+	</dd>
+	<dt><code>function <b>get_source</b>(): String</code></dt>
+	<dd>
+		Returns the source code referenced by the tokens. Must be called within processing.
+	</dd>
+	<dt><code>function <b>append_tokens</b>(tokens)</code></dt>
+	<dd>
+		Appends new tokens at the end of the script, these will be processed with the
+		classes features. The tokens array must not be reused (it will be processed in a deferred
+		manner). Must be called within processing.
+	</dd>
+</dl>
+
+<h3 id="class-ClassType">ClassType class</h3>
+
+<dl>
+	<dt><code>static function <b>create_array</b>(base_type: ClassType): ClassType</code></dt>
+	<dd>
+		Creates an array type with given base type.
+	</dd>
+	<dt><code>static function <b>create_hash</b>(base_type: ClassType, index_type: ClassType): ClassType</code></dt>
+	<dd>
+		Creates a hash type with given base and index type.
+	</dd>
+	<dt><code>function <b>is_class</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the type is a class.
+	</dd>
+	<dt><code>function <b>is_array</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the type is an array.
+	</dd>
+	<dt><code>function <b>is_hash</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the type is a hash.
+	</dd>
+	<dt><code>function <b>is_struct</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the type is a struct.
+	</dd>
+	<dt><code>function <b>is_struct_array</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the type is a struct array.
+	</dd>
+	<dt><code>function <b>is_multiple</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the type is a multiple type.
+	</dd>
+	<dt><code>function <b>is_assignable_from</b>(other: ClassType): Boolean</code></dt>
+	<dd>
+		Returns true when the given type is assignable to the current type.
+	</dd>
+	<dt><code>function <b>get_class_name</b>(): String</code></dt>
+	<dd>
+		Returns name of class.
+	</dd>
+	<dt><code>function <b>get_parent_class</b>(): ClassType</code></dt>
+	<dd>
+		Returns parent class.
+	</dd>
+	<dt><code>function <b>get_method_real_name</b>(name: String, types: ClassType[], is_static: Boolean): String</code></dt>
+	<dd>
+		Returns the real name of method (or <code>null</code>) with given types
+		(the first entry is a return value).
+	</dd>
+	<dt><code>function <b>get_base</b>(): ClassType</code></dt>
+	<dd>
+		Returns the base type of array or hash.
+	</dd>
+	<dt><code>function <b>get_index</b>(): ClassType</code></dt>
+	<dd>
+		Returns the index type of hash.
+	</dd>
+	<dt><code>function <b>get_multiple_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the count of types in a multiple type.
+	</dd>
+	<dt><code>function <b>get_multiple_type</b>(idx: Integer): ClassType</code></dt>
+	<dd>
+		Returns the type at given index in a multiple type.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the string representation of the type.
+	</dd>
+	<dt><code>static function <b>dump_list</b>(list: ClassType[])</code></dt>
+	<dd>
+		Dumps list of types in string representation.
+	</dd>
+</dl>
+
+</body>
+</html>

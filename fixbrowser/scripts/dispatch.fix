@@ -1,0 +1,66 @@
+import "util/string";
+
+var @mq;
+
+function dispatch_adjust_document(request, document)
+{
+	if (!mq) {
+		dispatch_init();
+	}
+
+	return element_multiquery_match_all(mq, document);
+}
+
+function dispatch_handle_redirect(request, new_url)
+{
+	if (string_starts_with(new_url, "https://medium.com/m/global-identity?redirectUrl=")) {
+		return "site/com/me/medium.com/dispatch";
+	}
+	if (string_starts_with(new_url, "https://guce.yahoo.com/consent?")) {
+		return "site/com/ya/yahoo.com/dispatch";
+	}
+	return null;
+}
+
+function @dispatch_init()
+{
+	mq = element_multiquery_create();
+	element_multiquery_add(mq, "div#disqus_thread", "site/com/di/disqus.com/dispatch");
+	element_multiquery_add(mq, "script[src^='/_Incapsula_Resource']", "dispatch/incapsula");
+	element_multiquery_add(mq, "iframe[src^='/_Incapsula_Resource']", "dispatch/incapsula");
+	element_multiquery_add(mq, "div.cf-error-footer a#brand_link[href^='https://www.cloudflare.com/5xx-error-landing']", "dispatch/cloudflare");
+	element_multiquery_add(mq, "form[id='challenge-form'][action$='/cdn-cgi/l/chk_jschl']", "dispatch/cloudflare");
+	element_multiquery_add(mq, "body.ng-cloak", "dispatch/angular");
+	element_multiquery_add(mq, "script[src*='//unpkg.com/docsify/']", "dispatch/docsify");
+	element_multiquery_add(mq, "div[id='incompatible-browser'] a[href='https://github.com/Chocobozzz/PeerTube/issues/new']", "dispatch/peertube");
+	element_multiquery_add(mq, "meta[name='generator'][content='Wix.com Website Builder']", "dispatch/wix");
+
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.medium.com/']", "site/com/me/medium.com/dispatch");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.wp.com/']", "site/com/wo/wordpress.com/dispatch");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='-wpengine.netdna-ssl.com/']", "site/com/wp/wpengine.com/dispatch");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://www.blogger.com/']", "site/com/bl/blogger.com/dispatch");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.squarespace.com/']", "site/com/sq/squarespace.com/dispatch");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.webflow.com/']", "site/com/we/webflow.com/dispatch");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://discourse-cdn-sjc1.com/']", "site/org/di/discourse.org/dispatch");
+
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='http://yui.yahooapis.com/pure/']", "dispatch/external_css");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://unpkg.com/purecss@']", "dispatch/external_css");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://ajax.aspnetcdn.com/ajax/bootstrap/']", "dispatch/external_css");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/']", "dispatch/external_css");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.bootstrapcdn.com/bootstrap/']", "dispatch/external_css");
+	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://cdnjs.cloudflare.com/ajax/libs/materialize/']", "dispatch/external_css");
+}
+
+function element_list_to_string(list)
+{
+	var s = {"["};
+	for (var i=0; i<length(list); i++) {
+		if (i > 0) {
+			s[] = ',';
+			s[] = ' ';
+		}
+		string_append(s, element_to_string(list[i]));
+	}
+	s[] = ']';
+	return s;
+}

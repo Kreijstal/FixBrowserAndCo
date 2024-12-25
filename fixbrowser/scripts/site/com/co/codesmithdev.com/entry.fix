@@ -1,0 +1,7 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	// TODO: styles messed up
+	add_style_to_element(document, "div#hgr_top_navbar_container", "position: static");
+}

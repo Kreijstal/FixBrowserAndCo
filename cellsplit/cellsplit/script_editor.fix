@@ -1,0 +1,561 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "image/image";
+import "image/font";
+import "gui/view";
+import "gui/subview";
+import "gui/event";
+import "gui/subview/divider";
+import "gui/subview/scrollview";
+import "gui/subview/scrollbar";
+import "gui/pure/divider";
+import "gui/code_editor/view";
+import "gui/code_editor/font";
+import "gui/code_editor/syntax";
+import "gui/code_editor/syntax/fixscript";
+import "io/gzip";
+import "cellsplit/worker_comm";
+
+const {
+	@ACTION_RESTART,
+	@ACTION_TOGGLE_LINES,
+	@ACTION_CLEAR_LOG
+};
+
+class ScriptEditor: SubView
+{
+	var @client: ClientInterface;
+	var @editor: CodeEditor;
+	var @log_window: CodeEditor;
+	var @divider: SubDivider;
+	var @check_timer: Timer;
+	var @script_worker: Worker;
+	var @normal_font: Font;
+	var @bold_font: Font;
+	var @active: Boolean;
+	var @env_timer: Timer;
+
+	constructor create(client: ClientInterface)
+	{
+		this.client = client;
+		editor = CodeEditor::create();
+		editor.set_syntax(CustomFixScriptSyntax::create());
+		editor.set_text(String::from_utf8(get_resource_string("bots/example_client.fix")));
+		editor.set_visible_lines(true);
+
+		log_window = CodeEditor::create();
+		log_window.set_syntax(LogOutputSyntax::create());
+		log_window.set_editable(false);
+
+		divider = PureDivider::create(DIVIDE_HORIZ, editor, CodeEditorWrapper::create(log_window));
+		divider.set_split(0.7);
+		add(divider);
+
+		check_timer = Timer::create(500, ScriptEditor::check_changes#1, this);
+		editor.listeners().add(ScriptEditor::handle_editor_event#2, this);
+
+		/*
+		normal_font = Font::load(gzip_uncompress(get_resource("fonts/LiberationMono_redux.ttf.gz")));
+		bold_font = Font::load(gzip_uncompress(get_resource("fonts/LiberationMono-Bold_redux.ttf.gz")));
+		*/
+	}
+
+	function set_active(active: Boolean)
+	{
+		if (active == this.active) return;
+		this.active = active;
+
+		if (active) {
+			var data = [weakref_create(this), null];
+			script_worker = Worker::create("cellsplit/script_worker", "main#0", [], ScriptEditor::handle_script_worker_message#2, data);
+			data[1] = script_worker;
+			check_timer.restart();
+
+			env_timer = Timer::run(100, ScriptEditor::send_environment#1, weakref_create(this));
+
+			editor.set_text(editor.get_text()); // TODO
+		}
+		else {
+			script_worker.send([MSG_SCRIPT_QUIT]);
+			script_worker = null;
+
+			env_timer.stop();
+			env_timer = null;
+		}
+	}
+
+	override function handle_resize()
+	{
+		divider.set_rect(0, 0, get_width(), get_height());
+
+		var scale = get_scale();
+		editor.set_font(SystemFontImpl::create("Courier New", 12 * scale, FONT_NORMAL));
+		log_window.set_font(SystemFontImpl::create("Courier New", 12 * scale, FONT_NORMAL));
+
+		/*
+		var font = TrueTypeFontImpl::create([normal_font, bold_font], 13 * scale, true, 0.9);
+		editor.set_font(font);
+		log_window.set_font(font);
+		*/
+	}
+
+	function focus()
+	{
+		editor.focus();
+	}
+
+	function @append_log(s: String)
+	{
+		var save_scroll = false;
+		var scrollview = log_window.get_scroll_view();
+		var vert_scrollbar = scrollview.get_vertical_scrollbar();
+		if (vert_scrollbar) {
+			save_scroll = vert_scrollbar.get_value() < vert_scrollbar.get_maximum();
+		}
+
+		var orig_cursor = log_window.get_cursor_position();
+		var orig_scroll = scrollview.get_scroll_position();
+
+		var last_row = log_window.get_row_count()-1;
+		var last_column = log_window.get_column_count(last_row);
+		log_window.set_cursor_position(last_column, last_row);
+		if (last_column != 0) {
+			log_window.insert_text("\n");
+		}
+		log_window.insert_text(s);
+
+		if (save_scroll) {
+			log_window.set_cursor_position(orig_cursor[0], orig_cursor[1]);
+			scrollview.set_scroll_position(orig_scroll[0], orig_scroll[1]);
+		}
+		else {
+			scrollview.set_scroll_position(orig_scroll[0], scrollview.get_scroll_position()[1]);
+		}
+	}
+
+	function @handle_editor_event(event: CodeEditorEvent)
+	{
+		if (event.get_type() == EVENT_TEXT_CHANGED) {
+			check_timer.restart();
+		}
+	}
+
+	function @check_changes(): Boolean
+	{
+		var src = editor.get_text();
+		if (script_worker) {
+			script_worker.send([MSG_COMPILE_SCRIPT, src, true]);
+		}
+		return false;
+	}
+
+	function @handle_script_worker_message(msg: Dynamic[])
+	{
+		var data = this as Dynamic[];
+		this = weakref_get(data[0]);
+		if (!this) {
+			var worker = data[1] as Worker;
+			worker.send([MSG_SCRIPT_QUIT]);
+			data[1] = null;
+			return;
+		}
+
+		switch (msg[0]) {
+			case MSG_COMPILE_RESULT: {
+				var error_msg = msg[1];
+				if (error_msg) {
+					if (!is_string(error_msg)) {
+						error_msg = to_string(error_msg, true);
+					}
+					append_log(error_msg);
+				}
+				break;
+			}
+
+			case MSG_SCRIPT_LOG: {
+				var text = msg[1] as String;
+				var clear = msg[2] as Boolean;
+				if (clear || !text) {
+					log_window.set_text("");
+				}
+				if (text) {
+					append_log(text);
+				}
+				break;
+			}
+
+			case MSG_ADD_MARK: {
+				var id = msg[1] as Integer;
+				var x = msg[2] as Float;
+				var y = msg[3] as Float;
+				var desc = msg[4] as String;
+				client.add_mark(id, x, y, desc);
+				break;
+			}
+
+			case MSG_REMOVE_MARK: {
+				var id = msg[1] as Integer;
+				client.remove_mark(id);
+				break;
+			}
+
+			case MSG_SET_TARGET: {
+				var x = msg[1] as Float;
+				var y = msg[2] as Float;
+				client.set_target(x, y);
+				break;
+			}
+
+			case MSG_CLEAR_TARGET: {
+				client.clear_target();
+				break;
+			}
+
+			case MSG_SPLIT: {
+				client.split();
+				break;
+			}
+
+			case MSG_EJECT_MASS: {
+				client.eject_mass();
+				break;
+			}
+
+			case MSG_RESET: {
+				if (msg.length == 2) {
+					client.reset(msg[1] as Float);
+				}
+				else {
+					client.reset();
+				}
+				break;
+			}
+		}
+	}
+
+	override function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_UP && event.get_button() == MOUSE_BUTTON_RIGHT) {
+			var editor_inner = editor.get_child(0).get_child(0).get_child(0);
+			if (event.get_view() === editor_inner) {
+				var menu = Menu::create();
+				menu.add_item("Restart\tCtrl+R", ScriptEditor::handle_popup_menu#2, this, ACTION_RESTART);
+				menu.add_item(editor.has_visible_lines()? "Hide lines" : "Show lines", ScriptEditor::handle_popup_menu#2, this, ACTION_TOGGLE_LINES);
+				menu.show(this, event.get_x(), event.get_y());
+				return true;
+			}
+
+			var log_inner = log_window.get_child(0).get_child(0).get_child(0);
+			if (event.get_view() === log_inner) {
+				var menu = Menu::create();
+				menu.add_item("Clear log\tCtrl+L", ScriptEditor::handle_popup_menu#2, this, ACTION_CLEAR_LOG);
+				menu.show(this, event.get_x(), event.get_y());
+				return true;
+			}
+		}
+		return false;
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN && (event.get_modifiers() & MOD_CTRL) != 0) {
+			switch (event.get_key()) {
+				case KEY_R:
+					handle_popup_menu(ACTION_RESTART);
+					return true;
+
+				case KEY_L:
+					handle_popup_menu(ACTION_CLEAR_LOG);
+					return true;
+			}
+		}
+		return false;
+	}
+
+	function @handle_popup_menu(id: Integer)
+	{
+		switch (id) {
+			case ACTION_RESTART: {
+				var src = editor.get_text();
+				if (script_worker) {
+					script_worker.send([MSG_COMPILE_SCRIPT, src, false]);
+				}
+				check_timer.stop();
+				break;
+			}
+
+			case ACTION_TOGGLE_LINES: {
+				editor.set_visible_lines(!editor.has_visible_lines());
+				break;
+			}
+
+			case ACTION_CLEAR_LOG: {
+				log_window.set_text("");
+				break;
+			}
+		}
+	}
+
+	function @send_environment(): Boolean
+	{
+		this = weakref_get(this);
+		if (!this) return false;
+
+		if (script_worker) {
+			script_worker.send([MSG_ENVIRONMENT, client.get_environment()]);
+		}
+		return true;
+	}
+}
+
+class @CodeEditorWrapper: SubView
+{
+	constructor create(editor: CodeEditor)
+	{
+		add(editor);
+	}
+
+	override function handle_resize()
+	{
+		var editor = get_child(0) as CodeEditor;
+
+		var scrollview = editor.get_scroll_view();
+		var has_horiz = false;
+		var at_bottom = true;
+		if (scrollview) {
+			has_horiz = scrollview.get_horizontal_scrollbar() != null;
+			var vert_scrollbar = scrollview.get_vertical_scrollbar();
+			if (vert_scrollbar) {
+				at_bottom = vert_scrollbar.get_value() == vert_scrollbar.get_maximum();
+			}
+		}
+
+		editor.set_rect(0, 0, get_width(), get_height());
+
+		if (scrollview) {
+			if (!has_horiz && scrollview.get_horizontal_scrollbar() != null && at_bottom) {
+				var vert_scrollbar = scrollview.get_vertical_scrollbar();
+				if (vert_scrollbar) {
+					vert_scrollbar.set_value(vert_scrollbar.get_maximum());
+				}
+			}
+		}
+	}
+}
+
+class @CustomFixScriptSyntax: FixScriptSyntax
+{
+	var @functions: String[];
+	
+	constructor create()
+	{
+		functions = [
+			"log",
+			"dump",
+			"clear_log",
+			"mark",
+			"get_cells",
+			"get_pellets",
+			"get_own_cells",
+			"get_enemy_cells",
+			"get_virus_cells",
+			"get_cells_by_name",
+			"get_cell_by_id",
+			"mass_to_size",
+			"size_to_mass",
+			"get_average_position",
+			"get_position_of_most_pellets",
+			"set_target",
+			"split",
+			"reset"
+		];
+	}
+
+	override function get_completion_data(data: SyntaxData, x: Integer, y: Integer, choices: CompletionData)
+	{
+		super.get_completion_data(data, x, y, choices);
+
+		var x1 = choices.get_start_range();
+		var x2 = choices.get_end_range();
+
+		var cur_line = data.get_text(y);
+		var is_statement = true;
+		for (var i=0; i<x1; i++) {
+			if (cur_line[i] != ' ' && cur_line[i] != '\t') {
+				is_statement = false;
+				break;
+			}
+		}
+
+		foreach (var name in functions) {
+			if (x2 - x1 > name.length) continue;
+			if (cur_line.extract(x1, x2-x1) != name.extract(0, x2-x1)) continue;
+			choices.add_text(name, SYNTAX_IDENTIFIER, get_font().get_string_advance(name));
+			choices.add_text("()", SYNTAX_SYMBOL, get_font().get_string_advance("()"));
+			var s = name+"()";
+			if (is_statement) {
+				s[] = ';';
+			}
+			choices.finish_line(s, name.length+1);
+			for (var i=0, n=choices.get_count(); i<n; i++) {
+				if (choices.get_value(i) == name) {
+					choices.remove_value(i);
+					break;
+				}
+			}
+		}
+	}
+}
+
+class @LogOutputSyntax: Syntax
+{
+	constructor create()
+	{
+	}
+
+	override function process(attrs: [Attribute], s: String, off: Integer, len: Integer, syntax_state: Dynamic): Dynamic
+	{
+		macro STATE_SEARCH_LINE { 0 }
+		macro STATE_LINE        { 1 }
+		macro STATE_FILE_NAME   { 2 }
+
+		var state = STATE_SEARCH_LINE;
+		var fname_start = -1, fname_end = -1, compile_error = false;
+		for (var i=len-1; i>=0; i--) {
+			var c = s[off+i];
+			switch (state) {
+				case STATE_SEARCH_LINE:
+					if (c == ')') {
+						compile_error = true;
+						continue;
+					}
+					if (c >= '0' && c <= '9') {
+						fname_start = 0;
+						fname_end = i+1;
+						state = STATE_LINE;
+						continue;
+					}
+					compile_error = false;
+					continue;
+
+				case STATE_LINE:
+					if (c == ':') {
+						state = STATE_FILE_NAME;
+						compile_error = false;
+						continue;
+					}
+					if (c == '(' && compile_error) {
+						state = STATE_FILE_NAME;
+						continue;
+					}
+					if (c >= '0' && c <= '9') {
+						continue;
+					}
+					state = STATE_SEARCH_LINE;
+					fname_start = -1;
+					fname_end = -1;
+					compile_error = false;
+					i++;
+					continue;
+
+				case STATE_FILE_NAME:
+					switch (c) {
+						case 'A'..'Z', 'a'..'z', '0'..'9', '_', '.', '/':
+							continue;
+					}
+					/*
+					if (s[off+i+1] == (compile_error? '(' : ':')) {
+						state = STATE_SEARCH_LINE;
+						fname_start = -1;
+						fname_end = -1;
+						compile_error = false;
+						i++;
+						continue;
+					}
+					*/
+					fname_start = i+1;
+					if (compile_error) {
+						//fname_end++;
+					}
+					break;
+			}
+			break;
+		}
+
+		var font = get_font();
+		if (fname_start != -1) {
+			if (fname_start > 0) {
+				attrs[] = {
+					.length: fname_start,
+					.width: font.get_string_advance(s, off, fname_start),
+					.style: 0
+				};
+			}
+			attrs[] = {
+				.length: fname_end - fname_start,
+				.width: font.get_string_advance(s, off + fname_start, fname_end - fname_start),
+				.style: 1
+			};
+			if (fname_end < len) {
+				attrs[] = {
+					.length: len - fname_end,
+					.width: font.get_string_advance(s, off + fname_start, len - fname_end),
+					.style: 0
+				};
+			}
+		}
+		else {
+			attrs[] = {
+				.length: len,
+				.width: font.get_string_advance(s, off, len),
+				.style: 0
+			};
+		}
+		return syntax_state;
+	}
+
+	override function draw_text(p: Painter, x: Float, y: Integer, s: String, off: Integer, len: Integer, width: Float, height: Integer, ascent: Integer, selection: Boolean, style: Dynamic)
+	{
+		var color = 0xFF000000;
+		if (style == 1) {
+			color = 0xFFCC0000;
+		}
+		get_font().draw_string(p, x, y+ascent, s, off, len, selection? 0xFFFFFFFF : color);
+	}
+}
+
+class ClientInterface
+{
+	constructor create() {}
+	virtual function add_mark(id: Integer, x: Float, y: Float, desc: String) {}
+	virtual function remove_mark(id: Integer) {}
+	virtual function set_target(x: Float, y: Float) {}
+	virtual function clear_target() {}
+	virtual function split() {}
+	virtual function eject_mass() {}
+	virtual function reset() {}
+	virtual function reset(mass: Float) {}
+	virtual function get_environment(): Environment {}
+}

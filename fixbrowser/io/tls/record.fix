@@ -1,0 +1,401 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "util/array";
+import "io/crypto/md5";
+import "io/crypto/sha1";
+import "io/crypto/sha256";
+
+const @MAX_READ_SIZE = 18432; // 16384+2048
+const @MAX_WRITE_SIZE = 4096;
+
+const {
+	TLS_1_0 = 0x0301,
+	TLS_1_1 = 0x0302,
+	TLS_1_2 = 0x0303
+};
+
+const TLS_LATEST_VERSION = TLS_1_2;
+
+// content types:
+const {
+	CT_CHANGE_CIPHER_SPEC = 20,
+	CT_ALERT              = 21,
+	CT_HANDSHAKE          = 22,
+	CT_APPLICATION_DATA   = 23
+};
+
+const {
+	AL_WARNING = 1,
+	AL_FATAL   = 2
+};
+
+const {
+	AD_CLOSE_NOTIFY             = 0,
+	AD_UNEXPECTED_MESSAGE       = 10,
+	AD_BAD_RECORD_MAC           = 20,
+	AD_DECRYPTION_FAILED_TLS11  = 21,
+	AD_RECORD_OVERFLOW          = 22,
+	AD_DECOMPRESSION_FAILURE    = 30,
+	AD_HANDSHAKE_FAILURE        = 40,
+	AD_NO_CERTIFICATE_RESERVED  = 41,
+	AD_BAD_CERTIFICATE          = 42,
+	AD_UNSUPPORTED_CERTIFICATE  = 43,
+	AD_CERTIFICATE_REVOKED      = 44,
+	AD_CERTIFICATE_EXPIRED      = 45,
+	AD_CERTIFICATE_UNKNOWN      = 46,
+	AD_ILLEGAL_PARAMETER        = 47,
+	AD_UNKNOWN_CA               = 48,
+	AD_ACCESS_DENIED            = 49,
+	AD_DECODE_ERROR             = 50,
+	AD_DECRYPT_ERROR            = 51,
+	AD_EXPORT_RESTRICTION_TLS10 = 60,
+	AD_PROTOCOL_VERSION         = 70,
+	AD_INSUFFICIENT_SECURITY    = 71,
+	AD_INTERNAL_ERROR           = 80,
+	AD_USER_CANCELED            = 90,
+	AD_NO_RENEGOTIATION         = 100,
+	AD_UNSUPPORTED_EXTENSION    = 110,
+
+	// RFC6066:
+
+	AD_CERTIFICATE_UNOBTAINABLE        = 111,
+	AD_UNRECOGNIZED_NAME               = 112,
+	AD_BAD_CERTIFICATE_STATUS_RESPONSE = 113,
+	AD_BAD_CERTIFICATE_HASH_VALUE      = 114
+};
+
+const {
+	@REC_version,
+	@REC_stream,
+
+	// read state:
+	@REC_state,
+	@REC_header,
+	@REC_header_pos,
+	@REC_remaining,
+	@REC_read_type,
+	@REC_reset,
+
+	// write state:
+	@REC_write_type,
+	@REC_write_buf,
+
+	@REC_handshake_md5,
+	@REC_handshake_sha1,
+	@REC_handshake_sha256,
+
+	@REC_SIZE
+};
+
+const {
+	@STATE_READ_HEADER,
+	@STATE_READ_DATA
+};
+
+const @HEADER_SIZE = 5;
+
+function record_create(stream)
+{
+	var record = object_create(REC_SIZE);
+	record->REC_version = TLS_1_0;
+	record->REC_stream = stream;
+
+	record->REC_state = STATE_READ_HEADER;
+	record->REC_header = [];
+	record->REC_read_type = -1;
+	array_set_length(record->REC_header, HEADER_SIZE);
+
+	record->REC_write_type = -1;
+	record->REC_write_buf = [];
+	array_set_length(record->REC_write_buf, HEADER_SIZE);
+
+	record->REC_handshake_md5 = md5_init();
+	record->REC_handshake_sha1 = sha1_init();
+	record->REC_handshake_sha256 = sha256_init();
+
+	return record;
+}
+
+function record_get_version(record)
+{
+	return record->REC_version;
+}
+
+function record_set_version(record, version)
+{
+	record->REC_version = version;
+}
+
+function record_read_part(record, buf, off, len)
+{
+	if (record->REC_reset) {
+		record->REC_read_type = -1;
+		record->REC_state = STATE_READ_HEADER;
+		record->REC_reset = false;
+	}
+
+	switch (record->REC_state) {
+		case STATE_READ_HEADER: {
+			var header = record->REC_header;
+			var header_pos = record->REC_header_pos;
+
+			var r = stream_read_part(record->REC_stream, header, header_pos, length(header) - header_pos);
+			if (r < 0) {
+				if (header_pos != 0) {
+					return 0, error("incomplete header");
+				}
+				return -1;
+			}
+			header_pos += r;
+
+			if (header_pos == length(header)) {
+				var type = header[0];
+				var version = (header[1] << 8) | header[2];
+				var in_len = (header[3] << 8) | header[4];
+				if (type < CT_CHANGE_CIPHER_SPEC || type > CT_APPLICATION_DATA) {
+					return 0, error({"unknown content type ", type});
+				}
+				if (in_len > MAX_READ_SIZE) {
+					return 0, error({"packet too big (", in_len, ")"});
+				}
+				record->REC_read_type = type;
+				record->REC_header_pos = 0;
+				record->REC_remaining = in_len;
+				record->REC_state = STATE_READ_DATA;
+			}
+			else {
+				record->REC_header_pos = header_pos;
+			}
+			return 0;
+		}
+
+		case STATE_READ_DATA: {
+			var remaining = record->REC_remaining;
+			if (remaining == 0) {
+				record->REC_reset = true;
+				return 0;
+			}
+			var num = min(len, remaining);
+			var r = stream_read_part(record->REC_stream, buf, off, num);
+			if (r < 0) {
+				return 0, error("premature end of data");
+			}
+			if (record->REC_read_type == CT_HANDSHAKE && record->REC_handshake_md5) {
+				md5_process(record->REC_handshake_md5, buf, off, r);
+				sha1_process(record->REC_handshake_sha1, buf, off, r);
+				sha256_process(record->REC_handshake_sha256, buf, off, r);
+			}
+			record->REC_remaining = (remaining -= r);
+			if (remaining == 0) {
+				record->REC_reset = true;
+			}
+			return r;
+		}
+	}
+}
+
+function record_get_type(record)
+{
+	return record->REC_read_type;
+}
+
+function record_read(record, buf, off, len)
+{
+	var type = -1;
+	if (len == 0) {
+		if (record->REC_state == STATE_READ_DATA && !record->REC_reset) {
+			return record->REC_read_type;
+		}
+		do {
+			var r = record_read_part(record, buf, off, len);
+			if (r < 0) {
+				return 0, error("premature end of data");
+			}
+		}
+		while (record->REC_state == STATE_READ_HEADER);
+
+		type = record->REC_read_type;
+		if (type == -1) {
+			return 0, error("internal error");
+		}
+		return type;
+	}
+
+	while (len > 0) {
+		var r = record_read_part(record, buf, off, len);
+		if (r < 0) {
+			if (type == -1) {
+				return -1;
+			}
+			return 0, error("premature end of data");
+		}
+		if (r == 0) continue;
+
+		if (type == -1) {
+			type = record->REC_read_type;
+			if (type == -1) {
+				return 0, error("internal error");
+			}
+		}
+		else if (type != record->REC_read_type) {
+			return 0, error("content type changed");
+		}
+
+		off += r;
+		len -= r;
+	}
+	return type;
+}
+
+function record_read_packet(record, buf)
+{
+	array_set_length(buf, 1);
+	var ct = record_read(record, buf, 0, 1);
+	if (ct < 0) return ct;
+	var rem = record->REC_remaining;
+	array_set_length(buf, 1+rem);
+	return record_read(record, buf, 1, rem);
+}
+
+function record_flush(record)
+{
+	var buf = record->REC_write_buf;
+	var len = length(buf) - HEADER_SIZE;
+	if (len == 0) return;
+
+	var version = record->REC_version;
+	buf[0] = record->REC_write_type & 0xFF;
+	buf[1] = version >>> 8;
+	buf[2] = version & 0xFF;
+	buf[3] = len >>> 8;
+	buf[4] = len & 0xFF;
+	stream_write(record->REC_stream, buf, 0, len + HEADER_SIZE);
+	array_set_length(buf, HEADER_SIZE);
+}
+
+function record_write(record, type, packet)
+{
+	if (type != record->REC_write_type) {
+		record_flush(record);
+		record->REC_write_type = type;
+	}
+
+	var buf = record->REC_write_buf;
+	var off = 0;
+	var len = length(packet);
+
+	if (type == CT_HANDSHAKE && record->REC_handshake_md5) {
+		md5_process(record->REC_handshake_md5, packet, off, len);
+		sha1_process(record->REC_handshake_sha1, packet, off, len);
+		sha256_process(record->REC_handshake_sha256, packet, off, len);
+	}
+
+	while (len - off > 0) {
+		var num = min(len - off, MAX_WRITE_SIZE - (length(buf) - HEADER_SIZE));
+		array_append(buf, packet, off, num);
+		off += num;
+		if (length(buf) - HEADER_SIZE == MAX_WRITE_SIZE) {
+			record_flush(record);
+		}
+	}
+}
+
+function record_get_handshake_md5(record)
+{
+	var md5 = record->REC_handshake_md5;
+	record->REC_handshake_md5 = null;
+	return md5;
+}
+
+function record_get_handshake_sha1(record)
+{
+	var sha1 = record->REC_handshake_sha1;
+	record->REC_handshake_sha1 = null;
+	return sha1;
+}
+
+function record_get_handshake_sha256(record)
+{
+	var sha256 = record->REC_handshake_sha256;
+	record->REC_handshake_sha256 = null;
+	return sha256;
+}
+
+function record_close(record)
+{
+	record_flush(record);
+	stream_close(record->REC_stream);
+}
+
+function record_force_close(record)
+{
+	stream_close(record->REC_stream);
+}
+
+function alert_get_level(level)
+{
+	switch (level) {
+		case AL_WARNING: return "warning";
+		case AL_FATAL:   return "fatal";
+	}
+	return {level};
+}
+
+function alert_get_description(desc)
+{
+	switch (desc) {
+		case AD_CLOSE_NOTIFY:             return "close_notify";
+		case AD_UNEXPECTED_MESSAGE:       return "unexpected_message";
+		case AD_BAD_RECORD_MAC:           return "bad_record_mac";
+		case AD_DECRYPTION_FAILED_TLS11:  return "decryption_failed (TLS 1.0-1.1)";
+		case AD_RECORD_OVERFLOW:          return "record_overflow";
+		case AD_DECOMPRESSION_FAILURE:    return "decompression_failure";
+		case AD_HANDSHAKE_FAILURE:        return "handshake_failure";
+		case AD_NO_CERTIFICATE_RESERVED:  return "no_certificate_RESERVED";
+		case AD_BAD_CERTIFICATE:          return "bad_certificate";
+		case AD_UNSUPPORTED_CERTIFICATE:  return "unsupported_certificate";
+		case AD_CERTIFICATE_REVOKED:      return "certificate_revoked";
+		case AD_CERTIFICATE_EXPIRED:      return "certificate_expired";
+		case AD_CERTIFICATE_UNKNOWN:      return "certificate_unknown";
+		case AD_ILLEGAL_PARAMETER:        return "illegal_parameter";
+		case AD_UNKNOWN_CA:               return "unknown_ca";
+		case AD_ACCESS_DENIED:            return "access_denied";
+		case AD_DECODE_ERROR:             return "decode_error";
+		case AD_DECRYPT_ERROR:            return "decrypt_error";
+		case AD_EXPORT_RESTRICTION_TLS10: return "export_restriction (TLS 1.0)";
+		case AD_PROTOCOL_VERSION:         return "protocol_version";
+		case AD_INSUFFICIENT_SECURITY:    return "insufficient_security";
+		case AD_INTERNAL_ERROR:           return "internal_error";
+		case AD_USER_CANCELED:            return "user_canceled";
+		case AD_NO_RENEGOTIATION:         return "no_renegotiation";
+		case AD_UNSUPPORTED_EXTENSION:    return "unsupported_extension";
+
+		// RFC6066:
+
+		case AD_CERTIFICATE_UNOBTAINABLE:        return "certificate_unobtainable";
+		case AD_UNRECOGNIZED_NAME:               return "unrecognized_name";
+		case AD_BAD_CERTIFICATE_STATUS_RESPONSE: return "bad_certificate_status_response";
+		case AD_BAD_CERTIFICATE_HASH_VALUE:      return "bad_certificate_hash_value";
+	}
+	return {desc};
+}

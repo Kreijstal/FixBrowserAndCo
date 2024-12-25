@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixImage Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixImage Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "image/image";</code>
+</p>
+
+<h2>Shape class</h2>
+
+<p>
+The class represents a 2D shape defined by multiple paths (either closed or open), using lines and quadratic and cubic curves
+as primitives.
+</p>
+
+<p>
+Internally the class is represented as an array where for each primitive there is a part type (an integer) followed by the coordinates (floats).
+Therefore no fields can be added in potential subclasses.
+</p>
+
+<p>
+The primitive types are:
+</p>
+
+<ul>
+<li><code><b>PART_MOVE_TO</b> (0)</code> - followed by the point to move to (two floats for the <code>x</code> and <code>y</code> coordinate)</li>
+<li><code><b>PART_LINE_TO</b> (1)</code> - followed by the point to line to</li>
+<li><code><b>PART_QUAD_TO</b> (2)</code> - followed by the control point and the next point</li>
+<li><code><b>PART_CUBIC_TO</b> (3)</code> - followed by two control points and the next point</li>
+<li><code><b>PART_CLOSE_PATH</b> (4)</code> - adds line to coordinates of the last <code>MOVE_TO</code> command</li>
+</ul>
+
+<p>
+You can also process just the coordinates by checking the individual stored values using
+the built-in <code>is_float</code> function. You can distinguish between the <code>x</code>
+and <code>y</code> coordinates based on the parity (even or odd).
+
+</p>
+
+<h3>Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): Shape</code></dt>
+	<dd>
+		Creates a new empty shape.
+	</dd>
+</dl>
+
+<h3>Common shapes</h3>
+
+<dl>
+	<dt><code>static function <b>line</b>(x1: Float, y1: Float, x2: Float, y2: Float): Shape</code></dt>
+	<dd>
+		Creates a line shape.
+	</dd>
+	<dt><code>static function <b>rect</b>(x: Float, y: Float, width: Float, height: Float): Shape</code></dt>
+	<dd>
+		Creates a rectangle shape.
+	</dd>
+	<dt><code>static function <b>circle</b>(cx: Float, cy: Float, radius: Float): Shape</code></dt>
+	<dd>
+		Creates a circle shape.
+	</dd>
+	<dt><code>static function <b>ellipse</b>(cx: Float, cy: Float, rx: Float, ry: Float): Shape</code></dt>
+	<dd>
+		Creates an ellipse shape.
+	</dd>
+	<dt><code>static function <b>ellipse_rect</b>(x: Float, y: Float, w: Float, h: Float): Shape</code></dt>
+	<dd>
+		Creates an ellipse shape defined by a rectangle.
+	</dd>
+	<dt><code>static function <b>round_rect</b>(x: Float, y: Float, w: Float, h: Float, arcw: Float, arch: Float): Shape</code></dt>
+	<dd>
+		Creates a rounded rectangle.
+	</dd>
+</dl>
+
+<h3>Shape definition</h3>
+
+<dl>
+	<dt><code>function <b>clear</b>()</code></dt>
+	<dd>
+		Clears the shape, making it empty.
+	</dd>
+	<dt><code>function <b>move_to</b>(x: Float, y: Float)</code></dt>
+	<dd>
+		Moves virtual pen to given position.
+	</dd>
+	<dt><code>function <b>line_to</b>(x: Float, y: Float)</code></dt>
+	<dd>
+		Draws line to given position.
+	</dd>
+	<dt><code>function <b>quad_to</b>(x1: Float, y1: Float, x2: Float, y2: Float)</code></dt>
+	<dd>
+		Draws quadratic curve using the control point (x1,y1) to given position (x2,y2).
+	</dd>
+	<dt><code>function <b>cubic_to</b>(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float)</code></dt>
+	<dd>
+		Draws cubic curve using the control points (x1,y1 and x2,y2) to given position (x3,y3).
+	</dd>
+	<dt><code>function <b>arc_to</b>(cx: Float, cy: Float, x2: Float, y2: Float)</code></dt>
+	<dd>
+		Draws arc segment using the center (cx,cy) to given position (x2,y2). The segment
+		is drawn clockwise in default transformation.
+	</dd>
+	<dt><code>function <b>arc_to_neg</b>(cx: Float, cy: Float, x2: Float, y2: Float)</code></dt>
+	<dd>
+		Draws arc segment in the opposite direction (in counter-clockwise). 
+	</dd>
+	<dt><code>function <b>close_path</b>()</code></dt>
+	<dd>
+		Closes the current path, drawing a line between the last and first points.
+	</dd>
+</dl>
+
+<h3>Outline</h3>
+
+<dl>
+	<dt><code>
+		function <b>get_outline</b>(): Shape<br>
+		function <b>get_outline</b>(width: Float): Shape<br>
+		function <b>get_outline</b>(width: Float, cap: Integer, join: Integer): Shape<br>
+		function <b>get_outline</b>(width: Float, cap: Integer, join: Integer, miter_limit: Float): Shape
+	</code></dt>
+	<dd>
+		Returns a shape that defines an outline of the shape. By default a width of 1.0 is used with
+		the square cap and the miter join (with miter limit of 10.0).
+		<br>
+		Cap values:<br>
+		<b>CAP_BUTT</b> - the ends are closed directly<br>
+		<b>CAP_ROUND</b> - the ends are closed with a circle<br>
+		<b>CAP_SQUARE</b> - the ends are closed with a half square<br>
+		Join values:<br>
+		<b>JOIN_BEVEL</b> - edges are joined with a line<br>
+		<b>JOIN_ROUND</b> - edges are joined with a circle<br>
+		<b>JOIN_MITER</b> - edges are extended to a sharp edge<br>
+	</dd>
+</dl>
+
+<h3>Miscellaneous</h3>
+
+<dl>
+	<dt><code>function <b>get_bounds</b>(): Float[]</code></dt>
+	<dd>
+		Returns the rectangular bounds of the shape. The returned values are in this order: min_x, min_y, max_x, max_y.
+	</dd>
+	<dt><code>function <b>transform</b>(tr: <a href="transform.html">Transform</a>)</code></dt>
+	<dd>
+		Transforms the shape by a given transform.
+	</dd>
+	<dt><code>function <b>append</b>(shape: Shape)<br>function <b>append</b>(shape: Shape, tr: <a href="transform.html">Transform</a>)</code></dt>
+	<dd>
+		Appends the shape to another, optionally applying given transform.
+	</dd>
+	<dt><code>function <b>hit_test</b>(x: Float, y: Float): Boolean;</code></dt>
+	<dd>
+		Returns true if given point is inside the shape.
+	</dd>
+	<dt><code>function <b>get_reversed</b>(): Shape</code></dt>
+	<dd>
+		Returns a new shape that has the opposite directions of the paths.
+	</dd>
+</dl>
+
+</body>
+</html>

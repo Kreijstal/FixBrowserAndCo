@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/sort";</code>
+</p>
+
+<p>
+There are two variants of the sort algorithms. The general sorting algorithm is
+slower but preserves the original order of the equal values. It is preferred to
+use the quick sort variant whenever possible as it is much faster and doesn't
+allocate any extra memory.
+</p>
+
+<p>
+The general sorting algorithm has an advantage when sorting by multiple different
+keys as it can be sorted repeatedly. However you can achieve the same result
+using the quick sort algorithm if you compare among all the keys in a single
+comparison.
+</p>
+
+<p>
+You can use the provided macros for better performance (the comparison and swap code
+fragments will get inlined into a specialized sorting function).
+</p>
+
+<h2>Global macros</h2>
+
+<dl>
+	<dt><code>macro <b>array_swap</b>(array, idx1: Integer, idx2: Integer)</code></dt>
+	<dd>
+		Swaps values in the array between given indicies.
+	</dd>
+	<dt><code>
+		macro <b>array_sort</b>(array, cmp_expr)<br>
+		macro <b>array_sort_range</b>(array, off: Integer, len: Integer, cmp_expr)<br>
+	</code></dt>
+	<dd>
+		Sorts the array using given comparison expression (must produce negative integer when the
+		first element is smaller than the second, positive integer when the first element is bigger
+		than the second, or zero when they are equal). You can optionally sort in the specified range only.<br><br>
+		Variables available in the expressions:<br>
+		<code>array</code> - reference to the array<br>
+		<code>index1</code> - index of the first element<br>
+		<code>index2</code> - index of the second element<br>
+		<code>value1</code> - value of the first element<br>
+		<code>value2</code> - value of the second element<br>
+	</dd>
+	<dt><code>
+		macro <b>array_quick_sort</b>(array, cmp_expr)<br>
+		macro <b>array_quick_sort_range</b>(array, off: Integer, len: Integer, cmp_expr)<br>
+	</code></dt>
+	<dd>
+		A quick sort variant of the macros. The comparison expression must produce <code>true</code>
+		when the first element is smaller than the second. The order among equal values is undefined.
+	</dd>
+	<dt><code>macro <b>sort_algorithm</b>(array, off: Integer, len: Integer, data, cmp_expr, swap_code)</code></dt>
+	<dd>
+		General sorting algorithm. This macro embeds a specialized version of the sorting function
+		using the provided comparison and swap code fragments. The <code>array</code> and
+		<code>data</code> are made available to the expressions. The comparison expression
+		must produce negative integer when the first element is smaller than the second,
+		positive integer when the first element is bigger than the second, or zero when
+		they are equal.<br><br>
+		Variables available in the expressions:<br>
+		<code>array</code> - reference to the array (or any other kind of type)<br>
+		<code>data</code> - reference to the extra passed data<br>
+		<code>index1</code> - index of the first element<br>
+		<code>index2</code> - index of the second element<br>
+	</dd>
+	<dt><code>macro <b>quick_sort_algorithm</b>(array, off: Integer, len: Integer, data, cmp_expr, swap_code)</code></dt>
+	<dd>
+		A quick sort variant of the sort algorithm. The comparison expression must produce <code>true</code>
+		when the first element is smaller than the second. The order among equal values is undefined.
+	</dd>
+</dl>
+
+<h2>Global functions</h2>
+
+<dl>
+	<dt><code>
+		function <b>array_sort_ints</b>(array: Integer[])<br>
+		function <b>array_sort_ints</b>(array: Integer[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Sorts the integer values (optionally in the specified range only).
+	</dd>
+	<dt><code>
+		function <b>array_sort_floats</b>(array: Float[])<br>
+		function <b>array_sort_floats</b>(array: Float[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Sorts the float values (optionally in the specified range only).
+	</dd>
+	<dt><code>
+		function <b>array_sort_strings</b>(array: String[])<br>
+		function <b>array_sort_strings</b>(array: String[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Sorts the string values (optionally in the specified range only).
+	</dd>
+	<dt><code>
+		function <b>array_sort_custom</b>(array, cmp_func, data)<br>
+		function <b>array_sort_custom</b>(array, off: Integer, len: Integer, cmp_func, data)<br>
+	</code></dt>
+	<dd>
+		Sorts the values using custom comparison function (takes 3 parameters, first is data, then
+		two values, must return negative integer when the first value is smaller than the second,
+		positive integer when the first value is bigger than the second, or zero when they are equal).
+	</dd>
+	<dt><code>
+		function <b>array_quick_sort_custom</b>(array, cmp_func, data)<br>
+		function <b>array_quick_sort_custom</b>(array, off: Integer, len: Integer, cmp_func, data)<br>
+	</code></dt>
+	<dd>
+		A quick sort variant of the sort algorithm. The comparison function must return <code>true</code>
+		when the first element is smaller than the second. The order among equal values is undefined.
+	</dd>
+	<dt><code>
+		function <b>general_sort</b>(array, cmp_func, swap_func, data)<br>
+		function <b>general_sort</b>(array, off: Integer, len: Integer, cmp_func, swap_func, data)<br>
+	</code></dt>
+	<dd>
+		General sorting algorithm. Sort the array (or any other kind of type) in the specified
+		range using comparison and swap functions. Both functions take 4 parameters, first is
+		data, second is the array and then the indicies for the first and second value.
+		The comparison function must return negative integer when the first element is smaller
+		than the second, positive integer when the first element is bigger than the second, or
+		zero when they are equal.
+	</dd>
+	<dt><code>
+		function <b>general_quick_sort</b>(array, cmp_func, swap_func, data)<br>
+		function <b>general_quick_sort</b>(array, off: Integer, len: Integer, cmp_func, swap_func, data)<br>
+	</code></dt>
+	<dd>
+		A quick sort variant of the sort algorithm. The comparison function must return <code>true</code>
+		when the first element is smaller than the second. The order among equal values is undefined.
+	</dd>
+</dl>
+
+</body>
+</html>

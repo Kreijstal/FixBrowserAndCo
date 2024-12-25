@@ -1,0 +1,14 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "i.guim.co.uk")) return true;
+	if (domain_ends_with(dest, "assets.guim.co.uk")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	// TODO: probably CSS issue
+	remove_element(document, "div#main-menu");
+}

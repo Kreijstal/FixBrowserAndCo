@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixNative Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixNative Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "native/native";</code>
+</p>
+
+<h2>Global functions</h2>
+
+<dl>
+	<dt id="native-call"><code>
+		function <b>native_call</b>(func: <a href="pointer.html">Pointer</a>, sig: String[, &lt;up to 16 parameters&gt;]): Dynamic<br>
+		function <b>native_call_args</b>(func: <a href="pointer.html">Pointer</a>, sig: String, args: Dynamic[]): Dynamic<br>
+	</code></dt>
+	<dd>
+		Calls native function. You have to provide pointer to the function as well
+		as the signature specifying the parameters and the return value. Signature
+		consists of a string of single letters, each specifying one parameter, return
+		value or modifier.<br><br>
+		It begins with optional modifiers:<br>
+		<b><code>$</code></b> - use STDCALL calling convention (used on Windows 32-bit only, ignored elsewhere)<br>
+		<b><code>+</code></b> - function uses variable number of arguments (used on ARM, ignored elsewhere)<br><br>
+		Then the return value and the parameters follow:<br>
+		<b><code>v</code></b> - void (used only for return values)<br>
+		<b><code>i</code></b> - 32-bit integer (corresponds to C's <code>int</code> type)<br>
+		<b><code>l</code></b> - 64-bit integer (corresponds to C's <code>int64_t</code> type)<br>
+		<b><code>n</code></b> - 32/64-bit integer (corresponds to C's <code>long</code> type)<br>
+		<b><code>f</code></b> - 32-bit float (corresponds to C's <code>float</code> type)<br>
+		<b><code>d</code></b> - 64-bit float (corresponds to C's <code>double</code> type)<br>
+		<b><code>p</code></b> - 32/64-bit pointer (corresponds to C's <code>void *</code> type)<br>
+		<br>
+		Smaller integers are passed as <code>int</code>.
+		Passing of 64-bit numbers is done by using two parameters, the low part and then
+		the high part. Pointers are passed using the <a href="pointer.html">Pointer</a> type.
+		When calling functions with variable amount of arguments (varargs), remember
+		that any <code>float</code>s are always passed as <code>double</code>s.
+	</dd>
+</dl>
+
+</body>
+</html>

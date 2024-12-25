@@ -1,0 +1,346 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "gui/worker";
+import "task/heap";
+import "io/time";
+import "cellsplit/worker_comm";
+
+class Mark
+{
+	var x: Float;
+	var y: Float;
+	var desc: String;
+}
+
+var @heap: Heap;
+var @script_log: String;
+var @script_clear_log: Boolean;
+var @failed: Boolean;
+var @target_set: Boolean;
+
+var @cur_marks: Integer[Mark];
+var @prev_marks: Integer[Mark];
+var @mark_counter: Integer;
+
+var @env: Environment;
+
+function @process(msg)
+{
+	switch (msg[0]) {
+		case MSG_COMPILE_SCRIPT: {
+			var src = msg[1] as String;
+			var reload = msg[2] as Boolean;
+			if (heap != null && !reload) {
+				heap.destroy();
+				heap = null;
+			}
+			if (!heap) {
+				heap = create_heap();
+			}
+			script_log = {""};
+			var r, e;
+			if (reload) {
+				(r, e) = heap.reload("script.fix", src.to_utf8() as String, load_script#3, null); // TODO
+			}
+			else {
+				(r, e) = heap.load("script.fix", src.to_utf8() as String, load_script#3, null); // TODO
+			}
+			flush_script_log();
+			failed = (e != null);
+			Worker::send([MSG_COMPILE_RESULT, e? e[0] : null]);
+			break;
+		}
+
+		case MSG_ENVIRONMENT: {
+			env = msg[1];
+			break;
+		}
+	}
+}
+
+function @create_heap(): Heap
+{
+	var heap = Heap::create();
+	heap.set_time_limit(-1);
+	heap.register_native_function("log#1", script_log#3, null);
+	heap.register_native_function("clear_log#0", script_clear_log#3, null);
+	heap.register_native_function("mark#2", script_mark#3, null);
+	heap.register_native_function("mark#3", script_mark#3, null);
+	heap.register_native_function("get_pellets#0", script_get_pellets#3, null);
+	heap.register_native_function("get_cells#0", script_get_cells#3, null);
+	heap.register_native_function("set_target#2", script_set_target#3, null);
+	heap.register_native_function("split#0", script_split#3, null);
+	heap.register_native_function("eject_mass#0", script_eject_mass#3, null);
+	heap.register_native_function("reset#0", script_reset#3, null);
+	heap.register_native_function("reset#1", script_reset#3, null);
+	return heap;
+}
+
+function @load_script(data, heap: Heap, name: String)
+{
+	var fname = name+".fix";
+	if (heap.is_loaded(fname)) return;
+
+	var (compressed, e1) = get_resource("scripts/"+fname+".gz");
+	if (compressed) {
+		heap.load(fname, gzip_uncompress(compressed), load_script#3, data);
+		return;
+	}
+
+	var (src, e2) = get_resource_string("scripts/"+fname);
+	if (src) {
+		heap.load(fname, src, load_script#3, data);
+		return;
+	}
+
+	throw error("script "+fname+" not found");
+}
+
+function @send_log_message(msg: String)
+{
+	script_log += msg;
+	script_log[] = '\n';
+}
+
+function @script_log(data, heap: Heap, params: Value[]): Value[]
+{
+	var value = params[0];
+	var s: String;
+	if (heap.is_string(value)) {
+		s = heap.clone_from(value);
+	}
+	else {
+		s = heap.to_string(value);
+	}
+	send_log_message(s);
+}
+
+function @script_clear_log(data, heap: Heap, params: Value[]): Value[]
+{
+	script_log.clear();
+	script_clear_log = true;
+}
+
+function @get_float(value: Value): Float
+{
+	if (value.is_int()) {
+		return value.get_int();
+	}
+	return value.get_float();
+}
+
+function @get_string(heap: Heap, value: Value): String
+{
+	if (heap.is_string(value)) {
+		return heap.clone_from(value);
+	}
+	return heap.to_string(value);
+}
+
+function @script_mark(data, heap: Heap, params: Value[]): Value[]
+{
+	if (!cur_marks) {
+		cur_marks = {};
+		prev_marks = {};
+	}
+	
+	var mark = new Mark;
+	mark.x = get_float(params[0]);
+	mark.y = get_float(params[1]);
+	mark.desc = params.length == 3? get_string(heap, params[2]) : null;
+	var id = prev_marks.get(mark, -1);
+	if (id == -1) {
+		id = mark_counter++;
+	}
+	cur_marks[mark] = id;
+}
+
+function @script_get_pellets(data, heap: Heap, params: Value[]): Value[]
+{
+	var pellets: [Pellet];
+	if (env) {
+		pellets = env.pellets;
+	}
+	else {
+		pellets = Array::create_shared(0, 4);
+	}
+	return [heap.clone_to(pellets), Value::int(0)];
+}
+
+function @script_get_cells(data, heap: Heap, params: Value[]): Value[]
+{
+	var cells: [EnvCell];
+	if (env) {
+		cells = env.cells;
+	}
+	else {
+		cells = [];
+	}
+	return [heap.clone_to(cells), Value::int(0)];
+}
+
+function @script_set_target(data, heap: Heap, params: Value[]): Value[]
+{
+	var x = get_float(params[0]);
+	var y = get_float(params[1]);
+	Worker::send([MSG_SET_TARGET, x, y]);
+	target_set = true;
+}
+
+function @script_split(data, heap: Heap, params: Value[]): Value[]
+{
+	Worker::send([MSG_SPLIT]);
+}
+
+function @script_eject_mass(data, heap: Heap, params: Value[]): Value[]
+{
+	Worker::send([MSG_EJECT_MASS]);
+}
+
+function @script_reset(data, heap: Heap, params: Value[]): Value[]
+{
+	if (params.length == 1) {
+		Worker::send([MSG_RESET, get_float(params[0])]);
+	}
+	else {
+		Worker::send([MSG_RESET]);
+	}
+}
+
+function @flush_script_log()
+{
+	if (script_log.length > 0 || script_clear_log) {
+		Worker::send([MSG_SCRIPT_LOG, script_log, script_clear_log]);
+		script_log.clear();
+		script_clear_log = false;
+	}
+}
+
+function @update_marks()
+{
+	if (!cur_marks) return;
+
+	foreach (var mark, id in prev_marks) {
+		if (!cur_marks.contains(mark)) {
+			Worker::send([MSG_REMOVE_MARK, id]);
+		}
+	}
+
+	foreach (var mark, id in cur_marks) {
+		if (!prev_marks.contains(mark)) {
+			Worker::send([MSG_ADD_MARK, id, mark.x, mark.y, mark.desc]);
+		}
+	}
+
+	prev_marks.clear();
+	var tmp = cur_marks;
+	cur_marks = prev_marks;
+	prev_marks = tmp;
+
+	if (prev_marks.length == 0) {
+		mark_counter = 0;
+	}
+}
+
+function @mass_to_size(mass: Float): Float
+{
+	return sqrt(mass * 100.0);
+}
+
+function @size_to_mass(size: Float): Float
+{
+	return size*size / 100.0;
+}
+
+function @run_function(name: String)
+{
+	if (!heap) return;
+
+	heap.set_time_limit(200);
+
+	var (result, e) = heap.run("script.fix", name, []);
+	if (e) {
+		if (e[0] == "function not found") {
+			send_log_message("function "+name+" not found");
+		}
+		else {
+			send_log_message(to_string(e, true));
+		}
+		failed = true;
+	}
+	else if (result[1].value != 0) {
+		e = heap.clone_from(result[1]);
+		if (!is_array(e) || length(e) != 2 || e[0] != "execution stop") {
+			send_log_message(to_string(e, true));
+		}
+		failed = true;
+	}
+
+	flush_script_log();
+	heap.set_time_limit(-1);
+}
+
+function @custom_log(value)
+{
+	log("[script] "+value);
+}
+
+function main()
+{
+	set_log_function(custom_log#1);
+
+	var last_time = Monotonic::get_time();
+	var num_ticks = 0;
+
+	for (;;) {
+		var msg = Worker::receive(20);
+		if (msg) {
+			if (msg[0] == MSG_SCRIPT_QUIT) break;
+			var (r, e) = process(msg);
+			if (e) {
+				dump(e);
+			}
+		}
+
+		var time = Monotonic::get_time();
+		while (sub32(time, last_time) >= 200) {
+			if (!failed) {
+				if (heap) {
+					var (r, e) = heap.run("common.fix", "before_update#0", []);
+				}
+				target_set = false;
+				run_function("update#0");
+				if (!target_set) {
+					Worker::send([MSG_CLEAR_TARGET]);
+				}
+				update_marks();
+			}
+			last_time = add32(last_time, 200);
+			num_ticks++;
+			if ((num_ticks % 10) == 0) {
+				Worker::send([MSG_CHECK_SCRIPT_EDITOR]);
+			}
+		}
+	}
+}

@@ -1,0 +1,198 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/file";
+
+const {
+	REDIR_IN        = 0x01,
+	REDIR_OUT       = 0x02,
+	REDIR_ERR       = 0x04,
+	REDIR_MERGE_ERR = 0x08,
+	
+	REDIR_NONE      = 0x00,
+	REDIR_IN_OUT    = 0x03, // REDIR_IN | REDIR_OUT
+	REDIR_ALL       = 0x07, // REDIR_IN | REDIR_OUT | REDIR_ERR
+	REDIR_MERGED    = 0x0B  // REDIR_IN | REDIR_OUT | REDIR_MERGE_ERR
+};
+
+var @self_stream: ProcessStream;
+var @self_err_stream: ProcessStream;
+
+class Process
+{
+	static function run(args: String[]): Integer
+	{
+		return create(args, null, null, 0).wait();
+	}
+
+	static function run(args: String[], env: String[String]): Integer
+	{
+		return create(args, env, null, 0).wait();
+	}
+
+	static function run(args: String[], env: String[String], path): Integer
+	{
+		return create(args, env, path, 0).wait();
+	}
+	
+	static function create(args: String[], env: String[String], path, flags: Integer): Process
+	{
+		if (is_string(path)) {
+			path = Path::create(path);
+		}
+		return @process_create(args, env, (path as Path).to_string(), flags);
+	}
+
+	function in_write(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer;
+	function out_read(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer;
+	function err_read(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer;
+
+	function close_in();
+	function close_out();
+	function close_err();
+
+	function create_in_stream(): ProcessStream
+	{
+		return ProcessStream::create(this, 0);
+	}
+
+	function create_out_stream(): ProcessStream
+	{
+		return ProcessStream::create(this, 1);
+	}
+
+	function create_err_stream(): ProcessStream
+	{
+		return ProcessStream::create(this, 2);
+	}
+
+	function create_stream(): ProcessStream
+	{
+		return ProcessStream::create(this, 3);
+	}
+
+	function wait(): Integer;
+	function kill();
+	function kill(force: Boolean);
+
+	function is_running(): Boolean;
+
+	function get_id(): Integer;
+
+	static function get_current_environment(): String[String];
+}
+
+class ProcessStream: Stream
+{
+	var @process: Process;
+	var @type: Integer;
+	
+	constructor @create(process: Process, type: Integer)
+	{
+		this.process = process;
+		this.type = type;
+	}
+
+	static function get(): ProcessStream
+	{
+		if (!self_stream) {
+			self_stream = new ProcessStream: Stream::create();
+			self_stream.type = 4;
+		}
+		return self_stream;
+	}
+
+	static function get_err(): ProcessStream
+	{
+		if (!self_err_stream) {
+			self_err_stream = new ProcessStream: Stream::create();
+			self_err_stream.type = 5;
+		}
+		return self_err_stream;
+	}
+
+	function get_process(): Process
+	{
+		return process;
+	}
+	
+	override function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		switch (type) {
+			case 1: return process.out_read(buf, off, len, -1);
+			case 2: return process.err_read(buf, off, len, -1);
+			case 3: return process.out_read(buf, off, len, -1);
+			case 4: return @process_in_read(buf, off, len, -1);
+		}
+		throw error("reading is not supported for this stream");
+	}
+
+	override function write_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		switch (type) {
+			case 0: return process.in_write(buf, off, len, -1);
+			case 3: return process.in_write(buf, off, len, -1);
+			case 4: return @process_out_write(buf, off, len, -1);
+			case 5: return @process_err_write(buf, off, len, -1);
+		}
+		throw error("writing is not supported for this stream");
+	}
+	
+	function read_part(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer
+	{
+		switch (type) {
+			case 1: return process.out_read(buf, off, len, timeout);
+			case 2: return process.err_read(buf, off, len, timeout);
+			case 3: return process.out_read(buf, off, len, timeout);
+			case 4: return @process_in_read(buf, off, len, timeout);
+		}
+		throw error("reading is not supported for this stream");
+	}
+
+	function write_part(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer
+	{
+		switch (type) {
+			case 0: return process.in_write(buf, off, len, timeout);
+			case 3: return process.in_write(buf, off, len, timeout);
+			case 4: return @process_out_write(buf, off, len, timeout);
+			case 5: return @process_err_write(buf, off, len, timeout);
+		}
+		throw error("writing is not supported for this stream");
+	}
+
+	override function close()
+	{
+		switch (type) {
+			case 0: process.close_in(); break;
+			case 1: process.close_out(); break;
+			case 2: process.close_err(); break;
+			case 3: process.close_in(); process.close_out(); break;
+		}
+	}
+}
+
+function @process_create(args, env, path, flags);
+function @process_in_read(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer;
+function @process_out_write(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer;
+function @process_err_write(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer;

@@ -1,0 +1,456 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/string";
+
+const {
+	@TPL_fname,
+	@TPL_block,
+	@TPL_vars,
+	@TPL_stack,
+	@TPL_cur_record,
+	@TPL_SIZE
+};
+
+const {
+	@PART_type = 0,
+	
+	@PART_text = 1,
+	
+	@PART_var_name = 1,
+	@PART_var_line = 2,
+
+	@PART_block_name = 1,
+	@PART_block = 2,
+	@PART_block_line = 3,
+	
+	@PART_cond_expr = 1,
+	@PART_cond_block = 2,
+	@PART_cond_line = 3
+};
+
+const {
+	@PART_TEXT,
+	@PART_VAR,
+	@PART_BLOCK,
+	@PART_COND
+};
+
+const {
+	@PARSER_fname,
+	@PARSER_buf,
+	@PARSER_off,
+	@PARSER_line,
+	@PARSER_expr_off,
+	@PARSER_SIZE
+};
+
+const {
+	@NESTED_BLOCK = 1,
+	@NESTED_CONDITION
+};
+
+const {
+	@EXPR_NOT,
+	@EXPR_DEFINED,
+	@EXPR_FIRST,
+	@EXPR_LAST
+};
+
+function template_create(fname)
+{
+	var buf = resource_get(fname);
+
+	var par = object_create(PARSER_SIZE);
+	par->PARSER_fname = fname;
+	par->PARSER_buf = buf;
+	par->PARSER_line = 1;
+
+	var block = parse_block(par, false);
+	
+	if (par->PARSER_off != length(par->PARSER_buf)) {
+		return 0, create_error(par, "unclosed block");
+	}
+
+	var tpl = object_create(TPL_SIZE);
+	tpl->TPL_fname = fname;
+	tpl->TPL_block = block;
+	tpl->TPL_vars = {};
+	tpl->TPL_stack = [];
+	return tpl;
+}
+
+function template_set(tpl, name, value)
+{
+	var stack = tpl->TPL_stack;
+	if (length(stack) > 0) {
+		var last = stack[length(stack)-1];
+		if (tpl->TPL_cur_record) {
+			tpl->TPL_cur_record{name} = value;
+		}
+		else {
+			tpl->TPL_cur_record = {name: value};
+			last[] = tpl->TPL_cur_record;
+		}
+	}
+	else {
+		tpl->TPL_vars{name} = value;
+	}
+}
+
+function template_begin(tpl, name)
+{
+	var block = [];
+	template_set(tpl, name, block);
+	tpl->TPL_stack[] = block;
+	tpl->TPL_cur_record = null;
+}
+
+function template_next_record(tpl)
+{
+	if (!tpl->TPL_cur_record) {
+		var stack = tpl->TPL_stack;
+		var last = stack[length(stack)-1];
+		last[] = {};
+	}
+	else {
+		tpl->TPL_cur_record = null;
+	}
+}
+
+function template_end(tpl)
+{
+	var stack = tpl->TPL_stack;
+	array_set_length(stack, length(stack)-1);
+	if (length(stack) > 0) {
+		var last = stack[length(stack)-1];
+		tpl->TPL_cur_record = last[length(last)-1];
+	}
+	else {
+		tpl->TPL_cur_record = null;
+	}
+}
+
+function template_process(tpl)
+{
+	var s = {""};
+	process_block(tpl->TPL_block, tpl->TPL_vars, null, {}, tpl->TPL_fname, s);
+	return s;
+}
+
+function @process_block(block, vars, block_vars, block_infos, fname, s)
+{
+	for (var i=0; i<length(block); i++) {
+		var part = block[i];
+		switch (part->PART_type) {
+			case PART_TEXT:
+				string_append(s, part->PART_text);
+				break;
+
+			case PART_VAR: {
+				var name = part->PART_var_name;
+				var value;
+				if (block_vars && hash_contains(block_vars, name)) {
+					value = block_vars{name};
+				}
+				else {
+					if (!hash_contains(vars, name)) {
+						return 0, create_run_error(fname, part->PART_var_line, {"variable ", name, " not found"});
+					}
+					value = vars{name};
+				}
+				string_append(s, value);
+				break;
+			}
+
+			case PART_BLOCK: {
+				var name = part->PART_block_name;
+				var value;
+				if (block_vars && hash_contains(block_vars, name)) {
+					value = block_vars{name};
+				}
+				else {
+					if (!hash_contains(vars, name)) {
+						return 0, create_run_error(fname, part->PART_block_line, {"variable ", name, " not found"});
+					}
+					value = vars{name};
+				}
+				var block_info = [0, length(value)];
+				var prev_bi = hash_get(block_infos, name, null);
+				block_infos{name} = block_info;
+				for (var j=0; j<length(value); j++) {
+					block_info[0] = j;
+					process_block(part->PART_block, vars, value[j], block_infos, fname, s);
+				}
+				block_infos{name} = prev_bi;
+				break;
+			}
+
+			case PART_COND: {
+				if (eval_expression(vars, block_vars, block_infos, part->PART_cond_expr, fname, part->PART_cond_line)) {
+					process_block(part->PART_cond_block, vars, block_vars, block_infos, fname, s);
+				}
+				break;
+			}
+
+			default:
+				return 0, error("unhandled case");
+		}
+	}
+}
+
+function @eval_expression(vars, block_vars, block_infos, expr, fname, line)
+{
+	switch (expr[0]) {
+		case EXPR_NOT:
+			return !eval_expression(vars, block_vars, block_infos, expr[1], fname, line);
+
+		case EXPR_DEFINED: {
+			var name = expr[1];
+			if (block_vars && hash_contains(block_vars, name)) {
+				return true;
+			}
+			else if (hash_contains(vars, name)) {
+				return true;
+			}
+			return false;
+		}
+
+		case EXPR_FIRST:
+		case EXPR_LAST: {
+			var name = expr[1];
+			var block_info = hash_get(block_infos, name, null);
+			if (!block_info) {
+				return 0, create_run_error(fname, line, {"unknown block ", name});
+			}
+			switch (expr[0]) {
+				case EXPR_FIRST: return block_info[0] == 0;
+				case EXPR_LAST: return block_info[0] == block_info[1]-1;
+			}
+			break;
+		}
+	}
+	return 0, error("unhandled case");
+}
+
+function @create_error(par, msg)
+{
+	return error({msg, " (", par->PARSER_fname, ":", par->PARSER_line, ")"});
+}
+
+function @create_run_error(fname, line, msg)
+{
+	return error({msg, " (", fname, ":", line, ")"});
+}
+
+function @parse_block(par, nested)
+{
+	var buf = par->PARSER_buf;
+	var off = par->PARSER_off;
+
+	var parts = [];
+	var s = {""};
+
+	while (off < length(buf)) {
+		var c = buf[off++];
+		switch (c) {
+			case '$':
+				if (off < length(buf) && buf[off] == '{') {
+					off++;
+					var start = off, end = off;
+					while (off < length(buf)) {
+						c = buf[off++];
+						if (c == '\n') {
+							return 0, create_error(par, "unexpected newline");
+						}
+						if (c == '}') {
+							end = off-1;
+							break;
+						}
+					}
+					if (end <= start) {
+						return 0, create_error(par, "unclosed variable name");
+					}
+
+					if (length(s) > 0) {
+						parts[] = [PART_TEXT, array_extract(s, 0, length(s))];
+						array_set_length(s, 0);
+					}
+					var var_name = array_extract(buf, start, end-start);
+					parts[] = [PART_VAR, var_name, par->PARSER_line];
+					continue;
+				}
+				break;
+
+			case '<':
+				if (off < length(buf) && buf[off] == '?') {
+					off++;
+					var start = off, end = off;
+					while (off < length(buf)) {
+						c = buf[off++];
+						if (c == '\n') {
+							return 0, create_error(par, "unexpected newline");
+						}
+						if (c == '?' && off < length(buf) && buf[off] == '>') {
+							end = off-1;
+							off++;
+							break;
+						}
+					}
+					if (end <= start) {
+						return 0, create_error(par, "unclosed directive");
+					}
+
+					if (length(s) > 0) {
+						parts[] = [PART_TEXT, array_extract(s, 0, length(s))];
+						array_set_length(s, 0);
+					}
+
+					var value = array_extract(buf, start, end-start);
+					if (string_starts_with(value, "begin ")) {
+						par->PARSER_off = off;
+						var block = parse_block(par, NESTED_BLOCK);
+						off = par->PARSER_off;
+
+						parts[] = [PART_BLOCK, string_substring(value, 6), block, par->PARSER_line];
+					}
+					else if (string_starts_with(value, "if ")) {
+						par->PARSER_off = off;
+						var block = parse_block(par, NESTED_CONDITION);
+						off = par->PARSER_off;
+
+						par->PARSER_expr_off = 0;
+						var expr_str = string_substring(value, 3);
+						var expr = parse_expression(par, expr_str);
+						if (par->PARSER_expr_off != length(expr_str)) {
+							return 0, create_error(par, "invalid expression");
+						}
+						parts[] = [PART_COND, expr, block, par->PARSER_line];
+					}
+					else if (value == "end") {
+						if (nested != NESTED_BLOCK) {
+							return 0, create_error(par, "unexpected block end");
+						}
+						par->PARSER_off = off;
+						return parts;
+					}
+					else if (value == "endif") {
+						if (nested != NESTED_CONDITION) {
+							return 0, create_error(par, "unexpected condition end");
+						}
+						par->PARSER_off = off;
+						return parts;
+					}
+					else {
+						return 0, create_error(par, {"bad directive: ", value});
+					}
+					continue;
+				}
+				break;
+
+			case '\n':
+				par->PARSER_line++;
+				break;
+		}
+
+		s[] = c;
+	}
+
+	if (length(s) > 0) {
+		parts[] = [PART_TEXT, array_extract(s, 0, length(s))];
+		array_set_length(s, 0);
+	}
+
+	switch (nested) {
+		case NESTED_BLOCK: return 0, create_error(par, "missing block end");
+		case NESTED_CONDITION: return 0, create_error(par, "missing condition end");
+	}
+
+	par->PARSER_off = off;
+	return parts;
+}
+
+function @parse_expression(par, s)
+{
+	var off = par->PARSER_expr_off;
+	if (s[off] == '!') {
+		par->PARSER_expr_off = ++off;
+		return [EXPR_NOT, parse_expression(par, s)];
+	}
+
+	var ident = {""};
+	while (off < length(s)) {
+		var c = s[off];
+		switch (c) {
+			case 'a'..'z', 'A'..'Z', '_':
+				ident[] = c;
+				off++;
+				continue;
+
+			case '0'..'9':
+				if (length(ident) == 0) {
+					return 0, create_error(par, "identifiers can't start with number");
+				}
+				ident[] = c;
+				off++;
+				continue;
+		}
+
+		break;
+	}
+
+	var type = -1;
+	if (ident == "defined") {
+		type = EXPR_DEFINED;
+	}
+	else if (ident == "first") {
+		type = EXPR_FIRST;
+	}
+	else if (ident == "last") {
+		type = EXPR_LAST;
+	}
+
+	if (type != -1) {
+		if (off == length(s) || s[off] != '(') {
+			return 0, create_error(par, "expected '('");
+		}
+		off++;
+		var var_name = {""};
+		while (off < length(s)) {
+			var c = s[off++];
+			if (c == '(') {
+				return 0, create_error(par, "illegal character '('");
+			}
+			if (c == ')') {
+				break;
+			}
+			var_name[] = c;
+		}
+
+		par->PARSER_expr_off = off;
+		return [type, var_name];
+	}
+	else if (length(ident) > 0) {
+		return 0, create_error(par, {"unknown identifier: ", ident});
+	}
+
+	return 0, create_error(par, "expression parse error");
+}

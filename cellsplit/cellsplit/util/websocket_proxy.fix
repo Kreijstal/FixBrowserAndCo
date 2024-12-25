@@ -1,0 +1,80 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "unpack";
+use "classes";
+
+import "io/stream";
+import "io/tcp";
+import "cellsplit/util/websocket"; // TODO
+import "task/task";
+import "task/channel";
+
+const @BUF_SIZE = 4096;
+
+class WebSocketProxy
+{
+	constructor create(proxy_port: Integer, client_host: String, client_port: Integer)
+	{
+		Task::create(main#3, [proxy_port, client_host, client_port]);
+	}
+}
+
+function @main(proxy_port: Integer, client_host: String, client_port: Integer)
+{
+	var server = TCPServer::create(proxy_port);
+	for (;;) {
+		var conn = server.accept();
+		Task::create(client_main#3, [conn, client_host, client_port]);
+	}
+}
+
+function @client_main(conn: TCPConnection, client_host: String, client_port: Integer)
+{
+	var client = TCPConnection::open(client_host, client_port);
+	var server = WebSocket::create_server(conn);
+	var buf = Array::create(4096, 1);
+	var wait = true;
+	for (;;) {
+		for (;;) {
+			var msg = server.receive_wait(1024*1024, wait? 10 : 0);
+			if (!msg) {
+				wait = true;
+				break;
+			}
+			client.write(msg);
+			wait = false;
+		}
+
+		buf.set_length(4096);
+		var read = client.read_part(buf, 0, buf.length, 10);
+		if (read < 0) break;
+		if (read > 0) {
+			if (read == 4096) {
+				wait = false;
+			}
+			buf.set_length(read);
+			server.send(buf);
+		}
+	}
+	conn.close();
+	client.close();
+}

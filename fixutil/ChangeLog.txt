@@ -1,0 +1,22 @@
+Version 0.4 (2024/05/05):
+- Added from_float function in JSONDouble
+- Added ability to get unsigned integer from Long
+- Adjusted for syntax improvements in classes
+- Changed to use offset/length instead of range in most string functions
+
+Version 0.3 (2022/12/27):
+- Added struct allocator
+- Added support for operators in BigInteger, Long and Double
+- Removed redundant checks for division and remainder
+- Renamed get_bitsize method to get_bit_size in BigInteger
+- Fixed array overflow in is_bit_set method of BigInteger
+- Fixed handling of negative numbers in to_string method of BigInteger
+- Fixed subtraction in BigInteger
+- Fixed shr method in Long
+
+Version 0.2 (2021/10/03):
+- Added stable sort variant
+- Fixed wrong to_bytes function in JSON
+
+Version 0.1 (2021/05/12):
+- Initial release

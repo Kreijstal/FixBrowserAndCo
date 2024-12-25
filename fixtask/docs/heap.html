@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/heap";</code>
+</p>
+
+<h2>Heap class</h2>
+
+<p>
+Heap allows to run FixScript code in separate context.
+</p>
+
+<p>
+<b>Table of contents:</b>
+<ul>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#gc">Garbage collection</a></li>
+	<li><a href="#time-limit">Execution time limit</a></li>
+	<li><a href="#handle-refs">Reference handling in value handles</a></li>
+	<li><a href="#array">Array access</a></li>
+	<li><a href="#string">String access</a></li>
+	<li><a href="#hash">Hash access</a></li>
+	<li><a href="#native-handles">Native handles</a></li>
+	<li><a href="#weak-references">Weak references</a></li>
+	<li><a href="#error-handling">Error handling</a></li>
+	<li><a href="#value-inspection">Value inspection</a></li>
+	<li><a href="#serialization">Cloning &amp; serialization</a></li>
+	<li><a href="#scripts">Script loading &amp; running</a></li>
+</ul>
+</p>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): Heap</code></dt>
+	<dd>
+	</dd>
+	<dt><code>static function <b>create_full</b>(): Heap</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>destroy</b>()</code></dt>
+	<dd>
+</dl>
+
+<h3 id="gc">Garbage collection</h3>
+
+<dl>
+	</dd>
+	<dt><code>function <b>collect</b>()</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_size</b>(): Integer</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>adjust_size</b>(relative_change: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>set_stack_size</b>(size: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_stack_size</b>(): Integer</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>ref</b>(value: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>unref</b>(value: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="time-limit">Execution time limit</h3>
+
+<dl>
+	<dt><code>function <b>set_time_limit</b>(limit: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_remaining_time</b>(): Integer</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_async</b>(): <a href="async_heap.html">AsyncHeap</a></code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="handle-refs">Reference handling in value handles</h3>
+
+<dl>
+	<dt><code>function <b>mark_ref</b>(value: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="array">Array access</h3>
+
+<dl>
+	<dt><code>function <b>create_array</b>(len: Integer): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>set_array_length</b>(array: <a href="value.html">Value</a>, len: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_array_length</b>(array: <a href="value.html">Value</a>): Integer</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>is_array</b>(value: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>set_array_elem</b>(array: <a href="value.html">Value</a>, idx: Integer, value: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_array_elem</b>(array: <a href="value.html">Value</a>, idx: Integer): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>append_array_elem</b>(array: <a href="value.html">Value</a>, value: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_array_range</b>(array: <a href="value.html">Value</a>, off: Integer, len: Integer, values: <a href="value.html">Value</a>[], values_off: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>set_array_range</b>(array: <a href="value.html">Value</a>, off: Integer, len: Integer, values: <a href="value.html">Value</a>[], values_off: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_array_values</b>(array: <a href="value.html">Value</a>, off: Integer, len: Integer, values, values_off: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>set_array_values</b>(array: <a href="value.html">Value</a>, off: Integer, len: Integer, values, values_off: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_array_numbers</b>(array: <a href="value.html">Value</a>, off: Integer, len: Integer, numbers, numbers_off: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>set_array_numbers</b>(array: <a href="value.html">Value</a>, off: Integer, len: Integer, numbers, numbers_off: Integer)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>copy_array</b>(dest: <a href="value.html">Value</a>, dest_off: Integer, src: <a href="value.html">Value</a>, src_off: Integer, count: Integer)</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="string">String access</h3>
+
+<dl>
+	<dt><code>function <b>create_string</b>(str: String): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>create_string</b>(str: String, off: Integer, len: Integer): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>is_string</b>(string: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+	<dt><code>
+		function <b>get_const_string</b>(string: <a href="value.html">Value</a>): <a href="value.html">Value</a><br>
+		function <b>get_const_string</b>(string: <a href="value.html">Value</a>, off: Integer, len: Integer): <a href="value.html">Value</a><br>
+	</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>is_const_string</b>(string: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="hash">Hash access</h3>
+
+<dl>
+	<dt><code>function <b>create_hash</b>(): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>is_hash</b>(hash: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>set_hash_elem</b>(hash: <a href="value.html">Value</a>, key: <a href="value.html">Value</a>, value: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_hash_elem</b>(hash: <a href="value.html">Value</a>, key: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>remove_hash_elem</b>(hash: <a href="value.html">Value</a>, key: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clear_hash</b>(hash: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_hash_entry</b>(hash: <a href="value.html">Value</a>, idx: Integer)</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="native-handles">Native handles</h3>
+
+<dl>
+	<dt><code>function <b>create_handle</b>(handle: <a href="handle.html">Handle</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>is_handle</b>(value: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_handle</b>(value: <a href="value.html">Value</a>): <a href="handle.html">Handle</a></code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="weak-references">Weak references</h3>
+
+<dl>
+	<dt><code>function <b>create_weak_ref</b>(value: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>create_weak_ref</b>(value: <a href="value.html">Value</a>, container: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>create_weak_ref</b>(value: <a href="value.html">Value</a>, container: <a href="value.html">Value</a>, key: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_weak_ref</b>(weak_ref: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>is_weak_ref</b>(weak_ref: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="error-handling">Error handling</h3>
+
+<dl>
+	<dt><code>function <b>create_error</b>(string_or_value: String or <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>create_error_string</b>(msg: String): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="value-inspection">Value inspection</h3>
+
+<dl>
+	<dt><code>function <b>dump_value</b>(value: <a href="value.html">Value</a>)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>dump_value</b>(value: <a href="value.html">Value</a>, newlines: Boolean)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>to_string</b>(value: <a href="value.html">Value</a>): String</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>to_string</b>(value: <a href="value.html">Value</a>, newlines: Boolean): String</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="serialization">Cloning &amp; serialization</h3>
+
+<dl>
+	<dt><code>function <b>compare</b>(value1: <a href="value.html">Value</a>, value2: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>compare_between</b>(value1: <a href="value.html">Value</a>, heap2: Heap, value2: <a href="value.html">Value</a>): Boolean</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone</b>(value: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_deep</b>(value: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_to</b>(value: Dynamic): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_to</b>(value: Dynamic, resolve_existing: Boolean): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_to</b>(value: Dynamic, load_func, load_data): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_from</b>(value: <a href="value.html">Value</a>): Dynamic</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_from</b>(value: <a href="value.html">Value</a>, resolve_existing: Boolean): Dynamic</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_between</b>(other: Heap, value: <a href="value.html">Value</a>): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_between</b>(other: Heap, value: <a href="value.html">Value</a>, resolve_existing: Boolean): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>clone_between</b>(other: Heap, value: <a href="value.html">Value</a>, load_func, load_data): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>serialize</b>(value: <a href="value.html">Value</a>): Byte[]</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>serialize</b>(bytes: Byte[], value: <a href="value.html">Value</a>): Byte[]</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>unserialize</b>(bytes: Byte[]): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>unserialize</b>(bytes: Byte[], off: Integer, len: Integer): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>unserialize</b>(bytes: Byte[], off_ref: Integer[]): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+</dl>
+
+<h3 id="scripts">Script loading &amp; running</h3>
+
+<dl>
+	<dt><code>function <b>load</b>(script: String, src: String, load_func, load_data)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>load_script</b>(script: String)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>reload</b>(script: String, src: String, load_func, load_data)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>is_loaded</b>(script: String): Boolean</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_function</b>(script: String, name: String): <a href="value.html">Value</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>get_function_info</b>(value: <a href="value.html">Value</a>): <a href="function_info.html">FunctionInfo</a></code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>run</b>(script: String, func_name: String, args: <a href="value.html">Value</a>[]): <a href="value.html">Value</a>[]</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>call</b>(func: <a href="value.html">Value</a>, args: <a href="value.html">Value</a>[]): <a href="value.html">Value</a>[]</code></dt>
+	<dd>
+	</dd>
+	<dt><code>function <b>register_native_function</b>(name: String, func, data)</code></dt>
+	<dd>
+	</dd>
+	<dt><code>static function <b>resolve_existing</b>(data, heap: Heap, name: String)</code></dt>
+	<dd>
+	</dd>
+</dl>
+
+</body>
+</html>

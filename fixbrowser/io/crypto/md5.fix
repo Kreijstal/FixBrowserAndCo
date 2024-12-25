@@ -1,0 +1,175 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const {
+	@STATE_total_lo = 4,
+	@STATE_total_hi,
+	@STATE_buf,
+	@STATE_pos
+};
+
+function md5_init()
+{
+	var buf = [];
+	array_set_length(buf, 64);
+	return [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0, 0, buf, 0];
+}
+
+function md5_copy(state)
+{
+	return clone_deep(state);
+}
+
+function md5_process(state, buf, off, len)
+{
+	var (lo, c1) = add32(state->STATE_total_lo, len << 3);
+	var (hi, c2) = add32(state->STATE_total_hi, len >>> 29, c1);
+	state->STATE_total_lo = lo;
+	state->STATE_total_hi = hi;
+
+	var state_buf = state->STATE_buf;
+	var pos = state->STATE_pos;
+	if (pos > 0) {
+		var num = min(64 - pos, len);
+		array_copy(state_buf, pos, buf, off, num);
+		pos += num;
+		off += num;
+		len -= num;
+		if (pos < 64) {
+			state->STATE_pos = pos;
+			return;
+		}
+		crypto_md5(state, state_buf, 0);
+	}
+
+	while (len >= 64) {
+		crypto_md5(state, buf, off);
+		off += 64;
+		len -= 64;
+	}
+
+	array_copy(state_buf, 0, buf, off, len);
+	state->STATE_pos = len;
+}
+
+function md5_finish(state)
+{
+	var buf = state->STATE_buf;
+	var pos = state->STATE_pos;
+	buf[pos++] = 0x80;
+	if (pos > 56) {
+		while (pos < 64) {
+			buf[pos++] = 0;
+		}
+		crypto_md5(state, buf, 0);
+		array_fill(buf, 0, 64, 0);
+	}
+	else {
+		while (pos < 56) {
+			buf[pos++] = 0;
+		}
+	}
+
+	var total_lo = state->STATE_total_lo;
+	var total_hi = state->STATE_total_hi;
+	buf[56] = total_lo & 0xFF;
+	buf[57] = (total_lo >>> 8) & 0xFF;
+	buf[58] = (total_lo >>> 16) & 0xFF;
+	buf[59] = total_lo >>> 24;
+	buf[60] = total_hi & 0xFF;
+	buf[61] = (total_hi >>> 8) & 0xFF;
+	buf[62] = (total_hi >>> 16) & 0xFF;
+	buf[63] = total_hi >>> 24;
+	crypto_md5(state, buf, 0);
+
+	var h0 = state[0];
+	var h1 = state[1];
+	var h2 = state[2];
+	var h3 = state[3];
+	return [
+		h0 & 0xFF, (h0 >>> 8) & 0xFF, (h0 >>> 16) & 0xFF, h0 >>> 24,
+		h1 & 0xFF, (h1 >>> 8) & 0xFF, (h1 >>> 16) & 0xFF, h1 >>> 24,
+		h2 & 0xFF, (h2 >>> 8) & 0xFF, (h2 >>> 16) & 0xFF, h2 >>> 24,
+		h3 & 0xFF, (h3 >>> 8) & 0xFF, (h3 >>> 16) & 0xFF, h3 >>> 24
+	];
+}
+
+function md5(buf)
+{
+	return md5(buf, 0, length(buf));
+}
+
+function md5(buf, off, len)
+{
+	var state = md5_init();
+	md5_process(state, buf, off, len);
+	return md5_finish(state);
+}
+
+function @to_hex(value)
+{
+	var hex = {""};
+	var len = length(value);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}
+
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_md5()
+{
+	assert(to_hex(md5("")), "d41d8cd98f00b204e9800998ecf8427e");
+	assert(to_hex(md5("The quick brown fox jumps over the lazy dog")), "9e107d9d372bb6826bd81d3542a419d6");
+	assert(to_hex(md5("The quick brown fox jumps over the lazy cog")), "1055d3e698d289f2af8663725127bd4b");
+
+	var s = {"The quick brown fox jumps over the lazy dogXXXXXXXXXXX"};
+	assert(length(s), 54);
+	assert(to_hex(md5(s)), "fe317dac107635359623c7eb769426e0");
+
+	s[] = 'X';
+	assert(length(s), 55);
+	assert(to_hex(md5(s)), "4f24b8fc79f4211cac9aafdabd9cf777");
+
+	s[] = 'X';
+	assert(length(s), 56);
+	assert(to_hex(md5(s)), "0a829c182447abe5d663070e6707ffac");
+
+	s[] = 'X';
+	assert(length(s), 57);
+	assert(to_hex(md5(s)), "410c6b94f75f18cedf04f8a913568590");
+
+	s = "The quick brown fox jumps over the lazy dog";
+	s = {s, s, s, s};
+	s = {s, s, s, s};
+	assert(length(s), 43*16);
+	assert(to_hex(md5(s)), "c6235dbd7930113674c8736b1be664c8");
+}

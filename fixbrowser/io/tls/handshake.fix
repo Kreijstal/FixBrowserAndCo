@@ -1,0 +1,608 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/tls/record";
+import "io/tls/util";
+import "io/crypto/ecdsa";
+import "math/bigint";
+
+// handshake packet types:
+const {
+	HT_HELLO_REQUEST       = 0,
+	HT_CLIENT_HELLO        = 1,
+	HT_SERVER_HELLO        = 2,
+	HT_CERTIFICATE         = 11,
+	HT_SERVER_KEY_EXCHANGE = 12,
+	HT_CERTIFICATE_REQUEST = 13,
+	HT_SERVER_HELLO_DONE   = 14,
+	HT_CERTIFICATE_VERIFY  = 15,
+	HT_CLIENT_KEY_EXCHANGE = 16,
+	HT_FINISHED            = 20
+};
+
+// cipher suites:
+const {
+	TLS_RSA_WITH_AES_128_CBC_SHA = 0x002F,
+	TLS_RSA_WITH_AES_256_CBC_SHA = 0x0035,
+	TLS_RSA_WITH_AES_128_GCM_SHA256 = 0x009C,
+	TLS_RSA_WITH_AES_256_GCM_SHA384 = 0x009D,
+
+	TLS_DHE_RSA_WITH_AES_128_CBC_SHA = 0x0033,
+	TLS_DHE_RSA_WITH_AES_256_CBC_SHA = 0x0039,
+	TLS_DHE_RSA_WITH_AES_128_GCM_SHA256 = 0x009E,
+	TLS_DHE_RSA_WITH_AES_256_GCM_SHA384 = 0x009F,
+
+	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA = 0xC013,
+	TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA = 0xC014,
+	TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = 0xC02F,
+	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = 0xC030,
+
+	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = 0xC009,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA = 0xC00A,
+	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 = 0xC02B,
+	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = 0xC02C
+};
+
+// hash algorithms:
+const {
+	HA_SHA1 = 2,
+	HA_SHA224 = 3,
+	HA_SHA256 = 4,
+	HA_SHA384 = 5,
+	HA_SHA512 = 6
+};
+
+// signature algorithms:
+const {
+	SA_RSA = 1,
+	SA_ECDSA = 3
+};
+
+// server hello packet:
+const {
+	SHP_version,
+	SHP_random,
+	SHP_session_id,
+	SHP_cipher_suite
+};
+
+// server key exchange packet:
+const {
+	SKEP_dh_p = 0,
+	SKEP_dh_g = 1,
+	SKEP_dh_Ys = 2,
+
+	SKEP_curve_type = 0,
+	SKEP_curve_point = 1,
+	
+	SKEP_data_len = 3,
+	SKEP_hash_alg,
+	SKEP_sign_alg,
+	SKEP_sign_data
+};
+
+function cipher_suite_to_string(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_CBC_SHA: return "TLS_RSA_WITH_AES_128_CBC_SHA";
+		case TLS_RSA_WITH_AES_256_CBC_SHA: return "TLS_RSA_WITH_AES_256_CBC_SHA";
+		case TLS_RSA_WITH_AES_128_GCM_SHA256: return "TLS_RSA_WITH_AES_128_GCM_SHA256";
+		case TLS_RSA_WITH_AES_256_GCM_SHA384: return "TLS_RSA_WITH_AES_256_GCM_SHA384";
+
+		case TLS_DHE_RSA_WITH_AES_128_CBC_SHA: return "TLS_DHE_RSA_WITH_AES_128_CBC_SHA";
+		case TLS_DHE_RSA_WITH_AES_256_CBC_SHA: return "TLS_DHE_RSA_WITH_AES_256_CBC_SHA";
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256: return "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256";
+		case TLS_DHE_RSA_WITH_AES_256_GCM_SHA384: return "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384";
+
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA: return "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA";
+		case TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA: return "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA";
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256: return "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256";
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384: return "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384";
+
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA: return "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA";
+		case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA: return "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA";
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: return "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256";
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: return "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384";
+	}
+	return "(unknown)";
+}
+
+function cipher_suite_is_rsa(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_DHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_DHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+			return true;
+	}
+	return false;
+}
+
+function cipher_suite_is_ecdsa(cs)
+{
+	switch (cs) {
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+			return true;
+	}
+	return false;
+}
+
+function cipher_suite_is_dhe(cs)
+{
+	switch (cs) {
+		case TLS_DHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_DHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+			return true;
+	}
+	return false;
+}
+
+function cipher_suite_is_ecdhe(cs)
+{
+	switch (cs) {
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+			return true;
+	}
+	return false;
+}
+
+function cipher_suite_is_gcm(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_DHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+			return true;
+	}
+	return false;
+}
+
+function cipher_suite_is_aead(cs)
+{
+	return cipher_suite_is_gcm(cs);
+}
+
+function cipher_suite_is_aes128_cbc(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+			return true;
+	}
+	return false;
+}
+
+function cipher_suite_is_aes128_gcm(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+			return true;
+	}
+	return false;
+}
+
+function cipher_suite_get_hash_size(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
+			return 20;
+
+		case TLS_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+		case TLS_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_DHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+			return 0;
+	}
+	return 0, error("unknown cipher suite");
+}
+
+function cipher_suite_get_key_size(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_DHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+			return 16;
+
+		case TLS_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_DHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+			return 32;
+	}
+	return 0, error("unknown cipher suite");
+}
+
+function cipher_suite_get_iv_size(cs)
+{
+	switch (cs) {
+		case TLS_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_DHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:
+			return 16;
+
+		case TLS_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_DHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_DHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
+		case TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+		case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+			return 4;
+	}
+	return 0, error("unknown cipher suite");
+}
+
+function read_handshake_packet(record, buf)
+{
+	var ct_type;
+
+	for (;;) {
+		ct_type = record_read(record, buf, 0, 0);
+		if (ct_type < 0) return -1;
+
+		if (ct_type == CT_ALERT) {
+			array_set_length(buf, 2);
+			if (record_read(record, buf, 0, length(buf)) < 0) {
+				return -1;
+			}
+
+			var level = buf[0];
+			var desc = buf[1];
+			if (level == AL_WARNING) {
+				log({"TLS warning: ", alert_get_description(desc)});
+				continue;
+			}
+			return 0, error({"unhandled alert message encountered (level=", alert_get_level(level), ", desc=", alert_get_description(desc), ")"});
+		}
+
+		break;
+	}
+	
+	if (ct_type != CT_HANDSHAKE) {
+		return 0, error({"expected handshake packet (got ", ct_type, " instead)"});
+	}
+
+	array_set_length(buf, 4);
+	if (record_read(record, buf, 0, length(buf)) < 0) {
+		return -1;
+	}
+
+	var ht_type = buf[0];
+	var len = (buf[1] << 16) | (buf[2] << 8) | buf[3];
+
+	if (len > 0) {
+		array_set_length(buf, len);
+		var ct_type_check = record_read(record, buf, 0, length(buf));
+		if (ct_type_check < 0) return 0, error("premature end of data");
+		if (ct_type_check != ct_type) return 0, error("content type changed");
+	}
+
+	return ht_type;
+}
+
+function @prepare_handshake_packet(buf, type)
+{
+	array_set_length(buf, 0);
+	append_uint8(buf, type);
+	append_uint24(buf, 0);
+}
+
+function @finish_handshake_packet(buf)
+{
+	var len = length(buf) - 4;
+	if (len > 0xFFFFFF) {
+		return 0, error("packet too big");
+	}
+	set_uint24(buf, 1, len);
+}
+
+function write_client_hello_packet(record, buf, random, session_id, cipher_suites, server_name)
+{
+	if (length(random) != 32) {
+		return 0, error("invalid random length");
+	}
+	
+	prepare_handshake_packet(buf, HT_CLIENT_HELLO);
+
+	append_uint16(buf, TLS_LATEST_VERSION);
+
+	append_byte_array(buf, random);
+
+	if (session_id) {
+		if (length(session_id) > 32) {
+			return 0, error("session_id must not exceed 32 bytes");
+		}
+		append_uint8(buf, length(session_id));
+		append_byte_array(buf, session_id);
+	}
+	else {
+		append_uint8(buf, 0);
+	}
+
+	append_uint16(buf, length(cipher_suites)*2);
+	append_short_array(buf, cipher_suites);
+
+	append_uint8(buf, 1);
+	append_uint8(buf, 0); // compression method null
+
+	var extensions = {};
+
+	if (server_name) {
+		var ext = [];
+		append_uint16(ext, 3+length(server_name));
+		append_uint8(ext, 0); // host_name
+		append_uint16(ext, length(server_name));
+		append_byte_array(ext, server_name);
+		extensions{0} = ext; // server_name
+	}
+
+	var ext = [];
+	var num_curves = 3;
+	append_uint16(ext, 2*num_curves);
+	append_uint16(ext, 29); // x25519
+	append_uint16(ext, 23); // secp256r1
+	append_uint16(ext, 24); // secp384r1
+	extensions{10} = ext; // elliptic_curves
+
+	ext = [];
+ 	append_uint8(ext, 1); // len
+ 	append_uint8(ext, 0); // uncompressed
+ 	extensions{11} = ext; // ec_point_formats
+
+	ext = [];
+	var num_algos = 7;
+	append_uint16(ext, 2*num_algos);
+	append_uint16(ext, 0x0401); // rsa_pkcs1_sha256
+	append_uint16(ext, 0x0501); // rsa_pkcs1_sha384
+	append_uint16(ext, 0x0403); // ecdsa_secp256r1_sha256
+	append_uint16(ext, 0x0503); // ecdsa_secp384r1_sha384
+	append_uint16(ext, 0x0807); // ed25519
+	append_uint16(ext, 0x0201); // rsa_pkcs1_sha1
+	append_uint16(ext, 0x0203); // ecdsa_sha1
+	extensions{13} = ext; // signature_algorithms
+
+	var total_size = 0;
+	for (var i=0; i<length(extensions); i++) {
+		var (k, v) = hash_entry(extensions, i);
+		total_size += 4+length(v);
+	}
+	append_uint16(buf, total_size);
+	for (var i=0; i<length(extensions); i++) {
+		var (k, v) = hash_entry(extensions, i);
+		append_uint16(buf, k);
+		append_uint16(buf, length(v));
+		append_byte_array(buf, v);
+	}
+
+	finish_handshake_packet(buf);
+	record_write(record, CT_HANDSHAKE, buf);
+}
+
+function read_server_hello_packet(buf)
+{
+	var off = 0;
+	var version = get_uint16(buf, off); off += 2;
+	var random = array_extract(buf, off, 32); off += 32;
+	var session_id_len = buf[off++];
+	if (session_id_len > 32) {
+		return 0, error({"invalid session id length (", session_id_len, ")"});
+	}
+	var session_id = array_extract(buf, off, session_id_len); off += session_id_len;
+	var cipher_suite = get_uint16(buf, off); off += 2;
+	var compression_method = buf[off++];
+	if (compression_method != 0) {
+		return 0, error({"unsupported compression method (", compression_method, ")"});
+	}
+	return [version, random, session_id, cipher_suite];
+}
+
+function read_certificate_packet(buf)
+{
+	var certs = [];
+	var off = 0;
+	var total_len = get_uint24(buf, off); off += 3;
+	while (total_len > 0) {
+		var len = get_uint24(buf, off); off += 3;
+		certs[] = array_extract(buf, off, len);
+		off += len;
+		total_len -= len + 3;
+	}
+	return certs;
+}
+
+function @read_dhe_signature(buf, off, version, signature_length)
+{
+	var hash_alg = buf[off++];
+	var sign_alg = buf[off++];
+	var sign_len;
+	if (version >= TLS_1_2) {
+		sign_len = get_uint16(buf, off); off += 2;
+	}
+	else {
+		sign_len = signature_length;
+		hash_alg = HA_SHA1;
+		sign_alg = SA_RSA;
+	}
+	var sign_data = array_extract(buf, off, sign_len); off += sign_len;
+	if (off != length(buf)) {
+		return 0, error("unexpected trailing data");
+	}
+	return [hash_alg, sign_alg, sign_data];
+}
+
+function read_server_key_exchange_packet_dhe(buf, version, signature_length)
+{
+	var off = 0;
+	var dh_p_len = get_uint16(buf, off); off += 2;
+	var dh_p = array_extract(buf, off, dh_p_len); off += dh_p_len;
+	var dh_g_len = get_uint16(buf, off); off += 2;
+	var dh_g = array_extract(buf, off, dh_g_len); off += dh_g_len;
+	var dh_Ys_len = get_uint16(buf, off); off += 2;
+	var dh_Ys = array_extract(buf, off, dh_Ys_len); off += dh_Ys_len;
+
+	var data_len = off;
+	var sig = read_dhe_signature(buf, off, version, signature_length);
+	return [dh_p, dh_g, dh_Ys, data_len, sig[0], sig[1], sig[2]];
+}
+
+function read_server_key_exchange_packet_ecdhe(buf, version, signature_length)
+{
+	var off = 0;
+	var curve_type = buf[off++];
+	if (curve_type != 3) return 0, error("expected named_curve");
+	var named_curve = get_uint16(buf, off); off += 2;
+	var type;
+	switch (named_curve) {
+		case 23: type = CURVE_P256; break;
+		case 24: type = CURVE_P384; break;
+		case 29: type = CURVE_X25519; break;
+		default:
+			return 0, error("unsupported curve type");
+	}
+	var curve_point_len = buf[off++];
+	var curve_point = array_extract(buf, off, curve_point_len); off += curve_point_len;
+
+	if (type != CURVE_X25519) {
+		if (curve_point[0] != 4) {
+			return 0, error("only uncompressed form is supported");
+		}
+		var size = (length(curve_point)-1)/2;
+		curve_point = [bigint_bytes_BE(array_extract(curve_point, 1, size)), bigint_bytes_BE(array_extract(curve_point, 1+size, size))];
+	}
+
+	var data_len = off;
+	var sig = read_dhe_signature(buf, off, version, signature_length);
+	return [type, curve_point, 0, data_len, sig[0], sig[1], sig[2]];
+}
+
+function prepare_ecdh_public_key(pubkey, curve_type)
+{
+	if (curve_type == CURVE_X25519) {
+		return pubkey;
+	}
+	var buf = [];
+	append_uint8(buf, 4); // uncompressed
+	append_byte_array(buf, bigint_to_bytes_BE(pubkey[0]));
+	append_byte_array(buf, bigint_to_bytes_BE(pubkey[1]));
+	return buf;
+}
+
+function write_client_key_exchange_packet(record, buf, encrypted_premaster, ecdh)
+{
+	prepare_handshake_packet(buf, HT_CLIENT_KEY_EXCHANGE);
+
+	if (ecdh) {
+		append_uint8(buf, length(encrypted_premaster));
+	}
+	else {
+		append_uint16(buf, length(encrypted_premaster));
+	}
+	append_byte_array(buf, encrypted_premaster);
+
+	finish_handshake_packet(buf);
+	record_write(record, CT_HANDSHAKE, buf);
+}
+
+function write_finished_packet(record, buf, verify_data)
+{
+	prepare_handshake_packet(buf, HT_FINISHED);
+
+	append_byte_array(buf, verify_data);
+
+	finish_handshake_packet(buf);
+	record_write(record, CT_HANDSHAKE, buf);
+}
+
+function write_client_certificate_packet(record, buf)
+{
+	prepare_handshake_packet(buf, HT_CERTIFICATE);
+
+	append_uint24(buf, 0);
+
+	finish_handshake_packet(buf);
+	record_write(record, CT_HANDSHAKE, buf);
+}

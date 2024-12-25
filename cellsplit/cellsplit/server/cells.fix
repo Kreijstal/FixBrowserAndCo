@@ -1,0 +1,252 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/time";
+import "cellsplit/server/world";
+import "cellsplit/server/packets";
+import "cellsplit/util/vector";
+import "cellsplit/util/random";
+
+const @MAX_VIRUSES = 100;
+
+var @random: Random;
+
+class PlayerCell: Cell
+{
+	var target: Vector;
+	var boost: Float;
+	var ticks_to_merge: Integer;
+
+	constructor create(world: World, cx: Float, cy: Float, size: Float, color: Integer, account: String, nick: String, view: View)
+	{
+		super::create(world, cx, cy, size, color, account, nick, view, CELL_PLAYER);
+		target = Vector();
+		boost = 0.0;
+		if (!random) {
+			random = Random::create(Monotonic::get_micro_time(), 0);
+		}
+	}
+
+	function calc_time_to_merge()
+	{
+		ticks_to_merge = iround(fmax(30.0, floor(get_size() * 0.2)) * (1000.0 / 40.0));
+	}
+
+	override function update()
+	{
+		var world = get_world();
+		var mass = world.consume_pellets(get_x(), get_y(), get_size());
+		if (mass > 0.0) {
+			set_mass(get_mass() + mass);
+		}
+
+		var speed = 3.52 * pow(get_size(), -0.4396754) * (1000.0 / 40.0) + boost;
+		var vector = target.clone().sub(get_x(), get_y());
+		if (fabs(vector.x) + fabs(vector.y) > 0.001) {
+			var size = get_size();
+			var len = fmin(vector.length(), size) / size;
+			vector.normalize().mul(speed * len);
+			vector.add(get_x(), get_y());
+			set_position(vector);
+		}
+		set_mass(fmax(10.0, get_mass() * (1.0-(0.002 * (1.0/40.0)))));
+
+		if (boost > 0.01) {
+			boost *= 0.9;
+		}
+		else {
+			boost = 0.0;
+		}
+
+		if (ticks_to_merge > 0) {
+			ticks_to_merge--;
+		}
+	}
+
+	override function collides_with(cell: Cell): Boolean
+	{
+		if (cell.get_type() == CELL_PLAYER && get_owner() === cell.get_owner()) {
+			var other = cell as PlayerCell;
+			if (boost > 20.0 || other.boost > 20.0) return false;
+			if (ticks_to_merge == 0 && other.ticks_to_merge == 0) return false;
+			return true;
+		}
+		return false;
+	}
+
+	override function eats(cell: Cell): Boolean
+	{
+		switch (cell.get_type()) {
+			case CELL_PLAYER: {
+				var other = cell as PlayerCell;
+				if (get_owner() === other.get_owner()) {
+					if (boost > 20.0 || other.boost > 20.0) return false;
+					if (ticks_to_merge == 0 && other.ticks_to_merge == 0) {
+						set_mass(get_mass() + other.get_mass());
+						return true;
+					}
+				}
+				else {
+					if (get_size()*EAT_MULT > other.get_size()) {
+						set_mass(get_mass() + other.get_mass());
+						return true;
+					}
+				}
+				break;
+			}
+
+			case CELL_VIRUS: {
+				if (get_size()*EAT_MULT < cell.get_size()) {
+					return false;
+				}
+
+				var num_cells = get_world().get_cell_count_for_owner(get_owner());
+				var new_cells: PlayerCell[] = [this];
+
+				while (num_cells < 16) {
+					var splitted = false;
+					foreach (var cell2 in new_cells) {
+						if (cell2.get_mass() > 2.0*17.64) {
+							var new_size = Cell::mass_to_size(cell2.get_mass() * 0.5);
+							var x = get_x() + ((random.next_float() * 2.0) - 1.0) * 0.01;
+							var y = get_y() + ((random.next_float() * 2.0) - 1.0) * 0.01;
+							var new_cell = PlayerCell::create(get_world(), x, y, new_size, get_color(), get_account(), get_nick(), get_owner());
+							new_cell.target.set(target);
+							new_cell.calc_time_to_merge();
+							new_cells[] = new_cell;
+							cell2.set_size(new_size);
+							cell2.calc_time_to_merge();
+							num_cells++;
+							splitted = true;
+							break;
+						}
+					}
+					if (!splitted) break;
+				}
+
+				if (new_cells.length == 1) {
+					set_mass(get_mass() + cell.get_mass());
+				}
+				return true;
+			}
+
+			case CELL_EJECTED_MASS: {
+				if (get_size()*EAT_MULT < cell.get_size()) {
+					return false;
+				}
+				set_mass(get_mass() + cell.get_mass());
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
+class VirusCell: Cell
+{
+	var @vector: Vector;
+	var @boost: Float;
+
+	constructor create(world: World, cx: Float, cy: Float)
+	{
+		super::create(world, cx, cy, Cell::mass_to_size(100.0), 0xFF00FF00, null, "", null, CELL_VIRUS);
+		set_bouncy(true);
+	}
+
+	override function eats(cell: Cell): Boolean
+	{
+		if (cell.get_type() == CELL_EJECTED_MASS) {
+			if (get_world().get_cell_count_for_type(CELL_VIRUS) > MAX_VIRUSES) {
+				return false;
+			}
+			var ejected_mass = cell as EjectedMass;
+			set_mass(get_mass() + cell.get_mass());
+			if (get_mass() > 200.0) {
+				set_mass(100.0);
+				var new_virus = VirusCell::create(get_world(), get_x(), get_y());
+				new_virus.vector = ejected_mass.vector.clone();
+				new_virus.boost = 80.0;
+			}
+			return true;
+		}
+		return false;
+	}
+
+	override function update()
+	{
+		if (boost < 0.01) {
+			return;
+		}
+
+		var vector = vector * boost;
+		vector.add(get_x(), get_y());
+		set_position(vector);
+
+		boost *= 0.9;
+	}
+
+	override function reflect_x()
+	{
+		if (vector) {
+			vector.x = -vector.x;
+		}
+	}
+
+	override function reflect_y()
+	{
+		if (vector) {
+			vector.y = -vector.y;
+		}
+	}
+}
+
+class EjectedMass: Cell
+{
+	var @vector: Vector;
+	var @boost: Float;
+
+	constructor create(world: World, cx: Float, cy: Float, color: Integer, vec: Vector)
+	{
+		super::create(world, cx, cy, Cell::mass_to_size(13.0), color, null, "", null, CELL_EJECTED_MASS);
+		vector = vec;
+		boost = 80.0;
+	}
+
+	override function collides_with(cell: Cell): Boolean
+	{
+		return cell.get_type() == CELL_EJECTED_MASS;
+	}
+
+	override function update()
+	{
+		if (boost < 0.01) {
+			return;
+		}
+
+		var vector = vector * boost;
+		vector.add(get_x(), get_y());
+		set_position(vector);
+
+		boost *= 0.9;
+	}
+}

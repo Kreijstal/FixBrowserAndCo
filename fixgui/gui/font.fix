@@ -1,0 +1,87 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+
+const {
+	FONT_NORMAL = 0x00,
+	FONT_BOLD   = 0x01,
+	FONT_ITALIC = 0x02
+};
+
+var @cache;
+var @list: String[];
+var @set: Boolean[String];
+
+class SystemFont
+{
+	static function create(family: String, size: Float, style: Integer): SystemFont
+	{
+		var key = [family, size, style];
+		if (!cache) {
+			cache = {};
+		}
+		var font = weakref_get(hash_get(cache, key, null)) as SystemFont;
+		if (!font) {
+			key = clone_deep(key);
+			font = @system_font_create(family, size, style);
+			cache{key} = weakref_create(font, cache, key);
+		}
+		return font;
+	}
+
+	static function get_list(): String[]
+	{
+		if (!list) {
+			list = @system_font_get_list();
+			set = {};
+			foreach (var name in list) {
+				set[name] = true;
+			}
+		}
+		return clone_deep(list);
+	}
+
+	static function has_font(family: String): Boolean
+	{
+		if (!set) {
+			get_list();
+		}
+		return hash_contains(set, family);
+	}
+
+	function get_size(): Integer;
+	function get_ascent(): Integer;
+	function get_descent(): Integer;
+	function get_height(): Integer;
+	function get_string_advance(s: String): Integer;
+	function get_string_advance(s: String, off: Integer, len: Integer): Integer;
+	function get_string_position(s: String, x: Integer): Float;
+	function get_string_position(s: String, off: Integer, len: Integer, x: Integer): Float;
+
+	function draw_string(p: Painter, x: Integer, y: Integer, s: String, color: Integer);
+	function draw_string(p: Painter, x: Integer, y: Integer, s: String, off: Integer, len: Integer, color: Integer);
+}
+
+function @system_font_create(family: String, size: Float, style: Integer);
+function @system_font_get_list(): String[];

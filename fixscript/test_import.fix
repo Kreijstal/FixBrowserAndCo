@@ -1,0 +1,71 @@
+/*
+ * FixScript v0.9 - https://www.fixscript.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "test_other";
+
+const ZERO = 0;
+const XXX = 505;
+const IMPORT1 = 100;
+const @IMPORT2 = 101;
+const FROM_OTHER_FILE = OTHER_CONST;
+const FROM_SAME_FILE = IMPORT2;
+
+const {
+	OTHER_SIZE
+};
+
+var aaa_local;
+var local;
+var local1;
+var @private_local;
+var bbb_local10;
+var local100;
+
+function zzz_test()
+{
+}
+
+function aaa_test()
+{
+}
+
+function @some_func(a,b) {
+	return [a + b];
+}
+
+function test(a,b,c)
+{
+	log({"test ", a, ", ", b, ", ", c});
+}
+
+function test_forward()
+{
+	log("forward imported");
+}
+
+function imported_func()
+{
+}
+
+function dummy_native_func()
+{
+	return 123;
+}

@@ -1,0 +1,7 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "d2gatte9o95jao.cloudfront.net")) return true;
+	return false;
+}

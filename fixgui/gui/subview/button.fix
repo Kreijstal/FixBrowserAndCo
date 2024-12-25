@@ -1,0 +1,207 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/subview";
+import "gui/event";
+
+const {
+	BUTTON_PRESSED  = 0x01,
+	BUTTON_HOVER    = 0x02,
+	BUTTON_DISABLED = 0x04
+};
+
+class SubButton: SubView
+{
+	var @state: Integer;
+	var @click_action;
+	var @click_data;
+
+	constructor create()
+	{
+		set_focusable(true);
+	}
+
+	function set_state(state: Integer): Integer
+	{
+		this.state = state;
+	}
+
+	function get_state(): Integer
+	{
+		return state;
+	}
+
+	function set_enabled(enabled: Boolean)
+	{
+		var old_state = state;
+		if (enabled) {
+			state &= ~BUTTON_DISABLED;
+		}
+		else {
+			state |= BUTTON_DISABLED;
+		}
+		set_focusable(enabled);
+		if (old_state != state) {
+			if ((state & BUTTON_DISABLED) != 0) {
+				unfocus();
+			}
+			repaint();
+		}
+	}
+
+	function is_enabled(): Boolean
+	{
+		return (state & BUTTON_DISABLED) == 0;
+	}
+
+	function set_click_action(action, data)
+	{
+		click_action = action;
+		click_data = data;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		switch (event.get_type()) {
+			case EVENT_MOUSE_ENTER:
+				state |= BUTTON_HOVER;
+				repaint();
+				break;
+
+			case EVENT_MOUSE_LEAVE:
+				state &= ~BUTTON_HOVER;
+				repaint();
+				break;
+
+			case EVENT_MOUSE_DOWN:
+				if (event.get_button() == MOUSE_BUTTON_LEFT && (state & BUTTON_PRESSED) == 0) {
+					if ((state & BUTTON_DISABLED) == 0) {
+						state |= BUTTON_PRESSED;
+						if (is_focusable()) {
+							focus();
+						}
+						repaint();
+					}
+					return true;
+				}
+				break;
+
+			case EVENT_MOUSE_UP:
+				if (event.get_button() == MOUSE_BUTTON_LEFT) {
+					if ((state & BUTTON_DISABLED) == 0) {
+						state &= ~BUTTON_PRESSED;
+						repaint();
+						if (get_top_view(event.get_x(), event.get_y()) === this) {
+							handle_click();
+						}
+					}
+					return true;
+				}
+				break;
+
+			case EVENT_MOUSE_DRAG:
+				if ((state & BUTTON_DISABLED) == 0) {
+					if ((event.get_modifiers() & MOD_LBUTTON) != 0 && get_top_view(event.get_x(), event.get_y()) === this) {
+						if ((state & BUTTON_PRESSED) == 0) {
+							state |= BUTTON_PRESSED;
+							repaint();
+						}
+					}
+					else {
+						if ((state & BUTTON_PRESSED) != 0) {
+							state &= ~BUTTON_PRESSED;
+							repaint();
+						}
+					}
+				}
+				break;
+		}
+		return false;
+	}
+	
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_SPACE && (state & BUTTON_PRESSED) == 0) {
+			if ((state & BUTTON_DISABLED) == 0) {
+				state |= BUTTON_PRESSED;
+				repaint();
+				return true;
+			}
+		}
+		if (event.get_type() == EVENT_KEY_UP && event.get_key() == KEY_SPACE && (state & BUTTON_PRESSED) != 0) {
+			if ((state & BUTTON_DISABLED) == 0) {
+				state &= ~BUTTON_PRESSED;
+				repaint();
+				handle_click();
+				return true;
+			}
+		}
+	}
+
+	override function handle_focus_event(event: FocusEvent): Boolean
+	{
+		if (event.get_type() == EVENT_FOCUS_LOST && (state & BUTTON_PRESSED) != 0) {
+			state &= ~BUTTON_PRESSED;
+		}
+		repaint();
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		paint_background(p);
+		paint_foreground(p);
+		draw_children(p);
+	}
+
+	virtual function paint_background(p: Painter)
+	{
+		var shape = Shape::round_rect(0, 0, get_width(), get_height(), 5, 5);
+		var shape2 = Shape::round_rect(0.5, 0.5, get_width()-1.0, get_height()-1.0, 5, 5);
+		var color = (state & BUTTON_HOVER) != 0? 0xFFAAAAAA : 0xFF808080; //XXX
+		if ((state & BUTTON_DISABLED) != 0) {
+			color = 0xFF303030;
+		}
+		else if ((state & BUTTON_PRESSED) != 0) { //XXX
+			color = 0xFF404040;
+		}
+		p.fill_shape(shape, color);
+		p.fill_shape(shape2.get_outline(1.0), 0xFF404040);
+	}
+
+	virtual function paint_foreground(p: Painter)
+	{
+		if (has_focus()) {
+			var shape = Shape::round_rect(3.5, 3.5, get_width()-7, get_height()-7, 2, 2);
+			p.fill_shape(shape.get_outline(1.0), 0xFF000040);
+		}
+	}
+
+	virtual function handle_click()
+	{
+		if (click_action) {
+			click_action(click_data);
+		}
+	}
+}

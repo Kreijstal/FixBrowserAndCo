@@ -1,0 +1,919 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/font";
+import "gui/subview";
+import "gui/subview/scrollview";
+import "gui/event";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "gui/pure/button";
+import "gui/pure/text_field";
+import "gui/pure/scrollview";
+import "util/string";
+
+const @DEBUG_SPACES = 0;
+const @DEBUG_LAYER  = 0;
+
+const {
+	BLOCK_ALIGN_LEFT,
+	BLOCK_ALIGN_CENTER,
+	BLOCK_ALIGN_RIGHT,
+	BLOCK_ALIGN_JUSTIFY
+};
+
+var @default_text_line_part: DefaultTextLinePart;
+var @inline_object_line_part: InlineObjectLinePart;
+var @table_object_line_part: TableObjectLinePart;
+
+class DefaultBlockStyle
+{
+	var align: Integer;
+	var margin_left: Integer;
+	var margin_top: Integer;
+	var margin_right: Integer;
+	var margin_bottom: Integer;
+
+	constructor create(align: Integer, margin_left: Integer, margin_top: Integer, margin_right: Integer, margin_bottom: Integer)
+	{
+		this.align = align;
+		this.margin_left = margin_left;
+		this.margin_top = margin_top;
+		this.margin_right = margin_right;
+		this.margin_bottom = margin_bottom;
+	}
+}
+
+class DefaultTextStyle
+{
+	var font: SystemFont;
+	var color: Integer;
+
+	constructor create(font: SystemFont, color: Integer)
+	{
+		this.font = font;
+		this.color = color;
+	}
+}
+
+class InlineObject
+{
+	var @marker;
+	var @view: SubView;
+	var @width: Integer;
+	var @ascent: Integer;
+	var @descent: Integer;
+	var @overdraw: Integer;
+
+	var @block: BlockView;
+	var @id: Integer;
+	var @cur_x: Integer;
+	var @cur_y: Integer;
+	var @row_ascent: Integer;
+	var @row_descent: Integer;
+	var @content_view: ContentView;
+
+	function @marker() {}
+
+	constructor create(view: SubView, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer)
+	{
+		marker = InlineObject::marker#1;
+		this.view = view;
+		this.width = width;
+		this.ascent = ascent;
+		this.descent = descent;
+		this.overdraw = overdraw;
+		view.set_rect(0, 0, width+overdraw*2, ascent+descent+overdraw*2);
+		view.set_root(InlineViewRoot::create(this));
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) > 0 && obj[0] == InlineObject::marker#1;
+	}
+}
+
+class FloatObject
+{
+	var @marker;
+	var @side: Integer;
+	var @width: Integer;
+	var @blocks: Block[];
+
+	function @marker() {}
+
+	constructor create(side: Integer, width: Integer, blocks: Block[])
+	{
+		marker = FloatObject::marker#1;
+		this.side = side;
+		this.width = width;
+		this.blocks = blocks;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) > 0 && obj[0] == FloatObject::marker#1;
+	}
+}
+
+class ClearFloatObject
+{
+	var @marker;
+	var @sides: Integer;
+
+	function @marker() {}
+
+	constructor create(sides: Integer)
+	{
+		marker = ClearFloatObject::marker#1;
+		this.sides = sides;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) > 0 && obj[0] == ClearFloatObject::marker#1;
+	}
+}
+
+class TableObject
+{
+	var @marker;
+	var @total_width: Float;
+	var @widths: Float[];
+	var @vertical_align: Float;
+	var @num_columns: Integer;
+	var @cells: TableCell[];
+	var @dirty: Boolean;
+	var @width: Integer;
+	var @height: Integer;
+	var @mtv: ModelToViewProxy;
+	var @block: BlockView;
+	var @id: Integer;
+	var @cur_x: Integer;
+	var @cur_y: Integer;
+	var @last_mouse_cell: TableCell;
+
+	function @marker() {}
+
+	constructor create(total_width: Float, widths: Float[], vertical_align: Float)
+	{
+		marker = TableObject::marker#1;
+		this.total_width = total_width;
+		this.widths = clone(widths);
+		this.vertical_align = vertical_align;
+		num_columns = length(widths);
+		dirty = true;
+		cells = [];
+		mtv = ModelToViewProxy::create(null);
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) > 0 && obj[0] == TableObject::marker#1;
+	}
+
+	function get_ascent(): Integer
+	{
+		var descent = int(float(height) * vertical_align);
+		return height - descent;
+	}
+
+	function @update()
+	{
+		if (!dirty) return;
+
+		width = 3;
+		foreach (var w in widths) {
+			width += iround(w)+3;
+		}
+
+		var x = 3;
+		var y = 3;
+		var max_height = 0;
+
+		for (var i=0; i<length(cells); i++) {
+			var row = i / num_columns;
+			var column = i % num_columns;
+			var cell = cells[i];
+			cell.update(iround(widths[column]));
+			cell.x = x;
+			cell.y = y;
+			max_height = max(max_height, cell.get_height());
+			x += iround(widths[column])+3;
+			if (column == num_columns-1) {
+				y += max_height+3;
+				x = 3;
+				max_height = 0;
+			}
+		}
+
+		height = y+2;
+		dirty = false;
+	}
+
+	function add_cell(blocks: Block[])
+	{
+		cells[] = TableCell::create(this, blocks, mtv);
+		dirty = true;
+	}
+
+	function @draw(p: Painter)
+	{
+		draw_rect(p, 0, 0, width, height, 0xFF000000);
+
+		foreach (var cell in cells) {
+			p.fill_rect(cell.x, cell.y, cell.get_width(), cell.get_height(), 0xFFFFFF88);
+			draw_rect(p, cell.x-1, cell.y-1, cell.get_width()+2, cell.get_height()+2, 0xFF000000);
+			p.translate(cell.x, cell.y);
+			cell.draw(p);
+			p.translate(-cell.x, -cell.y);
+		}
+	}
+
+	function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var type = event.get_type();
+		if (event.is_drag_event() || type == EVENT_MOUSE_LEAVE) {
+			if (last_mouse_cell) {
+				var x = last_mouse_cell.x;
+				var y = last_mouse_cell.y;
+				event.translate(-x, -y);
+				var ret = last_mouse_cell.handle_mouse_event(event);
+				event.translate(x, y);
+				if (type == EVENT_MOUSE_LEAVE) {
+					last_mouse_cell = null;
+				}
+				return ret;
+			}
+		}
+
+		var event_x = event.get_x(); 
+		var event_y = event.get_y(); 
+
+		foreach (var cell in cells) {
+			var x1 = cell.x;
+			var y1 = cell.y;
+			var x2 = x1 + cell.get_width();
+			var y2 = y1 + cell.get_height();
+			x1 -= cell.get_left_overflow();
+			x2 += cell.get_right_overflow();
+			if (event_x >= x1 && event_y >= y1 && event_x < x2 && event_y < y2) {
+				if (last_mouse_cell != null && last_mouse_cell !== cell) {
+					last_mouse_cell.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0));
+				}
+				last_mouse_cell = cell;
+				x1 += cell.get_left_overflow();
+				event.translate(-x1, -y1);
+				var ret = cell.handle_mouse_event(event);
+				event.translate(x1, y1);
+				return ret;
+			}
+		}
+
+		if (last_mouse_cell) {
+			last_mouse_cell.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0));
+		}
+		last_mouse_cell = null;
+		return false;
+	}
+
+	function get_selection_point(x: Integer, y: Integer, same_layer: Boolean, exact: Boolean): SelectionPoint
+	{
+		foreach (var cell in cells) {
+			var x1 = cell.x;
+			var y1 = cell.y;
+			var x2 = x1 + cell.get_width();
+			var y2 = y1 + cell.get_height();
+			x1 -= cell.get_left_overflow();
+			x2 += cell.get_right_overflow();
+			if (x >= x1 && y >= y1 && x < x2 && y < y2) {
+				x1 += cell.get_left_overflow();
+				return cell.get_selection_point(x - x1, y - y1, same_layer, exact);
+			}
+		}
+		return null;
+	}
+}
+
+class @TableCell: Layer
+{
+	var @table: TableObject;
+	var @x: Integer;
+	var @y: Integer;
+
+	constructor create(table: TableObject, blocks: Block[], mtv: ModelToView)
+	{
+		super::create(blocks, mtv);
+		this.table = table;
+	}
+
+	override function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		table.block.repaint_part(table.id, this.x+x, this.y+y-table.get_ascent(), width, height);
+	}
+
+	override function get_top_layer(point: Integer[]): Layer
+	{
+		if (point) {
+			point[0] += x + table.cur_x;
+			point[1] += y + table.cur_y + table.block.get_y();
+		}
+		return table.block.get_layer();
+	}
+}
+
+class @DefaultTextLinePart: LinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): DefaultTextLinePart
+	{
+		var handler = default_text_line_part;
+		if (!handler) {
+			handler = create();
+			default_text_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function get_text_width(text: String, off: Integer, len: Integer, data): Integer
+	{
+		var style = data as DefaultTextStyle;
+		var s = array_extract(text, off, len);
+		if (DEBUG_SPACES != 0) {
+			s = string_replace_char(s, ' ', '_');
+		}
+		return style.font.get_string_advance(s);
+	}
+
+	override function get_text_position(x: Integer, text: String, off: Integer, len: Integer, data): Float
+	{
+		var style = data as DefaultTextStyle;
+		var s = array_extract(text, off, len);
+		if (DEBUG_SPACES != 0) {
+			s = string_replace_char(s, ' ', '_');
+		}
+		return style.font.get_string_position(s, x);
+	}
+
+	override function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		var style = data as DefaultTextStyle;
+		var s = array_extract(text, off, len);
+		if (DEBUG_SPACES != 0) {
+			s = string_replace_char(s, ' ', '_');
+		}
+		style.font.draw_string(p, x, y, s, style.color);
+	}
+}
+
+class @InlineViewRoot: SubViewRoot
+{
+	var @obj: InlineObject;
+
+	constructor create(obj: InlineObject)
+	{
+		this.obj = obj;
+	}
+
+	override function focus()
+	{
+		var focus_obj = obj.content_view.focus_obj;
+		if (focus_obj) {
+			var view = focus_obj.view.get_current_focus();
+			if (view) {
+				view.unfocus();
+			}
+		}
+		obj.content_view.focus_obj = obj;
+		obj.content_view.focus();
+	}
+
+	override function has_focus(): Boolean
+	{
+		return obj.content_view.focus_obj === obj;
+	}
+
+	override function repaint(rect: Rect)
+	{
+		obj.block.repaint_part(obj.id, rect.x1 - obj.overdraw, -obj.ascent + rect.y1 - obj.overdraw, rect.get_width(), rect.get_height());
+	}
+
+	override function set_cursor(cursor)
+	{
+	}
+
+	override function show_menu(menu: Menu, x: Integer, y: Integer)
+	{
+		x += obj.cur_x;
+		y += obj.cur_y - obj.ascent;
+		var point = [x, y];
+		var top = obj.block.get_layer().get_top_layer(point) as MainLayer;
+		log("top="+((top as Integer)|0)+" point="+point);
+		menu.show(top.view, point[0], point[1]);
+	}
+}
+
+class @InlineObjectLinePart: LinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): InlineObjectLinePart
+	{
+		var handler = inline_object_line_part;
+		if (!handler) {
+			handler = create();
+			inline_object_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function get_text_position(x: Integer, text: String, off: Integer, len: Integer, data): Float
+	{
+		var obj = data as InlineObject;
+		return fmax(0.0, fmin(float(x) / float(obj.width), 1.0));
+	}
+
+	override function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+		var obj = data as InlineObject;
+		log("id="+id+" x="+x+" y="+y+" width="+width+" ascent="+ascent+" descent="+descent);
+		obj.block = block;
+		obj.id = id;
+		obj.cur_x = x;
+		obj.cur_y = y;
+		obj.row_ascent = ascent;
+		obj.row_descent = descent;
+	}
+
+	override function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+	}
+
+	override function paint_layer(block: BlockView, id: Integer, layer: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		if (layer != 1) return;
+		var obj = data as InlineObject;
+		p.push();
+		p.translate(x-obj.overdraw, y-obj.ascent-obj.overdraw);
+		p.clip(0, 0, width+obj.overdraw*2, obj.ascent+obj.descent+obj.overdraw*2);
+		obj.view.draw(p);
+		p.pop();
+	}
+	
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		var obj = data as InlineObject;
+		event.translate(0+obj.overdraw, obj.ascent+obj.overdraw);
+		log("view="+event.to_string());
+		var ret = obj.view.process_event(event);
+		obj.content_view.set_cursor(obj.view.get_current_cursor(event));
+		return ret;
+	}
+}
+
+class @TableObjectLinePart: LinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): TableObjectLinePart
+	{
+		var handler = table_object_line_part;
+		if (!handler) {
+			handler = create();
+			table_object_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function get_text_position(x: Integer, text: String, off: Integer, len: Integer, data): Float
+	{
+		var obj = data as TableObject;
+		return fmax(0.0, fmin(float(x) / float(obj.width), 1.0));
+	}
+
+	override function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+		var obj = data as TableObject;
+		obj.block = block;
+		obj.id = id;
+		obj.cur_x = x;
+		obj.cur_y = y - obj.get_ascent();
+	}
+
+	override function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		var obj = data as TableObject;
+		p.push();
+		p.translate(x, y-obj.get_ascent());
+		obj.draw(p);
+		p.pop();
+	}
+
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		var obj = data as TableObject;
+		event.translate(0, obj.get_ascent());
+		return obj.handle_mouse_event(event);
+	}
+
+	override function get_selection_point(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, sel_x: Integer, sel_y: Integer, same_layer: Boolean, exact: Boolean, data): SelectionPoint
+	{
+		if (!same_layer) {
+			var obj = data as TableObject;
+			return obj.get_selection_point(sel_x, sel_y + obj.get_ascent(), same_layer, exact);
+		}
+		return super.get_selection_point(block, id, x, y, width, ascent, descent, text, off, len, sel_x, sel_y, same_layer, exact, data);
+	}
+}
+
+class @DefaultModelToView: ModelToView
+{
+	var @content_view: ContentView;
+
+	constructor create(content_view: ContentView)
+	{
+		this.content_view = content_view;
+	}
+
+	override function adjust_block(block: BlockView, style, prev_style)
+	{
+		if (!style) return;
+
+		var def_style = style as DefaultBlockStyle;
+		var margin_top = def_style.margin_top;
+
+		if (prev_style) {
+			margin_top = max(0, margin_top - (prev_style as DefaultBlockStyle).margin_bottom);
+		}
+		
+		block.set_margins(def_style.margin_left, margin_top, def_style.margin_right, def_style.margin_bottom);
+		//block.set_renderer(TestBlockRenderer::create());
+	}
+
+	override function adjust_block_start(line: LineBuilder, style)
+	{
+	}
+
+	override function adjust_block_end(line: LineBuilder, style)
+	{
+	}
+
+	override function add_line_parts(line: LineBuilder, text: String, off: Integer, len: Integer, style)
+	{
+		if (InlineObject::is_instance(style)) {
+			var obj = style as InlineObject;
+			obj.content_view = content_view;
+			line.add_draw_layer(1);
+			line.add_part(obj.width, obj.ascent, obj.descent, obj.overdraw, InlineObjectLinePart::get(), obj);
+			return;
+		}
+		if (FloatObject::is_instance(style)) {
+			var obj = style as FloatObject;
+			var layer = FloatLayer::create(obj.blocks, this);
+			layer.update(obj.width);
+			line.add_float(obj.side, 0, layer);
+			return;
+		}
+		if (ClearFloatObject::is_instance(style)) {
+			var obj = style as ClearFloatObject;
+			line.clear_floats(obj.sides);
+			return;
+		}
+		if (TableObject::is_instance(style)) {
+			var obj = style as TableObject;
+			obj.mtv.set_target(this);
+			obj.update();
+			var descent = int(float(obj.height) * obj.vertical_align);
+			var ascent = obj.height - descent;
+			line.add_part(obj.width, ascent, descent, 0, TableObjectLinePart::get(), obj);
+			return;
+		}
+		var font = (style as DefaultTextStyle).font;
+		line.add_text(off, len, font.get_ascent(), font.get_descent(), 0, DefaultTextLinePart::get(), style);
+	}
+
+	override function adjust_line(line: LineBuilder, style)
+	{
+		if (!style) return;
+
+		var def_style = style as DefaultBlockStyle;
+
+		switch (def_style.align) {
+			case BLOCK_ALIGN_CENTER:  line.align_center(); break;
+			case BLOCK_ALIGN_RIGHT:   line.align_right(); break;
+			case BLOCK_ALIGN_JUSTIFY: line.align_justify(); break;
+		}
+	}
+}
+
+class @TestBlockRenderer: BlockRenderer
+{
+	constructor create()
+	{
+	}
+
+	override function get_overdraw(): Integer
+	{
+		return 0;
+	}
+
+	override function paint_background(block: BlockView, p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		width += block.get_inner_overflow();
+		p.fill_rect(x, y, width, height, 0x80404040);
+	}
+
+	override function paint_foreground(block: BlockView, p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		p.fill_rect(x, y, width, height, 0x80404040);
+	}
+}
+
+class @MainLayer: Layer
+{
+	var @view: ContentView;
+
+	constructor create(view: ContentView, blocks: Block[], mtv: ModelToView)
+	{
+		super::create(blocks, mtv);
+		this.view = view;
+	}
+
+	override function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		view.repaint(x, y, width, height);
+	}
+}
+
+function @draw_rect(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)
+{
+	p.fill_rect(x, y, width, 1, color);
+	p.fill_rect(x, y+1, 1, height-1, color);
+	p.fill_rect(x, y+height-1, width, 1, color);
+	p.fill_rect(x+width-1, y+1, 1, height-2, color);
+}
+
+class RichTextView: SubView
+{
+	var @scroll: SubScrollView;
+	var @content: ContentView;
+	var @canvas: CanvasImpl;
+
+	constructor create()
+	{
+		content = ContentView::create();
+		scroll = PureScrollView::create(content);
+		add(scroll);
+	}
+
+	function as_scroll_view(): Canvas
+	{
+		return as_scroll_view(0);
+	}
+
+	function as_scroll_view(flags: Integer): Canvas
+	{
+		if (!canvas) {
+			canvas = CanvasImpl::create(flags, this);
+		}
+		return canvas;
+	}
+
+	override function handle_resize()
+	{
+		scroll.set_rect(0, 0, get_width(), get_height());
+
+		var rect = scroll.get_view_area(false, true);
+		var layer = content.layer;
+		var visibility = scroll.get_scrollbar_visibility();
+		var always_vertical = (visibility == SCROLL_ALWAYS_VERTICAL || visibility == SCROLL_ALWAYS_BOTH);
+
+		if (scroll.get_vertical_scrollbar()) {
+			content.layout(rect.get_width());
+			if (layer.get_height() <= rect.get_height() && !always_vertical) {
+				content.layout(get_width());
+			}
+		}
+		else {
+			content.layout(get_width());
+			if (layer.get_height() > rect.get_height()) {
+				content.layout(rect.get_width());
+			}
+		}
+
+		scroll.set_content_size(layer.get_width() + layer.get_right_overflow(), layer.get_height());
+	}
+}
+
+class @CanvasImpl: Canvas
+{
+	var @view: RichTextView;
+
+	constructor create(flags: Integer, view: RichTextView)
+	{
+		super::create(flags | CANVAS_SCROLLABLE);
+		this.view = view;
+		view.assign_view(this);
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var ret = view.content.process_event(event);
+		if ((event.get_modifiers() & MOD_MOUSE_BUTTONS) == 0) {
+			var cursor = view.content.get_current_cursor(event);
+			if (is_int(cursor) && cursor > 0) {
+				set_cursor(cursor);
+			}
+			else {
+				set_cursor(CURSOR_ARROW);
+			}
+		}
+		return ret;
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		return view.content.process_event(event);
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		view.content.process_event(event);
+	}
+
+	override function handle_resize()
+	{
+		var rect = get_content_rect();
+		var height = view.content.layer.get_height() - 1; // TODO: why -1?
+
+		view.content.layout(rect.get_width());
+		set_scroll_state(SCROLL_VERT, get_scroll_position(SCROLL_VERT), max(0, height), rect.get_height(), false);
+
+		var rect2 = get_content_rect();
+		if (rect2.get_width() != rect.get_width()) {
+			rect = rect2;
+			view.content.layout(rect.get_width());
+			height = view.content.layer.get_height() - 1; // TODO: why -1?
+			view.content.set_rect(0, 0, rect.get_width(), height);
+			set_scroll_state(SCROLL_VERT, get_scroll_position(SCROLL_VERT), max(0, height), rect.get_height(), false);
+		}
+
+		var width = view.content.layer.get_width() + view.content.layer.get_right_overflow() - 1; // TODO: why -1?
+		set_scroll_state(SCROLL_HORIZ, get_scroll_position(SCROLL_HORIZ), max(0, width), rect.get_width(), false);
+
+		view.content.set_rect(0, 0, max(width, rect.get_width())+1, max(height, rect.get_height())+1); // TODO: why +1?
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		view.content.draw(p);
+	}
+}
+
+class @ContentView: SubView
+{
+	var @layer: MainLayer;
+	var @width: Integer;
+	var @focus_obj: InlineObject;
+
+	constructor create()
+	{
+		set_focusable(true);
+
+		var block = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_CENTER, 10, 10, 10, 10));
+		var style = DefaultTextStyle::create(SystemFont::create("Times New Roman", 16, FONT_NORMAL), 0xFF000000);
+		var style2 = DefaultTextStyle::create(SystemFont::create("Times New Roman", 24, FONT_NORMAL), 0xFF000000);
+		block.add("Hello, world!", style);
+		block.add(InlineObject::create(PureButton::create("Test"), 32, 16, 0, 0));
+		var float_block = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_LEFT, 10, 10, 10, 10));
+		float_block.add("Float", style);
+		for (var i=0; i<2; i++) {
+			block.add(FloatObject::create(FLOAT_LEFT, (100/(i+1)), [float_block]));
+		}
+		block.add(FloatObject::create(FLOAT_RIGHT, 80, [float_block]));
+		block.add(FloatObject::create(FLOAT_RIGHT, 60, [float_block]));
+		block.add("How are you?", style2);
+		block.add("Something reaaaaaaaaaaaaaly looooong", style);
+		block.add(FloatObject::create(FLOAT_LEFT, 64, [float_block, float_block, float_block]));
+		block.add(InlineObject::create(PureButton::create("Button"), 64, 16, 0, 0));
+		block.add(InlineObject::create(PureTextField::create(), 128, 24, 0, 0));
+
+		var block2 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_JUSTIFY, 10, 10, 10, 10));
+		block2.add("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.", style);
+
+		var block3 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_JUSTIFY, 10, 10, 10, 10));
+		block3.add("Curabitur pretium tincidunt lacus. Nulla gravida orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis sollicitudin mauris. Integer in mauris eu nibh euismod gravida. Duis ac tellus et risus vulputate vehicula. Donec lobortis risus a elit. Etiam tempor. Ut ullamcorper, ligula eu tempor congue, eros est euismod turpis, id tincidunt sapien risus a quam. ", style);
+		block3.add(InlineObject::create(PureButton::create("Button"), 64, 16, 0, 10));
+		//block3.add(InlineObject::create(PureTextField::create(), 64, 16, 0, 10));
+		block3.add("Maecenas fermentum consequat mi. Donec fermentum. Pellentesque malesuada nulla a mi. Duis sapien sem, aliquet nec, commodo eget, consequat quis, neque. Aliquam faucibus, elit ut dictum aliquet, felis nisl adipiscing sapien, sed malesuada diam lacus eget erat. Cras mollis scelerisque nunc. Nullam arcu. Aliquam consequat. Curabitur augue lorem, dapibus quis, laoreet et, pretium ac, nisi. Aenean magna nisl, mollis quis, molestie eu, feugiat in, orci. In hac habitasse platea dictumst.", style);
+
+		var block4 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_LEFT, 10, 10, 10, 10));
+		for (var i=0; i<20; i++) {
+			block4.add(FloatObject::create(FLOAT_LEFT, 50, [float_block]));
+		}
+		block4.add(ClearFloatObject::create(FLOAT_LEFT | FLOAT_RIGHT));
+
+		var table = TableObject::create(200.0, [80.0, 100.0], 0.5);
+
+		var block0 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_LEFT, 5, 5, 5, 5));
+		block0.add("First", style);
+		block0.add(InlineObject::create(PureButton::create("Test"), 32, 24, 0, 0));
+		block0.add(InlineObject::create(PureTextField::create(), 32, 24, 0, 0));
+		table.add_cell([block0]);
+
+		block0 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_LEFT, 5, 5, 5, 5));
+		block0.add("Second", style);
+		table.add_cell([block0]);
+
+		block0 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_LEFT, 5, 5, 5, 5));
+		block0.add("Some longer text.", style);
+		table.add_cell([block0]);
+
+		block0 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_LEFT, 5, 5, 5, 5));
+		block0.add("Some even much longer and longer text.", style);
+		table.add_cell([block0]);
+		
+		var block5 = Block::create(DefaultBlockStyle::create(BLOCK_ALIGN_LEFT, 10, 10, 10, 10));
+		block5.add("Before", style);
+		block5.add(table);
+		block5.add("After", style);
+
+		layer = MainLayer::create(this, [block, block2, block3, block4, block5], DefaultModelToView::create(this));
+	}
+	
+	function layout(width: Integer)
+	{
+		this.width = width;
+		layer.update(width);
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		p.fill_rect(0, 0, get_width(), get_height(), 0xFFFFFFFF);
+		if (DEBUG_LAYER != 0) {
+			p.translate(100, 0);
+		}
+		layer.draw(p);
+		if (DEBUG_LAYER != 0) {
+			draw_rect(p, -layer.get_left_overflow(), 0, layer.get_width()+layer.get_left_overflow()+layer.get_right_overflow(), layer.get_height(), 0xFFCCCCCC);
+			draw_rect(p, 0, 0, layer.get_width(), layer.get_height(), 0xFF000000);
+		}
+		p.fill_rect(width, 0, 1, get_height(), 0x40400000);
+		if (DEBUG_LAYER != 0) {
+			p.translate(-100, 0);
+		}
+		draw_children(p);
+	}
+	
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var ret = layer.handle_mouse_event(event);
+		//repaint();
+		var sp = layer.get_selection_point(event.get_x(), event.get_y(), false, false);
+		log("sp="+sp.to_string());
+		return ret;
+
+		if (event.get_type() == EVENT_MOUSE_MOVE) {
+			layout(event.get_x());
+			repaint();
+		}
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (focus_obj) {
+			return focus_obj.view.process_event(event);
+		}
+		return false;
+	}
+}

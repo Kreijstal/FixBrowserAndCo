@@ -1,0 +1,8 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "cloudinary.com")) return true;
+	if (domain_ends_with(dest, "fastly.net")) return true;
+	return false;
+}

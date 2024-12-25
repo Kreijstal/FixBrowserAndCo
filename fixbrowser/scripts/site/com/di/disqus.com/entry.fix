@@ -1,0 +1,110 @@
+import "util/common";
+import "util/string";
+import "util/template";
+import "util/json";
+import "util/extract";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "disquscdn.com")) return true;
+	return false;
+}
+
+function handle_request(request)
+{
+	if (request_get_path(request) == "/embed") {
+		var shortname = request_get_domain(request);
+		if (string_ends_with(shortname, ".disqus.com")) {
+			shortname = string_substring(shortname, 0, length(shortname)-11);
+		}
+		else {
+			shortname = null;
+		}
+
+		var params = request_get_params(request);
+		var url = params{"url"};
+		var title = params{"title"};
+
+		if (hash_get(params, "load", null) == "1") {
+			//var version = retrieve_version(shortname);
+			var disqus_url = link_with_params("https://disqus.com/embed/comments/", {
+				"base": "default",
+				"f": shortname,
+				"t_u": url,
+				"t_d": title,
+				"t_t": title,
+				"s_o": "default"
+			});
+			return show_comments(disqus_url);
+		}
+
+		var tpl = template_create("site/com/di/disqus.com/confirm_load.tpl");
+		template_set(tpl, "shortname", html_escape(shortname));
+		template_set(tpl, "url", html_escape(url));
+		template_set(tpl, "title", html_escape(title));
+		return template_process(tpl);
+	}
+}
+
+function @show_comments(url)
+{
+	var doc = document_parse(http_get(url));
+	var forum_data = json_parse(element_extract_text(element_query(doc, "script#disqus-forumData")));
+	var thread_data = json_parse(element_extract_text(element_query(doc, "script#disqus-threadData")));
+
+	var response = json_get_object(thread_data, "response");
+	var posts = json_get_array(response, "posts");
+
+	var tpl = template_create("site/com/di/disqus.com/posts.tpl");
+
+	var levels = {};
+
+	template_begin(tpl, "posts");
+	for (var i=0; i<json_length(posts); i++) {
+		var post = json_get_object(posts, i);
+		var id = json_get_string(post, "id");
+		var parent = json_get_number(post, "parent");
+		//var message = json_get_string(post, "message");
+		var message = json_get_string(post, "raw_message");
+		var date = json_get_string(post, "createdAt");
+		var idx = string_search_char(date, 'T');
+		if (idx != -1) {
+			date[idx] = ' ';
+		}
+
+		var author = json_get_object(post, "author");
+		var profile_url = json_get_string(author, "profileUrl");
+		var name = json_get_string(author, "name");
+
+		var avatar = json_get_object(author, "avatar");
+		var image = json_get_string(json_get_object(avatar, "large"), "cache");
+
+		var level = parent? hash_get(levels, parent, -1) + 1 : 0;
+		levels{id} = level;
+
+		template_set(tpl, "message", html_escape(message));
+		template_set(tpl, "date", html_escape(date));
+		template_set(tpl, "profile_url", html_escape(profile_url));
+		template_set(tpl, "name", html_escape(name));
+		template_set(tpl, "image", html_escape(image));
+		template_set(tpl, "indent", {(level*56)});
+		template_next_record(tpl);
+	}
+	template_end(tpl);
+
+	return template_process(tpl);
+}
+
+function @retrieve_version(shortname)
+{
+	var url = {"https://", shortname, ".disqus.com/embed.js"};
+	var content = http_get(url);
+
+	var version = extract_string(content, "lounge.load.", ".js");
+	if (version) {
+		return version;
+	}
+
+	log("disqus: cannot retrieve version, using fallback");
+	return "bc375ca08174aafcdafffefdfe6bc380";
+}

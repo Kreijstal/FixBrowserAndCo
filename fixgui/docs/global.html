@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/view";</code>
+</p>
+
+<h2>Global functions</h2>
+
+<dl>
+	<dt><code>function <b>show_message</b>(window: <a href="window.html">Window</a>, type: Integer, title: String, message: String): Integer</code></dt>
+	<dd>
+		Shows a modal message dialog. You can optionally provide the parent window.<br><br>
+		The type can be one of the following constants:<br>
+		<b>MSG_OK</b> - there will be OK button<br>
+		<b>MSG_OK_CANCEL</b> - there will be OK and Cancel buttons<br>
+		<b>MSG_YES_NO</b> - there will be Yes and No buttons<br>
+		<b>MSG_YES_NO_CANCEL</b> - there will be Yes, No and Cancel buttons<br><br>
+		You can also OR (<code>|</code>) one of the following constants:<br>
+		<b>MSG_ICON_INFO</b> - the information icon will be used<br>
+		<b>MSG_ICON_QUESTION</b> - the question icon will be used<br>
+		<b>MSG_ICON_ERROR</b> - the error icon will be used<br>
+		<b>MSG_ICON_WARNING</b> - the warning icon will be used<br>
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,175 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/css/selector";
+import "browser/css/property";
+import "browser/css/media_query";
+import "browser/css/parser";
+import "util/string";
+
+const @class_Stylesheet = "struct=SHEET";
+const @field_Stylesheet_rules = "Rule[]";
+
+const @class_Rule = "";
+const @field_Rule_type = "Integer";
+const @field_Rule_selector = "Selector[]";
+const @field_Rule_properties = "Property[]";
+const @field_Rule_media_query = "Dynamic";
+const @field_Rule_stylesheet = "Stylesheet";
+const @field_Rule_import_url = "String";
+const @field_Rule_import_media_query = "Dynamic";
+
+const {
+	SHEET_rules,
+	@SHEET_SIZE
+};
+
+const {
+	RULE_type = 0,
+	
+	// selector:
+	RULE_selector = 1,
+	RULE_properties = 2,
+
+	// media query:
+	RULE_media_query = 1,
+	RULE_stylesheet = 2,
+
+	// import:
+	RULE_import_url = 1,
+	RULE_import_media_query = 2,
+
+	@RULE_SIZE = 3
+};
+
+const {
+	RULE_SELECTOR,
+	RULE_MEDIA_QUERY,
+	RULE_IMPORT,
+	RULE_SUPPORTS,
+	RULE_PAGE,
+	RULE_FONT_FACE,
+	RULE_KEYFRAMES
+};
+
+function stylesheet_create()
+{
+	var sheet = object_create(SHEET_SIZE);
+	sheet->SHEET_rules = [];
+	return sheet;
+}
+
+function stylesheet_add_rule(sheet, rule)
+{
+	sheet->SHEET_rules[] = rule;
+}
+
+function rule_create_selector(selector, properties)
+{
+	var rule = object_create(RULE_SIZE);
+	rule->RULE_type = RULE_SELECTOR;
+	rule->RULE_selector = selector;
+	rule->RULE_properties = properties;
+	return rule;
+}
+
+function rule_create_media_query(media, stylesheet)
+{
+	var rule = object_create(RULE_SIZE);
+	rule->RULE_type = RULE_MEDIA_QUERY;
+	rule->RULE_media_query = media;
+	rule->RULE_stylesheet = stylesheet;
+	return rule;
+}
+
+function rule_create_import(url, media)
+{
+	var rule = object_create(RULE_SIZE);
+	rule->RULE_type = RULE_IMPORT;
+	rule->RULE_import_url = url;
+	rule->RULE_import_media_query = media;
+	return rule;
+}
+
+function @indent(s, level)
+{
+	for (var i=0; i<level; i++) {
+		s[] = ' ';
+		s[] = ' ';
+		s[] = ' ';
+		s[] = ' ';
+	}
+}
+
+function stylesheet_to_string(sheet)
+{
+	return stylesheet_to_string(sheet, 0);
+}
+
+function stylesheet_to_string(sheet, level)
+{
+	var s = {""};
+	var rules = sheet->SHEET_rules;
+	for (var i=0; i<length(rules); i++) {
+		var rule = rules[i];
+		switch (rule->RULE_type) {
+			case RULE_SELECTOR: {
+				indent(s, level);
+				string_append(s, serialize_selector_group(rule->RULE_selector));
+				string_append(s, " {\n");
+				var props = rule->RULE_properties;
+				for (var j=0; j<length(props); j++) {
+					indent(s, level+1);
+					string_append(s, property_to_string(props[j]));
+					s[] = '\n';
+				}
+				indent(s, level);
+				string_append(s, "}\n\n");
+				break;
+			}
+
+			case RULE_MEDIA_QUERY: {
+				indent(s, level);
+				string_append(s, "@media ");
+				string_append(s, serialize_media_query(rule->RULE_media_query));
+				string_append(s, " {\n");
+				string_append(s, stylesheet_to_string(rule->RULE_stylesheet, level+1));
+				indent(s, level);
+				string_append(s, "}\n\n");
+				break;
+			}
+
+			case RULE_IMPORT: {
+				indent(s, level);
+				string_append(s, "@import ");
+				string_append(s, css_serialize_string(rule->RULE_import_url));
+				if (rule->RULE_import_media_query) {
+					s[] = ' ';
+					string_append(s, serialize_media_query(rule->RULE_import_media_query));
+				}
+				string_append(s, ";\n\n");
+				break;
+			}
+		}
+	}
+
+	return s;
+}

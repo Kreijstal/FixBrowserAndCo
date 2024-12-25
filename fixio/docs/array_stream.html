@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/stream";</code>
+</p>
+
+<h2>ArrayStream class</h2>
+
+<p>
+Stream backed by arrays.
+</p>
+
+<p>
+For performance reasons it is recommended to use the type directly instead of casting
+it to the generic Stream class as this class statically replaces the primitive reading/writing
+functions.
+</p>
+
+<p>
+Inherits from <a href="stream.html">Stream</a>.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): ArrayStream<br>
+		static function <b>create</b>(in_buf: Byte[]): ArrayStream<br>
+		static function <b>create</b>(in_buf: Byte[], out_buf: Byte[]): ArrayStream<br>
+	</code></dt>
+	<dd>
+		Creates a new array stream. You can provide input and output buffers. The
+		output buffer is created automatically on first write if not provided.
+	</dd>
+	<dt><code>function <b>reset</b>()</code></dt>
+	<dd>
+		Resets the stream, the reading position is set back to beginning and
+		the output buffer is cleared.
+	</dd>
+	<dt><code>
+		function <b>reset</b>(in_buf: Byte[])<br>
+		function <b>reset</b>(in_buf: Byte[], out_buf: Byte[])<br>
+	</code></dt>
+	<dd>
+		Resets the stream using the provided input and output buffers.
+	</dd>
+	<dt><code>function <b>get_position</b>(): Integer</code></dt>
+	<dd>
+		Returns the current reading position.
+	</dd>
+	<dt><code>function <b>set_position</b>(pos: Integer)</code></dt>
+	<dd>
+		Sets the current reading position.
+	</dd>
+	<dt><code>function <b>get_output</b>(): Byte[]</code></dt>
+	<dd>
+		Returns the output buffer.
+	</dd>
+</dl>
+
+<h3 id="utilities">Utility functions</h3>
+
+<dl>
+	<dt><code>
+		function <b>read_line</b>(buf: Byte[]): Byte[]<br>
+		function <b>read_line</b>(buf: Byte[], max_bytes: Integer): Byte[]<br>
+	</code></dt>
+	<dd>
+		Reads a line delimited by LF or CRLF. The provided buffer is cleared before reading
+		and the newline characters are not included. You can optionally limit the maximum
+		length of the line (pass negative value to remove the limit). Returns the buffer
+		or <code>null</code> when the end of the stream is reached.
+	</dd>
+	<dt><code>
+		function <b>read_null_string</b>(): Byte[]<br>
+		function <b>read_null_string</b>(str: Byte[]): Byte[]<br>
+		function <b>read_null_string</b>(str: Byte[], max_bytes: Integer): Byte[]<br>
+	</code></dt>
+	<dd>
+		Reads null terminated byte string. Optionally it can append it into the provided
+		string. You can also optionally limit the maximum length of the string (pass
+		negative value to remove the limit).
+	</dd>
+</dl>
+
+</body>
+</html>

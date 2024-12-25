@@ -1,0 +1,928 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+
+const {
+	WIN_RESIZABLE = 0x01,
+	WIN_CENTER    = 0x02,
+	WIN_MAXIMIZE  = 0x04,
+	WIN_MINIMIZE  = 0x08,
+	WIN_MENUBAR   = 0x10,
+	WIN_STATUSBAR = 0x20
+};
+
+const {
+	SCROLL_HORIZ,
+	SCROLL_VERT
+};
+
+const {
+	CANVAS_SCROLLABLE = 0x01,
+	CANVAS_BORDER     = 0x02
+};
+
+const {
+	BTN_DEFAULT = 0x01
+};
+
+const {
+	CURSOR_DEFAULT,
+	CURSOR_ARROW,
+	CURSOR_EMPTY,
+	CURSOR_TEXT,
+	CURSOR_CROSS,
+	CURSOR_HAND,
+	CURSOR_MOVE,
+	CURSOR_RESIZE_N,
+	CURSOR_RESIZE_NE,
+	CURSOR_RESIZE_E,
+	CURSOR_RESIZE_SE,
+	CURSOR_RESIZE_S,
+	CURSOR_RESIZE_SW,
+	CURSOR_RESIZE_W,
+	CURSOR_RESIZE_NW,
+	CURSOR_WAIT
+};
+
+const {
+	MSG_OK,
+	MSG_OK_CANCEL,
+	MSG_YES_NO,
+	MSG_YES_NO_CANCEL,
+
+	MSG_ICON_INFO     = 0x100,
+	MSG_ICON_QUESTION = 0x200,
+	MSG_ICON_ERROR    = 0x300,
+	MSG_ICON_WARNING  = 0x400
+};
+
+const {
+	MSG_BTN_OK,
+	MSG_BTN_CANCEL,
+	MSG_BTN_YES,
+	MSG_BTN_NO
+};
+
+class View
+{
+	var @handle;
+
+	var @design_width: Float;
+	var @design_height: Float;
+	var @design_anchors: Anchors;
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= View::SIZE && is_handle((obj as View).handle);
+	}
+
+	function destroy();
+	function get_rect(): Rect;
+	function get_content_rect(): Rect;
+	function get_inner_rect(): Rect;
+	function set_rect(x: Integer, y: Integer, width: Integer, height: Integer);
+	function set_rect(rect: Rect);
+	//function set_content_rect(rect: Rect);
+	function set_visible(visible: Boolean);
+	
+	function add(view)
+	{
+		if (View::is_instance(view)) {
+			@view_add(this, view);
+		}
+		else {
+			view[0](view, 0, this);
+		}
+	}
+	
+	function add(view, rect: Rect)
+	{
+		if (View::is_instance(view)) {
+			(view as View).set_rect(rect);
+			@view_add(this, view);
+		}
+		else {
+			view[0](view, 1, [this, rect]);
+		}
+	}
+
+	function get_parent(): View;
+	function get_next(): View;
+	function get_prev(): View;
+	function get_first_child(): View;
+	function get_last_child(): View;
+	function get_child_count(): Integer;
+	function get_child(idx: Integer): View;
+
+	function focus();
+	function has_focus(): Boolean;
+
+	function get_sizing(): ViewSizing;
+	function @get_default_size(): Dynamic;
+	function get_scale(): Float;
+
+	static function get_current_scale(): Float
+	{
+		return (null as View).get_scale();
+	}
+
+	function set_cursor(type: Integer);
+	function get_cursor(): Integer;
+
+	virtual function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function handle_touch_event(event: TouchEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function handle_key_event(event: KeyEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function handle_focus_event(event: FocusEvent)
+	{
+	}
+}
+
+class Window: View
+{
+	static function create(title: String, width: Integer, height: Integer, flags: Integer): Window
+	{
+		return new Window: @window_create(title, width, height, flags);
+	}
+
+	function set_title(title: String);
+	function get_title(): String;
+	function set_minimum_size(width: Integer, height: Integer);
+	function is_maximized(): Boolean;
+	function set_menu(menu: Menu);
+	function get_menu(): Menu;
+	function set_status_text(text: String);
+
+	virtual function handle_destroy()
+	{
+	}
+
+	virtual function handle_close()
+	{
+		destroy();
+	}
+
+	virtual function handle_resize()
+	{
+	}
+
+	virtual function handle_activate()
+	{
+	}
+}
+
+class Label: View
+{
+	static function create(label: String): Label;
+
+	function get_label(): String;
+	function set_label(text: String);
+}
+
+class TextField: View
+{
+	static function create(): TextField;
+
+	function get_text(): String;
+	function set_text(text: String);
+
+	function is_enabled(): Boolean;
+	function set_enabled(enabled: Boolean): Boolean;
+}
+
+class TextArea: View
+{
+	static function create(): TextArea;
+
+	function get_text(): String;
+	function set_text(text: String);
+	function append_text(text: String);
+
+	function set_read_only(read_only: Boolean);
+	function is_read_only(): Boolean;
+
+	function is_enabled(): Boolean;
+	function set_enabled(enabled: Boolean): Boolean;
+}
+
+class Button: View
+{
+	var @click_action;
+	var @click_data;
+
+	static function create(label: String): Button
+	{
+		return create(label, 0);
+	}
+
+	static function create(label: String, flags: Integer): Button;
+
+	static function create(label: String, flags: Integer, action, data): Button
+	{
+		var btn = create(label, flags);
+		btn.set_click_action(action, data);
+		return btn;
+	}
+
+	function set_click_action(action, data)
+	{
+		click_action = action;
+		click_data = data;
+	}
+
+	function get_label(): String;
+	function set_label(text: String);
+
+	function is_enabled(): Boolean;
+	function set_enabled(enabled: Boolean): Boolean;
+}
+
+class Table: View
+{
+	var @click_action;
+	var @click_data;
+	var @right_click_action;
+	var @right_click_data;
+	var @space_key_action;
+	var @space_key_data;
+	var @sort_action;
+	var @sort_data;
+
+	static function create(): Table;
+
+	function set_columns(titles: String[]);
+	function get_column_width(idx: Integer): Integer;
+	function set_column_width(idx: Integer, width: Integer);
+	function clear();
+	function insert_row(row: Integer, values: String[]);
+
+	function add_row(values: String[])
+	{
+		insert_row(-1, values);
+	}
+	
+	function get_selected_row(): Integer;
+	function set_selected_row(row: Integer);
+
+	function set_click_action(action, data)
+	{
+		click_action = action;
+		click_data = data;
+	}
+
+	function set_right_click_action(action, data)
+	{
+		right_click_action = action;
+		right_click_data = data;
+	}
+
+	function set_space_key_action(action, data)
+	{
+		space_key_action = action;
+		space_key_data = data;
+	}
+
+	function set_sort_action(action, data)
+	{
+		sort_action = action;
+		sort_data = data;
+	}
+}
+
+class Canvas: View
+{
+	static function create(): Canvas
+	{
+		return create(0);
+	}
+	
+	static function create(flags: Integer): Canvas;
+	function set_scroll_state(type: Integer, pos: Integer, max: Integer, page_size: Integer, always_show: Boolean);
+	function set_scroll_position(type: Integer, pos: Integer);
+	function get_scroll_position(type: Integer): Integer;
+
+	function set_active_rendering(enable: Boolean);
+	function get_active_rendering(): Boolean;
+
+	function set_relative_mode(enable: Boolean);
+	function get_relative_mode(): Boolean;
+
+	function set_overdraw_size(amount: Integer);
+	function get_overdraw_size(): Integer;
+
+	function set_focusable(enable: Boolean);
+	function is_focusable(): Boolean;
+
+	function repaint();
+	function repaint(x: Integer, y: Integer, width: Integer, height: Integer);
+	
+	function repaint(r: Rect)
+	{
+		repaint(r.x1, r.y1, r.get_width(), r.get_height());
+	}
+
+	virtual function handle_destroy()
+	{
+	}
+
+	virtual function handle_resize()
+	{
+	}
+
+	virtual function handle_paint(p: Painter)
+	{
+	}
+}
+
+class Menu
+{
+	var @handle;
+
+	static function create(): Menu;
+
+	function insert_item(idx: Integer, title: String, action, data, id: Integer);
+	function insert_separator(idx: Integer);
+	function insert_submenu(idx: Integer, title: String, submenu: Menu);
+
+	function insert_item(idx: Integer, item: MenuItem)
+	{
+		if (item.title) {
+			if (item.submenu) {
+				insert_submenu(idx, item.title, item.submenu);
+			}
+			else {
+				insert_item(idx, item.title, item.action, item.data, item.id);
+			}
+		}
+		else {
+			insert_separator(idx);
+		}
+	}
+
+	function add_item(title: String, action, data, id: Integer)
+	{
+		insert_item(-1, title, action, data, id);
+	}
+
+	function add_separator()
+	{
+		insert_separator(-1);
+	}
+
+	function add_submenu(title: String, submenu: Menu)
+	{
+		insert_submenu(-1, title, submenu);
+	}
+
+	function add_item(item: MenuItem)
+	{
+		insert_item(-1, item);
+	}
+
+	function remove_item(idx: Integer);
+
+	function get_item_count(): Integer;
+	function get_item(idx: Integer): MenuItem;
+
+	function show(view, x: Integer, y: Integer)
+	{
+		if (View::is_instance(view)) {
+			@menu_show(this, view, x, y);
+		}
+		else {
+			view[0](view, 2, [this, x, y]);
+		}
+	}
+
+	function dump()
+	{
+		var s = {""};
+		dump(this, 0, s);
+		if (s.length > 0) {
+			s.set_length(s.length-1);
+		}
+		log(s); 
+	}
+
+	static function @dump(menu: Menu, indent: Integer, s: String)
+	{
+		for (var i=0; i<menu.get_item_count(); i++) {
+			for (var j=0; j<indent; j++) {
+				s += "  ";
+			}
+			var item = menu.get_item(i);
+			s += item.to_string();
+			s[] = '\n';
+			if (item.submenu) {
+				dump(item.submenu, indent+1, s);
+			}
+		}
+	}
+}
+
+class MenuItem
+{
+	var menu: Menu;
+	var idx: Integer;
+	var title: String;
+	var submenu: Menu;
+	var action;
+	var data;
+	var id: Integer;
+
+	function is_separator(): Boolean
+	{
+		return !title;
+	}
+
+	function update()
+	{
+		menu.remove_item(idx);
+		menu.insert_item(idx, this);
+	}
+
+	function to_string(): String
+	{
+		if (title) {
+			if (submenu) {
+				return "menu item '"+title+"' submenu=#"+((submenu as Integer)|0);
+			}
+			else {
+				return "menu item '"+title+"'";
+			}
+		}
+		else {
+			return "menu separator";
+		}
+	}
+}
+
+function @menu_show(menu, view, x, y);
+
+class Worker
+{
+	static function create(script_name: String, func_name: String, params, callback, data): Worker;
+	function send(msg);
+}
+
+class Timer
+{
+	var @interval: Integer;
+	var @callback;
+	var @data;
+	var @once: Boolean;
+
+	constructor create(interval: Integer)
+	{
+		this.interval = interval;
+	}
+	
+	constructor create(interval: Integer, callback, data)
+	{
+		this.interval = interval;
+		this.callback = callback;
+		this.data = data;
+	}
+	
+	static function run(interval: Integer, callback, data): Timer
+	{
+		var timer = create(interval, callback, data);
+		timer.start();
+		return timer;
+	}
+	
+	static function run_once(delay: Integer, callback, data): Timer
+	{
+		var timer = create(delay, callback, data);
+		timer.once = true;
+		timer.start();
+		return timer;
+	}
+
+	static function get_time(): Integer;
+	static function get_micro_time(): Integer;
+
+	function get_interval(): Integer
+	{
+		return interval;
+	}
+
+	function set_interval(interval: Integer)
+	{
+		if (interval == this.interval) return;
+		this.interval = interval;
+		if (is_active()) {
+			stop();
+			start();
+		}
+	}
+
+	function is_active(): Boolean;
+	function start();
+	function stop();
+	function restart();
+
+	virtual function run()
+	{
+		if (once) {
+			stop();
+			callback(data);
+		}
+		else {
+			if (!callback(data)) {
+				stop();
+			}
+		}
+	}
+}
+
+class NotifyIcon
+{
+	var @handle;
+	
+	static function create(images: Image[]): NotifyIcon;
+	static function get_sizes(): Integer[];
+
+	function destroy();
+	function set_menu(menu: Menu);
+	function get_menu(): Menu;
+
+	virtual function handle_click_action()
+	{
+	}
+}
+
+class Clipboard
+{
+	static function set_text(text: String);
+	static function get_text(): String;
+}
+
+const {
+	SIDE_NONE,
+	SIDE_MIN,
+	SIDE_MAX
+};
+
+const @SIDE_MASK = 0x7FFFFFFF;
+const @ANCHOR_SET = 0x80000000;
+
+const OFFSET_SMALL  = 8000000.0;
+const OFFSET_MEDIUM = 8000001.0;
+const OFFSET_LARGE  = 8000002.0;
+
+class Anchors
+{
+	var @left_view: View;
+	var @left_type: Integer;
+	var @left_offset: Float;
+	
+	var @top_view: View;
+	var @top_type: Integer;
+	var @top_offset: Float;
+	
+	var @right_view: View;
+	var @right_type: Integer;
+	var @right_offset: Float;
+	
+	var @bottom_view: View;
+	var @bottom_type: Integer;
+	var @bottom_offset: Float;
+
+	constructor create()
+	{
+	}
+
+	function left(view: View, type: Integer, offset: Float, anchor: Boolean): Anchors
+	{
+		left_view = view;
+		left_type = type;
+		left_offset = offset;
+		if (anchor) left_type |= ANCHOR_SET;
+		return this;
+	}
+
+	function top(view: View, type: Integer, offset: Float, anchor: Boolean): Anchors
+	{
+		top_view = view;
+		top_type = type;
+		top_offset = offset;
+		if (anchor) top_type |= ANCHOR_SET;
+		return this;
+	}
+
+	function right(view: View, type: Integer, offset: Float, anchor: Boolean): Anchors
+	{
+		right_view = view;
+		right_type = type;
+		right_offset = offset;
+		if (anchor) right_type |= ANCHOR_SET;
+		return this;
+	}
+
+	function bottom(view: View, type: Integer, offset: Float, anchor: Boolean): Anchors
+	{
+		bottom_view = view;
+		bottom_type = type;
+		bottom_offset = offset;
+		if (anchor) bottom_type |= ANCHOR_SET;
+		return this;
+	}
+}
+
+class ViewSizing
+{
+	var @grid_x: Float;
+	var @grid_y: Float;
+	var @form_small: Integer;
+	var @form_medium: Integer;
+	var @form_large: Integer;
+	var @view_small: Integer;
+	var @view_medium: Integer;
+	var @view_large: Integer;
+
+	static function create(grid_x: Float, grid_y: Float, form_small: Integer, form_medium: Integer, form_large: Integer, view_small: Integer, view_medium: Integer, view_large: Integer): ViewSizing
+	{
+		return [grid_x, grid_y, form_small, form_medium, form_large, view_small, view_medium, view_large] as ViewSizing;
+	}
+}
+
+class Form
+{
+	var @parent: View;
+	var @sizing: ViewSizing;
+	var @design_width: Float;
+	var @design_height: Float;
+	var @width: Integer;
+	var @height: Integer;
+	var @last_scale: Float;
+	var @last_extra_width: Integer;
+	var @last_extra_height: Integer;
+	var @views: View[];
+
+	constructor create(sizing: ViewSizing, width: Float, height: Float)
+	{
+		this.sizing = sizing;
+		this.design_width = width;
+		this.design_height = height;
+		this.width = -1;
+		this.height = -1;
+		this.views = [];
+	}
+
+	function set_view(view: View)
+	{
+		parent = view;
+	}
+
+	function get_width(): Integer
+	{
+		return width;
+	}
+
+	function get_height(): Integer
+	{
+		return height;
+	}
+
+	function add(child: View, width: Float, height: Float, anchors: Anchors)
+	{
+		child.design_width = width;
+		child.design_height = height;
+		child.design_anchors = anchors;
+		add_to_list(views, anchors.left_view);
+		add_to_list(views, anchors.top_view);
+		add_to_list(views, anchors.right_view);
+		add_to_list(views, anchors.bottom_view);
+		add_to_list(views, child);
+	}
+
+	static function @add_to_list(list: View[], view: View)
+	{
+		if (!view) return;
+		for (var i=0; i<list.length; i++) {
+			if (list[i] === view) {
+				return;
+			}
+		}
+		list[] = view;
+	}
+
+	function layout()
+	{
+		var scale = parent.get_scale();
+		if (last_scale != 0 && scale != last_scale) {
+			if (parent) {
+				sizing = parent.get_sizing();
+			}
+			width = -1;
+			height = -1;
+		}
+		last_scale = scale;
+
+		if (width == -1 && height == -1) {
+			width = 0;
+			height = 0;
+			last_extra_width = 0;
+			last_extra_height = 0;
+			relayout();
+			relayout();
+		}
+
+		if (!parent) {
+			return;
+		}
+
+		var content_rect = parent.get_content_rect();
+		var extra_width = max(0, content_rect.get_width() - width);
+		var extra_height = max(0, content_rect.get_height() - height);
+		var dx = extra_width - last_extra_width;
+		var dy = extra_height - last_extra_height;
+		last_extra_width = extra_width;
+		last_extra_height = extra_height;
+
+		for (var i=0; i<views.length; i++) {
+			var view = views[i];
+			var anchors = view.design_anchors;
+
+			var left = (anchors.left_type & ANCHOR_SET) as Boolean;
+			var top = (anchors.top_type & ANCHOR_SET) as Boolean;
+			var right = (anchors.right_type & ANCHOR_SET) as Boolean;
+			var bottom = (anchors.bottom_type & ANCHOR_SET) as Boolean;
+
+			if (!right && !bottom) {
+				continue;
+			}
+
+			var rect = view.get_rect();
+			if (right) {
+				if (left) {
+					rect.x2 += dx;
+				}
+				else {
+					rect.translate(dx, 0);
+				}
+			}
+			if (bottom) {
+				if (top) {
+					rect.y2 += dy;
+				}
+				else {
+					rect.translate(0, dy);
+				}
+			}
+			view.set_rect(rect);
+		}
+	}
+
+	function @relayout()
+	{
+		var rect = Rect();
+		var min_offset = [sizing.form_large, sizing.form_large];
+		var min_x1 = 0x7FFFFFFF, min_y1 = 0x7FFFFFFF;
+		var max_x2 = 0x80000000, max_y2 = 0x80000000;
+		for (var i=0; i<views.length; i++) {
+			var view = views[i];
+			rect.set(0, 0, iround(view.design_width * sizing.grid_x), iround(view.design_height * sizing.grid_y));
+			if (view.design_width == -1 || view.design_height == -1) {
+				var (w, h) = view.get_default_size();
+				if (view.design_width == -1) {
+					rect.x2 = w;
+				}
+				if (view.design_height == -1) {
+					rect.y2 = h;
+				}
+			}
+			var anchors = view.design_anchors;
+			if ((anchors.left_type & SIDE_MASK) != SIDE_NONE) {
+				rect.translate(get_position(anchors.left_view, anchors.left_offset, true, (anchors.left_type & SIDE_MASK) == SIDE_MIN, sizing, min_offset), 0);
+			}
+			if ((anchors.top_type & SIDE_MASK) != SIDE_NONE) {
+				rect.translate(0, get_position(anchors.top_view, anchors.top_offset, false, (anchors.top_type & SIDE_MASK) == SIDE_MIN, sizing, min_offset));
+			}
+			if ((anchors.right_type & SIDE_MASK) != SIDE_NONE) {
+				var pos = get_position(anchors.right_view, anchors.right_offset, true, (anchors.right_type & SIDE_MASK) == SIDE_MIN, sizing, min_offset);
+				if ((anchors.left_type & SIDE_MASK) == SIDE_NONE) {
+					rect.x1 = pos - rect.get_width();
+				}
+				rect.x2 = pos;
+			}
+			if ((anchors.bottom_type & SIDE_MASK) != SIDE_NONE) {
+				var pos = get_position(anchors.bottom_view, anchors.bottom_offset, false, (anchors.bottom_type & SIDE_MASK) == SIDE_MIN, sizing, min_offset);
+				if ((anchors.top_type & SIDE_MASK) == SIDE_NONE) {
+					rect.y1 = pos - rect.get_height();
+				}
+				rect.y2 = pos;
+			}
+			view.set_rect(rect);
+			min_x1 = min(min_x1, rect.x1);
+			min_y1 = min(min_y1, rect.y1);
+			max_x2 = max(max_x2, rect.x2);
+			max_y2 = max(max_y2, rect.y2);
+		}
+
+		if (design_width == -1.0) {
+			width = (max_x2 - min_x1) + min_offset[0] * 2;
+		}
+		else {
+			width = iround(design_width * sizing.grid_x);
+		}
+
+		if (design_height == -1.0) {
+			height = (max_y2 - min_y1) + min_offset[1] * 2;
+		}
+		else {
+			height = iround(design_height * sizing.grid_y);
+		}
+	}
+
+	function @get_position(view: View, offset: Float, horiz: Boolean, is_min: Boolean, sizing: ViewSizing, min_offset: Integer[]): Integer
+	{
+		var abs_offset = fabs(offset);
+		var ret = iround(abs_offset * (horiz? sizing.grid_x : sizing.grid_y));
+
+		if (view) {
+			if (abs_offset == OFFSET_SMALL) {
+				ret = sizing.view_small;
+			}
+			else if (abs_offset == OFFSET_MEDIUM) {
+				ret = sizing.view_medium;
+			}
+			else if (abs_offset == OFFSET_LARGE) {
+				ret = sizing.view_large;
+			}
+		}
+		else {
+			if (abs_offset == OFFSET_SMALL) {
+				ret = sizing.form_small;
+			}
+			else if (abs_offset == OFFSET_MEDIUM) {
+				ret = sizing.form_medium;
+			}
+			else if (abs_offset == OFFSET_LARGE) {
+				ret = sizing.form_large;
+			}
+			if (horiz) {
+				min_offset[0] = min(min_offset[0], ret);
+			}
+			else {
+				min_offset[1] = min(min_offset[1], ret);
+			}
+		}
+
+		if (offset < 0.0) {
+			ret = -ret;
+		}
+		if (view) {
+			var rect = view.get_rect();
+			if (is_min) {
+				ret += horiz? rect.x1 : rect.y1;
+			}
+			else {
+				ret += horiz? rect.x2 : rect.y2;
+			}
+		}
+		else {
+			if (!is_min) {
+				ret += horiz? get_width() : get_height();
+			}
+		}
+		return ret;
+	}
+}
+
+function show_message(window: Window, type: Integer, title: String, message: String): Integer;

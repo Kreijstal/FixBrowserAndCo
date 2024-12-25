@@ -1,0 +1,439 @@
+/*
+ * FixScript Task v0.6 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+const {
+	@TIMER_time,
+	@TIMER_func,
+	@TIMER_data,
+	@TIMER_SIZE
+};
+
+var @shared_ret: Channel;
+var @tmp_array: Dynamic[];
+
+var @set: ChannelSet;
+var @timers: Dynamic[];
+var @leave_loop: Boolean;
+var @leave_value;
+
+class Channel
+{
+	static function create(): Channel;
+	static function create(size: Integer): Channel;
+
+	function send(msg);
+	function send(msg, timeout: Integer): Boolean;
+
+	function receive(): Dynamic;
+	function receive(timeout: Integer): Dynamic { return receive(timeout, Channel::timeout_value#0); }
+	function receive(timeout: Integer, timeout_value): Dynamic;
+
+	function get_sender(): Channel;
+	function get_receiver(): Channel;
+
+	function get_shared_count(): Integer;
+	function set_size(size: Integer);
+	function get_size(): Integer;
+
+	function call(params: Dynamic[]): Dynamic
+	{
+		if (!shared_ret) {
+			shared_ret = Channel::create();
+			tmp_array = [];
+		}
+
+		tmp_array.clear();
+		tmp_array.append(params);
+		tmp_array[] = shared_ret;
+		send(tmp_array);
+		tmp_array.clear();
+
+		var msg = shared_ret.receive();
+		if (!msg) return;
+		if (length(msg) == 2 && msg[1]) {
+			var e = msg[1];
+			if (is_array(e) && length(e) == 2 && is_array(e[1])) {
+				var e2 = error(e[0]);
+				array_insert_array(e2[1], 0, e[1]);
+				e = e2;
+			}
+			return msg[0], e;
+		}
+		return msg[0];
+	}
+
+	function call(params: Dynamic[], func, data)
+	{
+		if (!shared_ret) {
+			shared_ret = Channel::create();
+			tmp_array = [];
+		}
+
+		var ret_channel = Channel::create();
+		tmp_array.clear();
+		tmp_array.append(params);
+		tmp_array[] = ret_channel;
+		send(tmp_array);
+		tmp_array.clear();
+
+		Dispatcher::register(ret_channel, Channel::receive_reply#2, [func, data, ret_channel]);
+	}
+
+	static function @receive_reply(data, msg)
+	{
+		Dispatcher::unregister(data[2]);
+
+		var func = data[0];
+		data = data[1];
+
+		if (!msg) {
+			func(data, null, null);
+			return;
+		}
+
+		if (length(msg) == 2) {
+			func(data, msg[0], msg[1]);
+		}
+		else {
+			func(data, msg[0], null);
+		}
+	}
+
+	function handle(func)
+	{
+		handle(func, null, -1);
+	}
+
+	function handle(func, error_func)
+	{
+		handle(func, error_func, -1);
+	}
+
+	function handle(func, error_func, timeout: Integer)
+	{
+		for (;;) {
+			var (msg, e1) = receive(timeout);
+			if (e1) {
+				dump(e1);
+				continue;
+			}
+			
+			var (r2, e2) = func(msg);
+			if (e2) {
+				if (error_func) {
+					var (r3, e3) = error_func(msg, e2);
+					if (e3) {
+						dump(e3);
+					}
+				}
+				else {
+					dump(e2);
+				}
+			}
+		}
+	}
+
+	function handle_sync(func)
+	{
+		for (;;) {
+			var (msg, e1) = receive();
+			if (e1) {
+				dump(e1);
+				continue;
+			}
+			
+			var (ret_value, ret_error) = func(msg);
+			if (ret_value != Dispatcher::handle_async#0) {
+				var (r, e2) = handle_sync_reply(ret_value, ret_error, msg);
+				if (e2) {
+					dump(e2);
+				}
+			}
+		}
+	}
+
+	function @handle_sync_reply(ret_value, ret_error, msg)
+	{
+		if (is_array(ret_error) && length(ret_error) >= 2 && is_array(ret_error[1])) {
+			var stack = ret_error[1] as String[];
+			var search = "Channel.handle_sync ";
+			for (var i=stack.length-1; i>=0; i--) {
+				var entry = stack[i];
+				if (is_string(entry) && entry.length >= search.length && array_extract(entry, 0, search.length) == search) {
+					stack.set_length(i);
+					break;
+				}
+			}
+			(msg[length(msg)-1] as Channel).send([ret_value, ret_error]);
+			return;
+		}
+
+		if (ret_value != 0 || ret_error != 0) { //XXX
+			ret_value = [ret_value, ret_error];
+		}
+		(msg[length(msg)-1] as Channel).send(ret_value);
+	}
+
+	static function @timeout_value() {}
+	static function @error_value() {}
+
+	static function is_timeout(value): Boolean
+	{
+		return value == Channel::timeout_value#0;
+	}
+
+	static function is_error(value): Boolean
+	{
+		return value == Channel::error_value#0;
+	}
+}
+
+class ChannelSet
+{
+	static function create(): ChannelSet;
+
+	function add(channel: Channel, key);
+	function remove(channel: Channel);
+
+	function receive(): Dynamic
+	{
+		var (key, msg) = receive(Channel::error_value#0, -1, null);
+		return key, msg;
+	}
+	
+	function receive(timeout: Integer): Dynamic
+	{
+		var (key, msg) = receive(Channel::error_value#0, timeout, Channel::timeout_value#0);
+		return key, msg;
+	}
+	
+	function receive(timeout: Integer, timeout_key): Dynamic
+	{
+		var (key, msg) = receive(Channel::error_value#0, timeout, timeout_key);
+		return key, msg;
+	}
+
+	function @receive(error_key, timeout: Integer, timeout_key): Dynamic;
+}
+
+class Dispatcher
+{
+	static function register(channel: Channel, func, data)
+	{
+		if (!set) {
+			set = ChannelSet::create();
+		}
+		set.add(channel, [func, data, false]);
+	}
+
+	static function register_sync(channel: Channel, func, data)
+	{
+		if (!set) {
+			set = ChannelSet::create();
+		}
+		set.add(channel, [func, data, true]);
+	}
+
+	static function unregister(channel: Channel)
+	{
+		if (!set) {
+			set = ChannelSet::create();
+		}
+		set.remove(channel);
+	}
+
+	static function run_later(delay: Integer, func, data)
+	{
+		if (!timers) {
+			timers = [];
+		}
+
+		if (delay < 0) {
+			throw error("negative delay");
+		}
+
+		var next_time = 0;
+		if (delay > 0) {
+			next_time = add32(get_time(), delay);
+			if (next_time == 0) next_time++;
+		}
+
+		var off = timers.length;
+		for (var i=0; i<timers.length; i+=TIMER_SIZE) {
+			var time = timers[i+TIMER_time] as Integer;
+			if (time == 0) continue;
+			if (next_time == 0) {
+				off = i;
+				break;
+			}
+			if (sub32(next_time, time) < 0) {
+				off = i;
+				break;
+			}
+		}
+
+		timers.set_length(timers.length + TIMER_SIZE);
+		Array::copy(timers, off+TIMER_SIZE, timers, off, timers.length - (off+TIMER_SIZE));
+		timers[off+TIMER_time] = next_time;
+		timers[off+TIMER_func] = func;
+		timers[off+TIMER_data] = data;
+	}
+
+	static function enter_loop(): Dynamic
+	{
+		while (!leave_loop) {
+			var (r, e) = dispatch(-1);
+			if (e) dump(e);
+		}
+		var value = leave_value;
+		leave_loop = false;
+		leave_value = null;
+		return value;
+	}
+
+	static function leave_loop()
+	{
+		leave_loop = true;
+	}
+
+	static function leave_loop(value: Dynamic)
+	{
+		leave_loop = true;
+		leave_value = value;
+	}
+
+	static function dispatch()
+	{
+		dispatch(-1);
+	}
+
+	static function dispatch(timeout: Integer): Boolean
+	{
+		if (!set) {
+			set = ChannelSet::create();
+		}
+
+		if (timers != null && timers.length > 0) {
+			var off = 0, len = 0;
+
+			// get number of current immediate timers:
+			for (; len<timers.length; len+=TIMER_SIZE) {
+				var time = timers[len+TIMER_time] as Integer;
+				if (time != 0) break;
+			}
+
+			// process immediate timers:
+			for (; off<len; off+=TIMER_SIZE) {
+				var (r, e) = timers[off+TIMER_func](timers[off+TIMER_data]);
+				if (e) {
+					timers.remove(0, off+TIMER_SIZE);
+					throw e;
+				}
+			}
+			timers.remove(0, off);
+
+			// skip newly added immediate timers:
+			for (off=0; off<timers.length; off+=TIMER_SIZE) {
+				var time = timers[off+TIMER_time] as Integer;
+				if (time != 0) break;
+			}
+
+			if (off != 0) {
+				timeout = 0;
+			}
+
+			if (off < timers.length) {
+				var imm_off = off;
+				var cur_time = get_time();
+				for (; off<timers.length; off+=TIMER_SIZE) {
+					var time = timers[off+TIMER_time] as Integer;
+					var diff = sub32(time, cur_time);
+					if (diff > 0) {
+						if (timeout >= 0) {
+							timeout = min(timeout, diff);
+						}
+						else {
+							timeout = diff;
+						}
+						break;
+					}
+					var (r, e) = timers[off+TIMER_func](timers[off+TIMER_data]);
+					if (e) {
+						timers.remove(0, off+TIMER_SIZE);
+						throw e;
+					}
+				}
+				timers.remove(imm_off, off - imm_off);
+			}
+		}
+
+		var (key, msg) = set.receive(timeout);
+		if (Channel::is_error(key)) {
+			throw msg;
+		}
+
+		if (!Channel::is_timeout(key)) {
+			if (key[2]) {
+				if (!is_array(msg)) {
+					throw error("received non-array message");
+				}
+
+				var (ret_value, ret_error) = key[0](key[1], msg);
+				if (ret_value != Dispatcher::handle_async#0) {
+					if (is_array(ret_error) && length(ret_error) >= 2 && is_array(ret_error[1])) {
+						var stack = ret_error[1] as String[];
+						var search = "Dispatcher::dispatch ";
+						for (var i=stack.length-1; i>=0; i--) {
+							var entry = stack[i];
+							if (is_string(entry) && entry.length >= search.length && array_extract(entry, 0, search.length) == search) {
+								stack.set_length(i);
+								break;
+							}
+						}
+						(msg[length(msg)-1] as Channel).send([ret_value, ret_error]);
+						return true;
+					}
+
+					if (ret_value != 0 || ret_error != 0) { //XXX
+						ret_value = [ret_value, ret_error];
+					}
+					(msg[length(msg)-1] as Channel).send(ret_value);
+				}
+			}
+			else {
+				key[0](key[1], msg);
+			}
+			return true;
+		}
+		return false;
+	}
+
+	static function handle_async(): Dynamic
+	{
+		return Dispatcher::handle_async#0;
+	}
+
+	static function @get_time(): Integer;
+
+	static function integrate_async();
+}

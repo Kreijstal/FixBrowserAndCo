@@ -1,0 +1,72 @@
+Version 0.8 (2024/05/05):
+- Added support for SQLite and PostgreSQL
+- Added ability to close redirected streams in Process
+- Added conversions between strings and native charset used by OS
+- Added ability to show prompt in console and improved print functions
+- Added set_log_function to allow customization of logging (moved from FixBuild)
+- Added advanced console access
+- Added ability to obtain process ID
+- Added CRC-32 checksum to detect corruption of rollback in AtomicFile
+- Added support for WebAssembly
+- Adjusted for syntax improvements in classes
+- Changed file open modes with improved options
+- Fixed print functions by adding missing conversion to native charset
+- Fixed killing of processes not being implemented on Windows
+
+Version 0.7 (2022/12/27):
+- Added hiding of console window when redirecting process streams on Windows
+- Added computation of CRC-32 checksum
+- Added support for operators in Path
+- Fixed file synchronization on MacOS
+- Fixed moving of empty rollback in AtomicFile
+
+Version 0.6 (2022/03/14):
+- Added ability to specify new buffers when resetting ArrayStream
+- Added serialization of keys and comparison in serialized form
+- Added AtomicFile to allow atomic updates of files using transactions
+- Updated for API change in fixscript_lock_array
+- Improved array_create_view function to not require offset and length
+
+Version 0.5 (2021/10/03):
+- Added is_empty function to Path
+- Added sync function to File
+- Added ability to get native file descriptor/handle
+- Added ability to set length of file
+- Added support for file locking
+- Fixed caching of file type
+- Fixed create_directories in Path
+
+Version 0.4 (2021/05/12):
+- Added generalization of async stream interface
+- Added print_err and println_err functions
+- Added ability to get current time (both normal and monotonic)
+- Added array_create_view function
+- Added string representation of Path objects when dumping
+- Added ability to get just file name from Path
+- Added ability to get modification time of files
+- Fixed accepted async TCP sockets not being put into non-blocking mode on Linux
+- Fixed crashing due to SIGPIPE signal
+
+Version 0.3 (2020/10/13):
+- Added setting of position in ArrayStream
+- Added initial support for WebSockets
+- Added poll() implementation for non-Linux systems
+
+Version 0.2 (2020/04/20):
+- Added ability to integrate with foreign event loops
+- Added read_line function in ArrayStream and BufferedStream
+- Added read_null_string and write_null_string functions
+- Added ability to run processes
+- Added access to standard input/output/error streams
+- Added get_position function to ArrayStream
+- Added ZipReader
+- Added ability to create directories and delete files/directories
+- Renamed C functions to start with fixio prefix
+- Fixed and improved BufferedStream
+- Fixed permissions for created files on Linux
+- Fixed various bugs in async I/O
+- Fixed skip function in Stream
+- Fixed get_parent functions in Path
+
+Version 0.1 (2019/12/26):
+- Initial release

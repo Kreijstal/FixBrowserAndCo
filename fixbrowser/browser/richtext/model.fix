@@ -1,0 +1,125 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+// note: keep synced between model.fix and view.fix
+const {
+	@FLOW_text,
+	@FLOW_off,
+	@FLOW_len,
+	@FLOW_style,
+	@FLOW_SIZE
+};
+
+class Block
+{
+	var @flows;
+	var @style;
+
+	constructor create(style)
+	{
+		flows = [];
+		this.style = style;
+	}
+
+	function get_style(): Dynamic
+	{
+		return style;
+	}
+
+	function get_flow_count(): Integer
+	{
+		return length(flows)/FLOW_SIZE;
+	}
+
+	function get_flow_text(idx: Integer): String
+	{
+		var off = idx*FLOW_SIZE;
+		var text = flows[off+FLOW_text];
+		if (!text) return null;
+		return array_extract(text, flows[off+FLOW_off], flows[off+FLOW_len]);
+	}
+
+	function get_flow_raw_text(idx: Integer): String
+	{
+		return flows[idx*FLOW_SIZE+FLOW_text];
+	}
+
+	function get_flow_offset(idx: Integer): Integer
+	{
+		return flows[idx*FLOW_SIZE+FLOW_off];
+	}
+
+	function get_flow_length(idx: Integer): Integer
+	{
+		return flows[idx*FLOW_SIZE+FLOW_len];
+	}
+
+	function get_flow_style(idx: Integer): Dynamic
+	{
+		return flows[idx*FLOW_SIZE+FLOW_style];
+	}
+	
+	function add(obj)
+	{
+		add(null, 0, 0, obj);
+	}
+
+	function add(text: String, style)
+	{
+		add(text, 0, length(text), style);
+	}
+	
+	function add(text: String, off: Integer, len: Integer, style)
+	{
+		var flows = this.flows;
+		flows[] = text;
+		flows[] = off;
+		flows[] = len;
+		flows[] = style;
+	}
+
+	function set(idx: Integer, obj)
+	{
+		set(idx, null, 0, 0, obj);
+	}
+
+	function set(idx: Integer, text: String, style)
+	{
+		set(idx, text, 0, length(text), style);
+	}
+
+	function set(idx: Integer, text: String, off: Integer, len: Integer, style)
+	{
+		var flows = this.flows;
+		idx *= FLOW_SIZE;
+		flows[idx+FLOW_text] = text;
+		flows[idx+FLOW_off] = off;
+		flows[idx+FLOW_len] = len;
+		flows[idx+FLOW_style] = style;
+	}
+
+	function remove(idx: Integer)
+	{
+		array_remove(flows, idx*FLOW_SIZE, FLOW_SIZE);
+	}
+}

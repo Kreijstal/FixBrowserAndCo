@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/view";</code>
+</p>
+
+<h2>Timer class</h2>
+
+<p>
+Timer allows to run code repeatedly or with a given delay.
+</p>
+
+<p>
+It can be used in multiple modes. You can either provide the callback directly or you can
+subclass the Timer class to override the <code>run</code> method.
+</p>
+
+<ul>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#properties">Properties</a></li>
+	<li><a href="#start-stop">Starting/stopping</a></li>
+	<li><a href="#handler">Timer handler</a></li>
+	<li><a href="#time-source">Time source</a></li>
+</ul>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(interval: Integer): Timer<br>
+		static function <b>create</b>(interval: Integer, callback, data): Timer<br>
+	</code></dt>
+	<dd>
+		Creates a new timer. You can also directly provide a callback to avoid the need
+		to override the run method. The callback takes a single parameter (data) and
+		should return <code>true</code> to continue running of the timer.
+	</dd>
+	<dt><code>
+		static function <b>run</b>(interval: Integer, callback, data): Timer<br>
+		static function <b>run_once</b>(delay: Integer, callback, data): Timer<br>
+	</code></dt>
+	<dd>
+		Creates a new timer with given callback and automatically starts it. The callback
+		takes a single parameter (data) and should return <code>true</code> to continue
+		running of the timer (unless the <code>once</code> variant was used).
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>get_interval</b>(): Integer</code></dt>
+	<dd>
+		Returns the interval in milliseconds.
+	</dd>
+	<dt><code>function <b>set_interval</b>(interval: Integer)</code></dt>
+	<dd>
+		Sets the interval in milliseconds. If the new interval is different from the current
+		interval and the timer is active the timer is restarted.
+	</dd>
+	<dt><code>function <b>is_active</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the timer is currently active.
+	</dd>
+</dl>
+
+<h3 id="start-stop">Starting/stopping</h3>
+
+<dl>
+	<dt><code>function <b>start</b>()</code></dt>
+	<dd>
+		Starts the timer (does nothing if it is already started).
+	</dd>
+	<dt><code>function <b>stop</b>()</code></dt>
+	<dd>
+		Stops the timer (does nothing if it is already stopped).
+	</dd>
+	<dt><code>function <b>restart</b>()</code></dt>
+	<dd>
+		Restarts the timer (can be also called for starting the timer).
+	</dd>
+</dl>
+
+<h3 id="handler">Timer handler</h3>
+
+<dl>
+	<dt><code>virtual function <b>run</b>()</code></dt>
+	<dd>
+		Override to handle the timer. The default implementation handles calling of
+		the callback if it was provided.
+	</dd>
+</dl>
+
+<h3 id="time-source">Time source</h3>
+
+<dl>
+	<dt><code>
+		static function <b>get_time</b>(): Integer<br>
+		static function <b>get_micro_time</b>(): Integer<br>
+	</code></dt>
+	<dd>
+		Returns the time in milliseconds or microseconds from an arbitrary start. You have
+		to use wrapping arithmetic to use (eg. by using the <code>sub32</code> intrinsic function
+		to get the difference). The time source is the same used by the Timer class and
+		can differ from the other sources.
+	</dd>
+</dl>
+
+</body>
+</html>

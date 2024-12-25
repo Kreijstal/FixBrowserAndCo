@@ -1,0 +1,1253 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "util/long";
+import "util/double";
+import "util/string";
+
+const {
+	COLOR_BLACK,
+	COLOR_DARK_BLUE,
+	COLOR_DARK_GREEN,
+	COLOR_DARK_CYAN,
+	COLOR_DARK_RED,
+	COLOR_DARK_MAGENTA,
+	COLOR_DARK_YELLOW,
+	COLOR_LIGHT_GRAY,
+	COLOR_DARK_GRAY,
+	COLOR_BLUE,
+	COLOR_GREEN,
+	COLOR_CYAN,
+	COLOR_RED,
+	COLOR_MAGENTA,
+	COLOR_YELLOW,
+	COLOR_WHITE
+};
+
+const {
+	EVENT_NONE,
+	EVENT_CHAR_TYPED,
+	EVENT_KEY_PRESSED,
+	EVENT_CONSOLE_RESIZED
+};
+
+const {
+	MOD_CTRL  = 0x01,
+	MOD_SHIFT = 0x02,
+	MOD_ALT   = 0x04
+};
+
+const {
+	KEY_NONE,
+	KEY_ESCAPE,
+	KEY_F1,
+	KEY_F2,
+	KEY_F3,
+	KEY_F4,
+	KEY_F5,
+	KEY_F6,
+	KEY_F7,
+	KEY_F8,
+	KEY_F9,
+	KEY_F10,
+	KEY_F11,
+	KEY_F12,
+	KEY_PRINT_SCREEN,
+	KEY_SCROLL_LOCK,
+	KEY_PAUSE,
+	KEY_GRAVE,
+	KEY_NUM1,
+	KEY_NUM2,
+	KEY_NUM3,
+	KEY_NUM4,
+	KEY_NUM5,
+	KEY_NUM6,
+	KEY_NUM7,
+	KEY_NUM8,
+	KEY_NUM9,
+	KEY_NUM0,
+	KEY_MINUS,
+	KEY_EQUAL,
+	KEY_BACKSPACE,
+	KEY_TAB,
+	KEY_Q,
+	KEY_W,
+	KEY_E,
+	KEY_R,
+	KEY_T,
+	KEY_Y,
+	KEY_U,
+	KEY_I,
+	KEY_O,
+	KEY_P,
+	KEY_LBRACKET,
+	KEY_RBRACKET,
+	KEY_BACKSLASH,
+	KEY_CAPS_LOCK,
+	KEY_A,
+	KEY_S,
+	KEY_D,
+	KEY_F,
+	KEY_G,
+	KEY_H,
+	KEY_J,
+	KEY_K,
+	KEY_L,
+	KEY_SEMICOLON,
+	KEY_APOSTROPHE,
+	KEY_ENTER,
+	KEY_LSHIFT,
+	KEY_Z,
+	KEY_X,
+	KEY_C,
+	KEY_V,
+	KEY_B,
+	KEY_N,
+	KEY_M,
+	KEY_COMMA,
+	KEY_PERIOD,
+	KEY_SLASH,
+	KEY_RSHIFT,
+	KEY_LCONTROL,
+	KEY_LMETA,
+	KEY_LALT,
+	KEY_SPACE,
+	KEY_RALT,
+	KEY_RMETA,
+	KEY_RMENU,
+	KEY_RCONTROL,
+	KEY_INSERT,
+	KEY_DELETE,
+	KEY_HOME,
+	KEY_END,
+	KEY_PAGE_UP,
+	KEY_PAGE_DOWN,
+	KEY_LEFT,
+	KEY_UP,
+	KEY_RIGHT,
+	KEY_DOWN,
+	KEY_NUM_LOCK,
+	KEY_NUMPAD_SLASH,
+	KEY_NUMPAD_STAR,
+	KEY_NUMPAD_MINUS,
+	KEY_NUMPAD_PLUS,
+	KEY_NUMPAD_ENTER,
+	KEY_NUMPAD_DOT,
+	KEY_NUMPAD0,
+	KEY_NUMPAD1,
+	KEY_NUMPAD2,
+	KEY_NUMPAD3,
+	KEY_NUMPAD4,
+	KEY_NUMPAD5,
+	KEY_NUMPAD6,
+	KEY_NUMPAD7,
+	KEY_NUMPAD8,
+	KEY_NUMPAD9
+};
+
+class Console
+{
+	static function is_present(): Boolean;
+
+	static function get_width(): Integer;
+	static function get_height(): Integer;
+
+	static function set_active(active: Boolean);
+	static function is_active(): Boolean;
+
+	static function clear();
+	static function put_text(text: String);
+	static function put_text(text: String, off: Integer, len: Integer);
+	static function get_cursor(): Integer[];
+	static function set_cursor(x: Integer, y: Integer);
+	static function move_cursor(rel_x: Integer, rel_y: Integer);
+	static function show_cursor();
+	static function hide_cursor();
+	static function reset_color();
+	static function set_color(background: Integer, foreground: Integer);
+	static function scroll(rel_y: Integer);
+
+	static function get_event(): ConsoleEvent;
+	static function get_event(timeout: Integer): ConsoleEvent;
+}
+
+class ConsoleEvent
+{
+	static function create_none(): ConsoleEvent
+	{
+		return (EVENT_NONE << 28) as ConsoleEvent;
+	}
+
+	static function create_char_typed(char: Integer): ConsoleEvent
+	{
+		return ((EVENT_CHAR_TYPED << 28) | (char & 0x0FFFFFFF)) as ConsoleEvent;
+	}
+
+	static function create_key_pressed(key: Integer, mod: Integer): ConsoleEvent
+	{
+		return ((EVENT_KEY_PRESSED << 28) | ((mod & 0xF) << 24) | (key & 0x00FFFFFF)) as ConsoleEvent;
+	}
+
+	static function create_console_resized(width: Integer, height: Integer): ConsoleEvent
+	{
+		return ((EVENT_CONSOLE_RESIZED << 28) | (clamp(width, 0, 0x3FFF) << 14) | clamp(height, 0, 0x3FFF)) as ConsoleEvent;
+	}
+	
+	function get_type(): Integer
+	{
+		return (this as Integer) >>> 28;
+	}
+
+	function get_char(): Integer
+	{
+		return (this as Integer) & 0x0FFFFFFF;
+	}
+
+	function get_key(): Integer
+	{
+		return (this as Integer) & 0x00FFFFFF;
+	}
+
+	function get_modifiers(): Integer
+	{
+		return ((this as Integer) >>> 24) & 0xF;
+	}
+
+	function get_width(): Integer
+	{
+		return ((this as Integer) >>> 14) & 0x3FFF;
+	}
+
+	function get_height(): Integer
+	{
+		return (this as Integer) & 0x3FFF;
+	}
+
+	function to_string(): String
+	{
+		var s = {"[type="};
+		switch (get_type()) {
+			case EVENT_NONE:
+				s += "NONE";
+				break;
+
+			case EVENT_CHAR_TYPED:
+				s += "CHAR_TYPED, char="+get_char();
+				break;
+
+			case EVENT_KEY_PRESSED:
+				s += "KEY_PRESSED, key="+key_to_string(get_key())+", modifiers="+modifiers_to_string(get_modifiers());
+				break;
+
+			case EVENT_CONSOLE_RESIZED:
+				s += "CONSOLE_RESIZED, width="+get_width()+", height="+get_height();
+				break;
+
+			default:
+				s += "???";
+				break;
+		}
+		s[] = ']';
+		return s;
+	}
+}
+
+function @flag(s: String, name: String)
+{
+	if (s.length > 0) s[] = '|';
+	s += name;
+}
+
+function @modifiers_to_string(mod: Integer): String
+{
+	var s = {""};
+	if ((mod & MOD_CTRL) as Boolean) flag(s, "CTRL");
+	if ((mod & MOD_SHIFT) as Boolean) flag(s, "SHIFT");
+	if ((mod & MOD_ALT) as Boolean) flag(s, "ALT");
+	if (s.length == 0) {
+		return "(none)";
+	}
+	return s;
+}
+
+function @key_to_string(type: Integer): String
+{
+	switch (type) {
+		case KEY_NONE:             return "NONE";
+		case KEY_ESCAPE:           return "ESCAPE";
+		case KEY_F1:               return "F1";
+		case KEY_F2:               return "F2";
+		case KEY_F3:               return "F3";
+		case KEY_F4:               return "F4";
+		case KEY_F5:               return "F5";
+		case KEY_F6:               return "F6";
+		case KEY_F7:               return "F7";
+		case KEY_F8:               return "F8";
+		case KEY_F9:               return "F9";
+		case KEY_F10:              return "F10";
+		case KEY_F11:              return "F11";
+		case KEY_F12:              return "F12";
+		case KEY_PRINT_SCREEN:     return "PRINT_SCREEN";
+		case KEY_SCROLL_LOCK:      return "SCROLL_LOCK";
+		case KEY_PAUSE:            return "PAUSE";
+		case KEY_GRAVE:            return "GRAVE";
+		case KEY_NUM1:             return "NUM1";
+		case KEY_NUM2:             return "NUM2";
+		case KEY_NUM3:             return "NUM3";
+		case KEY_NUM4:             return "NUM4";
+		case KEY_NUM5:             return "NUM5";
+		case KEY_NUM6:             return "NUM6";
+		case KEY_NUM7:             return "NUM7";
+		case KEY_NUM8:             return "NUM8";
+		case KEY_NUM9:             return "NUM9";
+		case KEY_NUM0:             return "NUM0";
+		case KEY_MINUS:            return "MINUS";
+		case KEY_EQUAL:            return "EQUAL";
+		case KEY_BACKSPACE:        return "BACKSPACE";
+		case KEY_TAB:              return "TAB";
+		case KEY_Q:                return "Q";
+		case KEY_W:                return "W";
+		case KEY_E:                return "E";
+		case KEY_R:                return "R";
+		case KEY_T:                return "T";
+		case KEY_Y:                return "Y";
+		case KEY_U:                return "U";
+		case KEY_I:                return "I";
+		case KEY_O:                return "O";
+		case KEY_P:                return "P";
+		case KEY_LBRACKET:         return "LBRACKET";
+		case KEY_RBRACKET:         return "RBRACKET";
+		case KEY_BACKSLASH:        return "BACKSLASH";
+		case KEY_CAPS_LOCK:        return "CAPS_LOCK";
+		case KEY_A:                return "A";
+		case KEY_S:                return "S";
+		case KEY_D:                return "D";
+		case KEY_F:                return "F";
+		case KEY_G:                return "G";
+		case KEY_H:                return "H";
+		case KEY_J:                return "J";
+		case KEY_K:                return "K";
+		case KEY_L:                return "L";
+		case KEY_SEMICOLON:        return "SEMICOLON";
+		case KEY_APOSTROPHE:       return "APOSTROPHE";
+		case KEY_ENTER:            return "ENTER";
+		case KEY_LSHIFT:           return "LSHIFT";
+		case KEY_Z:                return "Z";
+		case KEY_X:                return "X";
+		case KEY_C:                return "C";
+		case KEY_V:                return "V";
+		case KEY_B:                return "B";
+		case KEY_N:                return "N";
+		case KEY_M:                return "M";
+		case KEY_COMMA:            return "COMMA";
+		case KEY_PERIOD:           return "PERIOD";
+		case KEY_SLASH:            return "SLASH";
+		case KEY_RSHIFT:           return "RSHIFT";
+		case KEY_LCONTROL:         return "LCONTROL";
+		case KEY_LMETA:            return "LMETA";
+		case KEY_LALT:             return "LALT";
+		case KEY_SPACE:            return "SPACE";
+		case KEY_RALT:             return "RALT";
+		case KEY_RMETA:            return "RMETA";
+		case KEY_RMENU:            return "RMENU";
+		case KEY_RCONTROL:         return "RCONTROL";
+		case KEY_INSERT:           return "INSERT";
+		case KEY_DELETE:           return "DELETE";
+		case KEY_HOME:             return "HOME";
+		case KEY_END:              return "END";
+		case KEY_PAGE_UP:          return "PAGE_UP";
+		case KEY_PAGE_DOWN:        return "PAGE_DOWN";
+		case KEY_LEFT:             return "LEFT";
+		case KEY_UP:               return "UP";
+		case KEY_RIGHT:            return "RIGHT";
+		case KEY_DOWN:             return "DOWN";
+		case KEY_NUM_LOCK:         return "NUM_LOCK";
+		case KEY_NUMPAD_SLASH:     return "NUMPAD_SLASH";
+		case KEY_NUMPAD_STAR:      return "NUMPAD_STAR";
+		case KEY_NUMPAD_MINUS:     return "NUMPAD_MINUS";
+		case KEY_NUMPAD_PLUS:      return "NUMPAD_PLUS";
+		case KEY_NUMPAD_ENTER:     return "NUMPAD_ENTER";
+		case KEY_NUMPAD_DOT:       return "NUMPAD_DOT";
+		case KEY_NUMPAD0:          return "NUMPAD0";
+		case KEY_NUMPAD1:          return "NUMPAD1";
+		case KEY_NUMPAD2:          return "NUMPAD2";
+		case KEY_NUMPAD3:          return "NUMPAD3";
+		case KEY_NUMPAD4:          return "NUMPAD4";
+		case KEY_NUMPAD5:          return "NUMPAD5";
+		case KEY_NUMPAD6:          return "NUMPAD6";
+		case KEY_NUMPAD7:          return "NUMPAD7";
+		case KEY_NUMPAD8:          return "NUMPAD8";
+		case KEY_NUMPAD9:          return "NUMPAD9";
+	}
+	return "??? "+type;
+}
+
+function print(value);
+function prompt(msg: String): String;
+function progress(msg: String);
+function beep();
+
+function @invalid_value() {}
+
+function prompt_int(msg: String): Integer
+{
+	return String::parse_int(prompt(msg), invalid_value#0 as Integer);
+}
+
+function prompt_long(msg: String): Long
+{
+	return String::parse_long(prompt(msg), null);
+}
+
+function prompt_float(msg: String): Float
+{
+	return String::parse_float(prompt(msg), invalid_value#0 as Float);
+}
+
+function prompt_double(msg: String): Double
+{
+	return String::parse_double(prompt(msg), null);
+}
+
+function prompt_password(msg: String): String
+{
+	return prompt_password(msg, '*', 256);
+}
+
+function prompt_password(msg: String, replacement_char: Integer): String
+{
+	return prompt_password(msg, replacement_char, 256);
+}
+
+function prompt_password(msg: String, replacement_char: Integer, max_length: Integer): String
+{
+	if (replacement_char == -1) {
+		throw error("invalid replacement character");
+	}
+	var handler = PromptHandler::create();
+	handler.set_replacement_char(replacement_char);
+	handler.set_max_length(max_length);
+	return prompt(msg, handler);
+}
+
+class PromptHandler
+{
+	var @replacement_char: Integer;
+	var @max_length: Integer;
+	var @history: String[];
+	var @max_history_size: Integer;
+	var @done: Boolean;
+	var @search_label: String;
+	var @text: String;
+	var @internal_text: String;
+	var @cursor: Integer;
+	var @text_updated: Boolean;
+	var @choice: Integer;
+
+	static function create(): PromptHandler
+	{
+		return create(100);
+	}
+	
+	constructor create(max_history_size: Integer)
+	{
+		replacement_char = -1;
+		max_length = 0x7FFFFFFF;
+		history = [];
+		this.max_history_size = max_history_size;
+		search_label = "(search: %s) ";
+	}
+
+	function set_replacement_char(char: Integer)
+	{
+		replacement_char = char;
+	}
+
+	function get_replacement_char(): Integer
+	{
+		return replacement_char;
+	}
+
+	function set_max_length(size: Integer)
+	{
+		max_length = size;
+	}
+
+	function get_max_length(): Integer
+	{
+		return max_length;
+	}
+
+	function set_search_label(label: String)
+	{
+		this.search_label = label;
+	}
+
+	function get_search_label(): String
+	{
+		return search_label;
+	}
+
+	function is_done(): Boolean
+	{
+		return done;
+	}
+
+	function set_text(text: String)
+	{
+		this.text = text;
+		this.internal_text = null;
+		text_updated = true;
+	}
+
+	function set_text(text: String, cursor: Integer)
+	{
+		set_text(text);
+		set_cursor(cursor);
+	}
+
+	function get_text(): String
+	{
+		if (internal_text) {
+			text = {internal_text};
+			internal_text = null;
+		}
+		return text;
+	}
+
+	function set_cursor(cursor: Integer)
+	{
+		if (cursor < 0) {
+			if (internal_text) {
+				cursor = internal_text.length;
+			}
+			else if (text) {
+				cursor = text.length;
+			}
+			else {
+				cursor = 0;
+			}
+		}
+		this.cursor = cursor;
+	}
+
+	function get_cursor(): Integer
+	{
+		return cursor;
+	}
+
+	virtual function get_history_size(): Integer
+	{
+		return history.length;
+	}
+
+	virtual function get_history_value(idx: Integer): String
+	{
+		return history[idx];
+	}
+
+	virtual function add_history_value(value: String)
+	{
+		for (var i=0; i<history.length; i++) {
+			if (history[i] == value) {
+				history.remove(i);
+				break;
+			}
+		}
+		history[] = value;
+		if (history.length > max_history_size) {
+			history.remove(0);
+		}
+	}
+
+	function get_choice(cnt: Integer): Integer
+	{
+		var choice = this.choice;
+		var result = choice % cnt;
+		if (((choice >> 31) & result) as Boolean) {
+			return result + cnt;
+		}
+		return result;
+	}
+
+	virtual function get_completion(input: String): String
+	{
+		return null;
+	}
+
+	virtual function handle_completion(): Boolean
+	{
+		var result = get_completion(get_text().substring(0, get_cursor()));
+		if (result) {
+			set_text(result + get_text().substring(get_cursor()));
+			set_cursor(result.length);
+			return true;
+		}
+		return false;
+	}
+
+	virtual function handle_event(event: ConsoleEvent): Boolean
+	{
+		return false;
+	}
+}
+
+class PromptHandlerImpl
+{
+	function set_done(done: Boolean)
+	{
+		(this as PromptHandler).done = done;
+	}
+
+	function set_internal_text(text: String)
+	{
+		(this as PromptHandler).text = null;
+		(this as PromptHandler).internal_text = text;
+		(this as PromptHandler).text_updated = false;
+	}
+
+	function set_text_updated(text_updated: Boolean)
+	{
+		(this as PromptHandler).text_updated = text_updated;
+	}
+
+	function is_text_updated(): Boolean
+	{
+		return (this as PromptHandler).text_updated;
+	}
+
+	function set_choice(choice: Integer)
+	{
+		(this as PromptHandler).choice = choice;
+	}
+}
+
+function @alloc_string(len: Integer, max_value: Integer): String
+{
+	var s = {""};
+	s.set_length(len);
+	s[0] = max_value;
+	return s;
+}
+
+function prompt(msg: String, handler: PromptHandler): String
+{
+	if (!Console::is_present()) {
+		return prompt(msg);
+	}
+
+	var value = {""};
+	var cursor = 0;
+	var replacement_char = -1;
+	var max_length = 0x7FFFFFFF;
+	if (handler) {
+		replacement_char = handler.get_replacement_char();
+		max_length = handler.get_max_length();
+		if (replacement_char != -1) {
+			if (max_length == 0x7FFFFFFF) {
+				max_length = 256;
+			}
+			// the value is expanded to maximum capacity and element size for security reasons:
+			value.set_length(max_length);
+			value[0] = -1;
+			value.clear();
+		}
+		if ((handler as PromptHandlerImpl).is_text_updated()) {
+			var initial_text = handler.get_text();
+			if (initial_text) {
+				value.append(initial_text, 0, min(initial_text.length, max_length));
+				cursor = clamp(handler.get_cursor(), 0, value.length);
+			}
+		}
+	}
+
+	var active = Console::is_active();
+	if (!active) {
+		Console::set_active(true);
+	}
+
+	var (r, e) = handle_prompt(msg, handler, value, cursor, replacement_char, max_length);
+
+	if (replacement_char != -1) {
+		if (e) {
+			value.set_length(max_length);
+			value.fill(0);
+		}
+		else {
+			var len = value.length;
+			value.set_length(max_length);
+			value.fill(len, value.length - len, 0);
+			value.set_length(len);
+		}
+	}
+
+	if (!active) {
+		var (r2, e2) = Console::set_active(false);
+	}
+
+	if (e) throw e;
+
+	if (replacement_char != -1 && r != null) {
+		var max_value = 0xFF;
+		for (var i=0; i<value.length; i++) {
+			var c = value[i];
+			if (c < 0 || c > 0xFFFF) {
+				max_value = -1;
+				c = 0;
+				break;
+			}
+			else if (c > 0xFF) {
+				max_value = 0xFFFF;
+			}
+			c = 0;
+		}
+		var (s, e2) = alloc_string(value.length, max_value);
+		if (s) {
+			Array::copy(s, 0, value, 0, value.length);
+			value.fill(0);
+			return s;
+		}
+	}
+	if (handler) {
+		handler.set_text(r);
+		if (!r) {
+			handler.set_cursor(0);
+		}
+		(handler as PromptHandlerImpl).set_text_updated(false);
+	}
+	return r;
+}
+
+function @handle_prompt(msg: String, handler: PromptHandler, value: String, cursor: Integer, replacement_char: Integer, max_length: Integer): String
+{
+	if (!handler) {
+		handler = PromptHandler::create();
+	}
+
+	(handler as PromptHandlerImpl).set_done(false);
+	
+	var completion_orig_value: String;
+	var completion_orig_cursor: Integer;
+	var completion_choice = 0;
+
+	var history_pos = handler.get_history_size();
+
+	Console::put_text(msg);
+
+	var start_pos = Console::get_cursor();
+	var end_x = start_pos[0], end_y = start_pos[1];
+	var update = true;
+	var quit = false;
+	var cancel = false;
+	var clear_value = false;
+	var modified = false;
+	var search_text: String;
+	var original_value: String;
+	var original_cursor: Integer;
+	var search_choice = 0;
+
+	macro update_search(reset) {
+		var label = {handler.get_search_label()};
+		var idx = -1;
+		for (var i=0; i<label.length; i++) {
+			if (label[i] == '%' && i+1 < label.length) {
+				var c = label[i+1];
+				if (c == 's') {
+					idx = i;
+					label.remove(i, 2);
+					i--;
+					continue;
+				}
+				else {
+					label.remove(++i);
+					continue;
+				}
+			}
+		}
+		value.clear();
+		value += label;
+		if (idx >= 0) {
+			value.insert(idx, search_text);
+			cursor = idx + search_text.length;
+		}
+		else {
+			cursor = value.length;
+		}
+		if (reset) {
+			search_choice = -1;
+			for (var i=handler.get_history_size()-1; i>=0; i--) {
+				var s = handler.get_history_value(i);
+				if (s.contains(search_text)) {
+					value += s;
+					search_choice = i;
+					break;
+				}
+			}
+		}
+		else {
+			value += handler.get_history_value(search_choice);
+		}
+		update = true;
+	}
+
+	macro prev_search() {
+		if (search_choice != -1) {
+			for (var $i=search_choice-1; $i>=0; $i--) {
+				var $s = handler.get_history_value($i);
+				if ($s.contains(search_text)) {
+					search_choice = $i;
+					update_search(false);
+					break;
+				}
+			}
+		}
+	}
+
+	macro next_search() {
+		if (search_choice != -1) {
+			for (var $i=search_choice+1, n=handler.get_history_size(); $i<n; $i++) {
+				var $s = handler.get_history_value($i);
+				if ($s.contains(search_text)) {
+					search_choice = $i;
+					update_search(false);
+					break;
+				}
+			}
+		}
+	}
+
+	macro accept_search() {
+		if (search_choice != -1) {
+			value.clear();
+			value += handler.get_history_value(search_choice);
+			cursor = value.length;
+			search_text = null;
+			original_value = null;
+			update = true;
+		}
+		else {
+			stop_search();
+		}
+	}
+
+	macro stop_search() {
+		value.clear();
+		value += original_value;
+		cursor = original_cursor;
+		search_text = null;
+		original_value = null;
+		update = true;
+	}
+
+	while (!quit || clear_value) {
+		if (update) {
+			var off = 0;
+			var x = start_pos[0];
+			var y = start_pos[1];
+			var cursor_x = x;
+			var cursor_y = y;
+			var width = Console::get_width();
+			var height = Console::get_height();
+			Console::set_cursor(x, y);
+			while (off <= value.length) {
+				var amount = min(width - x, value.length - off);
+				if (clear_value) {
+					if (replacement_char != 0) {
+						var s = {""};
+						for (var i=0; i<amount; i++) {
+							s[] = ' ';
+						}
+						Console::put_text(s);
+					}
+				}
+				else if (replacement_char != -1) {
+					if (replacement_char != 0) {
+						var s = {""};
+						for (var i=0; i<amount; i++) {
+							s[] = replacement_char;
+						}
+						Console::put_text(s);
+					}
+				}
+				else {
+					Console::put_text(value, off, amount);
+				}
+				if (cursor >= off && cursor <= off+amount) {
+					if (replacement_char != 0) {
+						cursor_x = x + (cursor - off);
+						cursor_y = y;
+						if (cursor_x == width) {
+							cursor_x = 0;
+							cursor_y++;
+						}
+					}
+				}
+				if (replacement_char != 0) {
+					x += amount;
+				}
+				off += amount;
+				if (off == value.length) {
+					var s = {""};
+					for (var i=0; i<width-x; i++) {
+						s[] = ' ';
+					}
+					Console::put_text(s);
+					var last_y = y;
+					while (last_y < end_y) {
+						for (var i=s.length; i<width; i++) {
+							s[] = ' ';
+						}
+						Console::set_cursor(0, ++last_y);
+						Console::put_text(s);
+					}
+					break;
+				}
+				if (replacement_char != 0) {
+					x = 0;
+					y++;
+				}
+				if (y >= height) {
+					Console::scroll(1);
+					start_pos[1]--;
+					cursor_y--;
+					end_y--;
+					y--;
+				}
+				Console::set_cursor(x, y);
+			}
+
+			end_x = x;
+			end_y = y;
+
+			if (cursor_y >= height) {
+				Console::scroll(1);
+				start_pos[1]--;
+				cursor_y--;
+				end_y--;
+			}
+			Console::set_cursor(cursor_x, cursor_y);
+		}
+
+		if (clear_value) {
+			clear_value = false;
+			continue;
+		}
+
+		var event = Console::get_event();
+		(handler as PromptHandlerImpl).set_internal_text(value);
+		handler.set_cursor(cursor);
+		if (completion_orig_value == null && search_text == null && replacement_char == -1 && handler.handle_event(event)) {
+			if ((handler as PromptHandlerImpl).is_text_updated()) {
+				var new_text = handler.get_text();
+				handler.set_text(null);
+				value.clear();
+				value.append(new_text, 0, min(new_text.length, max_length));
+				update = true;
+				modified = true;
+			}
+			var new_cursor = handler.get_cursor();
+			if (new_cursor != cursor) {
+				cursor = clamp(new_cursor, 0, value.length);
+				update = true;
+			}
+		}
+		else if (event.get_type() == EVENT_KEY_PRESSED) {
+			if (event.get_key() == KEY_A && event.get_modifiers() == MOD_CTRL) {
+				event = ConsoleEvent::create_key_pressed(KEY_HOME, 0);
+			}
+			if (event.get_key() == KEY_E && event.get_modifiers() == MOD_CTRL) {
+				event = ConsoleEvent::create_key_pressed(KEY_END, 0);
+			}
+			switch (event.get_key()) {
+				case KEY_ENTER:
+					if (search_text) {
+						accept_search();
+						break;
+					}
+					if (event.get_modifiers() == 0) {
+						quit = true;
+						if (replacement_char != -1) {
+							clear_value = true;
+						}
+					}
+					break;
+					
+				case KEY_C, KEY_D:
+					if (event.get_modifiers() == MOD_CTRL) {
+						if (completion_orig_value != null && event.get_key() == KEY_C) {
+							value.clear();
+							value += completion_orig_value;
+							cursor = completion_orig_cursor;
+							completion_orig_value = null;
+							update = true;
+							modified = true;
+							break;
+						}
+						if (search_text != null && event.get_key() == KEY_C) {
+							stop_search();
+							clear_value = true;
+							break;
+						}
+						if (event.get_key() == KEY_D) {
+							(handler as PromptHandlerImpl).set_done(true);
+							if (search_text) {
+								clear_value = true;
+							}
+						}
+						quit = true;
+						cancel = true;
+						if (replacement_char != -1) {
+							clear_value = true;
+						}
+					}
+					break;
+
+				case KEY_BACKSPACE:
+					if (event.get_modifiers() == 0) {
+						if (search_text) {
+							if (search_text.length > 0) {
+								search_text.set_length(search_text.length-1);
+								update_search(true);
+							}
+							else {
+								stop_search();
+							}
+						}
+						else if (cursor > 0) {
+							value.remove(--cursor);
+							update = true;
+						}
+					}
+					completion_orig_value = null;
+					break;
+
+				case KEY_DELETE:
+					if (replacement_char == 0) break;
+					if (search_text) break;
+					if (event.get_modifiers() == 0) {
+						if (cursor < value.length) {
+							value.remove(cursor);
+							update = true;
+							modified = true;
+						}
+					}
+					completion_orig_value = null;
+					break;
+
+				case KEY_LEFT:
+					if (replacement_char == 0) break;
+					if (search_text) break;
+					if (cursor > 0) {
+						cursor--;
+						update = true;
+					}
+					completion_orig_value = null;
+					break;
+
+				case KEY_RIGHT:
+					if (replacement_char == 0) break;
+					if (search_text) break;
+					if (cursor < value.length) {
+						cursor++;
+						update = true;
+					}
+					completion_orig_value = null;
+					break;
+
+				case KEY_HOME:
+					if (replacement_char == 0) break;
+					if (search_text) break;
+					if (cursor > 0) {
+						cursor = 0;
+						update = true;
+					}
+					completion_orig_value = null;
+					break;
+
+				case KEY_END:
+					if (replacement_char == 0) break;
+					if (search_text) break;
+					if (cursor < value.length) {
+						cursor = value.length;
+						update = true;
+					}
+					completion_orig_value = null;
+					break;
+
+				case KEY_TAB: {
+					if (replacement_char != -1) break;
+					if (search_text) break;
+					var shift = (event.get_modifiers() == MOD_SHIFT);
+					if (!completion_orig_value) {
+						completion_orig_value = {value};
+						completion_orig_cursor = cursor;
+						completion_choice = shift? 0 : -1;
+					}
+					handler.set_text({completion_orig_value});
+					handler.set_cursor(completion_orig_cursor);
+					(handler as PromptHandlerImpl).set_choice(shift? --completion_choice : ++completion_choice);
+					var has_completion = handler.handle_completion();
+					var new_text = handler.get_text();
+					var new_cursor = handler.get_cursor();
+					handler.set_text(null);
+					handler.set_cursor(0);
+					(handler as PromptHandlerImpl).set_choice(0);
+					if (has_completion) {
+						value.clear();
+						value.append(new_text, 0, min(new_text.length, max_length));
+						cursor = clamp(new_cursor, 0, value.length);
+						update = true;
+						modified = true;
+					}
+					else {
+						if (completion_choice > 1) {
+							value.clear();
+							value += completion_orig_value;
+							cursor = completion_orig_cursor;
+							update = true;
+							modified = true;
+						}
+						completion_orig_value = null;
+					}
+					break;
+				}
+
+				case KEY_ESCAPE:
+					if (search_text) {
+						stop_search();
+					}
+					else if (completion_orig_value) {
+						value.clear();
+						value += completion_orig_value;
+						cursor = completion_orig_cursor;
+						completion_orig_value = null;
+						update = true;
+						modified = true;
+					}
+					break;
+
+				case KEY_UP:
+					if (replacement_char == -1) {
+						if (search_text) {
+							prev_search();
+							break;
+						}
+						var size = handler.get_history_size();
+						if (modified) {
+							if (value.trim() != "") {
+								handler.add_history_value({value});
+							}
+							size = handler.get_history_size();
+							history_pos = size;
+							modified = false;
+						}
+						if (history_pos > 0 && history_pos <= size) {
+							value.clear();
+							value += handler.get_history_value(--history_pos);
+							cursor = value.length;
+							update = true;
+						}
+					}
+					break;
+
+				case KEY_DOWN:
+					if (replacement_char == -1) {
+						if (search_text) {
+							next_search();
+							break;
+						}
+						var size = handler.get_history_size();
+						if (modified) {
+							if (value.trim() != "") {
+								handler.add_history_value({value});
+							}
+							size = handler.get_history_size();
+							history_pos = size-1;
+							modified = false;
+						}
+						if (history_pos >= 0 && history_pos < size) {
+							value.clear();
+							if (++history_pos < size) {
+								value += handler.get_history_value(history_pos);
+							}
+							cursor = value.length;
+							update = true;
+						}
+					}
+					break;
+
+				case KEY_R:
+					if (replacement_char != -1) break;
+					if (event.get_modifiers() == MOD_CTRL) {
+						if (search_text) {
+							prev_search();
+						}
+						else {
+							original_value = {value};
+							original_cursor = cursor;
+							search_text = {""};
+							update_search(true);
+						}
+					}
+					break;
+			}
+		}
+		else if (event.get_type() == EVENT_CHAR_TYPED) {
+			if (search_text) {
+				search_text[] = event.get_char();
+				update_search(true);
+			}
+			else if (value.length < max_length) {
+				value.insert_char(cursor++, event.get_char());
+				update = true;
+				modified = true;
+				completion_orig_value = null;
+			}
+		}
+	}
+
+	if (end_x > 0) {
+		end_x = 0;
+		end_y++;
+		if (end_y == Console::get_height()) {
+			Console::scroll(1);
+			end_y--;
+		}
+	}
+	Console::set_cursor(end_x, end_y);
+	if (replacement_char == -1) {
+		if (value.trim() != "") {
+			handler.add_history_value({value});
+		}
+	}
+	if (cancel) {
+		if (replacement_char != -1) {
+			value.set_length(max_length);
+			value.fill(0);
+		}
+		value = null;
+	}
+	handler.set_cursor(cursor);
+	return value;
+}

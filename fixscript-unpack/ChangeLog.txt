@@ -1,0 +1,14 @@
+Version 0.4 (2024/05/05):
+- Relaxed parsing of parameters to allow better interoperability with other token processors
+- Changed syntax for named packed parameters to not collide with type declarations
+- Fixed special handling of 'this' to be applied to the first parameter only
+
+Version 0.3 (2021/10/03):
+- Adjusted for new symbol representation in tokens
+
+Version 0.2 (2021/05/12):
+- Changed to use script_line function for error reporting
+- Fixed determination of nesting level
+
+Version 0.1 (2020/04/19):
+- Initial release

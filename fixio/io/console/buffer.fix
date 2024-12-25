@@ -1,0 +1,378 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/console";
+
+const SIMPLE_BOX = "+-+||+-+";
+const BEVEL_BOX  = "/-\\||\\-/";
+const SINGLE_BOX = "\u250C\u2500\u2510\u2502\u2502\u2514\u2500\u2518";
+const DOUBLE_BOX = "\u2554\u2550\u2557\u2551\u2551\u255A\u2550\u255D";
+
+class ScreenBuffer
+{
+	var @width: Integer;
+	var @height: Integer;
+	var @offset: Integer;
+	var @stride: Integer;
+	var @colors: Byte[];
+	var @chars: Integer[];
+	var @clip_x1: Integer;
+	var @clip_y1: Integer;
+	var @clip_x2: Integer;
+	var @clip_y2: Integer;
+	var @off_x: Integer;
+	var @off_y: Integer;
+
+	constructor create(width: Integer, height: Integer)
+	{
+		if (width < 1 || height < 1) {
+			throw error("invalid width or height");
+		}
+
+		this.width = width;
+		this.height = height;
+		this.stride = width;
+		this.colors = Array::create_shared(width*height, 1);
+		this.chars = Array::create_shared(width*height, 4);
+		this.clip_x2 = width;
+		this.clip_y2 = height;
+	}
+
+	function get_width(): Integer
+	{
+		return width;
+	}
+
+	function get_height(): Integer
+	{
+		return height;
+	}
+
+	function get_view(): ScreenBuffer
+	{
+		return get_view(0, 0, width, height);
+	}
+
+	function get_view(x: Integer, y: Integer, width: Integer, height: Integer): ScreenBuffer
+	{
+		if (width < 1 || height < 1) {
+			throw error("invalid width or height");
+		}
+		if (x < 0 || y < 0 || x+width > this.width || y+height > this.height) {
+			throw error("screen buffer bounds exceeded");
+		}
+
+		var buf = new ScreenBuffer;
+		buf.width = width;
+		buf.height = height;
+		buf.offset = offset + y*stride+x;
+		buf.stride = stride;
+		buf.colors = colors;
+		buf.chars = chars;
+		buf.clip_x2 = width;
+		buf.clip_y2 = height;
+		return buf;
+	}
+
+	function reset()
+	{
+		(this as Dynamic[]).set_length(ScreenBuffer::SIZE);
+		clip_x1 = 0;
+		clip_y1 = 0;
+		clip_x2 = width;
+		clip_y2 = height;
+		off_x = 0;
+		off_y = 0;
+	}
+
+	function push()
+	{
+		var arr = this as Integer[];
+		arr[] = clip_x1;
+		arr[] = clip_y1;
+		arr[] = clip_x2;
+		arr[] = clip_y2;
+		arr[] = off_x;
+		arr[] = off_y;
+	}
+
+	function pop()
+	{
+		var arr = this as Integer[];
+		var base = arr.length-6;
+		if (base < ScreenBuffer::SIZE) {
+			throw error("unmatched pop operation");
+		}
+		clip_x1 = arr[base+0];
+		clip_y1 = arr[base+1];
+		clip_x2 = arr[base+2];
+		clip_y2 = arr[base+3];
+		off_x = arr[base+4];
+		off_y = arr[base+5];
+		arr.set_length(base);
+	}
+
+	function clip(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		x += off_x;
+		y += off_y;
+		clip_x1 = max(clip_x1, x);
+		clip_y1 = max(clip_y1, y);
+		clip_x2 = min(clip_x2, x+width);
+		clip_y2 = min(clip_y2, y+height);
+	}
+
+	function translate(dx: Integer, dy: Integer)
+	{
+		off_x += dx;
+		off_y += dy;
+	}
+
+	function put_char(x: Integer, y: Integer, background: Integer, foreground: Integer, char: Integer)
+	{
+		x += off_x;
+		y += off_y;
+		if (x < clip_x1 || y < clip_y1 || x >= clip_x2 || y >= clip_y2) {
+			return;
+		}
+
+		var off = offset + y * stride + x;
+		colors[off] = ((background & 15) << 4) | (foreground & 15);
+		chars[off] = char;
+	}
+
+	function put_text(x: Integer, y: Integer, background: Integer, foreground: Integer, text: String)
+	{
+		put_text(x, y, background, foreground, text, 0, text.length);
+	}
+
+	function put_text(x: Integer, y: Integer, background: Integer, foreground: Integer, text: String, off: Integer, len: Integer)
+	{
+		if (off < 0 || len < 0 || off+len > text.length) {
+			throw error("string out of bounds");
+		}
+
+		y += off_y;
+		if (y < clip_y1 || y >= clip_y2) {
+			return;
+		}
+
+		var x1 = off_x + x;
+		var x2 = x1 + len;
+		var orig_x1 = x1;
+
+		x1 = max(x1, clip_x1);
+		x2 = min(x2, clip_x2);
+		if (x1 >= x2) {
+			return;
+		}
+
+		off += x1 - orig_x1;
+
+		var colors = this.colors;
+		var chars = this.chars;
+		var dest_off = offset + y * stride + x1;
+		var color = ((background & 15) << 4) | (foreground & 15);
+		for (var i=x1; i<x2; i++) {
+			colors[dest_off] = color;
+			chars[dest_off++] = text[off++];
+		}
+	}
+
+	function fill(background: Integer, foreground: Integer, char: Integer)
+	{
+		fill(0, 0, width, height, background, foreground, char);
+	}
+
+	function fill(x: Integer, y: Integer, width: Integer, height: Integer, background: Integer, foreground: Integer, char: Integer)
+	{
+		var x1 = off_x + x;
+		var y1 = off_y + y;
+		var x2 = x1 + width;
+		var y2 = y1 + height;
+
+		x1 = max(x1, clip_x1);
+		y1 = max(y1, clip_y1);
+		x2 = min(x2, clip_x2);
+		y2 = min(y2, clip_y2);
+		if (x1 >= x2 || y1 >= y2) {
+			return;
+		}
+
+		var colors = this.colors;
+		var chars = this.chars;
+		var off = offset + y1 * stride + x1;
+		var color = ((background & 15) << 4) | (foreground & 15);
+		var next_line = stride - (x2 - x1);
+		for (var i=y1; i<y2; i++) {
+			for (var j=x1; j<x2; j++) {
+				colors[off] = color;
+				chars[off++] = char;
+			}
+			off += next_line;
+		}
+	}
+
+	function draw_box(x: Integer, y: Integer, width: Integer, height: Integer, background: Integer, foreground: Integer, box_chars: String)
+	{
+		put_char(x, y, background, foreground, box_chars[0]);
+		fill(x+1, y, width-2, 1, background, foreground, box_chars[1]);
+		put_char(x+width-1, y, background, foreground, box_chars[2]);
+
+		fill(x, y+1, 1, height-2, background, foreground, box_chars[3]);
+		fill(x+width-1, y+1, 1, height-2, background, foreground, box_chars[4]);
+
+		put_char(x, y+height-1, background, foreground, box_chars[5]);
+		fill(x+1, y+height-1, width-2, 1, background, foreground, box_chars[6]);
+		put_char(x+width-1, y+height-1, background, foreground, box_chars[7]);
+	}
+
+	function draw_buffer(x: Integer, y: Integer, buf: ScreenBuffer)
+	{
+		draw_buffer(x, y, 0, 0, buf.get_width(), buf.get_height(), buf);
+	}
+
+	function draw_buffer(dest_x: Integer, dest_y: Integer, src_x: Integer, src_y: Integer, width: Integer, height: Integer, buf: ScreenBuffer)
+	{
+		if (src_x + width > buf.width) {
+			width = buf.width - src_x;
+		}
+		if (src_y + height > buf.height) {
+			height = buf.height - src_y;
+		}
+
+		var x1 = off_x + dest_x;
+		var y1 = off_y + dest_y;
+		var x2 = x1 + width;
+		var y2 = y1 + height;
+
+		var orig_x1 = x1;
+		var orig_y1 = y1;
+
+		x1 = max(x1, clip_x1);
+		y1 = max(y1, clip_y1);
+		x2 = min(x2, clip_x2);
+		y2 = min(y2, clip_y2);
+		if (x1 >= x2 || y1 >= y2) {
+			return;
+		}
+
+		src_x += x1 - orig_x1;
+		src_y += y1 - orig_y1;
+
+		var dest_colors = this.colors;
+		var dest_chars = this.chars;
+		var src_colors = buf.colors;
+		var src_chars = buf.chars;
+		var dest_off = this.offset + y1 * this.stride + x1;
+		var src_off = buf.offset + src_y * buf.stride + src_x;
+		var dest_next_line = this.stride - (x2 - x1);
+		var src_next_line = buf.stride - (x2 - x1);
+		for (var i=y1; i<y2; i++) {
+			for (var j=x1; j<x2; j++) {
+				var char = src_chars[src_off];
+				if (char as Boolean) {
+					dest_colors[dest_off] = src_colors[src_off];
+					dest_chars[dest_off] = char;
+				}
+				dest_off++;
+				src_off++;
+			}
+			dest_off += dest_next_line;
+			src_off += src_next_line;
+		}
+	}
+
+	function update_console()
+	{
+		update_console(0, 0, 0, 0, width, height);
+	}
+
+	function update_console(x: Integer, y: Integer)
+	{
+		update_console(x, y, 0, 0, width, height);
+	}
+
+	function update_console(dest_x: Integer, dest_y: Integer, src_x: Integer, src_y: Integer, width: Integer, height: Integer)
+	{
+		var x1 = dest_x;
+		var y1 = dest_y;
+		var x2 = x1 + width;
+		var y2 = y1 + height;
+
+		if (x1 < 0) {
+			src_x += -x1;
+			x1 = 0;
+		}
+		if (y1 < 0) {
+			src_y += -y1;
+			y1 = 0;
+		}
+
+		x2 = min(min(x2, Console::get_width()), x1 + (this.width - src_x));
+		y2 = min(min(y2, Console::get_height()), y1 + (this.height - src_y));
+
+		if (x1 >= x2 || y1 >= y2) {
+			return;
+		}
+
+		var colors = this.colors;
+		var chars = this.chars;
+		var off = offset + src_y * stride + src_x;
+		var cur_color = -1;
+		var next_line = stride - (x2 - x1);
+
+		for (var i=y1; i<y2; i++) {
+			var start = off;
+			Console::set_cursor(x1, i);
+			for (var j=x1; j<x2; j++) {
+				if (chars[off] == 0) {
+					if (off > start) {
+						Console::put_text(chars as String, start, off-start);
+					}
+					while (j < x2 && chars[off] == 0) {
+						off++;
+						j++;
+					}
+					Console::set_cursor(j--, i);
+					start = off;
+					continue;
+				}
+				var color = colors[off];
+				if (color != cur_color) {
+					if (off > start) {
+						Console::put_text(chars as String, start, off-start);
+						start = off;
+					}
+					Console::set_color(color >> 4, color & 15);
+					cur_color = color;
+				}
+				off++;
+			}
+			if (off > start) {
+				Console::put_text(chars as String, start, off-start);
+			}
+			off += next_line;
+		}
+	}
+}

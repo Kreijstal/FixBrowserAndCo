@@ -1,0 +1,401 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "unpack";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/scrollview";
+import "gui/pure/panel";
+import "gui/pure/button";
+import "gui/pure/scrollbar";
+import "gui/pure/scrollview";
+import "gui/pure/common";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/richtext/default";
+import "browser/view/view";
+import "browser/view/tabbar";
+import "browser/view/mainbar";
+import "browser/about";
+
+const @DEBUG_RICHTEXT = 0;
+const @SHOW_TABBAR = 1;
+
+class MainWindow: Window
+{
+	var @area: AreaView;
+	var @richtext: RichTextView;
+	var @tabbar: TabBar;
+	var @mainbar: MainBar;
+	var @switcher: Switcher;
+	var @divider: Divider;
+	var @has_hover_status: Boolean;
+	var @max_heap_idx: Integer;
+
+	constructor create()
+	{
+		super::create("FixBrowser", 1024, 700, WIN_CENTER | WIN_RESIZABLE | WIN_MENUBAR | WIN_STATUSBAR);
+
+		area = AreaView::create(this);
+		add(AreaWrapper::create(this, area));
+
+		if (DEBUG_RICHTEXT != 0) {
+			richtext = RichTextView::create();
+			area.add(richtext);
+		}
+		else {
+			switcher = Switcher::create();
+			area.add(switcher);
+		}
+
+		if (SHOW_TABBAR != 0) {
+			mainbar = MainBar::create();
+			area.add(mainbar);
+
+			tabbar = TabBar::create(TABBAR_HORIZONTAL);
+			tabbar.set_change_action(MainWindow::handle_tab_change#3, this);
+			tabbar.add_tab("Test1", TabData::create());
+			tabbar.add_tab("Test2", TabData::create());
+			tabbar.add_tab("Test3", TabData::create());
+			area.add(tabbar);
+		}
+
+		divider = Divider::create();
+		area.add(divider);
+
+		if (DEBUG_RICHTEXT != 0) {
+			richtext.focus();
+		}
+
+		var menu = Menu::create();
+
+		var file_menu = Menu::create();
+		file_menu.add_item("E&xit\tAlt+F4", MainWindow::handle_menu#2, this, 0);
+		menu.add_submenu("&File", file_menu);
+
+		var help_menu = Menu::create();
+		help_menu.add_item("&About...", MainWindow::handle_menu#2, this, 1);
+		menu.add_submenu("&Help", help_menu);
+
+		set_menu(menu);
+		set_status_text("Done.");
+
+		//Timer::run(1000, MainWindow::monitor_heap#1, this);
+	}
+
+	function @handle_tab_change(idx: Integer, prev_idx: Integer)
+	{
+		var data = tabbar.get_selected_data() as TabData;
+		if (!data.webview) {
+			data.webview = WebView::create();
+			data.webview.set_title_handler(MainWindow::set_tab_title#2, [this, data]);
+			data.webview.set_status_handler(MainWindow::set_status#2, MainWindow::set_hover_status#2, [this, data]);
+			data.webview.open_url("https://www.fixbrowser.org/");
+		}
+		switcher.show_view(data.webview);
+		mainbar.set_go_action(WebView::open_url#2, data.webview);
+		mainbar.set_history_actions(WebView::back#1, WebView::forward#1, WebView::reload#1, WebView::stop#1, data.webview);
+		if (prev_idx != -1) {
+			var prev_data = tabbar.get_tab_data(prev_idx) as TabData;
+			if (prev_data.webview) {
+				prev_data.webview.set_history_handler(null, null);
+			}
+		}
+		data.webview.set_history_handler(MainBar::handle_history#3, mainbar);
+		([this, data] as MainWindow).set_hover_status(null);
+		data.webview.focus();
+		var title = tabbar.get_tab_title(idx);
+		if (title) {
+			set_title(title+" - FixBrowser");
+		}
+		else {
+			set_title("FixBrowser");
+		}
+	}
+
+	override function handle_destroy()
+	{
+		AboutWindow::hide();
+	}
+
+	function @handle_menu(id)
+	{
+		switch (id) {
+			case 0: destroy(); break;
+			case 1: AboutWindow::show(); break;
+		}
+	}
+
+	function @set_tab_title([data: TabData], title: String)
+	{
+		var idx = tabbar.find_tab(data);
+		if (idx != -1) {
+			tabbar.set_tab_title(idx, title);
+			if (data.webview === switcher.get_view()) {
+				if (title) {
+					set_title(title+" - FixBrowser");
+				}
+				else {
+					set_title("FixBrowser");
+				}
+			}
+		}
+	}
+
+	function @set_status([data: TabData], text: String)
+	{
+		data.cur_status_text = text;
+		if (!has_hover_status && data.webview === switcher.get_view()) {
+			set_status_text(text);
+		}
+	}
+
+	function @set_hover_status([data: TabData], text: String)
+	{
+		if (text) {
+			set_status_text(text);
+			has_hover_status = true;
+		}
+		else {
+			var cur_status_text = "";
+			var cur_data = tabbar.get_selected_data() as TabData;
+			if (cur_data) {
+				cur_status_text = cur_data.cur_status_text;
+			}
+			set_status_text(cur_status_text);
+			has_hover_status = false;
+		}
+	}
+
+	override function handle_resize()
+	{
+		var rect = get_content_rect();
+		area.as_view().set_rect(rect);
+
+		if (SHOW_TABBAR != 0) {
+			tabbar.set_rect(0, 0, rect.get_width(), 27);
+			rect.y1 += 27;
+			mainbar.set_rect(0, rect.y1, rect.get_width(), 35);
+			rect.y1 += 35;
+		}
+		if (get_theme_type() == THEME_WINDOWS_CLASSIC) {
+			rect.y2--;
+			divider.set_rect(0, rect.y2, rect.x2, 1);
+		}
+		else {
+			divider.set_rect(0, 0, 0, 0);
+		}
+		if (DEBUG_RICHTEXT != 0) {
+			richtext.set_rect(rect);
+		}
+		else {
+			switcher.set_rect(rect);
+		}
+	}
+
+	function @monitor_heap(): Boolean
+	{
+		max_heap_idx = max(max_heap_idx, [] as Integer);
+		heap_collect();
+		log("heap="+heap_size()+"KB max_index="+max_heap_idx);
+		return true;
+	}
+}
+
+class TabData
+{
+	var @webview: WebView;
+	var @cur_status_text: String;
+
+	constructor create()
+	{
+		cur_status_text = "";
+	}
+}
+
+class Switcher: SubView
+{
+	constructor create()
+	{
+	}
+
+	function show_view(view: SubView)
+	{
+		if (get_child_count() > 0) {
+			remove(get_child(0));
+		}
+		add(view);
+		handle_resize();
+	}
+
+	function get_view(): SubView
+	{
+		return get_child_count() > 0? get_child(0) : null;
+	}
+
+	override function handle_resize()
+	{
+		if (get_child_count() > 0) {
+			get_child(0).set_rect(0, 0, get_width(), get_height());
+		}
+	}
+}
+
+class AreaView: SubView
+{
+	var @main: MainWindow;
+
+	constructor create(main: MainWindow)
+	{
+		this.main = main;
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		if (DEBUG_RICHTEXT != 0) {
+			return false;
+		}
+		var webview = main.switcher.get_view() as WebView;
+		if (webview) {
+			return webview.pass_key_event(event);
+		}
+		return false;
+	}
+}
+
+class AreaWrapper: SubViewWrapper
+{
+	var @main: MainWindow;
+	
+	constructor create(main: MainWindow, subview: SubView)
+	{
+		super::create(subview);
+		this.main = main;
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (DEBUG_RICHTEXT != 0) {
+			return super.handle_key_event(event);
+		}
+		var webview = main.switcher.get_view() as WebView;
+		if (event.get_type() == EVENT_KEY_DOWN && (event.get_modifiers() & (MOD_CTRL | MOD_ALT | MOD_SHIFT)) == MOD_CTRL) {
+			switch (event.get_key()) {
+				case KEY_L: main.mainbar.focus_url_bar(); return true;
+				case KEY_R: if (webview) webview.reload(); return true;
+				case KEY_PAGE_UP: {
+					var cur = main.tabbar.get_selected_tab();
+					if (cur > 0) {
+						main.tabbar.select_tab(cur-1);
+					}
+					return true;
+				}
+				case KEY_PAGE_DOWN: {
+					var cur = main.tabbar.get_selected_tab();
+					if (cur < main.tabbar.get_tab_count()-1) {
+						main.tabbar.select_tab(cur+1);
+					}
+					return true;
+				}
+			}
+		}
+		if (event.get_type() == EVENT_KEY_DOWN && (event.get_modifiers() & (MOD_CTRL | MOD_ALT | MOD_SHIFT)) == MOD_ALT) {
+			switch (event.get_key()) {
+				case KEY_LEFT: if (webview) webview.back(); return true;
+				case KEY_RIGHT: if (webview) webview.forward(); return true;
+			}
+		}
+		if (event.get_type() == EVENT_KEY_DOWN && (event.get_modifiers() & (MOD_CTRL | MOD_ALT | MOD_SHIFT)) == 0) {
+			if (event.get_key() == KEY_ESCAPE) {
+				if (webview) {
+					webview.stop();
+				}
+				return true;
+			}
+		}
+		return super.handle_key_event(event);
+	}
+}
+
+class Resizer: SubView
+{
+	constructor create(content: SubView)
+	{
+		add(content);
+		add(ResizeButton::create(this));
+	}
+
+	override function handle_resize()
+	{
+		get_child(0).set_rect(0, 0, get_width(), get_height());
+		get_child(1).set_rect(get_width()-8, get_height()-8, 8, 8);
+	}
+}
+
+class @ResizeButton: PureButton
+{
+	var @resizer: Resizer;
+	var @orig_x: Integer;
+	var @orig_y: Integer;
+
+	constructor create(resizer: Resizer)
+	{
+		super::create("");
+		this.resizer = resizer;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_DOWN) {
+			orig_x = event.get_x();
+			orig_y = event.get_y();
+		}
+		else if (event.get_type() == EVENT_MOUSE_DRAG) {
+			var dx = event.get_x() - orig_x;
+			var dy = event.get_y() - orig_y;
+			resizer.set_rect(resizer.get_x(), resizer.get_y(), resizer.get_width() + dx, resizer.get_height() + dy);
+		}
+		return super.handle_mouse_event(event);
+	}
+}
+
+class Divider: SubView
+{
+	constructor create()
+	{
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		p.fill_rect(0, 0, get_width(), get_height(), 0xFFBBBBBB);
+	}
+}
+
+function init()
+{
+	WebView::init();
+	MainWindow::create().set_visible(true);
+}

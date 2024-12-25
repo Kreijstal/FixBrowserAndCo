@@ -1,0 +1,191 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/content/content_data";
+
+var @subview_line_part: SubViewLinePart;
+
+class SubViewObject: InlineObject
+{
+	var @root: SubViewObjectRoot;
+	var @view: SubView;
+	var @width: Size;
+	var @ascent: Integer;
+	var @descent: Integer;
+
+	var @block: BlockView;
+	var @id: Integer;
+	var @cur_x: Integer;
+	var @cur_y: Integer;
+	var @cur_width: Integer;
+
+	var @ignore_repaint: Boolean;
+
+	constructor create(view: SubView, width: Size, ascent: Integer, descent: Integer, content_data: ContentData, mirror: MirrorState)
+	{
+		super::create(null, null, null, content_data, mirror);
+		this.root = SubViewObjectRoot::create(this);
+		this.view = view;
+		this.width = width;
+		this.ascent = ascent;
+		this.descent = descent;
+		view.set_root(root);
+	}
+
+	function set_width(width: Size)
+	{
+		this.width = width;
+	}
+
+	function set_height(ascent: Integer, descent: Integer)
+	{
+		this.ascent = ascent;
+		this.descent = descent;
+	}
+
+	function add_to_line(line: LineBuilder)
+	{
+		var real_width = 32;
+		if (width.is_pixels()) {
+			real_width = width.get_pixels();
+		}
+		else if (width.is_fraction()) {
+			real_width = iround(line.get_width() * width.get_fraction());
+		}
+		line.add_part(real_width, ascent, descent, 0, SubViewLinePart::get(), this);
+	}
+}
+
+class @SubViewObjectRoot: SubViewRoot
+{
+	var @obj: SubViewObject;
+
+	constructor create(obj: SubViewObject)
+	{
+		this.obj = obj;
+	}
+
+	override function focus()
+	{
+		var focus_subview = obj.content_data.focus_subview;
+		if (focus_subview) {
+			var view = focus_subview.get_current_focus();
+			if (view) {
+				view.unfocus();
+			}
+		}
+		obj.content_data.focus_subview = obj.view;
+		obj.content_data.view.focus();
+	}
+
+	override function has_focus(): Boolean
+	{
+		return obj.content_data.focus_subview === obj.view;
+	}
+
+	override function repaint(rect: Rect)
+	{
+		if (obj.ignore_repaint) return;
+
+		obj.block.repaint_part(obj.id, rect.x1, -obj.ascent + rect.y1, rect.get_width(), rect.get_height());
+	}
+
+	override function set_cursor(cursor)
+	{
+	}
+
+	override function show_menu(menu: Menu, x: Integer, y: Integer)
+	{
+		x += obj.cur_x;
+		y += obj.cur_y - obj.ascent;
+		var point = [x, y];
+		var top = obj.block.get_layer().get_top_layer(point);
+		obj.content_data.show_menu(top, point[0], point[1], menu);
+	}
+}
+
+class SubViewLinePart: InlineLinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): SubViewLinePart
+	{
+		var handler = subview_line_part;
+		if (!handler) {
+			handler = create();
+			subview_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function get_text_position(x: Integer, text: String, off: Integer, len: Integer, data): Float
+	{
+		var obj = data as SubViewObject;
+		return fmax(0.0, fmin(float(x) / float(obj.cur_width), 1.0));
+	}
+
+	override function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+		var obj = data as SubViewObject;
+		obj.mirror.part_added(block, id, x, y, width, ascent, descent, overdraw, 0, 0, data);
+		//log("id="+id+" x="+x+" y="+y+" width="+width+" ascent="+ascent+" descent="+descent);
+		obj.block = block;
+		obj.id = id;
+		obj.cur_x = x;
+		obj.cur_y = y;
+		obj.cur_width = width;
+		obj.ignore_repaint = true;
+		obj.view.set_rect(0, 0, width, obj.ascent+obj.descent);
+		obj.ignore_repaint = false;
+	}
+
+	override function paint_content(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, hover: Boolean, data)
+	{
+		var obj = data as SubViewObject;
+		p.push();
+		p.translate(x, y-obj.ascent);
+		p.clip(0, 0, obj.cur_width, obj.ascent+obj.descent);
+		obj.view.draw(p);
+		p.pop();
+	}
+	
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		var obj = data as SubViewObject;
+		event.translate(0, obj.ascent);
+		log("view="+event.to_string());
+		var ret = obj.view.process_event(event);
+		obj.content_data.view.set_cursor(obj.view.get_current_cursor(event));
+		return ret;
+	}
+}

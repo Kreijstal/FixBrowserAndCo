@@ -1,0 +1,376 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/time";
+import "io/tcp";
+import "util/string";
+import "util/base64";
+
+const @BUF_SIZE = 4096;
+
+var @out_buf: Byte[];
+
+class WebSocket
+{
+	var @conn: TCPConnection;
+	var @server: Boolean;
+	var @buf: Byte[];
+	var @packet: Byte[];
+	var @closing: Boolean;
+
+	static function create_server(conn: TCPConnection): WebSocket
+	{
+		var stream = BufferedStream::create(conn);
+
+		var buf = {""};
+		stream.read_line(buf, 4096);
+		if (buf.length < 13) throw error("invalid header");
+		if (buf.substring(0, 4) != "GET ") throw error("invalid header");
+		if (buf.substring(buf.length-9) != " HTTP/1.1") throw error("invalid header");
+		var headers: String[String] = {};
+		for (;;) {
+			if (headers.length > 128) throw error("too many headers");
+			stream.read_line(buf, 4096);
+			if (buf.length == 0) break;
+
+			var idx = -1;
+			for (var i=0; i<buf.length; i++) {
+				if (buf[i] == ':') {
+					idx = i;
+					break;
+				}
+			}
+			if (idx == -1) throw error("invalid header");
+
+			var key = buf.substring(0, idx).trim().to_lower_case();
+			var value = buf.substring(idx+1).trim();
+			headers[key] = value;
+		}
+		if (headers.get("upgrade", null) != "websocket") {
+			throw error("not websocket request");
+		}
+		if (headers.get("sec-websocket-version", null) != "13") {
+			throw error("unsupported websocket version");
+		}
+		var key = headers.get("sec-websocket-key", null);
+		if (!key) {
+			throw error("websocket key missing");
+		}
+
+		var accept_code = Base64::encode(sha1(key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"));
+		buf.clear();
+		buf += "HTTP/1.1 101 Switching Protocols\r\n";
+		buf += "Upgrade: websocket\r\n";
+		buf += "Connection: Upgrade\r\n";
+		buf += "Sec-WebSocket-Accept: "+accept_code+"\r\n";
+		buf += "\r\n";
+		stream.write(buf);
+		stream.flush();
+
+		var socket = new WebSocket;
+		socket.conn = conn;
+		socket.server = true;
+		socket.buf = [];
+		if (!out_buf) {
+			out_buf = [];
+		}
+		return socket;
+	}
+
+	function receive(): Byte[]
+	{
+		return receive_wait(1024*1024, -1);
+	}
+
+	function receive(max_size: Integer): Byte[]
+	{
+		return receive_wait(max_size, -1);
+	}
+
+	function receive_wait(timeout: Integer): Byte[]
+	{
+		return receive_wait(1024*1024, timeout);
+	}
+	
+	function receive_wait(max_size: Integer, timeout: Integer): Byte[]
+	{
+		max_size = max(125, max_size);
+		for (;;) {
+			var pos = buf.length;
+			buf.set_length(pos+BUF_SIZE);
+			var read = conn.read_part(buf, pos, BUF_SIZE, timeout);
+			buf.set_length(pos+max(0, read));
+			if (buf.length < 2) {
+				if (timeout < 0) continue;
+				return null;
+			}
+
+			var opcode = buf[0];
+			if ((opcode & 0x70) != 0) throw error("reserved bits should be zero");
+			var finish = (opcode & 0x80) != 0;
+			opcode &= 15;
+			if ((opcode >= 3 && opcode <= 7) || (opcode >= 11 && opcode <= 15)) {
+				throw error("client used reserved opcodes");
+			}
+
+			var len = buf[1];
+			if (server) {
+				if ((len & 0x80) == 0) throw error("client is not using masking");
+				len &= 0x7F;
+			}
+			else {
+				if ((len & 0x80) != 0) throw error("server is using masking");
+			}
+
+			var size = 2;
+			if (len == 126) {
+				if (buf.length < 4) {
+					if (timeout < 0) continue;
+					return null;
+				}
+				len = (buf[2] << 8) | buf[3];
+				if (len < 126) throw error("extended encoding for small length");
+				size = 4;
+			}
+			else if (len == 127) {
+				if (buf.length < 10) {
+					if (timeout < 0) continue;
+					return null;
+				}
+				if ((buf[2] | buf[3] | buf[4] | buf[5]) != 0) throw error("message too long");
+				len = (buf[6] << 24) | (buf[7] << 16) | (buf[8] << 8) | buf[9];
+				if (len < 0) throw error("message too long");
+				if (len <= 0xFFFF) throw error("extended encoding for small length");
+				size = 10;
+			}
+			
+			if (len > max_size) {
+				throw error("maximum message size exceeded");
+			}
+
+			var mask: Byte[];
+			if (server) {
+				if (buf.length < size+4) {
+					if (timeout < 0) continue;
+					return null;
+				}
+				mask = Array::create(4, 1);
+				mask[0] = buf[size++];
+				mask[1] = buf[size++];
+				mask[2] = buf[size++];
+				mask[3] = buf[size++];
+			}
+
+			if (buf.length < size+len) {
+				if (timeout < 0) continue;
+				return null;
+			}
+
+			if (server) {
+				var msg = [];
+				for (var i=0; i<len; i++) {
+					msg[] = buf[size+i] ^ mask[i & 3];
+				}
+				buf.remove(0, size+len);
+				if (opcode >= 8 && opcode <= 10) {
+					if (handle_control_message(opcode, msg)) continue;
+					return null;
+				}
+				return msg;
+			}
+			else {
+				var msg = buf.extract(size, len);
+				buf.remove(0, size+len);
+				if (opcode >= 8 && opcode <= 10) {
+					if (handle_control_message(opcode, msg)) continue;
+					return null;
+				}
+				return msg;
+			}
+		}
+	}
+
+	function @handle_control_message(opcode: Integer, msg: Byte[]): Boolean
+	{
+		if (opcode == 8) { // connection close
+			if (!closing) {
+				send(8, []);
+			}
+			conn.close();
+			conn = null;
+			return false;
+		}
+		if (opcode == 9) { // ping
+			send(10, msg);
+			return true;
+		}
+		if (opcode == 10) { // pong
+			return true;
+		}
+		throw error("unknown control message "+opcode);
+	}
+
+	function send(msg: Byte[])
+	{
+		send(2, msg); // binary data
+	}
+
+	function @send(opcode: Byte, msg: Byte[])
+	{
+		var buf = out_buf;
+
+		buf.clear();
+		buf[] = 0x80 | opcode;
+		
+		var len = msg.length;
+		var mask_flag = server? 0 : 0x80;
+		if (len < 126) {
+			buf[] = len | mask_flag;
+		}
+		else if (len <= 0xFFFF) {
+			buf[] = 126 | mask_flag;
+			buf[] = len >>> 8;
+			buf[] = len & 0xFF;
+		}
+		else {
+			buf[] = 127 | mask_flag;
+			buf[] = 0;
+			buf[] = 0;
+			buf[] = 0;
+			buf[] = 0;
+			buf[] = len >>> 24;
+			buf[] = (len >>> 16) & 0xFF;
+			buf[] = (len >>> 8) & 0xFF;
+			buf[] = len & 0xFF;
+		}
+		if (server) {
+			buf.append(msg);
+		}
+		else {
+			var mask: Byte[] = [0xF1, 0xE2, 0xD3, 0xC4]; // TODO
+			for (var i=0; i<4; i++) {
+				buf[] = mask[i];
+			}
+			for (var i=0; i<msg.length; i++) {
+				buf[] = msg[i] ^ mask[i & 3];
+			}
+		}
+		conn.write(buf);
+		buf.clear();
+	}
+
+	function close()
+	{
+		closing = true;
+		send(8, []);
+
+		var start = Monotonic::get_time();
+		for (;;) {
+			var time = sub32(Monotonic::get_time(), start);
+			if (time >= 1000) break;
+			var msg = receive_wait(1000-time);
+			if (!conn) break;
+		}
+		
+		if (conn) {
+			conn.close();
+			conn = null;
+		}
+	}
+}
+
+function @sha1(buf: Byte[]): Byte[]
+{
+	var len = buf.length;
+	buf = clone(buf);
+	buf[] = 0x80;
+	while ((buf.length & 63) != 56) {
+		buf[] = 0;
+	}
+	var hi = len >>> 29;
+	var lo = len << 3;
+	buf[] = hi >>> 24;
+	buf[] = (hi >>> 16) & 0xFF;
+	buf[] = (hi >>> 8) & 0xFF;
+	buf[] = hi & 0xFF;
+	buf[] = lo >>> 24;
+	buf[] = (lo >>> 16) & 0xFF;
+	buf[] = (lo >>> 8) & 0xFF;
+	buf[] = lo & 0xFF;
+
+	var w = Array::create(80, 4);
+	var s0 = 0x67452301;
+	var s1 = 0xEFCDAB89;
+	var s2 = 0x98BADCFE;
+	var s3 = 0x10325476;
+	var s4 = 0xC3D2E1F0;
+
+	for (var i=0; i<buf.length; ) {
+		for (var j=0; j<16; j++) {
+			w[j] = (buf[i++] << 24) | (buf[i++] << 16) | (buf[i++] << 8) | buf[i++];
+		}
+		for (var j=16; j<80; j++) {
+			var tmp = w[j-3] ^ w[j-8] ^ w[j-14] ^ w[j-16];
+			w[j] = (tmp << 1) | (tmp >>> 31);
+		}
+
+		var a = s0;
+		var b = s1;
+		var c = s2;
+		var d = s3;
+		var e = s4;
+
+		for (var j=0; j<80; j+=20) {
+			for (var k=j, n=j+20; k<n; k++) {
+				var f, num;
+				switch (j) {
+					case 0: f = (b & c) | ((~b) & d); num = 0x5A827999; break;
+					case 20: f = b ^ c ^ d; num = 0x6ED9EBA1; break;
+					case 40: f = (b & c) | (b & d) | (c & d); num = 0x8F1BBCDC; break;
+					case 60: f = b ^ c ^ d; num = 0xCA62C1D6; break;
+				}
+				var tmp = add32(add32(add32(add32((a << 5) | (a >>> 27), f), e), num), w[k]);
+				e = d;
+				d = c;
+				c = (b << 30) | (b >>> 2);
+				b = a;
+				a = tmp;
+			}
+		}
+
+		s0 = add32(s0, a);
+		s1 = add32(s1, b);
+		s2 = add32(s2, c);
+		s3 = add32(s3, d);
+		s4 = add32(s4, e);
+	}
+
+	return [
+		s0 >>> 24, (s0 >>> 16) & 0xFF, (s0 >>> 8) & 0xFF, s0 & 0xFF,
+		s1 >>> 24, (s1 >>> 16) & 0xFF, (s1 >>> 8) & 0xFF, s1 & 0xFF,
+		s2 >>> 24, (s2 >>> 16) & 0xFF, (s2 >>> 8) & 0xFF, s2 & 0xFF,
+		s3 >>> 24, (s3 >>> 16) & 0xFF, (s3 >>> 8) & 0xFF, s3 & 0xFF,
+		s4 >>> 24, (s4 >>> 16) & 0xFF, (s4 >>> 8) & 0xFF, s4 & 0xFF
+	];
+}

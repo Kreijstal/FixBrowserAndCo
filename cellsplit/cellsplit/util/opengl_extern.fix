@@ -1,0 +1,232 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+function process_tokens(fname, tokens, src)
+{
+	var funcs = {};
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (tokens[i+TOK_type] == TOK_IDENT && tokens[i+TOK_len] == 6 && src[tokens[i+TOK_off]] == 'e') {
+			if (get_token_value(tokens, src, i) == "extern") {
+				i = expect_type(tokens, src, i, TOK_STRING, "string");
+				if (get_token_string(tokens, src, i) == "OpenGL") {
+					i = parse_extern(tokens, src, i, funcs) - TOK_SIZE;
+				}
+				continue;
+			}
+		}
+	}
+
+	var s = {"function @load_opengl_functions() {"};
+	for (var i=0; i<length(funcs); i++) {
+		var (name, required) = hash_entry(funcs, i);
+		array_append(s, {"nfunc_", name, " = wglGetProcAddress(\"", name, "\");"});
+		if (required) {
+			array_append(s, {"if (!nfunc_", name, ") throw error(\"required function ", name, " not present\");"});
+		}
+	}
+	array_append(s, "}");
+
+	tokens_parse(tokens, src, s, 0);
+
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @parse_extern(tokens, src, i, funcs)
+{
+	var new_tokens = tokens_parse([], src, "\"C\"", tokens[i+TOK_line]);
+	array_replace_range(tokens, i, i+TOK_SIZE, new_tokens);
+
+	var stdcall_token = tokens_parse([], src, "STDCALL", 0);
+
+	var last_func = null;
+	i = expect_symbol(tokens, src, i, '{');
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		switch (tokens[i+TOK_type]) {
+			case TOK_IDENT: {
+				var ident = get_token_value(tokens, src, i);
+				var found = false;
+				if (length(ident) > 2 && ident[0] == 'g' && ident[1] == 'l') {
+					funcs{ident} = true;
+					last_func = ident;
+					found = true;
+				}
+				else if (length(ident) > 3 && ident[0] == 'w' && ident[1] == 'g' && ident[2] == 'l') {
+					funcs{ident} = true;
+					last_func = ident;
+					found = true;
+				}
+				if (found) {
+					var line = tokens[i+TOK_line];
+					array_insert_array(tokens, i, stdcall_token);
+					tokens[i+TOK_line] = line;
+					i += TOK_SIZE;
+				}
+				continue;
+			}
+
+			case '[': {
+				i = expect_next(tokens, src, i);
+				if (get_token_value(tokens, src, i) == "optional") {
+					i = expect_symbol(tokens, src, i, ']');
+					array_remove(tokens, i-2*TOK_SIZE, 3*TOK_SIZE);
+					i -= 3*TOK_SIZE;
+					funcs{last_func} = false;
+					continue;
+				}
+				break;
+			}
+
+			case '}': {
+				break;
+			}
+
+			default:
+				continue;
+		}
+		break;
+	}
+	return i;
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": unexpected end of file"});
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}

@@ -1,0 +1,1013 @@
+/*
+ * FixScript Classes v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "test_attribs";
+import "test_import" : ti;
+
+const AAA = 123;
+const BBB = "string";
+const PI = 3.14159265;
+const @IMPORT1 = ti:IMPORT1;
+
+const {
+	CCC = 123,
+	DDD = AAA,
+	EEE = 2,
+	FFF,
+	GGG,
+	HHH = ti:IMPORT1
+};
+
+const const_pos_int1 = +123;
+const const_pos_hex1 = +0x123;
+const const_pos_flt1 = +123.456;
+const const_neg_int1 = -123;
+const const_neg_hex1 = -0x123;
+const const_neg_flt1 = -123.456;
+const const_pos_int2 = + 123;
+const const_pos_hex2 = + 0x123;
+const const_pos_flt2 = + 123.456;
+const const_neg_int2 = - 123;
+const const_neg_hex2 = - 0x123;
+const const_neg_flt2 = - 123.456;
+
+var local1, local2: Integer[], local3;
+
+function array_create(len: Integer, elem_size: Integer);
+
+function test_normal(param)
+{
+}
+
+/*
+class DuplicateClass {}
+class DuplicateClass {}
+*/
+
+/*
+class @Array {
+	static function create(len: Integer, elem_size: Integer, dummy): Array
+	{
+	}
+
+	function test1()
+	{
+	}
+
+	function test2()
+	{
+	}
+
+	function set_length(len: Integer);
+}
+*/
+
+class XMLParser {}
+
+class Base {
+	virtual function some(test) {
+		log({"base=", test});
+	}
+
+	virtual function abstract_method();
+}
+
+class Extended: Base {
+	override function some(test) {
+		log({"override=", test});
+	}
+}
+
+class SomeObject {
+	var @parent;
+
+	static function create(): SomeObject {
+		var obj1 = new Base;
+		var obj2 = new Extended: new Base;
+		obj1.some("hello!");
+		obj2.some("hello!");
+		//parent.aaa; // disallowed
+		test_static();
+		return new SomeObject;
+	}
+
+	function test_parent(): Dynamic {
+		this.parent = false;
+	}
+
+	function test_parent(a: Float): Dynamic {
+	}
+
+	function test_parent(a: Float, b: Float) {
+	}
+
+	static function test_static() {
+	}
+
+	static function test_static(a: Float, b: Float) {
+	}
+
+	virtual function test_virtual(): Dynamic {
+		log("test");
+		test_virtual();
+	}
+
+	virtual function test_params(a: Float) {
+	}
+}
+
+class OverrideObject: SomeObject {
+	override function test_virtual(): Dynamic {
+		log("override");
+		return new OverrideObject: new SomeObject;
+		this.test_virtual();
+		super.test_virtual();
+		super.test_params(123);
+		test_virtual();
+	}
+}
+
+class TestObject: SomeObject {
+	var @priv;
+	var public: Integer;
+	static function create(value1, value2: Integer): TestObject {
+		var x, y: Integer = 1+2*3, z: Float = 1.0*2+3;
+		var z10: Float = 1.0+2;
+		var z11: Float = 1.0+2*3;
+		var x2, y2: Integer = 1+2*3, z2: Float = 1*2.0+3, a2=1+2.0*3, b2=1+2+3+4.0+5+6+7*8+9+10;
+		var xxx: Float = 123;
+		var yyy: Integer = xxx as Integer;
+		var zzz;
+		//zzz = yyy = 123.0;
+		yyy = zzz = 123.0;
+		xxx = xxx + 5;
+		//xxx += 5;
+		/*
+		var x2, y2: Boolean = 1+2*3, z2: Float = 1*2+3;
+		var x3, y3: Boolean = 1+2*3, z3: Float = 1*2+3;
+		var x4, y4: Boolean = 1+2*3, z4: Float = 1*2+3;
+		var x5, y5: Boolean = 1+2*3, z5: Float = 1*2+3;
+		var x6, y6: Boolean = 1+2*3, z6: Float = 1*2+3;
+		var x7, y7: Boolean = 1+2*3, z7: Float = 1*2+3;
+		var x8, y8: Boolean = 1+2*3, z8: Float = 1*2+3;
+		var x9, y9: Boolean = 1+2*3, z9: Float = 1*2+3;
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		{var a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w;}
+		*/
+		var i = 0;
+		++i;
+		--(i);
+		i++;
+		(i)++;
+		i[] = 5;
+		;;;; // multiple semicolons are allowed
+		return null;
+	}
+	function method1() {
+		var a: Boolean = 1 == 0;
+		if (this != null) {
+			return;
+		}
+		else {
+			return;
+		}
+		if (this != null) {
+			return;
+		}
+		else return;
+		if (true) {
+		}
+		else if (false) {
+		}
+		if (this != null) return;
+		while (true) {
+		}
+		do {
+			return;
+		}
+		while (5 as Boolean);
+		for (;;) {
+		}
+		for (5, 6;;) {
+		}
+		for (var a2: Boolean = true, b, c;;) {
+		}
+		for (var i:Float=0; i<5.0; i=i+1.0) {
+			var test1 = i == 5;
+			var test2 = 5 == i;
+			var test3 = i < 5.0;
+			var test4 = 5.0 > i;
+		}
+		for (var i=0; i<5; i++) {
+		}
+		for (;;) {
+			switch (123) {
+				case 1,2,3:
+				case 5: {
+					var test;
+					break;
+				}
+				case 6 .. 'a':
+				case 123 .. 456, 789 .. 0xABC:
+				default:
+					continue;
+			}
+		}
+		switch (123) {
+			case AAA:
+			case EEE, FFF:
+				break;
+			case GGG..HHH:
+				break;
+		}
+		switch (123) {
+			case ti:ZERO:
+			case ti:IMPORT1..ti:XXX:
+				break;
+		}
+		switch (123) {
+			case ti:IMPORT1,ti:XXX:
+				break;
+		}
+		foreach (var v in []) {
+		}
+		foreach (var k, v in {}) {
+		}
+		foreach (var v in []) {
+		}
+		foreach (var k: String, v: Integer in {}) {
+		}
+		foreach (var obj: SomeObject in []) {
+			obj.test_parent();
+		}
+		foreach (var v in this.test_parent()) {
+		}
+		foreach (var v in [] as [TestStruct]) {
+		}
+		if (null) {
+		}
+		if (!null) {
+		}
+		if (0 as Boolean) {
+		}
+		if (0 as Float[]) {
+		}
+		if (!(0 as Boolean)) {
+		}
+		if (!(0 as Float[])) {
+		}
+		while (0 as Float[]) {
+		}
+		do {
+		}
+		while (0 as Float[]);
+		for (; 0 as Float[]; ) {
+		}
+		return;
+	}
+	function method2(a): Float {
+		var b = -a + 1;
+		var c = !!a;
+		var d = ~a;
+		var e = - -~-~~(a as Integer);
+		var f = true? 1:0;
+		var g = true? 1 : false? 2 : 3.0 as Dynamic;
+		var g1 = (1 + 1) as Boolean? 1 : 2;
+		var g2 = true && false || 3 != 0;
+		var g3 = 1 == 1? b : d;
+		var g4 = 1 == 1+b? b : d;
+		var h: Boolean = true && false || (3 != 0);
+		var i: Boolean = 1 != 2;
+		var j: Integer = FFF;
+		var k: String = BBB;
+		var m1 = [];
+		var m2 = [1, 2, {3}];
+		var n1 = {};
+		var n2: String = {""};
+		var n3: String = {123, 54545};
+		var n4: String = {123, 54545, "test"};
+		var n5: Float = {123.0 + 456.0};
+		priv = 5;
+		this.public = 5;
+		//parent = 5;
+		//this.parent = 5;
+		this.test_parent();
+		this.test_parent(1);
+		this.test_parent(1, 2);
+		this.test_parent(1, 2+3);
+		SomeObject::test_static();
+		SomeObject::test_static(1.0, 2.0);
+		SomeObject::test_static(1, 2);
+		SomeObject::test_static(1, 2+3);
+		test_parent();
+		test_parent(1);
+		test_parent(1, 2);
+		test_parent(1, 2+3);
+		test_parent(1.0, 2.0);
+		test_parent(1.0, float(2));
+		test_static();
+		test_static(1, 2);
+//		var o = some_unknown_func(1, 2, 3);
+//		var p = unknown_var;
+		return (m1[0] << 8) as Integer;
+		return (m1{"test"} << 8) as Integer;
+		log({"j=", j});
+		var obj = new SomeObject;
+		obj.parent; // TODO
+		var obj2 = SomeObject::create();
+		var obj3 = new TestObject: SomeObject::create();
+		var obj4: SomeObject = obj3;
+		var cmp: Boolean = b != 0 && b != 1;
+		var arr: Float[];
+		arr[0] = 1;
+		var hash: String[Float];
+		hash[5.0] = "test";
+		var str1 = "aaa" + 5;
+		var str2 = 5 + "aaa";
+		var str3 = "aaa" + 5 + "bbb" + 1.0;
+		var q1 = obj.test_parent(1) + obj.test_parent(2);
+		var q2 = test_parent(1) + test_parent(2);
+		var r1 = -0.5;
+		var r2 = -r1;
+		var r3 = 5.0 * -(r1);
+		var r4 = 5.0 * -r1;
+		var r5 = 5.0 * +r1;
+		var r6 = 1-2;
+		var r7 = 1.0-2.0;
+		var r8: Float = 1-2;
+		var r9a = 100.0-1;
+		var r9b = 100-1.0;
+		var r10 = { =1+2*3 };
+		var r11 = { var tmp = 1+2*3; =tmp };
+		var r12 = { 1.0-2.0 };
+		var r13a = {100.0-200};
+		var r13b = {100-200.0};
+		var r14 = {"a"}[0];
+		var r15 = -(5.0+1.0);
+		var r16a = 123.0 + 456 * 768.0;
+		var r16b = 123 + 456 * 768.0;
+		var r17 = length([]) > 2;
+		var r17b = [].length > 2;
+		var r17c = {}.length > 2;
+		var r17d = {123: 456}.length > 2;
+		var r17e = {123: []}[123].length > 2;
+		var test: Dynamic = 123;
+		if (length([]) > test) {
+		}
+		if ([].length > test) {
+		}
+		if ({}.length > test) {
+		}
+		if ({123: 456}.length > test) {
+		}
+		if ({123: []}[123].length > test) {
+		}
+		var r18a = @native_func("testing", 123);
+		var (r18b, e18b) = @native_func("testing", 123);
+		var r19 = public / 2.0;
+		var r20 = PI >= 3.0;
+		test_object_method2#2(null, 5);
+		var funcref = test_object_method2#2;
+		funcref(null, 5);
+		var r21a = !obj.parent;
+		var r21b = !obj.test_parent();
+		var r21c = !!obj.test_parent();
+		var r21d = ~obj.test_parent();
+		var r21e = +obj.test_parent();
+		var r21f = -obj.test_parent();
+		var r22a = test->CCC;
+		var r22b = test->CCC[5];
+		var r22c = (test->CCC as Dynamic)[5];
+		var r22d = ((test->CCC) as Dynamic)[5];
+		var r33a = TestObject::method2#2;
+		//var r33b = Array::create#3;
+		var import1 = ti:IMPORT1;
+		var import2 = ti:local;
+		var import3 = ti:test#3;
+		var import4 = ti:test(1+2*3, 2, 3);
+		var primary_expression_as = {1.0 as Float * 2.0};
+		var s = {""};
+		s += true? "a":"b";
+		s += "test";
+		s += 1;
+		s += 1+2;
+		s = s+1+2;
+		log(s+"test");
+		var obj5: NormalToString;
+		s = ""+obj5;
+		s = obj5+"";
+		s += obj5;
+		var obj6: AutoToString;
+		s = ""+obj6;
+		s = obj6+"";
+		s += obj6;
+		var obj7: TestObject;
+		s = ""+obj7;
+		s = obj7+"";
+		s += obj7;
+		for (var iter=0; iter<10; iter++) {
+			s += "";
+		}
+		foreach (var item in []) {
+			s += "";
+		}
+		return a as Float;
+	}
+	function method3(a, b): Void {
+		throw 1;
+		throw error("test");
+		throw this.method4();
+		return;
+	}
+	function method4(): Boolean {
+		return false;
+	}
+	function method_forward() {
+		method_forward2();
+	}
+	function method_forward2() {
+	}
+}
+
+class SubClass: TestObject {
+	function test() {
+	}
+}
+
+class ConstrBase {
+	var xxx;
+	
+	constructor create() {
+		xxx = 5;
+		instance_func();
+		return;
+	}
+
+	constructor create(x: Float) {
+	}
+
+	function instance_func() {
+	}
+}
+
+class ConstrExtended: ConstrBase {
+	constructor create() {
+		super::create(1);
+		this.instance_func();
+	}
+	virtual function test() {}
+}
+
+function test_normal()
+{
+	var obj: SomeObject;
+	obj.parent; // TODO
+	log(new SomeObject);
+}
+
+function test_attrib()
+{
+	var obj = SomeClass::create(1, true);
+	obj.field1 = 123;
+	obj.field2 = true;
+	obj.instance_function(1, true);
+}
+
+class NormalToString
+{
+	function to_string(): String
+	{
+		return "test";
+	}
+}
+
+class AutoToString: Object
+{
+	var field1: Boolean;
+	var @field2: String;
+	var field3: Integer;
+	var field4: Float;
+	var @self: AutoToString;
+	var @arr: Integer[];
+	var @hash: Integer[String];
+
+	constructor create()
+	{
+		arr = [1, 2, 3];
+		self = this;
+	}
+
+	/*
+	override function to_string(): String
+	{
+		return "XXX";
+	}
+	*/
+}
+
+function simple_to_string(obj): String
+{
+	return "obj="+@to_string(obj);
+}
+
+function test_to_string()
+{
+	var obj = AutoToString::create();
+	@dump(obj);
+	dump(obj);
+	dump([simple_to_string#1]);
+}
+
+struct BaseStruct {
+	var from_base;
+}
+
+struct TestStruct: BaseStruct
+{
+	var @aaa: Float;
+	var @bbb: Integer;
+
+	static function create(): TestStruct
+	{
+	}
+
+	function method()
+	{
+		log("ptr="+this);
+	}
+
+	function to_string(array: [TestStruct]): String
+	{
+		return "[from_base="+array[this].from_base+",aaa="+array[this].aaa+",bbb="+array[this].bbb+"]";
+	}
+
+	function some_method(array: [Dynamic])
+	{
+	}
+
+	function some_method(array: [Dynamic], a: Float, b, c)
+	{
+	}
+
+	function owner_method(owner: StructOwner)
+	{
+		var array = owner.array;
+	}
+
+	function owner_method(owner: StructOwner, a: Float, b, c)
+	{
+		var array = owner.array;
+	}
+}
+
+class StructOwner
+{
+	var @array: [TestStruct];
+
+	function test_index()
+	{
+		var test = TestStruct(0);
+		log(test.index);
+		log(array.first);
+		log(array.first as Integer);
+		log(array.first+1);
+		log(array.last);
+		log(array.last as Integer);
+		log(array.last+1);
+		log(array.length);
+	}
+}
+
+function test_structs()
+{
+	var test = TestStruct::create();
+	log("test size="+TestStruct::SIZE);
+	log("test from_base="+TestStruct::from_base);
+	log("test bbb="+TestStruct::bbb);
+	test.method();
+
+	var mixed: [Dynamic];
+	var array: [TestStruct] = array_create(TestStruct::SIZE);
+
+	var test_to_int = test as Integer;
+	var back_to_test = test_to_int as TestStruct;
+	var back_to_test2 = 1 as TestStruct;
+	var retype = test as BaseStruct;
+
+	test = 0 as TestStruct;
+	test = TestStruct(0);
+	var test_access = array[test].aaa;
+	array[test].aaa = 123;
+
+	array[] = {};
+
+	array[] = {
+		.aaa: 123
+	};
+
+	array[] = TestStruct {
+		.aaa: 123
+	};
+
+	/*
+	// not allowed:
+	array[] = BaseStruct {
+		.aaa: 123
+	};
+	*/
+
+	mixed[] = {};
+
+	mixed[] = {
+		"normal": "hash"
+	};
+
+	mixed[] = TestStruct {
+		.aaa: 123
+	};
+
+	[123, 456][] = {
+		"normal": "hash"
+	};
+
+	([123, 456] as Dynamic[])[] = TestStruct {
+		.aaa: 123,
+		.from_base: 1+2*3
+	};
+
+	([] as Dynamic[])[] = TestStruct {
+		.aaa: 123
+	};
+
+	([] as Integer[])[] = {
+		"normal": "hash"
+	};
+
+	/*
+	// not allowed:
+	([] as Integer[])[] = TestStruct {
+		.aaa: 123
+	};
+	*/
+
+	array[test] = {
+		.aaa: 123
+	};
+
+	array[test] = TestStruct {
+		.aaa: 123
+	};
+
+	/*
+	// not allowed:
+	array[test] = BaseStruct {
+		.aaa: 123
+	};
+	*/
+
+	mixed[test] = {
+		.aaa: 123
+	};
+
+	mixed[test] = TestStruct {
+		.aaa: 123
+	};
+
+	([123, 456] as Dynamic[])[test] = TestStruct {
+		.aaa: 123,
+		.from_base: 1+2*3
+	};
+
+	([] as Dynamic[])[((test))] = TestStruct {
+		.aaa: 123
+	};
+
+	/*
+	// not allowed:
+	([] as Integer[])[test] = TestStruct {
+		.aaa: 123
+	};
+	*/
+
+	++(test);        // -> ((test) += SIZE)
+	--test;          // -> (test -= SIZE)
+	(test)++;        // -> (((test) += SIZE))
+	test--;          // -> ((test -= SIZE))
+	var a=(test)++;  // -> var a = (((test) += SIZE) - SIZE)
+	var b=test--;    // -> var b = ((test -= SIZE) - SIZE)
+	(test) += 1+2*3; // -> (test) += ((1+2*3)*SIZE)
+	test -= 1+2*3;   // -> test -= ((1+2*3)*SIZE)
+	test + 1;        // -> test + ((1)*SIZE)
+	test - 1;        // -> test - ((1)*SIZE)
+	1 + test;        // -> ((1)*SIZE) + test
+	1 - test;        // -> ((1)*SIZE) - test
+	while (10 > test+1) {}
+	while (test+1 < 10) {}
+	var c=array[test].aaa; // uses multiplication by 1.0 to restore float type from shared arrays
+	log(array[test].to_string());
+	log(array[test].some_method());
+	log(array[test].some_method(1, 2, 3));
+	var owner: StructOwner;
+	log(owner[test].owner_method());
+	log(owner[test].owner_method(1, 2, 3));
+
+	if (test < 10) {}
+	if (test > test) {}
+	if (10 >= test) {}
+	//if (test <= retype) {} // can't compare different structs
+	if (test == 10) {}
+	if (test != test) {}
+	if (10 != test) {}
+
+	for (var i=0 as TestStruct; i<length(array as Dynamic); i++) {
+	}
+
+	for (var i=TestStruct(2); i<TestStruct(5); i++) {
+	}
+
+	for (var i=array.first; i<=array.last; i++) {
+	}
+
+	foreach (var i in array) {
+	}
+}
+
+class FloatShorthand
+{
+	var b: Float;
+	var self: FloatShorthand;
+
+	function test()
+	{
+		var a = 1.0;
+		a += 2;
+		a += 2.0;
+		a += self.b;
+		b *= a;
+		self.b *= a;
+
+		b += 2;
+		var arr: Float[];
+		var hash: Float[Integer];
+		arr[5+1] += 2;
+		hash[5+1] += 2;
+		//float_func() += 2; // not allowed
+		float_func2()[0] += 2;
+
+		a += a += 5;
+	}
+}
+
+function float_func(): Float
+{
+}
+
+function float_func2(): Float[]
+{
+}
+
+class TestOperators
+{
+	var @value: Integer;
+	
+	constructor create(value: Integer)
+	{
+		this.value = value;
+	}
+	
+	operator + (op1: TestOperators, op2: TestOperators)
+	{
+		return TestOperators::create(op1.value + op2.value);
+	}
+	
+	operator + (op1: TestOperators, op2: Integer)
+	{
+		return TestOperators::create(op1.value + op2);
+	}
+	
+	operator + (op1: Integer, op2: TestOperators)
+	{
+		return TestOperators::create(op1 + op2.value);
+	}
+
+	operator + (op1: TestOperators, op2: Dynamic)
+	{
+		return TestOperators::create(op1.value + (op2|0));
+	}
+
+	operator + (op1: Dynamic, op2: TestOperators)
+	{
+		return TestOperators::create((op1|0) + op2.value);
+	}
+	
+	/*
+	// not allowed:
+	operator + (op1: Integer, op2: Integer)
+	{
+		return TestOperators::create(op1 + op2);
+	}
+	*/
+	
+	operator - (op1: TestOperators, op2: TestOperators)
+	{
+		return TestOperators::create(op1.value - op2.value);
+	}
+	
+	operator - (op1: TestOperators, op2: Integer)
+	{
+		return TestOperators::create(op1.value - op2);
+	}
+	
+	operator - (op1: Integer, op2: TestOperators)
+	{
+		return TestOperators::create(op1 - op2.value);
+	}
+	
+	operator * (op1: TestOperators, op2: TestOperators)
+	{
+		return TestOperators::create(op1.value * op2.value);
+	}
+	
+	operator * (op1: TestOperators, op2: Integer)
+	{
+		return TestOperators::create(op1.value * op2);
+	}
+	
+	operator * (op1: Integer, op2: TestOperators)
+	{
+		return TestOperators::create(op1 * op2.value);
+	}
+
+	operator < (op1: TestOperators, op2: TestOperators)
+	{
+		return op1.value < op2.value;
+	}
+
+	operator <=> (op1: TestOperators, op2: TestOperators)
+	{
+		return op1.value < op2.value? -1 : op1.value > op2.value? +1 : 0;
+	}
+
+	operator += (op: TestOperators)
+	{
+		value += op.value;
+		return this;
+	}
+
+	operator += (op: Integer)
+	{
+		value += op;
+		return this;
+	}
+
+	operator += (op: Dynamic)
+	{
+		value += op|0;
+		return this;
+	}
+}
+
+function test_operators()
+{
+	var a = TestOperators::create(1);
+	var b = TestOperators::create(2);
+	var c = TestOperators::create(3);
+	log(a + b * c);
+	log(a * b + c);
+	log(5 + a * b);
+	log(a * b + 5);
+	log(a - b);
+	log(a + 5);
+	log(a +5);
+	log(a - 5);
+	log(a -5);
+	log(a -5 * c);
+	log(a < b);
+	log(a <= b);
+	log(a == b);
+	log(a != b);
+	log(a >= b);
+	log(a > b);
+	log(a + (123 as Integer));
+	log(a + (123 as Dynamic));
+	log(a + (123 as Integer[String]));
+	log((123 as Integer) + a);
+	log((123 as Dynamic) + a);
+	log((123 as Integer[String]) + a);
+	a += b;
+	a += (a += b);
+	a += (123 as Integer);
+	a += (123 as Dynamic);
+	a += (123 as Integer[String]);
+}
+
+function test_operators2()
+{
+	var a = TestOperators2::create(1);
+	var b = TestOperators2::create(2);
+	var c = TestOperators2::create(3);
+	log(a + b * c);
+	log(a * b + c);
+	log(5 + a * b);
+	log(a * b + 5);
+	log(a - b);
+	log(a + 5);
+	log(a +5);
+	log(a - 5);
+	log(a -5);
+	log(a -5 * c);
+	log(a < b);
+	log(a <= b);
+	log(a == b);
+	log(a != b);
+	log(a >= b);
+	log(a > b);
+	log(a + (123 as Integer));
+	log(a + (123 as Dynamic));
+	log(a + (123 as Integer[String]));
+	log((123 as Integer) + a);
+	log((123 as Dynamic) + a);
+	log((123 as Integer[String]) + a);
+	a += b;
+	a += (a += b);
+	a += (123 as Integer);
+	a += (123 as Dynamic);
+	a += (123 as Integer[String]);
+	for (var iter=0; iter<10; iter++) {
+		a += b;
+	}
+	foreach (var item in []) {
+		a += b;
+	}
+}
+
+function test_multiple_type(param: String or Integer or Float or Integer[])
+{
+	var s: String;
+	s = param;
+	test_multiple_type([] as Integer[]);
+}
+
+function test_builtin_types()
+{
+	var arr = Array::create(123);
+	var arr1: String;
+	var arr2: Integer[];
+	Array::copy(arr1, 0, arr2, 1, 2);
+	log(arr.get_element_size());
+	arr2.insert(5, '2');
+	Array::create_filled(123, true);
+	log(arr2.get(123));
+	var hash: String[Dynamic[Dynamic]];
+	var (k, v) = hash.entry(0);
+	(k, v) = hash.entry(0);
+	//hash.entry(0);
+	log(k.contains(null));
+	v.insert_char(0, 'A');
+	arr1.clear();
+	arr2.clear();
+	hash.clear();
+}
+
+static function Array::create_filled(len: Integer, value: Value): Value[]
+{
+	var arr: Value[] = Array::create(len);
+	arr.fill(value);
+	Array::create_filled(123, true);
+	var (r, e) = Array::create_filled(123, true);
+	return arr;
+}
+
+function @Array::get(idx: Integer): Value
+{
+	log(this.get(123));
+	return this[idx];
+}

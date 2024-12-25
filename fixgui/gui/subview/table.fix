@@ -1,0 +1,500 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "gui/event";
+import "gui/subview";
+import "gui/subview/scrollview";
+
+const {
+	TABLE_CHANGED,
+	TABLE_DATA_ADDED,
+	TABLE_DATA_REMOVED,
+	TABLE_DATA_UPDATED
+};
+
+class SubTable: SubView
+{
+	var @scroll: SubScrollView;
+	var @content: ContentView;
+	var @model: TableModel;
+	var @mutable: Boolean;
+	var @view_model: TableModel;
+
+	constructor create()
+	{
+		content = ContentView::create();
+		set_model(DefaultTableModel::create());
+	}
+
+	virtual function create_scrollview(content: SubView): SubScrollView
+	{
+		return SubScrollView::create(content);
+	}
+
+	virtual function create_view_model(model: TableModel): TableModel
+	{
+		return model;
+	}
+
+	function set_model(model: TableModel)
+	{
+		if (model === this.model) return;
+
+		this.model = model;
+		mutable = MutableTableModel::is_instance(model);
+		view_model = create_view_model(model);
+	}
+
+	function get_model(): TableModel
+	{
+		return model;
+	}
+
+	override function handle_resize()
+	{
+		if (!scroll) {
+			scroll = create_scrollview(content);
+			add(scroll);
+		}
+		scroll.set_content_size(1000, 1000);
+		scroll.set_rect(0, 0, get_width(), get_height());
+	}
+
+	function get_column_count(): Integer
+	{
+		return model.get_column_count();
+	}
+
+	function get_row_count(): Integer
+	{
+		return model.get_row_count();
+	}
+
+	function get_column_name(idx: Integer): String
+	{
+		return model.get_column_name(idx);
+	}
+
+	function get_value(row: Integer, column: Integer): Dynamic
+	{
+		return model.get_value(row, column);
+	}
+
+	function get_row(row: Integer, row_data: Dynamic[]): Dynamic[]
+	{
+		return model.get_row(row, row_data);
+	}
+
+	function add_column(name: String)
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).add_column(name);
+	}
+
+	function add_column(idx: Integer, name: String)
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).add_column(idx, name);
+	}
+
+	function remove_column(idx: Integer)
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).remove_column(idx);
+	}
+
+	function add_row(row_data: Dynamic[])
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).add_row(row_data);
+	}
+
+	function remove_rows(first: Integer, last: Integer)
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).remove_rows(first, last);
+	}
+
+	function clear()
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).clear();
+	}
+
+	function set_value(row: Integer, column: Integer, value)
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).set_value(row, column, value);
+	}
+
+	function set_row(row: Integer, row_data: Dynamic[])
+	{
+		if (!mutable) {
+			throw error("model is not mutable");
+		}
+		(model as MutableTableModel).set_row(row, row_data);
+	}
+}
+
+class TableModel
+{
+	var @_listeners: EventListeners; //XXX
+
+	constructor create()
+	{
+		_listeners = EventListeners::create();
+	}
+
+	virtual function get_column_count(): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_row_count(): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_column_name(idx: Integer): String
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_value(row: Integer, column: Integer): Dynamic
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_row(row: Integer, row_data: Dynamic[]): Dynamic[]
+	{
+		var num_columns = get_column_count();
+		row_data.set_length(num_columns);
+		for (var i=0; i<num_columns; i++) {
+			row_data[i] = get_value(row, i);
+		}
+		return row_data;
+	}
+
+	function listeners(): EventListeners
+	{
+		return _listeners;
+	}
+}
+
+class MutableTableModel: TableModel
+{
+	var @marker;
+
+	function @marker() {}
+
+	constructor create()
+	{
+		marker = MutableTableModel::marker#1;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= MutableTableModel::SIZE && (obj as MutableTableModel).marker === MutableTableModel::marker#1;
+	}
+
+	function add_column(name: String)
+	{
+		add_column(get_column_count(), name);
+	}
+
+	virtual function add_column(idx: Integer, name: String)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function remove_column(idx: Integer)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function add_row(row_data: Dynamic[])
+	{
+		throw error("not implemented");
+	}
+
+	virtual function remove_rows(first: Integer, last: Integer)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function clear()
+	{
+		var num_rows = get_row_count();
+		if (num_rows > 0) {
+			remove_rows(0, num_rows-1);
+		}
+	}
+
+	virtual function set_value(row: Integer, column: Integer, value)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function set_row(row: Integer, row_data: Dynamic[])
+	{
+		var num_columns = get_column_count();
+		for (var i=0; i<num_columns; i++) {
+			set_value(row, i, row_data[i]);
+		}
+	}
+}
+
+class DefaultTableModel: MutableTableModel
+{
+	var @data: Dynamic[];
+	var @num_columns: Integer;
+	var @num_rows: Integer;
+	var @columns: String[];
+
+	constructor create()
+	{
+		data = [];
+	}
+
+	override function add_column(idx: Integer, name: String)
+	{
+		if (idx < 0 || idx > num_columns) {
+			throw error("invalid column index: "+idx);
+		}
+
+		var data = this.data;
+		var num_columns = this.num_columns;
+
+		if (num_columns == 0) {
+			data[] = name;
+		}
+		else {
+			for (var i=num_rows*num_columns; i>=0; i-=num_columns) {
+				data.insert(i+idx, null);
+			}
+		}
+
+		this.num_columns++;
+		listeners().notify(TableModelEvent::create(this, TABLE_CHANGED));
+	}
+
+	override function remove_column(idx: Integer)
+	{
+		if (idx < 0 || idx >= num_columns) {
+			throw error("invalid column index: "+idx);
+		}
+
+		var data = this.data;
+		var num_columns = this.num_columns;
+
+		if (num_columns == 1) {
+			data.clear();
+		}
+		else {
+			for (var i=num_rows*num_columns; i>=0; i-=num_columns) {
+				data.remove(i+idx);
+			}
+		}
+
+		this.num_columns--;
+		listeners().notify(TableModelEvent::create(this, TABLE_CHANGED));
+	}
+
+	override function add_row(row_data: Dynamic[])
+	{
+		if (row_data.length != num_columns) {
+			throw error("mismatching number of columns: "+row_data.length+" != "+num_columns);
+		}
+
+		data.append(row_data);
+		num_rows++;
+		listeners().notify(TableModelEvent::create(this, TABLE_DATA_ADDED, num_rows-1, -1));
+	}
+
+	override function remove_rows(first: Integer, last: Integer)
+	{
+		if (first < 0 || last < 0 || first > last || last >= num_rows) {
+			throw error("invalid range: "+first+" to "+last);
+		}
+
+		data.remove((first+1)*num_columns, (last-first+1)*num_columns);
+		num_rows -= last-first+1;
+		listeners().notify(TableModelEvent::create(this, TABLE_DATA_REMOVED, first, last, -1));
+	}
+
+	override function clear()
+	{
+		var rows = num_rows;
+		data.set_length(num_columns);
+		num_rows = 0;
+		listeners().notify(TableModelEvent::create(this, TABLE_DATA_REMOVED, 0, rows, -1));
+	}
+
+	override function get_column_count(): Integer
+	{
+		return num_columns;
+	}
+
+	override function get_row_count(): Integer
+	{
+		return num_rows;
+	}
+
+	override function get_column_name(idx: Integer): String
+	{
+		if (idx < 0 || idx >= num_columns) {
+			throw error("invalid column: "+idx);
+		}
+		return data[idx];
+	}
+
+	override function get_value(row: Integer, column: Integer): Dynamic
+	{
+		if (row < 0 || row >= num_rows) {
+			throw error("invalid row: "+row);
+		}
+		if (column < 0 || column >= num_columns) {
+			throw error("invalid column: "+column);
+		}
+		return data[(row+1)*num_columns+column];
+	}
+
+	override function set_value(row: Integer, column: Integer, value)
+	{
+		if (row < 0 || row >= num_rows) {
+			throw error("invalid row: "+row);
+		}
+		if (column < 0 || column >= num_columns) {
+			throw error("invalid column: "+column);
+		}
+		data[(row+1)*num_columns+column] = value;
+
+		listeners().notify(TableModelEvent::create(this, TABLE_DATA_UPDATED, row, column));
+	}
+
+	override function get_row(row: Integer, row_data: Dynamic[]): Dynamic[]
+	{
+		if (row < 0 || row >= num_rows) {
+			throw error("invalid row: "+row);
+		}
+
+		var num_columns = this.num_columns;
+		row_data.set_length(num_columns);
+		Array::copy(row_data, 0, data, (row+1)*num_columns, num_columns);
+		return row_data;
+	}
+
+	override function set_row(row: Integer, row_data: Dynamic[])
+	{
+		var num_columns = this.num_columns;
+
+		if (row < 0 || row >= num_rows) {
+			throw error("invalid row: "+row);
+		}
+		if (row_data.length != num_columns) {
+			throw error("mismatching number of columns: "+row_data.length+" != "+num_columns);
+		}
+
+		Array::copy(data, (row+1)*num_columns, row_data, 0, num_columns);
+		listeners().notify(TableModelEvent::create(this, TABLE_DATA_UPDATED, row, -1));
+	}
+}
+
+class TableModelEvent
+{
+	var @model: TableModel;
+	var @type: Integer;
+	var @first: Integer;
+	var @last: Integer;
+	var @column: Integer;
+
+	constructor create(model: TableModel, type: Integer)
+	{
+		this.model = model;
+		this.type = type;
+	}
+
+	constructor create(model: TableModel, type: Integer, row: Integer, column: Integer)
+	{
+		this.model = model;
+		this.type = type;
+		this.first = row;
+		this.last = row;
+		this.column = column;
+	}
+
+	constructor create(model: TableModel, type: Integer, first: Integer, last: Integer, column: Integer)
+	{
+		this.model = model;
+		this.type = type;
+		this.first = first;
+		this.last = last;
+		this.column = column;
+	}
+
+	function get_model(): TableModel
+	{
+		return model;
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+
+	function get_first_row(): Integer
+	{
+		return first;
+	}
+
+	function get_last_row(): Integer
+	{
+		return last;
+	}
+
+	function get_column(): Integer
+	{
+		return column;
+	}
+}
+
+class @ContentView: SubView
+{
+	constructor create()
+	{
+	}
+}

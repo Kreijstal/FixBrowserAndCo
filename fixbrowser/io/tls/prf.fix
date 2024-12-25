@@ -1,0 +1,83 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/crypto/hmac";
+import "io/crypto/md5";
+import "io/crypto/sha1";
+import "io/crypto/sha256";
+import "util/array";
+
+function @p_hash(secret, seed, len, hash_func, block_size)
+{
+	var result = [];
+	var prev_seed = seed;
+	while (length(result) < len) {
+		prev_seed = hmac(secret, prev_seed, hash_func, block_size);
+		array_append(result, hmac(secret, array_join(prev_seed, seed), hash_func, block_size));
+	}
+	array_set_length(result, len);
+	return result;
+}
+
+function @p_md5(secret, seed, len)
+{
+	return p_hash(secret, seed, len, md5#1, 64);
+}
+
+function @p_sha1(secret, seed, len)
+{
+	return p_hash(secret, seed, len, sha1#1, 64);
+}
+
+function @p_sha256(secret, seed, len)
+{
+	return p_hash(secret, seed, len, sha256#1, 64);
+}
+
+function prf(secret, label, seed, len)
+{
+	var half_len = (length(secret) + 1) / 2;
+	var s1 = array_extract(secret, 0, half_len);
+	var s2 = array_extract(secret, length(secret) - half_len, half_len);
+	seed = array_join(label, seed);
+	var p1 = p_md5(s1, seed, len);
+	var p2 = p_sha1(s2, seed, len);
+	for (var i=0; i<len; i++) {
+		p1[i] ^= p2[i];
+	}
+	return p1;
+}
+
+function prf12(secret, label, seed, len)
+{
+	return p_sha256(secret, array_join(label, seed), len);
+}
+
+function test_prf()
+{
+	var result = prf(
+		[0x22, 0x12, 0x16, 0x9D, 0x33, 0xFA, 0xDC, 0x6F, 0xF9, 0x4A, 0x3E, 0x5E, 0x00, 0x20, 0x58, 0x79, 0x53, 0xCF, 0x19, 0x64],
+		[0xFC, 0xD5, 0xC9, 0x63, 0x7A, 0x21, 0xE4, 0x3F, 0x3C, 0xFF, 0x6E, 0xCF, 0x65, 0xB6, 0xE2, 0xF9, 0x79, 0x33, 0x77, 0x9F, 0x10, 0x1A, 0xD6],
+		"",
+		32
+	);
+	log({"prf matches: ", result == [0x1E, 0x1C, 0x64, 0x6C, 0x2B, 0xFB, 0xDC, 0x62, 0xFA, 0x4C, 0x81, 0xF1, 0xD0, 0x78, 0x1F, 0x5F, 0x26, 0x9D, 0x3F, 0x45, 0xE5, 0xC3, 0x3C, 0xAC, 0x8A, 0x26, 0x40, 0x22, 0x6C, 0x8C, 0x5D, 0x16]});
+}

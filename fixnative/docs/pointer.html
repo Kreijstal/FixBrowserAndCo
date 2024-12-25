@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixNative Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixNative Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "native/native";</code>
+</p>
+
+<h2>Pointer class</h2>
+
+<p>
+Pointer to arbitrary memory location.
+</p>
+
+<p>
+Subclasses:
+<a href="memory.html">Memory</a>
+</p>
+
+<h3>Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(lo: Integer, hi: Integer): Pointer</code></dt>
+	<dd>
+		Creates a new pointer with given address.
+	</dd>
+	<dt><code>static function <b>from_shared_array</b>(shared_array): Pointer</code></dt>
+	<dd>
+		Creates a new pointer with address used by the shared array.
+	</dd>
+</dl>
+
+<h3>Manipulation</h3>
+
+<dl>
+	<dt><code>function <b>get_value</b>(): Integer, Integer</code></dt>
+	<dd>
+		Returns the address of this pointer as two results (low and high part).
+	</dd>
+	<dt><code>function <b>with_offset</b>(offset: Integer): Pointer</code></dt>
+	<dd>
+		Returns a new pointer with given offset.
+	</dd>
+	<dt><code>function <b>get_view</b>(off: Integer, len: Integer, elem_size: Integer): Integer[]</code></dt>
+	<dd>
+		Creates a view into memory as a shared array.
+	</dd>
+</dl>
+
+<h3>Memory access</h3>
+
+<dl>
+	<dt><code>
+		function <b>set_byte</b>(offset: Integer, value: Integer)<br>
+		function <b>set_short</b>(offset: Integer, value: Integer)<br>
+		function <b>set_int</b>(offset: Integer, value: Integer)<br>
+		function <b>set_long</b>(offset: Integer, value_lo: Integer, value_hi: Integer)<br>
+		function <b>set_nlong</b>(offset: Integer, value_lo: Integer, value_hi: Integer)<br>
+		function <b>set_float</b>(offset: Integer, value: Float)<br>
+		function <b>set_double</b>(offset: Integer, value_lo: Integer, value_hi: Integer)<br>
+		function <b>set_pointer</b>(offset: Integer, value: Pointer)<br>
+	</code></dt>
+	<dd>
+		Sets memory location to given value. Offset is in bytes.
+	</dd>
+	<dt><code>
+		function <b>get_byte</b>(offset: Integer): Integer<br>
+		function <b>get_short</b>(offset: Integer): Integer<br>
+		function <b>get_int</b>(offset: Integer): Integer<br>
+		function <b>get_long</b>(offset: Integer): Integer, Integer<br>
+		function <b>get_nlong</b>(offset: Integer): Integer, Integer<br>
+		function <b>get_float</b>(offset: Integer): Float<br>
+		function <b>get_double</b>(offset: Integer): Integer, Integer<br>
+		function <b>get_pointer</b>(offset: Integer): Pointer<br>
+	</code></dt>
+	<dd>
+		Gets value from memory location. Offset is in bytes.
+	</dd>
+	<dt><code>
+		function <b>set_bytes</b>(offset: Integer, arr: Byte[])<br>
+		function <b>set_bytes</b>(offset: Integer, arr: Byte[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Copies bytes from given array to given memory location.
+	</dd>
+	<dt><code>
+		function <b>get_bytes</b>(offset: Integer, arr: Byte[])<br>
+		function <b>get_bytes</b>(offset: Integer, arr: Byte[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Copies bytes from given memory location to given array.
+	</dd>
+</dl>
+
+<h3>Utility functions</h3>
+
+<dl>
+	<dt><code>
+		function <b>find_byte</b>(offset: Integer, value: Byte): Integer<br>
+		function <b>find_byte</b>(offset: Integer, end_offset: Integer, value: Byte): Integer<br>
+		function <b>find_short</b>(offset: Integer, value: Short): Integer<br>
+		function <b>find_short</b>(offset: Integer, end_offset: Integer, value: Short): Integer<br>
+		function <b>find_int</b>(offset: Integer, value: Integer): Integer<br>
+		function <b>find_int</b>(offset: Integer, end_offset: Integer, value: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Searches for value, returning an index (-1 if not found).
+	</dd>
+	<dt><code>function <b>get_string_length</b>(offset: Integer): Integer</code></dt>
+	<dd>
+		Returns length of the zero-terminated string.
+	</dd>
+	<dt><code>function <b>get_string</b>(offset: Integer): String</code></dt>
+	<dd>
+		Returns string from given memory location.
+	</dd>
+	<dt><code>function <b>get_string_utf8</b>(offset: Integer): String</code></dt>
+	<dd>
+		Returns UTF-8 string from given memory location.
+	</dd>
+	<dt><code>function <b>set_string</b>(offset: Integer, value: String)</code></dt>
+	<dd>
+		Sets string at given memory location.
+	</dd>
+	<dt><code>function <b>set_string_utf8</b>(offset: Integer, value: String)</code></dt>
+	<dd>
+		Sets UTF-8 string at given memory location.
+	</dd>
+</dl>
+
+</body>
+</html>

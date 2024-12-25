@@ -1,0 +1,173 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "io/file";
+import "gui/worker";
+import "task/task";
+import "cellsplit/worker_comm";
+import "cellsplit/server/packets";
+import "cellsplit/util/native";
+import "cellsplit/util/config";
+
+const @MAX_QUALITY = 90;
+const @MIN_QUALITY = 80;
+
+var @skin_images: Byte[][];
+
+function @handle_message(msg)
+{
+	switch (msg[0]) {
+		case MSG_SKIN_LOAD_OWN: {
+			var path = Path(get_config_file("skin.png"));
+			if (!path.exists()) {
+				path = Path(get_config_file("skin.jpg"));
+				if (!path.exists()) {
+					return;
+				}
+			}
+
+			var (data, e1) = File::read_whole(path);
+			if (e1) {
+				dump(e1);
+				return;
+			}
+			var (image, e2) = load_image(data);
+			if (e2) {
+				dump(e2);
+				return;
+			}
+			var quality = MAX_QUALITY;
+			if (image.get_width() != image.get_height()) {
+				var size = min(image.get_width(), image.get_height());
+				var new_image = Image::create(size, size);
+				var p = Painter::create(new_image);
+				var tr = Transform::create();
+				tr.translate((size-image.get_width())/2, (size-image.get_height())/2);
+				p.fill_rect(0, 0, size, size, Shader {
+					replace(sample_nearest(image, tr, CLAMP_X|CLAMP_Y));
+				});
+				image = new_image;
+			}
+			while (image.get_width() > MAX_SKIN_DIMENSION) {
+				var size = max(MAX_SKIN_DIMENSION, image.get_width()/2);
+				var new_image = Image::create(size, size);
+				var p = Painter::create(new_image);
+				var tr = Transform::create();
+				tr.scale(float(size) / float(image.get_width()));
+				p.fill_rect(0, 0, size, size, Shader {
+					replace(sample_bilinear(image, tr, CLAMP_X|CLAMP_Y));
+				});
+				image = new_image;
+			}
+			data = image_to_jpg(image, quality);
+			while (data.length > MAX_SKIN_SIZE && quality > MIN_QUALITY) {
+				quality -= 5;
+				data = image_to_jpg(image, quality);
+			}
+			quality = MAX_QUALITY;
+			var size = image.get_width();
+			var new_image: Image;
+			while (data.length > MAX_SKIN_SIZE) {
+				size = max(1, size - 32);
+				new_image = Image::create(size, size);
+				var p = Painter::create(new_image);
+				var tr = Transform::create();
+				tr.scale(float(size) / float(image.get_width()));
+				p.fill_rect(0, 0, size, size, Shader {
+					replace(sample_bilinear(image, tr, CLAMP_X|CLAMP_Y));
+				});
+				data = image_to_jpg(new_image, quality);
+			}
+			if (new_image) {
+				image = new_image;
+			}
+			skin_images = [data];
+			image.apply_gamma(2.2);
+			while (size > 16) {
+				size = max(1, size/2);
+				new_image = Image::create(size, size);
+				var p = Painter::create(new_image);
+				var tr = Transform::create();
+				tr.scale(float(size) / float(image.get_width()));
+				p.fill_rect(0, 0, size, size, Shader {
+					replace(sample_bilinear(image, tr, CLAMP_X|CLAMP_Y));
+				});
+				var tmp_image = new_image.clone();
+				tmp_image.apply_gamma(1.0/2.2);
+				data = image_to_jpg(tmp_image, quality);
+				skin_images[] = data;
+				image = new_image;
+			}
+			return;
+		}
+
+		case MSG_SKIN_GET_OWN: {
+			if (skin_images) {
+				send_message([MSG_SKIN_OWN_DATA, skin_images]);
+			}
+			return;
+		}
+	}
+
+	throw error("unknown message");
+}
+
+function @custom_log(value)
+{
+	log("[skin] "+value);
+}
+
+function @receive_message()
+{
+	if (Worker::is_present()) {
+		return Worker::receive();
+	}
+	else {
+		return Task::receive();
+	}
+}
+
+function @send_message(msg)
+{
+	if (Worker::is_present()) {
+		Worker::send(msg);
+	}
+	else {
+		Task::send(msg);
+	}
+}
+
+function main()
+{
+	set_log_function(custom_log#1);
+
+	for (;;) {
+		var msg = receive_message();
+		var (r, e) = handle_message(msg);
+		if (e) {
+			dump(e);
+		}
+	}
+}

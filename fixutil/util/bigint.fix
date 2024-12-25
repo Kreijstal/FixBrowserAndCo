@@ -1,0 +1,1188 @@
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+// The format of big integers is array of 32bit unsigned words in little endian
+// order, where the first entry is 0 for positive number and 1 for negative
+// number. Additionally there is always a trailing zero at the end of the array
+// to make the computation easier. Negative zero is prohibited.
+
+import "util/unsigned";
+
+const @class_BigInteger = "prefix=bigint";
+const @static_BigInteger_create_0 = "(): BigInteger";
+const @static_BigInteger_create_1 = "(Integer): BigInteger";
+const @static_BigInteger_from_uint_1 = "(Integer): BigInteger";
+const @static_BigInteger_from_string_1 = "(String): BigInteger";
+const @static_BigInteger_from_hex_string_1 = "(String): BigInteger";
+const @static_BigInteger_from_bytes_BE_1 = "(Byte[]): BigInteger";
+const @static_BigInteger_from_bytes_BE_3 = "(Byte[], Integer, Integer): BigInteger";
+const @static_BigInteger_from_bytes_LE_1 = "(Byte[]): BigInteger";
+const @static_BigInteger_from_bytes_LE_3 = "(Byte[], Integer, Integer): BigInteger";
+const @method_BigInteger_is_zero_1 = "(): Boolean";
+const @method_BigInteger_cmp_lt_2 = "(BigInteger): Boolean";
+const @method_BigInteger_cmp_le_2 = "(BigInteger): Boolean";
+const @method_BigInteger_cmp_gt_2 = "(BigInteger): Boolean";
+const @method_BigInteger_cmp_ge_2 = "(BigInteger): Boolean";
+const @method_BigInteger_add_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_sub_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_abs_1 = "(): BigInteger";
+const @method_BigInteger_mul_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_divrem_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_div_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_rem_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_mod_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_shl_2 = "(Integer): BigInteger";
+const @method_BigInteger_shr_2 = "(Integer): BigInteger";
+const @method_BigInteger_modpow_3 = "(BigInteger, BigInteger): BigInteger";
+const @method_BigInteger_to_int_1 = "(): Integer";
+const @method_BigInteger_to_uint_1 = "(): Integer";
+const @method_BigInteger_to_string_1 = "(): String";
+const @method_BigInteger_to_hex_string_1 = "(): String";
+const @method_BigInteger_to_hex_string_2 = "(Boolean): String";
+const @method_BigInteger_to_bytes_BE_1 = "(): Byte[]";
+const @method_BigInteger_to_bytes_LE_1 = "(): Byte[]";
+const @method_BigInteger_get_bit_size_1 = "(): Integer";
+const @method_BigInteger_modinverse_2 = "(BigInteger): BigInteger";
+const @method_BigInteger_is_bit_set_2 = "(Integer): Boolean";
+const @operator_BigInteger_add_1 = "add (BigInteger, BigInteger)";
+const @operator_BigInteger_add_2 = "__add_int (BigInteger, Integer)";
+const @operator_BigInteger_add_3 = "__add_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_sub_1 = "sub (BigInteger, BigInteger)";
+const @operator_BigInteger_sub_2 = "__sub_int (BigInteger, Integer)";
+const @operator_BigInteger_sub_3 = "__sub_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_mul_1 = "mul (BigInteger, BigInteger)";
+const @operator_BigInteger_mul_2 = "__mul_int (BigInteger, Integer)";
+const @operator_BigInteger_mul_3 = "__mul_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_div_1 = "div (BigInteger, BigInteger)";
+const @operator_BigInteger_div_2 = "__div_int (BigInteger, Integer)";
+const @operator_BigInteger_div_3 = "__div_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_rem_1 = "rem (BigInteger, BigInteger)";
+const @operator_BigInteger_rem_2 = "__rem_int (BigInteger, Integer)";
+const @operator_BigInteger_rem_3 = "__rem_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_shl_1 = "shl (BigInteger, Integer)";
+const @operator_BigInteger_shr_1 = "shr (BigInteger, Integer)";
+const @operator_BigInteger_lt_1 = "cmp_lt (BigInteger, BigInteger)";
+const @operator_BigInteger_lt_2 = "__cmp_lt_int (BigInteger, Integer)";
+const @operator_BigInteger_lt_3 = "__cmp_lt_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_le_1 = "cmp_le (BigInteger, BigInteger)";
+const @operator_BigInteger_le_2 = "__cmp_le_int (BigInteger, Integer)";
+const @operator_BigInteger_le_3 = "__cmp_le_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_gt_1 = "cmp_gt (BigInteger, BigInteger)";
+const @operator_BigInteger_gt_2 = "__cmp_gt_int (BigInteger, Integer)";
+const @operator_BigInteger_gt_3 = "__cmp_gt_int_rev (Integer, BigInteger)";
+const @operator_BigInteger_ge_1 = "cmp_ge (BigInteger, BigInteger)";
+const @operator_BigInteger_ge_2 = "__cmp_ge_int (BigInteger, Integer)";
+const @operator_BigInteger_ge_3 = "__cmp_ge_int_rev (Integer, BigInteger)";
+const @global_BigInteger_0 = "(): BigInteger";
+const @global_BigInteger_1 = "(Integer): BigInteger";
+
+function bigint_create()
+{
+	return [0, 0];
+}
+
+function bigint_create(int)
+{
+	if (int == 0) {
+		return [0, 0];
+	}
+	if (int == 0x80000000) {
+		return [1, 0x80000000, 0];
+	}
+	return [int < 0, abs(int), 0];
+}
+
+function bigint_from_uint(uint)
+{
+	if (uint == 0) {
+		return [0, 0];
+	}
+	return [0, uint, 0];
+}
+
+function bigint_from_string(s)
+{
+	var end = length(s);
+	var idx = 0;
+	var neg = false;
+
+	if (end == 0) {
+		return 0, error("invalid number");
+	}
+	if (s[0] == '-') {
+		neg = true;
+		idx++;
+		if (end == 1) {
+			return 0, error("invalid number");
+		}
+	}
+
+	var group_size = (end - idx) % 9;
+	var result = bigint_create(0);
+	var billion = bigint_create(1000000000);
+
+	while (idx < end) {
+		var val = 0;
+		for (var i=0; i<group_size; i++) {
+			var c = s[idx++];
+			switch (c) {
+				case '0'..'9': val = val*10 + (c - '0'); break;
+				default: return 0, error("invalid number");
+			}
+		}
+		result = bigint_add(bigint_mul(result, billion), bigint_create(val));
+		group_size = 9;
+	}
+
+	if (neg) {
+		if (length(result) == 2) {
+			return 0, error("invalid number");
+		}
+		result[0] = 1;
+	}
+	return result;
+}
+
+function bigint_from_hex_string(s)
+{
+	var end = length(s);
+	var start = 0;
+	var neg = false;
+
+	if (end > 0 && s[0] == '-') {
+		neg = true;
+		start++;
+	}
+	if (end - start >= 2 && s[start] == '0' && s[start+1] == 'x') {
+		start += 2;
+	}
+
+	var len = end - start;
+	if (len == 0) {
+		return 0, error("invalid number");
+	}
+
+	var result = [];
+	var max = 2+(len+7)/8;
+	array_set_length(result, max);
+	result[0] = neg;
+
+	var idx = 1, val = 0, shift = 0;
+	while (start < end) {
+		var c = s[--end];
+		switch (c) {
+			case '0'..'9': val |= (c - '0') << shift; break;
+			case 'A'..'F': val |= (c - 'A' + 10) << shift; break;
+			case 'a'..'f': val |= (c - 'a' + 10) << shift; break;
+			default: return 0, error("invalid number");
+		}
+		shift += 4;
+		if (shift == 32) {
+			result[idx++] = val;
+			val = 0;
+			shift = 0;
+		}
+	}
+
+	result[idx] = val;
+
+	while (max > 2 && !result[max-2]) {
+		max--;
+	}
+	array_set_length(result, max);
+
+	if (neg && length(result) == 2) {
+		return 0, error("invalid number");
+	}
+	return result;
+}
+
+function bigint_from_bytes_BE(buf)
+{
+	return bigint_from_bytes_BE(buf, 0, length(buf));
+}
+
+function bigint_from_bytes_BE(buf, off, len)
+{
+	var end = off + len;
+	while (off < end && buf[off] == 0) {
+		off++;
+	}
+	var result = [0];
+	var num = 0, shift = 0;
+	while (off < end) {
+		num |= buf[--end] << shift;
+		shift += 8;
+		if (shift == 32) {
+			result[] = num;
+			shift = 0;
+			num = 0;
+		}
+	}
+	if (num) {
+		result[] = num;
+	}
+	result[] = 0;
+	return result;
+}
+
+function bigint_from_bytes_LE(buf)
+{
+	return bigint_from_bytes_LE(buf, 0, length(buf));
+}
+
+function bigint_from_bytes_LE(buf, off, len)
+{
+	var end = off + len;
+	while (off < end && buf[end-1] == 0) {
+		end--;
+	}
+	var result = [0];
+	var num = 0, shift = 0;
+	while (off < end) {
+		num |= buf[off++] << shift;
+		shift += 8;
+		if (shift == 32) {
+			result[] = num;
+			shift = 0;
+			num = 0;
+		}
+	}
+	if (num) {
+		result[] = num;
+	}
+	result[] = 0;
+	return result;
+}
+
+function bigint_is_zero(value)
+{
+	return length(value) == 2;
+}
+
+function @lt(val1, val2)
+{
+	var len1 = length(val1);
+	var len2 = length(val2);
+	if (len1 < len2) return true;
+	if (len1 > len2) return false;
+	if (len1 == 2) return false;
+	var idx = len1-2;
+	while (idx > 1 && val1[idx] == val2[idx]) {
+		idx--;
+	}
+	return uint_cmp_lt(val1[idx], val2[idx]);
+}
+
+function @le(val1, val2)
+{
+	var len1 = length(val1);
+	var len2 = length(val2);
+	if (len1 < len2) return true;
+	if (len1 > len2) return false;
+	if (len1 == 2) return true;
+	var idx = len1-2;
+	while (idx > 1 && val1[idx] == val2[idx]) {
+		idx--;
+	}
+	return uint_cmp_le(val1[idx], val2[idx]);
+}
+
+function @gt(val1, val2)
+{
+	var len1 = length(val1);
+	var len2 = length(val2);
+	if (len1 < len2) return false;
+	if (len1 > len2) return true;
+	if (len1 == 2) return false;
+	var idx = len1-2;
+	while (idx > 1 && val1[idx] == val2[idx]) {
+		idx--;
+	}
+	return uint_cmp_gt(val1[idx], val2[idx]);
+}
+
+function @ge(val1, val2)
+{
+	var len1 = length(val1);
+	var len2 = length(val2);
+	if (len1 < len2) return false;
+	if (len1 > len2) return true;
+	if (len1 == 2) return true;
+	var idx = len1-2;
+	while (idx > 1 && val1[idx] == val2[idx]) {
+		idx--;
+	}
+	return uint_cmp_ge(val1[idx], val2[idx]);
+}
+
+function bigint_cmp_lt(val1, val2)
+{
+	var neg1 = val1[0], neg2 = val2[0];
+	if (neg1 & ~neg2) return true;
+	if (~neg1 & neg2) return false;
+	if (neg1) return gt(val1, val2);
+	return lt(val1, val2);
+}
+
+function bigint_cmp_le(val1, val2)
+{
+	var neg1 = val1[0], neg2 = val2[0];
+	if (neg1 & ~neg2) return true;
+	if (~neg1 & neg2) return false;
+	if (neg1) return ge(val1, val2);
+	return le(val1, val2);
+}
+
+function bigint_cmp_gt(val1, val2)
+{
+	var neg1 = val1[0], neg2 = val2[0];
+	if (neg1 & ~neg2) return false;
+	if (~neg1 & neg2) return true;
+	if (neg1) return lt(val1, val2);
+	return gt(val1, val2);
+}
+
+function bigint_cmp_ge(val1, val2)
+{
+	var neg1 = val1[0], neg2 = val2[0];
+	if (neg1 & ~neg2) return false;
+	if (~neg1 & neg2) return true;
+	if (neg1) return le(val1, val2);
+	return ge(val1, val2);
+}
+
+function bigint_add(val1, val2)
+{
+	var len1 = length(val1)-1;
+	var len2 = length(val2)-1;
+	var max = max(len1, len2)+1;
+	var result = [];
+
+	array_set_length(result, max);
+
+	if (val1[0] ^ val2[0]) {
+		if (gt(val2, val1)) {
+			var tmp = len1;
+			len1 = len2;
+			len2 = tmp;
+
+			tmp = val1;
+			val1 = val2;
+			val2 = tmp;
+		}
+
+		var prev_borrow = 0;
+
+		for (var i=1; i<max; i++) {
+			var d1 = val1[min(i, len1)];
+			var d2 = val2[min(i, len2)];
+			var (sub, borrow) = sub32(d1, d2, prev_borrow);
+			result[i] = sub;
+			prev_borrow = borrow;
+		}
+
+		while (max > 2 && !result[max-2]) {
+			max--;
+		}
+		array_set_length(result, max);
+		
+		result[0] = val1[0];
+	}
+	else {
+		var prev_carry = 0;
+
+		for (var i=1; i<max; i++) {
+			var d1 = val1[min(i, len1)];
+			var d2 = val2[min(i, len2)];
+			var (sum, carry) = add32(d1, d2, prev_carry);
+			result[i] = sum;
+			prev_carry = carry;
+		}
+
+		if (result[max-1]) {
+			result[] = 0;
+		}
+		result[0] = val1[0];
+	}
+
+	if (length(result) == 2) {
+		result[0] = 0;
+	}
+	return result;
+}
+
+function bigint_sub(val1, val2)
+{
+	var nonzero = length(val2) > 2;
+	if (nonzero) {
+		val2[0] ^= 1;
+	}
+	var (result, e) = bigint_add(val1, val2);
+	if (nonzero) {
+		val2[0] ^= 1;
+	}
+	if (e) return 0, e;
+	return result;
+}
+
+function bigint_abs(val)
+{
+	if (val[0]) {
+		var result = clone(val);
+		result[0] = 0;
+		return result;
+	}
+	return val;
+}
+
+function bigint_mul(val1, val2)
+{
+	var len1 = length(val1)-1;
+	var len2 = length(val2)-1;
+	var max = len1 + len2;
+	var result = [];
+
+	array_set_length(result, max);
+	result[0] = val1[0] ^ val2[0];
+
+	var (r, e) = @bigint_mul(val1, val2, result);
+	if (!e) {
+		if (r) return 0, r;
+		if (length(result) == 2) {
+			result[0] = 0;
+		}
+		return result;
+	}
+
+	for (var i=1; i<len1; i++) {
+		var mult = val1[i];
+		if (!mult) continue;
+		var mul_carry = 0;
+		var add_carry = 0;
+		var idx = i;
+		for (var j=1; j<=len2; j++) {
+			var (lo, hi) = umul64(val2[j], mult);
+			var (mul, mc) = add32(lo, mul_carry);
+			mul_carry = add32(hi, mc);
+
+			var (sum, sc) = add32(result[idx], mul, add_carry);
+			result[idx++] = sum;
+			add_carry = sc;
+		}
+	}
+
+	while (max > 2 && !result[max-2]) {
+		max--;
+	}
+	array_set_length(result, max);
+
+	if (length(result) == 2) {
+		result[0] = 0;
+	}
+	return result;
+}
+
+function @shl1(val)
+{
+	var prev_carry = 0;
+	for (var i=1, n=length(val); i<n; i++) {
+		var v = val[i];
+		var (shifted, c) = add32(v, v, prev_carry);
+		val[i] = shifted;
+		prev_carry = c;
+	}
+	if (val[length(val)-1]) {
+		val[] = 0;
+	}
+}
+
+function @sub(val1, val2)
+{
+	var len1 = length(val1)-1;
+	var len2 = length(val2)-1;
+	var prev_borrow = 0;
+	for (var i=1; i<len1; i++) {
+		var d1 = val1[i];
+		var d2 = val2[min(i, len2)];
+		var (sub, borrow) = sub32(d1, d2, prev_borrow);
+		val1[i] = sub;
+		prev_borrow = borrow;
+	}
+	while (len1 > 1 && !val1[len1-1]) {
+		len1--;
+	}
+	array_set_length(val1, len1+1);
+}
+
+function bigint_divrem(val1, val2)
+{
+	if (length(val2) == 2) {
+		return 0, error("division by zero");
+	}
+
+	var quot = [], rem = [val1[0], 0];
+	array_set_length(quot, length(val1));
+	quot[0] = val1[0] ^ val2[0];
+
+	var (r, e) = @bigint_divrem(val1, val2, quot, rem);
+	if (!e) {
+		if (r) return 0, r;
+		return quot, rem;
+	}
+
+	for (var i=(length(val1)-1)*32-1; i>=32; i--) {
+		shl1(rem);
+		rem[1] |= (val1[i >> 5] >>> (i & 31)) & 1;
+		if (rem[length(rem)-1]) {
+			rem[] = 0;
+		}
+
+		if (ge(rem, val2)) {
+			sub(rem, val2);
+			quot[i >> 5] |= 1 << (i & 31);
+		}
+	}
+
+	var len = length(quot);
+	while (len > 2 && !quot[len-2]) {
+		len--;
+	}
+	array_set_length(quot, len);
+
+	return quot, rem;
+}
+
+function bigint_div(val1, val2)
+{
+	var (quot, rem) = bigint_divrem(val1, val2);
+	if (!quot) return 0, rem;
+	return quot;
+}
+
+function bigint_rem(val1, val2)
+{
+	var (quot, rem) = bigint_divrem(val1, val2);
+	if (!quot) return 0, rem;
+	return rem;
+}
+
+function bigint_mod(val1, val2)
+{
+	var rem = bigint_rem(val1, val2);
+	if (val1[0] ^ val2[0]) {
+		return bigint_add(rem, val2);
+	}
+	return rem;
+}
+
+function bigint_shl(value, shift)
+{
+	if (shift < 0) {
+		return 0, error("negative shift");
+	}
+	if (!shift) {
+		return value;
+	}
+
+	var word_shift = shift >> 5;
+	shift &= 31;
+	var inv_shift = 32 - shift;
+	var len = length(value);
+	var max = len + word_shift + 1;
+	var result = [];
+	array_set_length(result, max);
+	result[0] = value[0];
+
+	if (shift) {
+		var carry = 0, d;
+		for (var i=1, j=1+word_shift; i<len; i++, j++) {
+			d = value[i];
+			result[j] = (d << shift) | carry;
+			carry = d >>> inv_shift;
+		}
+	}
+	else {
+		array_copy(result, 1+word_shift, value, 1, len-2);
+	}
+	
+	while (max > 2 && !result[max-2]) {
+		max--;
+	}
+	array_set_length(result, max);
+	return result;
+}
+
+function bigint_shr(value, shift)
+{
+	if (value[0]) {
+		return 0, error("shifting negative numbers is not supported");
+	}
+	if (shift < 0) {
+		return 0, error("negative shift");
+	}
+	if (!shift) {
+		return value;
+	}
+
+	var word_shift = shift >> 5;
+	shift &= 31;
+	var inv_shift = 32 - shift;
+	var len = length(value);
+	var max = len - word_shift;
+	if (max <= 2) return [0, 0];
+	var result = [];
+	array_set_length(result, max);
+
+	if (shift) {
+		var carry = 0, d;
+		for (var i=len-2, j=i-word_shift; j>=1; i--, j--) {
+			d = value[i];
+			result[j] = (d >>> shift) | carry;
+			carry = d << inv_shift;
+		}
+	}
+	else {
+		array_copy(result, 1, value, 1+word_shift, len - word_shift - 2);
+	}
+
+	while (max > 2 && !result[max-2]) {
+		max--;
+	}
+	array_set_length(result, max);
+	return result;
+}
+
+function bigint_modpow(base, exponent, modulus)
+{
+	if (base[0] | exponent[0] | modulus[0]) {
+		return 0, error("negative numbers are not supported");
+	}
+	var result = bigint_create(1);
+	base = bigint_rem(base, modulus);
+	while (!bigint_is_zero(exponent)) {
+		if (exponent[1] & 1) {
+			result = bigint_rem(bigint_mul(result, base), modulus);
+		}
+		exponent = bigint_shr(exponent, 1);
+		base = bigint_rem(bigint_mul(base, base), modulus);
+	}
+	return result;
+}
+
+function bigint_to_int(value)
+{
+	if (length(value) > 3) {
+		return 0, error("integer overflow");
+	}
+	var v = value[1];
+	if (value[0]) {
+		if (v == 0x80000000) {
+			return v;
+		}
+		if (v < 0) {
+			return 0, error("integer overflow");
+		}
+		return -v;
+	}
+	else {
+		if (v < 0) {
+			return 0, error("integer overflow");
+		}
+		return v;
+	}
+}
+
+function bigint_to_uint(value)
+{
+	if (length(value) > 3 || value[0]) {
+		return 0, error("integer overflow");
+	}
+	return value[1];
+}
+
+function bigint_to_string(value)
+{
+	var s = {""};
+	var billion = bigint_create(1000000000);
+
+	while (length(value) > 2) {
+		var (div, rem) = bigint_divrem(value, billion);
+		if (!div) return 0, rem;
+		value = div;
+		rem = rem[1];
+		if (length(value) > 2) {
+			for (var i=0; i<9; i++) {
+				s[] = '0' + (rem % 10);
+				rem /= 10;
+			}
+		}
+		else {
+			while (rem) {
+				s[] = '0' + (rem % 10);
+				rem /= 10;
+			}
+		}
+	}
+
+	if (length(s) == 0) {
+		s[] = '0';
+		return s;
+	}
+
+	if (value[0]) {
+		s[] = '-';
+	}
+
+	var last = length(s)-1, tmp;
+	for (var i=0, j=last, n=last/2; i<=n; i++, j--) {
+		tmp = s[i];
+		s[i] = s[j];
+		s[j] = tmp;
+	}
+	return s;
+}
+
+function bigint_to_hex_string(value)
+{
+	return bigint_to_hex_string(value, 1);
+}
+
+function bigint_to_hex_string(value, use_prefix)
+{
+	var prefix = use_prefix? "0x" : "";
+	var s = value[0]? {"-", prefix} : {prefix};
+	var zero = true;
+	for (var i=length(value)-2; i>=1; i--) {
+		var val = value[i];
+		for (var j=0; j<8; j++) {
+			var d = val >>> 28;
+			val <<= 4;
+			if (zero && !d) continue;
+			zero = false;
+			if (d < 10) {
+				s[] = d + '0';
+			}
+			else {
+				s[] = d - 10 + 'A';
+			}
+		}
+	}
+	if (zero) {
+		s[] = '0';
+	}
+	return s;
+}
+
+function bigint_to_bytes_BE(value)
+{
+	if (value[0]) {
+		return 0, error("must be positive integer");
+	}
+
+	var result = [];
+	var first = length(value)-2;
+	for (var i=first; i>=1; i--) {
+		var d = value[i];
+		var b0 = d >>> 24;
+		var b1 = (d >>> 16) & 0xFF;
+		var b2 = (d >>> 8) & 0xFF;
+		var b3 = d & 0xFF;
+		if (i == first) {
+			if (b0) {
+				result[] = b0;
+			}
+			if (b0 | b1) {
+				result[] = b1;
+			}
+			if (b0 | b1 | b2) {
+				result[] = b2;
+			}
+			result[] = b3;
+		}
+		else {
+			result[] = b0;
+			result[] = b1;
+			result[] = b2;
+			result[] = b3;
+		}
+	}
+	return result;
+}
+
+function bigint_to_bytes_LE(value)
+{
+	if (value[0]) {
+		return 0, error("must be positive integer");
+	}
+
+	var result = [];
+	var len = length(value)-1;
+	for (var i=1; i<len; i++) {
+		var d = value[i];
+		result[] = d & 0xFF;
+		result[] = (d >>> 8) & 0xFF;
+		result[] = (d >>> 16) & 0xFF;
+		result[] = d >>> 24;
+	}
+	len = length(result);
+	while (len > 0 && result[len-1] == 0) {
+		len--;
+	}
+	array_set_length(result, len);
+	return result;
+}
+
+function @int_log2(v1)
+{
+	if (v1 < 0) return 31;
+	var result = (v1 > 0xFFFF) << 4, v2 = v1 >> result;
+	var shift1 = (v2 > 0xFF  ) << 3, v3 = v2 >> shift1; result |= shift1;
+	var shift2 = (v3 > 0xF   ) << 2, v4 = v3 >> shift2; result |= shift2;
+	var shift3 = (v4 > 0x3   ) << 1, v5 = v4 >> shift3; result |= shift3;
+    return result | (v5 >> 1);
+}
+
+function bigint_get_bit_size(value)
+{
+	var len = length(value) - 2;
+	if (len == 0) return 0;
+	var v = value[len];
+	return (len-1)*32 + (v? int_log2(v) + 1 : 0);
+}
+
+function bigint_modinverse(a, m)
+{
+	while (a[0]) {
+		a = bigint_add(a, m);
+	}
+
+	var t = bigint_create(0);
+	var r = m;
+	var newt = bigint_create(1);
+	var newr = a;
+
+	while (!bigint_is_zero(newr)) {
+		var quotient = bigint_div(r, newr);
+
+		var tmp_t = newt;
+		var tmp_newt = bigint_sub(t, bigint_mul(quotient, newt));
+		t = tmp_t;
+		newt = tmp_newt;
+
+		var tmp_r = newr;
+		var tmp_newr = bigint_sub(r, bigint_mul(quotient, newr));
+		r = tmp_r;
+		newr = tmp_newr;
+	}
+
+	if (bigint_cmp_gt(r, bigint_create(1))) {
+		return 0, error("not invertible");
+	}
+	if (bigint_cmp_lt(t, bigint_create(0))) {
+		t = bigint_add(t, m);
+	}
+	return t;
+}
+
+function bigint_is_bit_set(value, pos)
+{
+	var idx = (pos >> 5)+1;
+	if (idx >= length(value)) {
+		return false;
+	}
+	return (value[idx] & (1 << (pos & 31))) != 0;
+}
+
+function bigint___add_int(val1, val2)
+{
+	return bigint_add(val1, bigint_create(val2));
+}
+
+function bigint___add_int_rev(val1, val2)
+{
+	return bigint_add(bigint_create(val1), val2);
+}
+
+function bigint___sub_int(val1, val2)
+{
+	return bigint_sub(val1, bigint_create(val2));
+}
+
+function bigint___sub_int_rev(val1, val2)
+{
+	return bigint_sub(bigint_create(val1), val2);
+}
+
+function bigint___mul_int(val1, val2)
+{
+	return bigint_mul(val1, bigint_create(val2));
+}
+
+function bigint___mul_int_rev(val1, val2)
+{
+	return bigint_mul(bigint_create(val1), val2);
+}
+
+function bigint___div_int(val1, val2)
+{
+	return bigint_div(val1, bigint_create(val2));
+}
+
+function bigint___div_int_rev(val1, val2)
+{
+	return bigint_div(bigint_create(val1), val2);
+}
+
+function bigint___rem_int(val1, val2)
+{
+	return bigint_rem(val1, bigint_create(val2));
+}
+
+function bigint___rem_int_rev(val1, val2)
+{
+	return bigint_rem(bigint_create(val1), val2);
+}
+
+function bigint___cmp_lt_int(val1, val2)
+{
+	return bigint_cmp_lt(val1, bigint_create(val2));
+}
+
+function bigint___cmp_lt_int_rev(val1, val2)
+{
+	return bigint_cmp_lt(bigint_create(val1), val2);
+}
+
+function bigint___cmp_le_int(val1, val2)
+{
+	return bigint_cmp_le(val1, bigint_create(val2));
+}
+
+function bigint___cmp_le_int_rev(val1, val2)
+{
+	return bigint_cmp_le(bigint_create(val1), val2);
+}
+
+function bigint___cmp_gt_int(val1, val2)
+{
+	return bigint_cmp_gt(val1, bigint_create(val2));
+}
+
+function bigint___cmp_gt_int_rev(val1, val2)
+{
+	return bigint_cmp_gt(bigint_create(val1), val2);
+}
+
+function bigint___cmp_ge_int(val1, val2)
+{
+	return bigint_cmp_ge(val1, bigint_create(val2));
+}
+
+function bigint___cmp_ge_int_rev(val1, val2)
+{
+	return bigint_cmp_ge(bigint_create(val1), val2);
+}
+
+function BigInteger()
+{
+	return bigint_create();
+}
+
+function BigInteger(int)
+{
+	return bigint_create(int);
+}
+
+/*
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_bigint()
+{
+	assert(bigint_create(0xFFFFFFFF), [1, 1, 0]);
+	assert(bigint_to_hex_string([0, 0]), "0x0");
+	assert(bigint_to_hex_string([1, 0]), "-0x0");
+	assert(bigint_to_hex_string([0, 0, 0]), "0x0");
+	assert(bigint_add(bigint_create(5), bigint_create(10)), [0, 15, 0]);
+	assert(bigint_add([0, 0xFFFFFFFF, 0], [0, 1, 0]), [0, 0, 1, 0]);
+	assert(bigint_add(bigint_create(-5), bigint_create(-10)), [1, 15, 0]);
+	assert(bigint_add(bigint_create(5), bigint_create(-10)), [1, 5, 0]);
+	assert(bigint_add(bigint_create(-5), bigint_create(10)), [0, 5, 0]);
+	assert(bigint_add(bigint_create(10), bigint_create(-5)), [0, 5, 0]);
+	assert(bigint_add(bigint_create(-10), bigint_create(5)), [1, 5, 0]);
+	assert(bigint_add(bigint_create(0), bigint_create(0)), [0, 0]);
+	assert(bigint_add(bigint_create(5), bigint_create(-5)), [0, 0]);
+	assert(bigint_sub(bigint_create(5), bigint_create(5)), [0, 0]);
+	assert(bigint_mul([0, 0xFFFFFFFF, 0], [0, 0xFFFFFFFF, 0]), [0, 0x00000001, 0xFFFFFFFE, 0]);
+	assert(bigint_mul([0, 0xFFFFFFFF, 0], [0, 0]), [0, 0]);
+	assert(bigint_mul([0, 0xFFFFFFFF, 0], [0, 1, 0]), [0, 0xFFFFFFFF, 0]);
+
+	// test for negative zero (must not occur from operations):
+	assert(bigint_add(bigint_create(-5), bigint_create(5)), [0, 0]);
+	assert(bigint_mul(bigint_create(-5), bigint_create(0)), [0, 0]);
+
+	// a = 0x105227418E72EFE3B441B09C6FC49669CF5C5E9
+	// b = 0x393CEBA3C5076FECD0984DCB50
+	// m = 0x3A62D04A6FCD8725F5D0EC07C20DDCCC41B1478AE84683A887450B46CFD29BD0
+	// q = 0x48FF05D05D0C8
+	// r = 0x1036165B0034FA434F626DEF69
+
+	var a = [0, 0x9CF5C5E9, 0xC6FC4966, 0x3B441B09, 0x18E72EFE, 0x01052274, 0];
+	var b = [0, 0x984DCB50, 0x076FECD0, 0x3CEBA3C5, 0x00000039, 0];
+	var m = [0, 0xCFD29BD0, 0x87450B46, 0xE84683A8, 0x41B1478A, 0xC20DDCCC, 0xF5D0EC07, 0x6FCD8725, 0x3A62D04A, 0];
+	var q = [0, 0x5D05D0C8, 0x00048FF0, 0];
+	var r = [0, 0x626DEF69, 0x34FA434F, 0x36165B00, 0x00000010, 0];
+
+	assert(bigint_to_string(bigint_create(0)), "0");
+	assert(bigint_to_string(bigint_from_string("10000001000000")), "10000001000000");
+	assert(bigint_to_string(a), "5823495820394580923485092384509238982345082345");
+	assert(bigint_to_string(b), "4534859234850238582345832450896");
+	assert(bigint_to_string(m), "26408733800228131655055787658452686547110150310215644519106219491004289031120");
+	assert(bigint_to_string(q), "1284162422427848");
+	assert(bigint_to_string(r), "1284389816865780935829782130537");
+
+	assert(bigint_to_hex_string(a), "0x105227418E72EFE3B441B09C6FC49669CF5C5E9");
+	assert(bigint_to_hex_string(b), "0x393CEBA3C5076FECD0984DCB50");
+	assert(bigint_to_hex_string(m), "0x3A62D04A6FCD8725F5D0EC07C20DDCCC41B1478AE84683A887450B46CFD29BD0");
+	assert(bigint_to_hex_string(q), "0x48FF05D05D0C8");
+	assert(bigint_to_hex_string(r), "0x1036165B0034FA434F626DEF69");
+
+	assert(bigint_mul(a, b), m);
+	assert(bigint_mul(b, a), m);
+
+	var (quot, rem) = bigint_divrem(a, b);
+	assert(quot, q);
+	assert(rem, r);
+
+	assert(bigint_div(bigint_create(17), bigint_create(5)), bigint_create(3));
+	assert(bigint_div(bigint_create(-17), bigint_create(5)), bigint_create(-3));
+	assert(bigint_div(bigint_create(17), bigint_create(-5)), bigint_create(-3));
+	assert(bigint_div(bigint_create(-17), bigint_create(-5)), bigint_create(3));
+
+	assert(bigint_rem(bigint_create(17), bigint_create(5)), bigint_create(2));
+	assert(bigint_rem(bigint_create(-17), bigint_create(5)), bigint_create(-2));
+	assert(bigint_rem(bigint_create(17), bigint_create(-5)), bigint_create(2));
+	assert(bigint_rem(bigint_create(-17), bigint_create(-5)), bigint_create(-2));
+
+	assert(bigint_mod(bigint_create(17), bigint_create(5)), bigint_create(2));
+	assert(bigint_mod(bigint_create(-17), bigint_create(5)), bigint_create(3));
+	assert(bigint_mod(bigint_create(17), bigint_create(-5)), bigint_create(-3));
+	assert(bigint_mod(bigint_create(-17), bigint_create(-5)), bigint_create(-2));
+
+	assert(bigint_shl(a, 0), a);
+	assert(bigint_shl(a, 1), bigint_from_hex_string("0x20A44E831CE5DFC768836138DF892CD39EB8BD2"));
+	assert(bigint_shl(a, 31), bigint_from_hex_string("0x82913A0C73977F1DA20D84E37E24B34E7AE2F480000000"));
+	assert(bigint_shl(a, 32), bigint_from_hex_string("0x105227418E72EFE3B441B09C6FC49669CF5C5E900000000"));
+	assert(bigint_shl(a, 33), bigint_from_hex_string("0x20A44E831CE5DFC768836138DF892CD39EB8BD200000000"));
+	assert(bigint_shl(a, 78), bigint_from_hex_string("0x41489D0639CBBF8ED106C271BF1259A73D717A40000000000000000000"));
+
+	assert(bigint_shr(a, 0), a);
+	assert(bigint_shr(a, 1), bigint_from_hex_string("0x82913A0C73977F1DA20D84E37E24B34E7AE2F4"));
+	assert(bigint_shr(a, 31), bigint_from_hex_string("0x20A44E831CE5DFC768836138DF892CD"));
+	assert(bigint_shr(a, 32), bigint_from_hex_string("0x105227418E72EFE3B441B09C6FC4966"));
+	assert(bigint_shr(a, 33), bigint_from_hex_string("0x82913A0C73977F1DA20D84E37E24B3"));
+	assert(bigint_shr(a, 78), bigint_from_hex_string("0x41489D0639CBBF8ED10"));
+	assert(bigint_shr(a, 152), bigint_from_hex_string("0x1"));
+	assert(bigint_shr(a, 153), bigint_from_hex_string("0x0"));
+	assert(bigint_shr(a, 153), [0, 0]);
+
+	assert(bigint_modpow(bigint_create(4), bigint_create(13), bigint_create(497)), bigint_create(445));
+
+	assert(bigint_from_string("0"), [0, 0]);
+	assert(bigint_from_string("00"), [0, 0]);
+	assert(bigint_from_string("1"), [0, 0x00000001, 0]);
+	assert(bigint_from_string("12"), [0, 0x0000000C, 0]);
+	assert(bigint_from_string("-12"), [1, 0x0000000C, 0]);
+	assert(bigint_from_string("123"), [0, 0x0000007B, 0]);
+	assert(bigint_from_string("123456789"), [0, 0x075BCD15, 0]);
+	assert(bigint_from_string("1234567891"), [0, 0x499602D3, 0]);
+	assert(bigint_from_string("12345678912"), [0, 0xDFDC1C40, 0x00000002, 0]);
+	assert(bigint_from_string("123456789123456789"), [0, 0xACD05F15, 0x01B69B4B, 0]);
+	assert(bigint_from_string("123456789123456789123456789"), [0, 0x7C045F15, 0xF2E3B19F, 0x00661EFD, 0]);
+
+	assert(bigint_from_hex_string("0"), [0, 0]);
+	assert(bigint_from_hex_string("00"), [0, 0]);
+	assert(bigint_from_hex_string("0x0"), [0, 0]);
+	assert(bigint_from_hex_string("123456789ABCDEF"), [0, 0x89ABCDEF, 0x1234567, 0]);
+	assert(bigint_from_hex_string("0x123456789ABCDEF"), [0, 0x89ABCDEF, 0x1234567, 0]);
+	assert(bigint_from_hex_string("-0x123456789ABCDEF"), [1, 0x89ABCDEF, 0x1234567, 0]);
+	assert(bigint_from_hex_string("0x3A62D04A6FCD8725F5D0EC07C20DDCCC41B1478AE84683A887450B46CFD29BD0"), m);
+
+	assert(bigint_to_int(bigint_from_hex_string("0")), 0);
+	assert(bigint_to_int([1, 0]), 0);
+	assert(bigint_to_int(bigint_from_string("123")), 123);
+	assert(bigint_to_int(bigint_from_string("-123")), -123);
+	assert(bigint_to_int(bigint_from_hex_string("-0x80000000")), 0x80000000);
+	assert(bigint_to_uint(bigint_from_hex_string("0xFFFFFFFF")), 0xFFFFFFFF);
+
+	assert(bigint_from_bytes_BE([]), [0, 0]);
+	assert(bigint_from_bytes_BE([0x11]), [0, 0x00000011, 0]);
+	assert(bigint_from_bytes_BE([0x11, 0x22, 0x33, 0x44]), [0, 0x11223344, 0]);
+	assert(bigint_from_bytes_BE([0x11, 0x22, 0x33, 0x44, 0x55]), [0, 0x22334455, 0x00000011, 0]);
+	assert(bigint_from_bytes_BE([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]), [0, 0x22334455, 0x00000011, 0]);
+
+	assert(bigint_from_bytes_LE([]), [0, 0]);
+	assert(bigint_from_bytes_LE([0x11]), [0, 0x00000011, 0]);
+	assert(bigint_from_bytes_LE([0x11, 0x22, 0x33, 0x44]), [0, 0x44332211, 0]);
+	assert(bigint_from_bytes_LE([0x11, 0x22, 0x33, 0x44, 0x55]), [0, 0x44332211, 0x00000055, 0]);
+	assert(bigint_from_bytes_LE([0x11, 0x22, 0x33, 0x44, 0x55, 0x00]), [0, 0x44332211, 0x00000055, 0]);
+
+	assert(bigint_to_bytes_BE([0, 0]), []);
+	assert(bigint_to_bytes_BE([0, 0x00000011, 0]), [0x11]);
+	assert(bigint_to_bytes_BE([0, 0x11223344, 0]), [0x11, 0x22, 0x33, 0x44]);
+	assert(bigint_to_bytes_BE([0, 0x22334455, 0x00000011, 0]), [0x11, 0x22, 0x33, 0x44, 0x55]);
+
+	assert(bigint_to_bytes_LE([0, 0]), []);
+	assert(bigint_to_bytes_LE([0, 0x00000011, 0]), [0x11]);
+	assert(bigint_to_bytes_LE([0, 0x11223344, 0]), [0x44, 0x33, 0x22, 0x11]);
+	assert(bigint_to_bytes_LE([0, 0x22334455, 0x00000011, 0]), [0x55, 0x44, 0x33, 0x22, 0x11]);
+
+	assert(int_log2(0)+1, 1);
+	assert(int_log2(1)+1, 1);
+	assert(int_log2(2)+1, 2);
+	assert(int_log2(3)+1, 2);
+	assert(int_log2(4)+1, 3);
+	assert(int_log2(0x7FFFFFFF)+1, 31);
+	assert(int_log2(0x80000000)+1, 32);
+	assert(bigint_get_bit_size(bigint_create(0)), 0);
+	assert(bigint_get_bit_size(bigint_create(1)), 1);
+	assert(bigint_get_bit_size(bigint_create(2)), 2);
+	assert(bigint_get_bit_size(bigint_create(3)), 2);
+	assert(bigint_get_bit_size(bigint_create(7)), 3);
+	assert(bigint_get_bit_size(bigint_create(0)), 0);
+	assert(bigint_get_bit_size(bigint_shl(bigint_create(1), 31)), 31+1);
+	assert(bigint_get_bit_size(bigint_shl(bigint_create(2), 31)), 31+2);
+	assert(bigint_get_bit_size(bigint_shl(bigint_create(3), 31)), 31+2);
+	assert(bigint_get_bit_size(bigint_shl(bigint_create(7), 31)), 31+3);
+
+	assert(bigint_modinverse(bigint_create(3), bigint_create(11)), bigint_create(4));
+
+	assert(bigint_is_bit_set(bigint_from_hex_string("80000000"), 30), 0);
+	assert(bigint_is_bit_set(bigint_from_hex_string("80000000"), 31), 1);
+	assert(bigint_is_bit_set(bigint_from_hex_string("800000000"), 4+30), 0);
+	assert(bigint_is_bit_set(bigint_from_hex_string("800000000"), 4+31), 1);
+}
+*/

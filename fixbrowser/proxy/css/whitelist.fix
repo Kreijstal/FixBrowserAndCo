@@ -1,0 +1,399 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/css/selector";
+import "browser/css/media_query";
+import "browser/css/property";
+import "browser/css/stylesheet";
+import "browser/css/value";
+import "util/string";
+
+function whitelist_stylesheet(sheet, url_rewrite_func, url_rewrite_data)
+{
+	var rules = sheet->SHEET_rules;
+	for (var i=0; i<length(rules); i++) {
+		var rule = rules[i];
+		
+		switch (rule->RULE_type) {
+			case RULE_SELECTOR: {
+				var group = rule->RULE_selector;
+				whitelist_selector_group(group);
+				if (length(group) == 0) {
+					array_remove(rules, i--);
+					continue;
+				}
+
+				var props = rule->RULE_properties;
+				for (var j=0; j<length(props); j++) {
+					if (!whitelist_property(props[j], url_rewrite_func, url_rewrite_data)) {
+						array_remove(props, j--);
+					}
+				}
+				continue;
+			}
+
+			case RULE_MEDIA_QUERY: {
+				if (whitelist_media_query(rule->RULE_media_query)) {
+					rule->RULE_media_query = media_create(MEDIA_ALL);
+					whitelist_stylesheet(rule->RULE_stylesheet, url_rewrite_func, url_rewrite_data);
+					continue;
+				}
+				break;
+			}
+
+			case RULE_IMPORT: {
+				if (whitelist_media_query(rule->RULE_import_media_query)) {
+					rule->RULE_import_url = url_rewrite_func(url_rewrite_data, rule->RULE_import_url, false);
+					rule->RULE_import_media_query = null;
+					continue;
+				}
+				break;
+			}
+		}
+
+		array_remove(rules, i--);
+		continue;
+	}
+}
+
+function @whitelist_selector_group(group)
+{
+	for (var i=0; i<length(group); i++) {
+		if (!whitelist_selector(group[i])) {
+			array_remove(group, i--);
+		}
+	}
+}
+
+function @whitelist_selector(sel)
+{
+	switch (sel->SELECTOR_type) {
+		case SEL_TYPE:
+		case SEL_ID:
+		case SEL_CLASS:
+		case SEL_ATTRIB:
+		case SEL_ATTRIB_PREFIX:
+		case SEL_ATTRIB_SUFFIX:
+		case SEL_ATTRIB_SUBSTRING:
+		case SEL_ATTRIB_EXACT:
+		case SEL_ATTRIB_INCLUDE:
+		case SEL_ATTRIB_DASH:
+		case SEL_NOT:
+		case SEL_SEQUENCE:
+		case COMB_DESCENDANT:
+		case COMB_CHILD:
+		case COMB_NEXT_SIBLING:
+		case COMB_SUBSEQUENT_SIBLING:
+			break;
+
+		case SEL_PSEUDO_ELEMENT: {
+			var name = sel->SELECTOR_pseudo_name;
+			switch (length(name)) {
+				case 5:
+					if (name == "after") return true;
+					break;
+
+				case 6:
+					if (name == "before") return true;
+					break;
+					
+				case 10:
+					if (name == "first-line") return true;
+					break;
+					
+				case 12:
+					if (name == "first-letter") return true;
+					break;
+			}
+			return false;
+		}
+
+		case SEL_PSEUDO_CLASS: {
+			// note: 'link' and 'visited' are intentionally not supported
+			var name = sel->SELECTOR_pseudo_name;
+			switch (length(name)) {
+				case 4:
+					if (name == "root") return true;
+					break;
+
+				case 5:
+					if (name == "hover") return true;
+				    if (name == "focus") return true;
+				    if (name == "empty") return true;
+					break;
+
+				case 6:
+					if (name == "active") return true;
+				    if (name == "target") return true;
+					break;
+
+				case 7:
+				    if (name == "enabled") return true;
+				    if (name == "checked") return true;
+					break;
+
+				case 8:
+				    if (name == "disabled") return true;
+					break;
+
+				case 10:
+				    if (name == "last-child") return true;
+				    if (name == "only-child") return true;
+					break;
+
+				case 11:
+				    if (name == "first-child") return true;
+					break;
+
+				case 12:
+				    if (name == "last-of-type") return true;
+				    if (name == "only-of-type") return true;
+					break;
+
+				case 13:
+				    if (name == "first-of-type") return true;
+					break;
+			}
+			return false;
+		}
+
+		case SEL_FUNCTION_IDENT:
+			return false;
+
+		case SEL_FUNCTION_STRING:
+			return false;
+
+		case SEL_FUNCTION_ANB: {
+			var name = sel->SELECTOR_func_name;
+			switch (length(name)) {
+				case 9:
+					if (name == "nth-child") return true;
+					break;
+
+				case 11:
+					if (name == "nth-of-type") return true;
+					break;
+
+				case 14:
+					if (name == "nth-last-child") return true;
+					break;
+
+				case 16:
+					if (name == "nth-last-of-type") return true;
+					break;
+			}
+			return false;
+		}
+
+		default:
+			return false;
+	}
+
+	var count = selector_get_child_count(sel);
+	for (var i=0; i<count; i++) {
+		if (!whitelist_selector(selector_get_child(sel, i))) return false;
+	}
+	return true;
+}
+
+function whitelist_property(prop, url_rewrite_func, url_rewrite_data)
+{
+	if (!whitelist_value(prop->PROP_value, url_rewrite_func, url_rewrite_data)) return false;
+
+	switch (prop->PROP_value->VALUE_type) {
+		case VALUE_INITIAL:
+		case VALUE_INHERIT:
+		case VALUE_UNSET:
+			return true;
+	}
+
+	switch (prop->PROP_type) {
+		case PROP_FONT_FAMILY:
+			return whitelist_generic_fonts(prop->PROP_value);
+
+		case PROP_FONT:
+			return whitelist_generic_fonts_for_shorthand(prop->PROP_value);
+
+		case PROP_POSITION:
+			if (prop->PROP_value->VALUE_type == VALUE_FIXED) {
+				return false;
+			}
+			return true;
+	}
+	return true;
+}
+
+function @whitelist_value(value, url_rewrite_func, url_rewrite_data)
+{
+	switch (value->VALUE_type) {
+		case VALUE_URL: {
+			value->VALUE_value = url_rewrite_func(url_rewrite_data, value->VALUE_value, false);
+			break;
+		}
+	}
+
+	var count = value_child_count(value);
+	for (var i=0; i<count; i++) {
+		if (!whitelist_value(value_child_get(value, i), url_rewrite_func, url_rewrite_data)) return false;
+	}
+	return true;
+}
+
+function @whitelist_generic_fonts(value)
+{
+	if (value->VALUE_type == VALUE_FONT_FAMILY_GENERIC) {
+		return true;
+	}
+
+	if (value->VALUE_type == VALUE_FONT_FAMILY_NAME) {
+		value->VALUE_type = VALUE_FONT_FAMILY_GENERIC;
+		value->VALUE_value = "sans-serif";
+		return true;
+	}
+
+	if (value->VALUE_type == VALUE_MULTIPLE) {
+		for (var i=0; i<value_child_count(value); i++) {
+			var child = value_child_get(value, i);
+			if (child->VALUE_type == VALUE_FONT_FAMILY_GENERIC) {
+				value->VALUE_type = VALUE_FONT_FAMILY_GENERIC;
+				value->VALUE_value = child->VALUE_value;
+				return true;
+			}
+		}
+
+		array_set_length(value, VALUE_SIZE);
+		value->VALUE_type = VALUE_FONT_FAMILY_GENERIC;
+		value->VALUE_value = "sans-serif";
+		return true;
+	}
+
+	return false;
+}
+
+function @whitelist_generic_fonts_for_shorthand(group)
+{
+	var generic_font = null;
+
+	for (var i=0; i<value_child_count(group); i++) {
+		var value = value_child_get(group, i);
+		switch (value->VALUE_type) {
+			case VALUE_FONT_FAMILY_GENERIC:
+				if (!generic_font) {
+					generic_font = value;
+				}
+				value_child_remove(group, i--);
+				continue;
+
+			case VALUE_FONT_FAMILY_NAME:
+				value_child_remove(group, i--);
+				continue;
+
+			case VALUE_MULTIPLE:
+				if (whitelist_generic_fonts(value)) {
+					if (!generic_font) {
+						generic_font = value;
+					}
+				}
+				value_child_remove(group, i--);
+				continue;
+		}
+	}
+
+	if (!generic_font) {
+		generic_font = value_create_font_family_generic("sans-serif");
+	}
+	value_child_add(group, generic_font);
+	return true;
+}
+
+function @media_match(media, v1, v2)
+{
+	switch (media->MEDIA_cmp) {
+		case CMP_EXISTS: return true;
+		case CMP_EXACT:  return v1 == v2;
+		case CMP_MIN:    return v1 >= v2;
+		case CMP_MAX:    return v1 <= v2;
+	}
+	return false;
+}
+
+function whitelist_media_query(media)
+{
+	if (!media) return true;
+	return whitelist_media_query(media, 960, 768);
+}
+
+function @whitelist_media_query(media, screen_width, screen_height)
+{
+	switch (media->MEDIA_type) {
+		case MEDIA_WIDTH:
+		case MEDIA_DEVICE_WIDTH: {
+			var (px, e) = length_to_pixels(media->MEDIA_value, screen_width, screen_height);
+			if (e) return false;
+			return media_match(media, screen_width, px);
+		}
+
+		case MEDIA_HEIGHT:
+		case MEDIA_DEVICE_HEIGHT: {
+			var (px, e) = length_to_pixels(media->MEDIA_value, screen_width, screen_height);
+			if (e) return false;
+			return media_match(media, screen_height, px);
+		}
+
+		case MEDIA_ORIENTATION: {
+			return (media->MEDIA_value == VALUE_LANDSCAPE);
+		}
+
+		case MEDIA_ASPECT_RATIO:
+		case MEDIA_DEVICE_ASPECT_RATIO: {
+			var group = media->MEDIA_value;
+			var v1 = value_child_get(group, 0)->VALUE_value;
+			var v2 = value_child_get(group, 1)->VALUE_value;
+			var screen_ratio = iround({float(screen_width) / float(screen_height) * 1000.0});
+			var value_ratio = iround({float(v1) / float(v2) * 1000.0});
+			return media_match(media, screen_ratio, value_ratio);
+		}
+
+		case MEDIA_ALL:
+		case MEDIA_SCREEN:
+			return true;
+
+		case MEDIA_ONLY:
+			return whitelist_media_query(media->MEDIA_first, screen_width, screen_height);
+
+		case MEDIA_NOT:
+			return !whitelist_media_query(media->MEDIA_first, screen_width, screen_height);
+
+		case MEDIA_AND: {
+			var r1 = whitelist_media_query(media->MEDIA_first, screen_width, screen_height);
+			var r2 = whitelist_media_query(media->MEDIA_second, screen_width, screen_height);
+			return r1 && r2;
+		}
+			
+		case MEDIA_OR: {
+			var r1 = whitelist_media_query(media->MEDIA_first, screen_width, screen_height);
+			var r2 = whitelist_media_query(media->MEDIA_second, screen_width, screen_height);
+			return r1 || r2;
+		}
+	}
+
+	return false;
+}

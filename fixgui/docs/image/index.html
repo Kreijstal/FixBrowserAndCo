@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixImage Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+	</style>
+</head>
+<body>
+
+<h1>FixImage Documentation</h1>
+
+<ul>
+	<li>Version: 0.7</li>
+	<li><a href="https://www.fixscript.org/">Homepage</a> (<a href="http://fixscript.advel.cz/">mirror</a>)</li>
+	<li><a href="changelog.html">ChangeLog</a></li>
+</ul>
+
+<p>
+This library allows you to use and draw 2D images.
+</p>
+
+<p>
+<b>Features:</b>
+<ul>
+	<li>images up to 32768x32768 size can be used</li>
+	<li>the only supported format is ARGB with premultiplied alpha</li>
+	<li>direct access to pixels (as shared array)</li>
+	<li>built-in PNG loader/writer</li>
+	<li>built-in SVG loader (needs more work)</li>
+	<li>downscaling of images</li>
+	<li>fractional blur with radius independent performance (both faster and more accurate Gaussian approximations)</li>
+	<li>ability to apply color ramps</li>
+	<li>painting with 2D transforms</li>
+	<li>fast clearing &amp; painting of pixel aligned rectangles</li>
+	<li>high performance 2D shape rasterizer with maximum quality (255x antialiasing)</li>
+	<li>subpixel rendering</li>
+	<li>gamma adjusted rendering</li>
+	<li>simple shaders support</li>
+	<li>nearest, bilinear &amp; bicubic image filtering</li>
+	<li>shape outlining</li>
+	<li>TrueType font support (including grid fitting / auto hinting)</li>
+	<li>uses SSE2 and multiple CPU cores</li>
+	<li>optional batched rendering for better performance and full utilization of CPU cores</li>
+	<li>licensed under ZLIB license (no attribution required in binary builds)</li>
+</ul>
+</p>
+
+<h2>Format</h2>
+
+<p>
+All images are stored in ARGB format. Each pixel is 32-bit integer divided into four 8bit
+quantities. The order of channels is A,R,G,B (from highest order to lowest). For example,
+a fully opaque yellow color is 0x<span style="color: #000">FF</span><span style="color: #C00">FF</span><span style="color: #0C0">FF</span><span style="color: #00C">00</span>.
+</p>
+
+<p>
+The alpha channel determines how translucent the pixel is. The format uses premultiplied
+alpha which means that color channels are multiplied with alpha (as if represented in the normalized 0-1 range).
+For example a half-transparent yellow color is 0x<span style="color: #000">80</span><span style="color: #C00">80</span><span style="color: #0C0">80</span><span style="color: #00C">00</span>.
+This allows for correct filtering and better performance. You can think of it as the more transparent
+the pixel is the less important the color is up into a fully transparent pixel where the color
+is completely meaningless.
+</p>
+
+<p>
+As a side-effect this format also supports additive blending (with smooth transition between
+normal and additive blending when filtering), simply use zero alpha and non-zero color channels,
+it will be just added into the image instead of blending. However this is not supported for all
+operations (for example gamma adjusted rendering requires to convert back to normal representation).
+</p>
+
+<h2 id="shaders">Shaders</h2>
+
+<p>
+Some drawing functions accept shaders. These are small special purpose code fragments optimized
+for computing the resulting color. The syntax looks like this:
+<pre class="code">
+<span class="keyword">use</span> <span class="string">"image/shaders"</span><span class="symbol">;</span> // at the beginning of the file
+<span class="keyword">use</span> <span class="string">"classes"</span><span class="symbol">;</span>
+<span class="symbol">...</span>
+<span class="keyword">var</span> factor <span class="symbol">=</span> 128<span class="symbol">;</span>
+p<span class="symbol">.</span><span class="function">fill_rect</span><span class="symbol">(</span>0<span class="symbol">,</span> 0<span class="symbol">,</span> 100<span class="symbol">,</span> 100<span class="symbol">,</span> Shader <span class="symbol">{</span>
+    <span class="keyword">var</span> color <span class="symbol">=</span> <span class="function">sample_bilinear</span><span class="symbol">(</span>img<span class="symbol">,</span> tr<span class="symbol">,</span> CLAMP_X<span class="symbol">|</span>CLAMP_Y<span class="symbol">);</span>
+    <span class="function">blend</span><span class="symbol">(</span><span class="function">mix</span><span class="symbol">(</span>color<span class="symbol">,</span> 0x00000000<span class="symbol">,</span> factor<span class="symbol">) *</span> 0x80808080<span class="symbol">);</span>
+});
+</pre>
+The shader is created using the <code>Shader {}</code> construct. The body can contain these
+statements:
+<pre class="code">
+<span class="keyword">var</span> name <span class="symbol">=</span> &lt;expression&gt;<span class="symbol">;</span>
+<span class="function">blend</span><span class="symbol">(</span>&lt;expression&gt;<span class="symbol">);</span>
+<span class="function">replace</span><span class="symbol">(</span>&lt;expression&gt;<span class="symbol">);</span>
+</pre>
+That means you can declare variables and issue either blending with the output, or replacing
+the output with the color derived from the expression.
+</p>
+
+<p>
+In expressions you can use hexadecimal literals to directly provide constant color (in premultiplied
+format), or use the <code>rgb</code> and <code>argb</code> functions to convert from the normal
+format. You can directly reference outside variables by an identifier, or if it's a more complex
+expression you can wrap it in <code>$(...)</code> fragment (the body is normal FixScript code).
+You can use parenthesis in the expressions to group operations as needed, you can add/subtract/multiply
+pixel values (each component is processed separately using saturation arithmetic).
+</p>
+
+<p>
+You can use these functions:
+</p>
+
+<dl>
+	<dt><code>
+		<b>sample_nearest</b>(img: <a href="image.html">Image</a>, tr: <a href="transform.html">Transform</a>[, flags])<br>
+		<b>sample_bilinear</b>(img: <a href="image.html">Image</a>, tr: <a href="transform.html">Transform</a>[, flags])<br>
+		<b>sample_bicubic</b>(img: <a href="image.html">Image</a>, tr: <a href="transform.html">Transform</a>[, flags])<br>
+	</code></dt>
+	<dd>
+		Samples pixel values from given image and transform. Optionally you can use
+		these flags (delimited by <code>|</code>):<br>
+		<b>CLAMP</b> - clamp both X &amp; Y coordinates at the edges of the image<br>
+		<b>CLAMP_X</b> - clamp the X coordinate at the edges of the image<br>
+		<b>CLAMP_Y</b> - clamp the Y coordinate at the edges of the image<br>
+	</dd>
+	<dt><code><b>mix</b>(var1, var2, factor)</code></dt>
+	<dd>
+		Returns mixed color between variables var1 and var2 using the outside variable
+		<code>factor</code> (with values between 0 and 256 inclusively).
+	</dd>
+</dl>
+
+<h2>Classes</h2>
+
+<ul>
+<li><a href="image.html">Image</a> - contains the image data</li>
+<li><a href="painter.html">Painter</a> - is used to draw 2D shapes into an <a href="image.html">Image</a></li>
+<li><a href="shape.html">Shape</a> - represents a 2D shape defined by multiple paths (either closed or open)</li>
+<li><a href="transform.html">Transform</a> - represents linear 2D transformation</li>
+<li><a href="rect.html">Rect</a> - rectangle with integer coordinates</li>
+<li><a href="font.html">Font</a> - TrueType font</li>
+<li><a href="scaled_font.html">ScaledFont</a> - TrueType font scaled and grid fitted to particular size</li>
+<li><a href="svg_image.html">SVGImage</a> - SVG image</li>
+</ul>
+
+<p>
+<a href="global.html">Global functions</a><br>
+<a href="capi.html">C API</a>
+</p>
+
+</body>
+</html>

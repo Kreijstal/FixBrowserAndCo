@@ -1,0 +1,23 @@
+import "util/common";
+import "util/string";
+
+function handle_request(request)
+{
+	var domain = request_get_domain(request);
+	if (domain == "www.elm-lang.org" || domain == "elm-lang.org") {
+		var path = request_get_path(request);
+		if (string_search_char(path, '.') == -1) {
+			request_set_redirect(request, "https://guide.elm-lang.org/");
+			return null;
+		}
+	}
+	return null;
+}
+
+function adjust_document(request, document)
+{
+	add_style_to_element(document, "div.book-summary", "left: 0px");
+	add_style_to_element(document, "div.book-body", "left: 300px");
+	add_style_to_element(document, "div.book-header > h1", "display: block; opacity: 1");
+	remove_element(document, "div#book-search-input");
+}

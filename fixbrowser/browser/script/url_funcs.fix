@@ -1,0 +1,144 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/http/url";
+import "browser/script/handle_types";
+
+function @script_url_create(params, data)
+{
+	return script_create_handle(HANDLE_TYPE_URL, url_create(params[0]));
+}
+
+function @script_url_get_scheme(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url->URL_scheme;
+}
+
+function @script_url_set_scheme(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	url->URL_scheme = params[1];
+}
+
+function @script_url_get_host(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url->URL_host;
+}
+
+function @script_url_set_host(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	url->URL_host = params[1];
+}
+
+function @script_url_get_path(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url->URL_path;
+}
+
+function @script_url_set_path(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	url->URL_path = params[1];
+}
+
+function @script_url_get_param(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url_get_param(url, params[1]);
+}
+
+function @script_url_set_param(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	url_set_param(url, params[1], params[2]);
+}
+
+function @script_url_get_params(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url_params_to_hash(url);
+}
+
+function @script_url_get_params_array(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	var result = [];
+	array_set_length(result, url_get_param_count(url));
+	for (var i=0; i<length(result); i++) {
+		result[i] = [url_get_param_name(url, i), url_get_param_value(url, i)];
+	}
+	return result;
+}
+
+function @script_url_merge(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	var relative = script_get_handle(params[1], HANDLE_TYPE_URL);
+	return script_create_handle(HANDLE_TYPE_URL, url_merge(url, relative));
+}
+
+function @script_url_to_string(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url_to_string(url);
+}
+
+function @script_url_path_to_string(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url_path_to_string(url);
+}
+
+function @script_url_query_to_string(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url_query_to_string(url);
+}
+
+function @script_url_path_query_to_string(params, data)
+{
+	var url = script_get_handle(params[0], HANDLE_TYPE_URL);
+	return url_path_query_to_string(url);
+}
+
+function register_url_funcs(heap)
+{
+	script_register_function(heap, "url_create#1", script_url_create#2, null);
+	script_register_function(heap, "url_get_scheme#1", script_url_get_scheme#2, null);
+	script_register_function(heap, "url_set_scheme#2", script_url_set_scheme#2, null);
+	script_register_function(heap, "url_get_host#1", script_url_get_host#2, null);
+	script_register_function(heap, "url_set_host#2", script_url_set_host#2, null);
+	script_register_function(heap, "url_get_path#1", script_url_get_path#2, null);
+	script_register_function(heap, "url_set_path#2", script_url_set_path#2, null);
+	script_register_function(heap, "url_get_param#2", script_url_get_param#2, null);
+	script_register_function(heap, "url_set_param#3", script_url_set_param#2, null);
+	script_register_function(heap, "url_get_params#1", script_url_get_params#2, null);
+	script_register_function(heap, "url_get_params_array#1", script_url_get_params_array#2, null);
+	script_register_function(heap, "url_merge#2", script_url_merge#2, null);
+	script_register_function(heap, "url_to_string#1", script_url_to_string#2, null);
+	script_register_function(heap, "url_path_to_string#1", script_url_path_to_string#2, null);
+	script_register_function(heap, "url_query_to_string#1", script_url_query_to_string#2, null);
+	script_register_function(heap, "url_path_query_to_string#1", script_url_path_query_to_string#2, null);
+}

@@ -1,0 +1,135 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "task/channel";
+import "browser/worker/cache_comm";
+
+const @MAX_CACHED_DATA = 67108864; // 64MB
+const @MAX_MEMORY_SIZE = 20971520; // 20MB
+
+class CacheEntry
+{
+	var @key;
+	var @content_type: String;
+	var @data;
+	
+	constructor create(key, content_type: String, data)
+	{
+		this.key = key;
+		this.content_type = content_type;
+		this.data = data;
+	}
+}
+
+var @cache: CacheEntry[Dynamic];
+var @cache_list: CacheEntry[];
+var @cache_size: Integer;
+var @cache_changed: Boolean;
+
+function @handle_message(msg)
+{
+	if (Channel::is_timeout(msg)) {
+		if (cache_changed) {
+			cache_changed = false;
+			heap_collect();
+		}
+		return;
+	}
+
+	var response = msg[length(msg)-1] as Channel;
+
+	switch (msg[0]) {
+		case CACHE_GET: {
+			var key = msg[1];
+			var entry = hash_get(cache, key, null) as CacheEntry;
+			if (entry) {
+				var list = cache_list;
+				for (var i=0; i<length(list); i++) {
+					if (list[i] === entry) {
+						array_remove(cache_list, i);
+						break;
+					}
+				}
+				cache_list[] = entry;
+				log("CACHE GET "+key+" content_type="+entry.content_type);
+				response.send([[entry.content_type, entry.data], 0]);
+				return;
+			}
+			response.send(null);
+			return;
+		}
+
+		case CACHE_PUT: {
+			var key = msg[1];
+			var content_type = msg[2] as String;
+			var data = msg[3];
+			log("CACHE PUT "+key+" content_type="+content_type);
+			if (!is_shared(data)) {
+				throw error("data must be shared array");
+			}
+			if (length(data) > MAX_CACHED_DATA) {
+				response.send(null);
+				return;
+			}
+			var prev_entry = hash_get(cache, key, null) as CacheEntry;
+			if (prev_entry) {
+				var list = cache_list;
+				for (var i=0; i<length(list); i++) {
+					if (list[i] === prev_entry) {
+						cache_size -= length(prev_entry.data);
+						array_remove(list, i);
+						break;
+					}
+				}
+			}
+			var entry = CacheEntry::create(key, content_type, data);
+			cache[key] = entry;
+			cache_list[] = entry;
+			cache_size += length(data);
+			while (cache_size > MAX_MEMORY_SIZE && length(cache_list) > 1) {
+				var old_entry = cache_list[0];
+				array_remove(cache_list, 0);
+				hash_remove(cache, old_entry.key);
+				cache_size -= length(old_entry.data);
+			}
+			cache_changed = true;
+			response.send(null);
+			return;
+		}
+	}
+	throw error("unknown command "+msg[0]);
+}
+
+function @send_failure(msg, e)
+{
+	dump(e);
+	(msg[length(msg)-1] as Channel).send(null, 1000);
+}
+
+function main(channel: Channel)
+{
+	cache = {};
+	cache_list = [];
+
+	channel.handle(handle_message#1, send_failure#2, 10000);
+}

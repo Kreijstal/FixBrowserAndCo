@@ -1,0 +1,120 @@
+/*
+ * FixScript Task v0.6 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+class Task
+{
+	static function create(func, params): Task;
+	static function create(script_name: String, func_name: String, params): Task;
+	static function create(script_name: String, func_name: String, params, load_scripts: Boolean): Task;
+	static function get(): Task;
+	static function send(msg);
+	static function receive(): Dynamic;
+	static function receive_wait(timeout: Integer): Dynamic;
+	static function sleep(amount: Integer);
+
+	function send(msg);
+	function receive(): Dynamic;
+	function receive_wait(timeout: Integer): Dynamic;
+}
+
+class ComputeTask
+{
+	var @finish_data;
+
+	constructor create()
+	{
+	}
+	
+	constructor create(finish_data)
+	{
+		this.finish_data = finish_data;
+	}
+
+	virtual function process(): Dynamic
+	{
+	}
+
+	virtual function finish(data, result)
+	{
+	}
+
+	function run()
+	{
+		var data = finish_data;
+		finish_data = null;
+		var (r, e) = run(ComputeTask::process#1, this, ComputeTask::finish#2, this);
+		finish_data = data;
+		if (e) throw e;
+	}
+
+	static function @finish(data, result)
+	{
+		(data as ComputeTask).finish((data as ComputeTask).finish_data, result);
+	}
+	
+	static function run(process_func, process_data);
+	static function run(process_func, process_data, finish_func, finish_data);
+	static function check_finished();
+	static function finish_all();
+
+	static function get_core_count(): Integer;
+	static function run_parallel(start: Integer, end: Integer, func, data);
+	static function run_parallel(start: Integer, end: Integer, min_iters: Integer, func, data);
+}
+
+class ParentRef
+{
+	static function create(obj): ParentRef
+	{
+		if (is_float(obj)) {
+			return obj as ParentRef;
+		}
+		return (obj|0) as ParentRef;
+	}
+
+	function length(): Integer;
+	function array_get(idx: Integer): ParentRef;
+
+	function is_array(): Boolean;
+	function is_string(): Boolean;
+	function is_hash(): Boolean;
+	function is_shared(): Boolean;
+	function is_funcref(): Boolean;
+	function is_weakref(): Boolean;
+	function is_handle(): Boolean;
+
+	function get(): Dynamic;
+	function clone(): Dynamic;
+
+	function get_shared_count(): Integer;
+	function get_element_size(): Integer;
+	function copy_to(dest, dest_off: Integer, src_off: Integer, count: Integer);
+	function extract(off: Integer, count: Integer): Dynamic;
+
+	function weakref_get(): ParentRef;
+	function hash_get(key, default_value): ParentRef;
+	function hash_contains(key): Boolean;
+
+	function to_string(): String;
+	function to_string(newlines: Boolean): String;
+}

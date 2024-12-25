@@ -1,0 +1,816 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/tcp";
+import "io/file";
+import "gui/worker";
+import "task/task";
+import "util/bigint";
+import "cellsplit/master_protocol";
+import "cellsplit/worker_comm";
+import "cellsplit/util/crypto";
+import "cellsplit/util/config";
+import "cellsplit/util/native";
+
+const @MASTER_SERVER  = "master.cellsplit.org";
+const @MASTER_PORT    = 21236;
+const @MASTER_VERSION = 1;
+
+const @AUTH_MODULUS = "4D343DBE04B7F8C336869689A6F49F99FFF122214B96D4AB231BFCEF2FBC5F6F9F438388DD73CAA46C2D2A22F87088CC3F7E5E902A71BC330D86FC30AB47BA8831E74386FBEF9A885726C399024C85FF882F6893565B91B907B4FD3A150F77E639A1DB139A859BC35A425051A213AB3E65A6FCADA55EBD5C1DE868A0602CC85B";
+const @AUTH_PUBKEY  = "090A1CC8F055396DC1228741DAF315E36306F344BB0A77489A70A45A5136025C0928A93423854F5C7F427C4BC816E509C3EEE71918DA6F1623DE6C3034BA6F740D0B881CC4DDBAC4482A1630A0DB3EC8A2CD08AF02B50DAB841B9F5655BD18B09B64E281B2633D4DDC1894A6E4E73056BC27F496CA90A3C6B4C4FDAAA28C7BFF";
+
+var @account: Account;
+var @quit: Boolean;
+
+class MasterServer
+{
+	static function create_account(): Account
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_CREATE_ACCOUNT);
+		conn.flush();
+		check_error(conn);
+
+		var auth_base = BigInteger(2);
+		var auth_modulus = BigInteger::from_hex_string(AUTH_MODULUS);
+		var auth_pubkey = BigInteger::from_hex_string(AUTH_PUBKEY);
+
+		var auth_privkey: BigInteger;
+		do {
+			auth_privkey = BigInteger::from_bytes_LE(get_random_bytes((auth_modulus.get_bit_size()+7)/8));
+		}
+		while (auth_privkey.is_zero() || auth_privkey >= auth_modulus);
+
+		var auth_client_pubkey = auth_base.modpow(auth_privkey, auth_modulus);
+
+		var base = read_bigint(conn);
+		var modulus = read_bigint(conn);
+		var server_pubkey = read_bigint(conn);
+
+		if (base < 2 || base > 100000 || modulus.get_bit_size() < 1000 || modulus.get_bit_size() > 4096 || server_pubkey >= modulus) {
+			throw error("invalid key parameters (possible man in the middle attack)");
+		}
+
+		var privkey: BigInteger;
+		do {
+			privkey = BigInteger::from_bytes_LE(get_random_bytes((modulus.get_bit_size()+7)/8));
+		}
+		while (privkey.is_zero() || privkey >= modulus);
+
+		var pubkey = base.modpow(privkey, modulus);
+
+		conn.write_ubyte(1); // auth key id
+		write_bigint(conn, auth_client_pubkey);
+		write_bigint(conn, pubkey);
+		conn.flush();
+		check_error(conn);
+
+		var shared = server_pubkey.modpow(privkey, modulus);
+		var auth_shared = auth_pubkey.modpow(auth_privkey, auth_modulus).to_bytes_LE();
+		var secret = sha256(shared.to_bytes_LE());
+
+		var id = {""};
+		var len = conn.read_ubyte();
+		id.set_length(len);
+		conn.read(id);
+		var auth = Array::create(32);
+		conn.read(auth);
+
+		conn.close();
+
+		var auth_data = [];
+		auth_data[] = id.length;
+		auth_data.append(id);
+		auth_data.append(secret);
+		if (hmac_sha256(auth_shared, auth_data) != auth) {
+			throw error("master server authentication failed (possible man in the middle attack)");
+		}
+
+		return Account::create(id, secret);
+	}
+
+	static function create_account_web(): Account
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_CREATE_ACCOUNT_WEB);
+		var client_random = get_random_bytes(32);
+		conn.write(client_random);
+		conn.flush();
+		check_error(conn);
+
+		var server_random = Array::create(32, 1);
+		conn.read(server_random);
+
+		var combined_randoms = [];
+		combined_randoms.append(server_random);
+		combined_randoms.append(client_random);
+
+		var secret = sha256(combined_randoms);
+
+		var id = {""};
+		var len = conn.read_ubyte();
+		id.set_length(len);
+		conn.read(id);
+
+		conn.close();
+
+		return Account::create(id, secret);
+	}
+
+	static function login_account(account: Account): Boolean
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_LOGIN_ACCOUNT);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		conn.write(sha256(account.secret));
+		var client_challenge = get_random_bytes(32);
+		conn.write(client_challenge);
+		conn.flush();
+		if (check_error(conn, [MSG_ERROR_INVALID_LOGIN]) == MSG_ERROR_INVALID_LOGIN) {
+			return false;
+		}
+
+		var challenge: Byte[] = Array::create(32, 1);
+		conn.read(challenge);
+		challenge.append(client_challenge);
+
+		var response = hmac_sha256(account.secret, challenge);
+		conn.write(response);
+		conn.flush();
+		if (check_error(conn, [MSG_ERROR_INVALID_LOGIN]) == MSG_ERROR_INVALID_LOGIN) {
+			return false;
+		}
+
+		var len = conn.read_ubyte();
+		var data = Array::create(len, 1);
+		conn.read(data);
+		var response2 = Array::create(32, 1);
+		conn.read(response2);
+
+		conn.close();
+
+		var sign_data = [];
+		sign_data.append(client_challenge);
+		sign_data[] = data.length;
+		sign_data.append(data);
+
+		if (hmac_sha256(account.secret, sign_data) != response2) {
+			throw error("master server authentication failed (possible man in the middle attack)");
+		}
+
+		var stream = ArrayStream::create(data);
+		account.features = stream.read_int_LE();
+		account.permissions = stream.read_int_LE();
+		return true;
+	}
+
+	static function get_server_list(): ServerInfo[]
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_LIST_SERVERS);
+		conn.flush();
+		check_error(conn);
+
+		var cnt = conn.read_ushort_LE();
+		var servers: ServerInfo[] = Array::create(cnt);
+		for (var i=0; i<cnt; i++) {
+			var len = conn.read_ubyte();
+			var name = Array::create(len, 1);
+			conn.read(name);
+			len = conn.read_ubyte();
+			var host = Array::create(len, 1);
+			conn.read(host);
+			var port = conn.read_ushort_LE();
+			servers[i] = ServerInfo::create(String::from_utf8(name), String::from_utf8(host), port);
+		}
+
+		conn.close();
+		return servers;
+	}
+
+	static function connect_server(account: Account): Dynamic[]
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_CONNECT_SERVER);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		conn.write(sha256(account.secret));
+		var random = get_random_bytes(32);
+		conn.write(random);
+		conn.flush();
+		check_error(conn);
+
+		var challenge: Byte[] = Array::create(32, 1);
+		conn.read(challenge);
+		challenge.append(random);
+
+		var response = hmac_sha256(account.secret, challenge);
+		conn.write(response);
+		conn.flush();
+		check_error(conn);
+
+		var len = conn.read_ubyte();
+		var cookie: Byte[] = Array::create(len);
+		conn.read(cookie);
+
+		var master_random = Array::create(32, 1);
+		conn.read(master_random);
+
+		var combined_random = [];
+		combined_random.append(master_random);
+		combined_random.append(random);
+
+		var session_secret = hmac_sha256(account.secret, combined_random);
+
+		conn.close();
+		return [cookie, session_secret];
+	}
+
+	static function get_client_info(account: Account, cookie: Byte[]): ClientInfo
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_GET_CLIENT_INFO);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		conn.write(sha256(account.secret));
+		conn.write_ubyte(cookie.length);
+		conn.write(cookie);
+		var random = get_random_bytes(32);
+		conn.write(random);
+		conn.flush();
+		check_error(conn);
+
+		var challenge: Byte[] = Array::create(32, 1);
+		conn.read(challenge);
+		challenge[] = cookie.length;
+		challenge.append(cookie);
+		challenge.append(random);
+
+		var response = hmac_sha256(account.secret, challenge);
+		conn.write(response);
+		conn.flush();
+		check_error(conn);
+
+		var master_random = Array::create(32, 1);
+		conn.read(master_random);
+		var session_secret = Array::create_shared(32, 1);
+		conn.read(session_secret);
+
+		var combined_random = [];
+		combined_random.append(master_random);
+		combined_random.append(random);
+
+		var request_secret = hmac_sha256(account.secret, combined_random);
+
+		var cipher = SHA256Cipher::create(request_secret);
+		cipher.process(session_secret);
+
+		var len = conn.read_ubyte();
+		var data = Array::create(len, 1);
+		conn.read(data);
+		var auth1 = hmac_sha256(request_secret, data);
+		cipher.process(data);
+
+		var auth2 = Array::create(32, 1);
+		conn.read(auth2);
+
+		if (auth1 != auth2) {
+			throw error("master server authentication failed (possible man in the middle attack)");
+		}
+
+		var stream = ArrayStream::create(data);
+		var info = ClientInfo::create();
+		len = stream.read_ubyte();
+		info.account_id = {""};
+		info.account_id.set_length(len);
+		stream.read(info.account_id);
+		info.features = stream.read_int_LE();
+		info.permissions = stream.read_int_LE();
+		info.session_secret = session_secret;
+
+		conn.close();
+		return info;
+	}
+
+	static function get_account_info(account: Account, check_account_id: String): AccountInfo
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_GET_ACCOUNT_INFO);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		conn.write(sha256(account.secret));
+		var random = get_random_bytes(32);
+		conn.write(random);
+		conn.flush();
+		check_error(conn);
+
+		var challenge: Byte[] = Array::create(32, 1);
+		conn.read(challenge);
+		challenge.append(random);
+
+		var response = hmac_sha256(account.secret, challenge);
+		conn.write(response);
+		conn.flush();
+		check_error(conn);
+
+		var master_random = Array::create(32, 1);
+		conn.read(master_random);
+
+		var combined_random = [];
+		combined_random.append(master_random);
+		combined_random.append(random);
+
+		var request_secret = hmac_sha256(account.secret, combined_random);
+		var cipher = SHA256Cipher::create(request_secret);
+
+		var data_stream = ArrayStream::create();
+		data_stream.write_ubyte(check_account_id.length);
+		data_stream.write(check_account_id);
+		cipher.encrypt(conn, data_stream.get_output(), 64);
+		conn.flush();
+		check_error(conn);
+
+		data_stream = ArrayStream::create(cipher.decrypt(conn, 1024));
+		var info: AccountInfo;
+		var len = data_stream.read_ubyte();
+		if (len > 0) {
+			info = AccountInfo::create();
+			info.account_id = {""};
+			info.account_id.set_length(len);
+			data_stream.read(info.account_id);
+			info.features = data_stream.read_int_LE();
+			info.permissions = data_stream.read_int_LE();
+		}
+
+		conn.close();
+		return info;
+	}
+
+	static function report_player(account: Account, report_account_id: String, report_nick: String, reason: String)
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_REPORT_PLAYER);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		conn.write(sha256(account.secret));
+		var random = get_random_bytes(32);
+		conn.write(random);
+		conn.flush();
+		check_error(conn);
+
+		var challenge: Byte[] = Array::create(32, 1);
+		conn.read(challenge);
+		challenge.append(random);
+
+		var response = hmac_sha256(account.secret, challenge);
+		conn.write(response);
+		conn.flush();
+		check_error(conn);
+
+		var master_random = Array::create(32, 1);
+		conn.read(master_random);
+
+		var combined_random = [];
+		combined_random.append(master_random);
+		combined_random.append(random);
+
+		var request_secret = hmac_sha256(account.secret, combined_random);
+		var cipher = SHA256Cipher::create(request_secret);
+
+		var data_stream = ArrayStream::create();
+		data_stream.write_ubyte(report_account_id.length);
+		data_stream.write(report_account_id);
+		var nick_encoded = report_nick.to_utf8();
+		if (nick_encoded.length > 255) {
+			nick_encoded.set_length(255);
+		}
+		data_stream.write_ubyte(nick_encoded.length);
+		data_stream.write(nick_encoded);
+		if (!reason) {
+			reason = "";
+		}
+		var reason_encoded = reason.to_utf8();
+		if (reason_encoded.length > 4096) {
+			reason_encoded.set_length(4096);
+		}
+		data_stream.write_ushort_LE(reason_encoded.length);
+		data_stream.write(reason_encoded);
+		cipher.encrypt(conn, data_stream.get_output(), 8192);
+		conn.flush();
+		check_error(conn);
+
+		conn.close();
+	}
+
+	static function get_moderation_cookie(account: Account): Byte[]
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_GET_MODERATION_COOKIE);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		conn.write(sha256(account.secret));
+		conn.flush();
+		check_error(conn);
+
+		var challenge: Byte[] = Array::create(32, 1);
+		conn.read(challenge);
+
+		var response = hmac_sha256(account.secret, challenge);
+		conn.write(response);
+		conn.flush();
+		check_error(conn);
+
+		var len = conn.read_ubyte();
+		var cookie: Byte[] = Array::create(len);
+		conn.read(cookie);
+
+		conn.close();
+		return cookie;
+	}
+
+	static function moderation_action(account: Account, mod_account_id: String, report_account_id: String, report_nick: String, ban: Boolean, reason: String, cookie: Byte[])
+	{
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_MODERATION_ACTION);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		conn.write(sha256(account.secret));
+		var random = get_random_bytes(32);
+		conn.write(random);
+		conn.flush();
+		check_error(conn);
+
+		var challenge: Byte[] = Array::create(32, 1);
+		conn.read(challenge);
+		challenge.append(random);
+
+		var response = hmac_sha256(account.secret, challenge);
+		conn.write(response);
+		conn.flush();
+		check_error(conn);
+
+		var master_random = Array::create(32, 1);
+		conn.read(master_random);
+
+		var combined_random = [];
+		combined_random.append(master_random);
+		combined_random.append(random);
+
+		var request_secret = hmac_sha256(account.secret, combined_random);
+		var cipher = SHA256Cipher::create(request_secret);
+
+		var data_stream = ArrayStream::create();
+		data_stream.write_ubyte(mod_account_id.length);
+		data_stream.write(mod_account_id);
+		data_stream.write_ubyte(report_account_id.length);
+		data_stream.write(report_account_id);
+		var nick_encoded = report_nick.to_utf8();
+		if (nick_encoded.length > 255) {
+			nick_encoded.set_length(255);
+		}
+		data_stream.write_ubyte(nick_encoded.length);
+		data_stream.write(nick_encoded);
+		if (!reason) {
+			reason = "";
+		}
+		data_stream.write_ubyte(ban? 1:0);
+		var reason_encoded = reason.to_utf8();
+		if (reason_encoded.length > 4096) {
+			reason_encoded.set_length(4096);
+		}
+		data_stream.write_ushort_LE(reason_encoded.length);
+		data_stream.write(reason_encoded);
+		data_stream.write_ubyte(cookie.length);
+		data_stream.write(cookie);
+		cipher.encrypt(conn, data_stream.get_output(), 8192);
+		conn.flush();
+		check_error(conn);
+
+		conn.close();
+	}
+
+	static function validate_account(account: Account): Boolean
+	{
+		var auth_base = BigInteger(2);
+		var auth_modulus = BigInteger::from_hex_string(AUTH_MODULUS);
+		var auth_pubkey = BigInteger::from_hex_string(AUTH_PUBKEY);
+
+		var auth_privkey: BigInteger;
+		do {
+			auth_privkey = BigInteger::from_bytes_LE(get_random_bytes((auth_modulus.get_bit_size()+7)/8));
+		}
+		while (auth_privkey.is_zero() || auth_privkey >= auth_modulus);
+
+		var auth_client_pubkey = auth_base.modpow(auth_privkey, auth_modulus);
+		var auth_shared = auth_pubkey.modpow(auth_privkey, auth_modulus).to_bytes_LE();
+
+		var conn = BufferedStream::create(TCPConnection::open(MASTER_SERVER, MASTER_PORT));
+		conn.write_ubyte(MASTER_VERSION);
+		conn.write_ubyte(MSG_VALIDATE_ACCOUNT);
+		conn.write_ubyte(account.id.length);
+		conn.write(account.id);
+		var hash = sha256(account.secret);
+		conn.write(hash); // mask
+		conn.write(hash); // hash
+		conn.write_ubyte(1); // auth key id
+		write_bigint(conn, auth_client_pubkey);
+		conn.flush();
+		check_error(conn);
+
+		var result = conn.read_ubyte();
+		var auth = Array::create(32);
+		conn.read(auth);
+		conn.close();
+
+		var auth_data = [result];
+		auth_data[] = account.id.length;
+		auth_data.append(account.id);
+		if (hmac_sha256(auth_shared, auth_data) != auth) {
+			throw error("master server authentication failed (possible man in the middle attack)");
+		}
+
+		return result != 0;
+	}
+}
+
+class @Account
+{
+	var @version: Integer;
+	var @id: String;
+	var @secret: Byte[];
+	var @features: Integer;
+	var @permissions: Integer;
+
+	constructor create(id: String, secret: Byte[])
+	{
+		this.version = 1;
+		this.id = id;
+		this.secret = secret;
+		this.features = 0;
+		this.permissions = 0;
+	}
+
+	static function unserialize(data: Byte[]): Account
+	{
+		var account = @unserialize(data) as Account;
+		if (is_string(account.version)) {
+			(account as Dynamic[]).insert(0, 1); // version
+			(account as Dynamic[])[] = 0; // features
+		}
+		if (length(account as Dynamic) == 4) {
+			(account as Dynamic[])[] = 0; // permissions
+		}
+		return account;
+	}
+}
+
+function @check_error(stream: Stream)
+{
+	check_error(stream, null);
+}
+
+function @check_error(stream: Stream, handle_codes: Integer[]): Integer
+{
+	var reply = stream.read_ubyte();
+	if (reply != MSG_SUCCESS) {
+		if (handle_codes) {
+			foreach (var code in handle_codes) {
+				if (reply == code) {
+					stream.close();
+					return reply;
+				}
+			}
+		}
+		var len = stream.read_ushort_LE();
+		var data: Byte[] = Array::create(len);
+		stream.read(data);
+		stream.close();
+		var msg = String::from_utf8(data);
+		throw error(msg);
+	}
+	return MSG_SUCCESS;
+}
+
+function @read_bigint(stream: Stream): BigInteger
+{
+	var len = stream.read_ushort_LE();
+	var buf: Byte[] = Array::create_shared(len, 1);
+	stream.read(buf);
+	return BigInteger::from_bytes_LE(buf);
+}
+
+function @write_bigint(stream: Stream, value: BigInteger)
+{
+	var buf = value.to_bytes_LE();
+	stream.write_ushort_LE(buf.length);
+	stream.write(buf);
+}
+
+function @custom_log(value)
+{
+	log("[master] "+value);
+}
+
+function @handle_message(msg)
+{
+	switch (msg[0]) {
+		case MSG_MASTER_INIT_ACCOUNT: {
+			var account_file = Path(get_config_file("account.dat"));
+			var data: Byte[];
+			if (account_file.exists()) {
+				data = File::read_whole(account_file);
+				account = Account::unserialize(data);
+			}
+			else {
+				account = MasterServer::create_account();
+				File::write_whole(account_file, serialize(account));
+			}
+			if (!MasterServer::login_account(account)) {
+				if (MasterServer::validate_account(account)) {
+					throw error("can't login (validation is ok, shouldn't happen)");
+				}
+				for (var i=1; ; i++) {
+					var backup_name = Path("account.dat.old"+i);
+					if (!backup_name.exists()) {
+						log("registering new account");
+						if (Path("account.dat").exists()) {
+							rename_file("account.dat", backup_name.to_string());
+						}
+						data = null;
+						account = MasterServer::create_account();
+						File::write_whole(account_file, serialize(account));
+						if (!MasterServer::login_account(account)) {
+							throw error("can't login to new account (shouldn't happen)");
+						}
+						break;
+					}
+				}
+			}
+			if (data != null) {
+				var new_data = serialize(account);
+				if (new_data != data) {
+					File::write_whole(account_file, new_data);
+				}
+			}
+			log("account logged in");
+			send_message([MSG_MASTER_LOGGED_IN, account.id, account.features, account.permissions]);
+			return;
+		}
+
+		case MSG_MASTER_GET_SERVER_LIST: {
+			send_message([MSG_MASTER_SERVER_LIST_OBTAINED, MasterServer::get_server_list()]);
+			return;
+		}
+		
+		case MSG_MASTER_GET_COOKIE: {
+			var (data, e) = MasterServer::connect_server(account);
+			if (e) {
+				log("error when obtaining cookie");
+				dump(e);
+				data = [[], Array::create(32, 1)];
+			}
+			else {
+				log("connection cookie obtained");
+			}
+			send_message([MSG_MASTER_COOKIE_OBTAINED, data[0], data[1]]);
+			return;
+		}
+
+		case MSG_MASTER_GET_CLIENT_INFO: {
+			var (info, e) = MasterServer::get_client_info(account, msg[2]);
+			if (e) {
+				log("error when obtaining client info");
+				dump(e);
+				info = null;
+			}
+			else {
+				log("client info obtained");
+			}
+			send_message([MSG_MASTER_CLIENT_INFO_OBTAINED, msg[1], info]);
+			return;
+		}
+
+		case MSG_MASTER_GET_ACCOUNT_INFO: {
+			var (info, e) = MasterServer::get_account_info(account, msg[1]);
+			if (e) {
+				log("error when obtaining account info");
+				dump(e);
+				info = null;
+			}
+			send_message([MSG_MASTER_ACCOUNT_INFO_OBTAINED, msg[1], info]);
+			return;
+		}
+
+		case MSG_MASTER_REPORT_PLAYER: {
+			var (r, e) = MasterServer::report_player(account, msg[1], msg[2], msg[3]);
+			if (e) {
+				log("error when reporting player");
+				dump(e);
+			}
+			return;
+		}
+
+		case MSG_MASTER_GET_MODERATION_COOKIE: {
+			var (cookie, e) = MasterServer::get_moderation_cookie(account);
+			if (e) {
+				log("error when obtaining moderation cookie");
+				dump(e);
+				cookie = null;
+			}
+			send_message([MSG_MASTER_MODERATION_COOKIE_OBTAINED, cookie]);
+			return;
+		}
+
+		case MSG_MASTER_MODERATION_ACTION: {
+			var (cookie, e) = MasterServer::moderation_action(account, msg[1], msg[2], msg[3], msg[4], msg[5], msg[6]);
+			if (e) {
+				log("error when sending moderation action");
+				dump(e);
+				cookie = null;
+			}
+			return;
+		}
+
+		case MSG_MASTER_QUIT_TASK: {
+			quit = true;
+			return;
+		}
+	}
+
+	throw error("unknown message");
+}
+
+function @send_error(msg, e)
+{
+	var err_msg = null;
+	if (is_array(e) && length(e) >= 2 && is_string(e[0])) {
+		err_msg = e[0];
+	}
+	send_message([MSG_MASTER_ERROR, msg[0], err_msg]);
+}
+
+function @receive_message()
+{
+	if (Worker::is_present()) {
+		return Worker::receive();
+	}
+	else {
+		return Task::receive();
+	}
+}
+
+function @send_message(msg)
+{
+	if (Worker::is_present()) {
+		Worker::send(msg);
+	}
+	else {
+		Task::send(msg);
+	}
+}
+
+function main()
+{
+	set_log_function(custom_log#1);
+
+	while (!quit) {
+		var msg = receive_message();
+		var (r, e) = handle_message(msg);
+		if (e) {
+			dump(e);
+			(r, e) = send_error(msg, e);
+		}
+	}
+}

@@ -1,0 +1,569 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "classes";
+import "util/string";
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	@CONST_value,
+	@CONST_offset,
+	@CONST_SIZE
+};
+
+const {
+	@REPLACEDFUNC_orig_name,
+	@REPLACEDFUNC_const_name,
+	@REPLACEDFUNC_alt_const_name,
+	@REPLACEDFUNC_SIZE
+};
+
+const @TRANSACTION_PLACEHOLDER = "__fixio_transaction";
+
+var @global_counter;
+
+function process_tokens(fname, tokens, src)
+{
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (tokens[i+TOK_type] == TOK_IDENT && tokens[i+TOK_len] == 11 && src[tokens[i+TOK_off]] == 't') {
+			if (get_token_value(tokens, src, i) == "transaction") {
+				parse_transaction(tokens, src, i);
+				continue;
+			}
+		}
+	}
+
+	var ctx = class_context_get(fname);
+	class_context_register_function_call(ctx, TRANSACTION_PLACEHOLDER, placeholder_get_types#4, placeholder_adjust_call#7, null);
+	class_context_register_postprocess(ctx, postprocess#4, null);
+
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @placeholder_get_types(data, name, num_params, line)
+{
+	var params = [TYPE_VOID];
+	for (var i=0; i<num_params; i++) {
+		params[] = TYPE_DYNAMIC;
+	}
+	return params;
+}
+
+function @placeholder_adjust_call(data, name, types, tokens, src, start, end)
+{
+	var obj_type = types[1];
+	if (!class_type_is_class(obj_type)) {
+		return 0, error({script_line(tokens[start+TOK_line]), ": must be class type"});
+	}
+
+	var noarg_types = [TYPE_VOID, obj_type];
+
+	var begin_func = class_type_get_method_real_name(obj_type, "begin", types, false);
+	var commit_func = class_type_get_method_real_name(obj_type, "commit", noarg_types, false);
+	var rollback_func = class_type_get_method_real_name(obj_type, "rollback", noarg_types, false);
+
+	if (!begin_func && commit_func && rollback_func && length(types) > 2) {
+		var simple_begin_func = class_type_get_method_real_name(obj_type, "begin", noarg_types, false);
+		if (simple_begin_func) {
+			return 0, error({script_line(tokens[start+TOK_line]), ": improper parameters for begin method"});
+		}
+	}
+
+	if (!begin_func || !commit_func || !rollback_func) {
+		return 0, error({script_line(tokens[start+TOK_line]), ": class ", class_type_get_class_name(obj_type), " must have begin/commit/rollback methods"});
+	}
+
+	var new_tokens = tokens_parse([], src, {";", begin_func, ",", commit_func, ",", rollback_func}, tokens[start+TOK_line]);
+	array_insert_array(tokens, end - TOK_SIZE, new_tokens);
+	
+	return end + length(new_tokens);
+}
+
+function @postprocess(data, fname, tokens, src)
+{
+	var consts = {};
+	var consts_offset = -1;
+	var replaced_funcs = [];
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		var type = tokens[i+TOK_type];
+		if (type == KW_CONST) {
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == '@') {
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var name = get_token_value(tokens, src, i);
+				if (string_starts_with(name, "function_")) {
+					i = expect_symbol(tokens, src, i, '=');
+					i = expect_next(tokens, src, i);
+					if (tokens[i+TOK_type] == TOK_STRING) {
+						var value = get_token_string(tokens, src, i);
+						var con = object_create(CONST_SIZE);
+						con->CONST_value = value;
+						con->CONST_offset = i;
+						consts{name} = con;
+					}
+				}
+			}
+			continue;
+		}
+
+		if (consts_offset == -1) {
+			if (type == KW_VAR || type == KW_FUNCTION) {
+				consts_offset = i;
+			}
+		}
+
+		if (type == KW_FUNCTION) {
+			var private = false;
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == '@') {
+				private = true;
+			}
+			else {
+				i -= TOK_SIZE;
+			}
+			i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+			var name_offset = i;
+			var name = get_token_value(tokens, src, i);
+			var params = [];
+			i = expect_symbol(tokens, src, i, '(');
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == ')') {
+				// nothing
+			}
+			else {
+				i -= TOK_SIZE;
+				for (;;) {
+					i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+					params[] = get_token_value(tokens, src, i);
+					i = expect_next(tokens, src, i);
+					var sym = tokens[i+TOK_type];
+					if (sym == ',') {
+						continue;
+					}
+					if (sym == ')') {
+						break;
+					}
+					return 0, error({script_line(tokens[i+TOK_line]), ": expected ',' or ')'"});
+				}
+			}
+			var end_params_offset = i;
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == ';') {
+				continue;
+			}
+			i -= TOK_SIZE;
+			i = expect_symbol(tokens, src, i, '{');
+			i = parse_function(tokens, src, i, name, params, private, name_offset, end_params_offset, replaced_funcs);
+		}
+	}
+
+	//dump(replaced_funcs);
+	//dump(consts);
+	for (var i=0; i<length(replaced_funcs); i++) {
+		var repfunc = replaced_funcs[i];
+		var cnst = hash_get(consts, repfunc->REPLACEDFUNC_const_name, null);
+		var func_name = cnst? cnst->CONST_value : repfunc->REPLACEDFUNC_orig_name;
+		if (cnst) {
+			tokens[cnst->CONST_offset+TOK_off] = length(src);
+			tokens[cnst->CONST_offset+TOK_len] = 2;
+			array_append(src, "\"\"");
+		}
+		var new_tokens = tokens_parse([], src, {"const @", repfunc->REPLACEDFUNC_alt_const_name, " = ", token_escape_string(func_name), ";"}, tokens[consts_offset+TOK_line]);
+		array_insert_array(tokens, consts_offset, new_tokens);
+	}
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @parse_transaction(tokens, src, i)
+{
+	var start = i;
+
+	tokens[i+TOK_off] = length(src);
+	tokens[i+TOK_len] = length(TRANSACTION_PLACEHOLDER);
+	array_append(src, TRANSACTION_PLACEHOLDER);
+	
+	i = expect_symbol(tokens, src, i, '(');
+	var orig_off = i;
+	i = expect_expression(tokens, src, i);
+	if (i == orig_off) {
+		return 0, error({script_line(tokens[i+TOK_SIZE+TOK_line]), ": expected expression"});
+	}
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == ',') {
+			i = expect_expression(tokens, src, i);
+		}
+		else {
+			i -= TOK_SIZE;
+			break;
+		}
+	}
+	i = expect_symbol(tokens, src, i, ')');
+	i = expect_symbol(tokens, src, i, '{');
+	array_insert_array(tokens, i, tokens_parse([], src, ";", tokens[i+TOK_line]));
+	i += TOK_SIZE;
+
+	var level = 0;
+	i += TOK_SIZE;
+	//log({"token=", get_token_value(tokens, src, i), " line=", tokens[i+TOK_line]});
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '{':
+				//log({"{ ", tokens[i+TOK_line]});
+				level++;
+				break;
+			case '}':
+				//log({"} ", tokens[i+TOK_line]});
+				if (level == 0) {
+					/*
+					var new_tokens = tokens_parse([], src, "__fixio_transaction_end();", tokens[i+TOK_line]);
+					array_insert_array(tokens, i, new_tokens);
+					i += length(new_tokens);
+					*/
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+		}
+	}
+
+	return i;
+}
+
+function @parse_function(tokens, src, i, name, params, private, name_offset, end_params_offset, replaced_funcs)
+{
+	//log({"func=", name, " ", params});
+	var uses_transaction = false;
+	var handled_returns = null;
+	var level = 0;
+	var end = false;
+	i += TOK_SIZE;
+	//log({"token=", get_token_value(tokens, src, i), " line=", tokens[i+TOK_line]});
+	for (; i < length(tokens); i += TOK_SIZE) {
+		var type = tokens[i+TOK_type];
+		if (type >= ' ') {
+			switch (type) {
+				case '{':
+					//log({"{ ", tokens[i+TOK_line], " level=", level});
+					level++;
+					break;
+				case '}':
+					//log({"} ", tokens[i+TOK_line], " level=", level});
+					if (level == 0) {
+						end = true;
+						break;
+					}
+					level--;
+					break;
+			}
+			if (end) {
+				break;
+			}
+		}
+		else if (type == TOK_IDENT && tokens[i+TOK_len] == length(TRANSACTION_PLACEHOLDER)) {
+			if (get_token_value(tokens, src, i) == TRANSACTION_PLACEHOLDER) {
+				uses_transaction = true;
+				if (!handled_returns) {
+					handled_returns = {};
+				}
+				var start = i;
+				i = expect_symbol(tokens, src, i, '(');
+				i = expect_expression(tokens, src, i);
+				var extra_params_start = i;
+				for (;;) {
+					i = expect_next(tokens, src, i);
+					if (tokens[i+TOK_type] == ',') {
+						i = expect_expression(tokens, src, i);
+					}
+					else {
+						i -= TOK_SIZE;
+						break;
+					}
+				}
+				var extra_params_end = i;
+				var extra_params = null;
+				if (extra_params_end != extra_params_start) {
+					var num = extra_params_end - extra_params_start;
+					extra_params = array_extract(tokens, extra_params_start + TOK_SIZE, num);
+					array_remove(tokens, extra_params_start + TOK_SIZE, num);
+					i -= num;
+				}
+				i = expect_symbol(tokens, src, i, ';');
+				var funcs_start = i;
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var begin_func = get_token_value(tokens, src, i);
+				i = expect_symbol(tokens, src, i, ',');
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var commit_func = get_token_value(tokens, src, i);
+				i = expect_symbol(tokens, src, i, ',');
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var rollback_func = get_token_value(tokens, src, i);
+				i = expect_symbol(tokens, src, i, ')');
+				i = expect_symbol(tokens, src, i, ';');
+				var funcs_end = i;
+				var var_name = {"__fixio_transaction_var", global_counter++};
+				var new_tokens = tokens_parse([], src, {"var ", var_name, "="}, tokens[funcs_start+TOK_line]);
+				array_remove(tokens, funcs_start, funcs_end - funcs_start);
+				array_replace_range(tokens, start, start+TOK_SIZE*2, new_tokens);
+				new_tokens = tokens_parse([], src, {begin_func, "(", var_name}, tokens[funcs_start+TOK_SIZE*2+TOK_line]);
+				if (extra_params) {
+					array_append(new_tokens, extra_params);
+				}
+				tokens_parse(new_tokens, src, {"); __fixio_transaction_list[] = ", commit_func, "#1; __fixio_transaction_list[] = ", rollback_func, "#1; __fixio_transaction_list[] = ", var_name, ";"}, tokens[funcs_start+TOK_SIZE*2+TOK_line]);
+				array_insert_array(tokens, funcs_start+TOK_SIZE*2, new_tokens);
+				i = funcs_start+TOK_SIZE*2 + length(new_tokens) - TOK_SIZE;
+				var next_idx = i;
+				i = expect_symbol(tokens, src, i, '{');
+				var level2 = 0;
+				var end2 = false;
+				for (; i<length(tokens); i+=TOK_SIZE) {
+					switch (tokens[i]) {
+						case '{':
+							level2++;
+							continue;
+						case '}': 
+							if (--level2 == 0) {
+								//log({"ending at ", tokens[i+TOK_line]});
+								end2 = true;
+								break;
+							}
+							continue;
+						case KW_RETURN:
+							if (hash_contains(handled_returns, tokens[i+TOK_off])) continue;
+							handled_returns{tokens[i+TOK_off]} = true;
+							i += TOK_SIZE;
+							if (tokens[i] == TOK_NUMBER && tokens[i+TOK_len] == 1 && src[tokens[i+TOK_off]] == '0' && tokens[i+TOK_SIZE] == ',') {
+								i -= TOK_SIZE;
+							}
+							else {
+								i -= TOK_SIZE;
+								var iter = "__fixio_transaction_iter";
+								new_tokens = tokens_parse([], src, {
+									"for (var ", iter, "=length(__fixio_transaction_list)-3; ", iter, ">=0; ", iter, "-=3) {",
+										"var __fixio_transaction_commit = __fixio_transaction_list[", iter, "+0];",
+										"var __fixio_transaction_obj = __fixio_transaction_list[", iter, "+2];",
+										"array_set_length(__fixio_transaction_list, ", iter, ");",
+										"__fixio_transaction_commit(__fixio_transaction_obj);",
+									"}"
+								}, tokens[i+TOK_line]);
+								array_insert_array(tokens, i, new_tokens);
+								i += length(new_tokens);
+							}
+							continue;
+						default:
+							continue;
+					}
+					if (end2) {
+						break;
+					}
+				}
+
+				if (end2) {
+					new_tokens = tokens_parse([], src, {
+						"array_set_length(__fixio_transaction_list, length(__fixio_transaction_list)-3);",
+						commit_func, "(", var_name, ");"
+					}, tokens[i+TOK_line]);
+					array_insert_array(tokens, i, new_tokens);
+					i = next_idx;
+					continue;
+				}
+				return 0, error("shouldn't happen");
+			}
+		}
+	}
+
+	if (uses_transaction) {
+		var alt_func_name = {"__fixio_transaction_func", global_counter++};
+		tokens[name_offset+TOK_off] = length(src);
+		tokens[name_offset+TOK_len] = length(alt_func_name);
+		array_append(src, alt_func_name);
+
+		var new_tokens = tokens_parse([], src, length(params) > 0? ",__fixio_transaction_list":"__fixio_transaction_list", tokens[end_params_offset+TOK_line]);
+		array_insert_array(tokens, end_params_offset, new_tokens);
+		i += length(new_tokens);
+
+		var repfunc = object_create(REPLACEDFUNC_SIZE);
+		repfunc->REPLACEDFUNC_orig_name = {name, "#", length(params)};
+		repfunc->REPLACEDFUNC_const_name = {"function_", name, "_", length(params)};
+		repfunc->REPLACEDFUNC_alt_const_name = {"function_", alt_func_name, "_", length(params)+1};
+		replaced_funcs[] = repfunc;
+		
+		if (!private) {
+			array_insert_array(tokens, name_offset, tokens_parse([], src, "@", tokens[name_offset+TOK_line]));
+			i += TOK_SIZE;
+		}
+
+		var param_str = {""};
+		for (var j=0; j<length(params); j++) {
+			if (length(param_str) > 0) param_str[] = ',';
+			array_append(param_str, params[j]);
+		}
+
+		var param_str2 = {param_str};
+		if (length(param_str2) > 0) param_str2[] = ',';
+		array_append(param_str2, "__fixio_transaction_list");
+
+		var iter = "__fixio_transaction_iter";
+		new_tokens = tokens_parse([], src, {
+			"function ", private? "@":"", name, "(", param_str, ") {",
+				"var __fixio_transaction_list = [];",
+				"var (__fixio_transaction_result, __fixio_transaction_error) = ", alt_func_name, "(", param_str2, ");",
+				"if (__fixio_transaction_error) {",
+					"for (var ", iter, "=length(__fixio_transaction_list)-3; ", iter, ">=0; ", iter, "-=3) {",
+						"var __fixio_transaction_rollback = __fixio_transaction_list[", iter, "+1];",
+						"var __fixio_transaction_obj = __fixio_transaction_list[", iter, "+2];",
+						"var (__fixio_transaction_result2, __fixio_transaction_error2) = __fixio_transaction_rollback(__fixio_transaction_obj);",
+					"}",
+					"return 0, __fixio_transaction_error;",
+				"}",
+				"return __fixio_transaction_result;",
+			"}"
+		}, tokens[i+TOK_line]);
+		i += TOK_SIZE;
+		array_insert_array(tokens, i, new_tokens);
+	}
+
+	return i;
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": unexpected end of file"});
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}

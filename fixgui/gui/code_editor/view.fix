@@ -1,0 +1,2202 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/scrollview";
+import "gui/subview/scrollbar" : scrollbar;
+import "gui/pure/scrollview";
+import "gui/native/common";
+import "gui/native/virtual";
+import "gui/native/web";
+import "gui/code_editor/font";
+import "gui/code_editor/syntax";
+import "gui/code_editor/storage";
+import "gui/code_editor/popup";
+
+const @MAX_EDITS = 128;
+
+const {
+	EVENT_TEXT_CHANGED
+};
+
+class CodeEditor: SubView
+{
+	var @editor: EditorView;
+	var @scroll: SubScrollView;
+
+	constructor create()
+	{
+		editor = EditorView::create(this);
+		set_font(SystemFontImpl::create("Courier New", 12, FONT_NORMAL));
+	}
+
+	function set_font(font: AbstractFont)
+	{
+		editor.font = font;
+		editor.syntax.set_font(font);
+		editor.storage.set_syntax(editor.syntax);
+		set_row_height(iround(font.get_height()));
+	}
+
+	function get_font(): AbstractFont
+	{
+		return editor.font;
+	}
+
+	function set_row_height(height: Integer)
+	{
+		editor.row_height = height;
+	}
+
+	function get_row_height(): Integer
+	{
+		return editor.row_height;
+	}
+
+	function set_syntax(syntax: Syntax)
+	{
+		syntax.set_font(editor.font);
+		editor.syntax = syntax;
+		editor.storage.set_syntax(syntax);
+	}
+
+	function get_syntax(): Syntax
+	{
+		return editor.syntax;
+	}
+
+	function set_text(text: String)
+	{
+		if (text.length > 0 && text[text.length-1] == '\n') {
+			text = clone(text);
+			text.set_length(text.length-1);
+		}
+		editor.storage.clear();
+		editor.storage.insert(0, 0, text);
+		editor.edits.clear();
+		editor.edits_pos = 0;
+		editor.visual_x = 0.0;
+		editor.notify_change();
+		handle_resize();
+		editor.set_cursor_position(0, 0, false, true);
+		repaint();
+	}
+
+	function get_text(): String
+	{
+		var text = editor.storage.get_text();
+		if (text.length > 0) {
+			text[] = '\n';
+		}
+		return text;
+	}
+
+	function set_editable(editable: Boolean)
+	{
+		editor.editable = editable;
+	}
+
+	function is_editable(): Boolean
+	{
+		return editor.editable;
+	}
+
+	function set_visible_lines(lines: Boolean)
+	{
+		if (lines != editor.show_lines) {
+			editor.show_lines = lines;
+			handle_resize();
+		}
+	}
+
+	function has_visible_lines(): Boolean
+	{
+		return editor.show_lines;
+	}
+
+	function set_sticky_lines(sticky: Boolean)
+	{
+		if (sticky != editor.sticky_lines) {
+			editor.sticky_lines = sticky;
+			if (editor.show_lines) {
+				repaint();
+			}
+		}
+	}
+
+	function has_sticky_lines(): Boolean
+	{
+		return editor.sticky_lines;
+	}
+
+	function set_cursor_position(x: Integer, y: Integer)
+	{
+		editor.set_cursor_position(x, y, false, true);
+	}
+
+	function set_cursor_position(x: Integer, y: Integer, extend_selection: Boolean)
+	{
+		editor.set_cursor_position(x, y, extend_selection, true);
+	}
+	
+	function get_cursor_position(): Integer[]
+	{
+		return [editor.cursor_x, editor.cursor_y];
+	}
+
+	function clear_selection()
+	{
+		editor.set_selection(-1, -1, -1, -1);
+	}
+	
+	function set_selection(x1: Integer, y1: Integer, x2: Integer, y2: Integer)
+	{
+		editor.set_selection(x1, y1, x2, y2);
+	}
+	
+	function get_selection_start(): Integer[]
+	{
+		if (editor.selection_y >= 0) {
+			if (editor.selection_y < editor.cursor_y) {
+				return [editor.selection_x, editor.selection_y];
+			}
+			if (editor.selection_y == editor.cursor_y) {
+				return [min(editor.selection_x, editor.cursor_x), editor.selection_y];
+			}
+		}
+		return [editor.cursor_x, editor.cursor_y];
+	}
+	
+	function get_selection_end(): Integer[]
+	{
+		if (editor.selection_y >= 0) {
+			if (editor.selection_y > editor.cursor_y) {
+				return [editor.selection_x, editor.selection_y];
+			}
+			if (editor.selection_y == editor.cursor_y) {
+				return [max(editor.selection_x, editor.cursor_x), editor.selection_y];
+			}
+		}
+		return [editor.cursor_x, editor.cursor_y];
+	}
+
+	function has_selection(): Boolean
+	{
+		if (editor.selection_y >= 0) {
+			return editor.selection_x != editor.cursor_x || editor.selection_y != editor.cursor_y;
+		}
+		return false;
+	}
+
+	function insert_text(s: String)
+	{
+		editor.add_edit(InsertTextEdit::create(editor, s));
+	}
+
+	function get_row_count(): Integer
+	{
+		return editor.storage.get_height();
+	}
+
+	function get_column_count(row: Integer): Integer
+	{
+		return editor.storage.get_row_width(row);
+	}
+
+	function get_cursor_from_point(px: Integer, py: Integer): Integer[]
+	{
+		var y = max(0, min(py / editor.row_height, editor.storage.get_height()-1));
+		var x = iround(editor.storage.get_position(px, y));
+		return [x, y];
+	}
+
+	virtual function create_scroll_view(content: SubView, popup: Boolean): SubScrollView
+	{
+		var scroll = PureScrollView::create(content);
+		scroll.set_border(!popup);
+		return scroll;
+	}
+
+	function get_scroll_view(): SubScrollView
+	{
+		return scroll;
+	}
+
+	override function handle_resize()
+	{
+		if (!scroll) {
+			scroll = create_scroll_view(editor, false);
+			scroll.set_scrollbar_visibility(SCROLL_ALWAYS_VERTICAL);
+			add(scroll);
+			if (LayerScrollView::is_instance(scroll)) {
+				editor.sticky_lines = false;
+			}
+		}
+		
+		editor.margin_left = 0;
+		if (editor.show_lines) {
+			var s = editor.storage.get_height()+"  ";
+			editor.margin_left = iround(editor.font.get_string_advance(s)) + iround(4*get_scale());
+		}
+
+		scroll.set_rect(0, 0, get_width(), get_height());
+		scroll.set_content_size(editor.margin_left + iceil(editor.storage.get_visual_width())+iround(1*get_scale()), editor.row_height*editor.storage.get_height());
+	}
+
+	function focus()
+	{
+		editor.focus();
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		if (event.get_type() == EVENT_FOCUS_GAINED) {
+			editor.focus();
+		}
+	}
+
+	function listeners(): EventListeners
+	{
+		return editor.listeners;
+	}
+}
+
+class CodeEditorEvent 
+{
+	var @type: Integer;
+	
+	constructor @create(type: Integer)
+	{
+		this.type = type;
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+}
+
+macro @swap(&x, &y)
+{
+	var $tmp = x;
+	x = y;
+	y = $tmp;
+}
+
+class @EditorView: SubView
+{
+	var @editor: CodeEditor;
+	var @font: AbstractFont;
+	var @syntax: Syntax;
+	var @storage: TextStorage;
+
+	var @margin_left: Integer;
+	var @row_height: Integer;
+	var @cursor_x: Integer;
+	var @cursor_y: Integer;
+	var @selection_x: Integer;
+	var @selection_y: Integer;
+	var @visual_x: Float;
+	var @cursor_timer: Timer;
+	var @cursor_blink: Boolean;
+	var @selection_mode: Integer;
+	var @orig_sel_x: Integer;
+	var @orig_sel_y: Integer;
+	var @edits: Edit[];
+	var @edits_pos: Integer;
+	var @editable: Boolean;
+	var @show_lines: Boolean;
+	var @sticky_lines: Boolean;
+
+	var @popup: PopupWindow;
+	var @choicer: CompletionChoicer;
+	var @cur_completion_x1: Integer;
+	var @cur_completion_x2: Integer;
+	var @cur_completion_y: Integer;
+	
+	var @listeners: EventListeners;
+	var @change_notified: Boolean;
+
+	constructor create(editor: CodeEditor)
+	{
+		this.editor = editor;
+		syntax = Syntax::create();
+		storage = TextStorage::create(syntax);
+		selection_x = -1;
+		selection_y = -1;
+		visual_x = 0.0;
+		set_cursor(CURSOR_TEXT);
+		set_focusable(true);
+		var blink_interval = Common::get_cursor_blink_interval();
+		if (blink_interval > 0) {
+			cursor_timer = Timer::create(blink_interval, EditorView::blink_cursor#1, weakref_create(this));
+		}
+		edits = [];
+		editable = true;
+		sticky_lines = true;
+		listeners = EventListeners::create();
+	}
+
+	function @notify_change()
+	{
+		if (change_notified) return;
+
+		if (!listeners.is_empty()) {
+			change_notified = true;
+			Timer::run_once(0, EditorView::notify_change_after#1, this);
+		}
+	}
+
+	function @notify_change_after()
+	{
+		change_notified = false;
+		listeners.notify(CodeEditorEvent::create(EVENT_TEXT_CHANGED));
+	}
+
+	function set_cursor_position(x: Integer, y: Integer, extend_selection: Boolean, reset_visual_pos: Boolean)
+	{
+		y = max(0, min(y, storage.get_height()-1));
+		x = max(0, min(x, storage.get_row_width(y)));
+
+		if (reset_visual_pos) {
+			visual_x = storage.get_visual_position(x, y);
+		}
+
+		if (cursor_x == x && cursor_y == y) {
+			if (!extend_selection && selection_x >= 0) {
+				repaint(cursor_y, selection_y);
+				selection_x = -1;
+				selection_y = -1;
+			}
+			else {
+				repaint(cursor_y, cursor_y);
+			}
+			update_cursor();
+			return;
+		}
+
+		if (extend_selection) {
+			if (selection_x < 0) {
+				selection_x = cursor_x;
+				selection_y = cursor_y;
+			}
+			repaint(cursor_y, y);
+			cursor_x = x;
+			cursor_y = y;
+			update_cursor();
+		}
+		else {
+			if (selection_x >= 0) {
+				repaint(selection_y, cursor_y);
+			}
+			repaint(cursor_y, y);
+			cursor_x = x;
+			cursor_y = y;
+			selection_x = -1;
+			selection_y = -1;
+			update_cursor();
+		}
+	}
+
+	function @clear_selection()
+	{
+		if (selection_y >= 0) {
+			repaint(selection_y, cursor_y);
+			selection_x = -1;
+			selection_y = -1;
+			update_cursor();
+		}
+	}
+
+	function set_selection(x1: Integer, y1: Integer, x2: Integer, y2: Integer)
+	{
+		if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0) {
+			clear_selection();
+			return;
+		}
+		
+		if (y1 > y2) {
+			swap(&x1, &x2);
+			swap(&y1, &y2);
+		}
+		if (y1 == y2 && x1 > x2) {
+			swap(&x1, &x2);
+		}
+
+		var height = storage.get_height();
+		if (y1 >= height) {
+			clear_selection();
+			return;
+		}
+
+		x1 = min(x1, storage.get_row_width(y1));
+
+		if (y2 >= height) {
+			x2 = storage.get_row_width(height-1);
+			y2 = height-1;
+		}
+		else {
+			x2 = min(x2, storage.get_row_width(y2));
+		}
+
+		if (x1 == x2 && y1 == y2) {
+			clear_selection();
+			cursor_x = x1;
+			cursor_y = y1;
+			visual_x = storage.get_visual_position(cursor_x, cursor_y);
+			return;
+		}
+
+		var cursor_at_start = selection_y >= 0 && (cursor_y < selection_y || (cursor_y == selection_y && cursor_x < selection_x));
+
+		var old_x1 = cursor_x;
+		var old_y1 = cursor_y;
+		var old_x2 = selection_x;
+		var old_y2 = selection_y;
+		if (old_y2 < 0) {
+			repaint(cursor_y, cursor_y);
+			if (cursor_at_start) {
+				cursor_x = x1;
+				cursor_y = y1;
+				selection_x = x2;
+				selection_y = y2;
+			}
+			else {
+				selection_x = x1;
+				selection_y = y1;
+				cursor_x = x2;
+				cursor_y = y2;
+			}
+			repaint(y1, y2);
+			update_cursor();
+			visual_x = storage.get_visual_position(cursor_x, cursor_y);
+			return;
+		}
+
+		if (old_y1 > old_y2) {
+			swap(&old_x1, &old_x2);
+			swap(&old_y1, &old_y2);
+		}
+		if (old_y1 == old_y2 && old_x1 > old_x2) {
+			swap(&old_x1, &old_x2);
+		}
+
+		if (y1 != old_y1 || (y1 == old_y1 && x1 != old_x1)) {
+			repaint(y1, old_y1);
+		}
+		if (y2 != old_y2 || (y2 == old_y2 && x2 != old_x2)) {
+			repaint(y2, old_y2);
+		}
+
+		if (cursor_at_start) {
+			cursor_x = x1;
+			cursor_y = y1;
+			selection_x = x2;
+			selection_y = y2;
+		}
+		else {
+			selection_x = x1;
+			selection_y = y1;
+			cursor_x = x2;
+			cursor_y = y2;
+		}
+		update_cursor();
+		visual_x = storage.get_visual_position(cursor_x, cursor_y);
+	}
+
+	function insert(x: Integer, y: Integer, s: String)
+	{
+		var old_width = storage.get_visual_width();
+		var old_height = storage.get_height();
+
+		var num_lines = storage.insert(x, y, s);
+		repaint(y, y+num_lines);
+		repaint(cursor_y, cursor_y);
+		update_cursor();
+
+		if (old_width != storage.get_visual_width() || old_height != storage.get_height()) {
+			update_size();
+		}
+		
+		visual_x = storage.get_visual_position(cursor_x, cursor_y);
+		notify_change();
+	}
+
+	function remove(x1: Integer, y1: Integer, x2: Integer, y2: Integer)
+	{
+		var old_width = storage.get_visual_width();
+		var old_height = storage.get_height();
+
+		if (y1 > y2) {
+			swap(&x1, &x2);
+			swap(&y1, &y2);
+		}
+		if (y1 == y2 && x1 > x2) {
+			swap(&x1, &x2);
+		}
+
+		if (selection_x >= 0) {
+			repaint(cursor_y, selection_y);
+			selection_x = -1;
+			selection_y = -1;
+		}
+
+		var num_lines = storage.remove(x1, y1, x2, y2);
+		repaint(y1, y1+num_lines);
+		repaint(cursor_y, cursor_y);
+		if (cursor_y >= y1) {
+			if (cursor_y == y1 && cursor_x >= x1) {
+				cursor_x = x1;
+				cursor_y = y1;
+			}
+			else if (cursor_y == y2) {
+				cursor_x += x1-x2;
+				cursor_y = y1;
+			}
+			else if (cursor_y > y1 && cursor_y < y2) {
+				cursor_x = x1;
+				cursor_y = y1;
+			}
+			else if (cursor_y > y2) {
+				cursor_y -= y2-y1;
+			}
+		}
+		repaint(cursor_y, cursor_y);
+		update_cursor();
+
+		if (old_width != storage.get_visual_width() || old_height != storage.get_height()) {
+			update_size();
+		}
+
+		visual_x = storage.get_visual_position(cursor_x, cursor_y);
+		notify_change();
+	}
+
+	function update_cursor()
+	{
+		var scroll = SubScrollView::get_scroll_view(this);
+		var x = storage.get_visual_position(cursor_x, cursor_y);
+		var visible_x = margin_left + int(floor(x));
+		if (margin_left > 0 && (sticky_lines || visible_x == margin_left)) {
+			var scroll_x = -get_x();
+			if (visible_x < scroll_x + margin_left) {
+				visible_x -= margin_left;
+			}
+		}
+		scroll.scroll_to_visible(visible_x, cursor_y*row_height, int(ceil(x+fmax(1.0, 1.0*get_scale())) - floor(x)), row_height);
+
+		if (cursor_timer) {
+			cursor_timer.restart();
+		}
+		cursor_blink = false;
+	}
+
+	function update_size()
+	{
+		var editor = get_parent().get_parent().get_parent() as CodeEditor;
+		editor.handle_resize();
+	}
+
+	static function @blink_cursor(weak): Boolean
+	{
+		var editor = weakref_get(weak) as EditorView;
+		if (!editor) {
+			return false;
+		}
+		editor.cursor_blink = !editor.cursor_blink;
+		editor.repaint(editor.cursor_y, editor.cursor_y);
+		return true;
+	}
+
+	function repaint(y1: Integer, y2: Integer)
+	{
+		if (y1 > y2) {
+			swap(&y1, &y2);
+		}
+		repaint(0, y1*row_height, get_width(), (y2-y1+1)*row_height);
+	}
+
+	function get_selected_text(): String
+	{
+		var text = {""};
+		if (selection_x < 0) return text;
+
+		var x1 = selection_x;
+		var y1 = selection_y;
+		var x2 = cursor_x;
+		var y2 = cursor_y;
+
+		if (y1 > y2) {
+			swap(&x1, &x2);
+			swap(&y1, &y2);
+		}
+		if (y1 == y2 && x1 > x2) {
+			swap(&x1, &x2);
+		}
+
+		if (y1 == y2) {
+			var s = storage.get_row_text(y1);
+			text.append(s, x1, x2-x1);
+		}
+		else {
+			for (var i=y1; i<=y2; i++) {
+				var s = storage.get_row_text(i);
+				if (i == y1) {
+					text.append(s, x1, s.length-x1);
+					text[] = '\n';
+				}
+				else if (i == y2) {
+					text.append(s, 0, x2);
+				}
+				else {
+					text += s;
+					text[] = '\n';
+				}
+			}
+		}
+
+		return text;
+	}
+
+	override function handle_resize()
+	{
+		if (popup) {
+			popup.cancel();
+		}
+	}
+
+	override function handle_focus_event(event: FocusEvent): Boolean
+	{
+		if (event.get_type() == EVENT_FOCUS_GAINED) {
+			if (cursor_timer) {
+				cursor_timer.restart();
+			}
+			cursor_blink = false;
+		}
+		else if (event.get_type() == EVENT_FOCUS_LOST) {
+			if (cursor_timer) {
+				cursor_timer.stop();
+			}
+			cursor_blink = true;
+			if (popup) {
+				popup.cancel();
+			}
+			Virtual::hide_keyboard();
+		}
+		repaint(cursor_y, cursor_y);
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		event.translate(-margin_left, 0);
+
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			var mx = event.get_x();
+			var my = event.get_y();
+			var y = max(0, min(my / row_height, storage.get_height()-1));
+			var x = iround(storage.get_position(mx, y));
+			selection_mode = (event.get_click_count()-1) % 3;
+			if (selection_mode == 0) {
+				set_cursor_position(x, y, false, true);
+			}
+			else if (selection_mode == 1) {
+				var s = storage.get_row_text(y);
+				var x1 = find_word_start(s, x, -1);
+				var x2 = find_word_start(s, x, +1)+1;
+				set_cursor_position(x1, y, false, true);
+				set_cursor_position(x2, y, true, true);
+			}
+			else {
+				set_cursor_position(0, y, false, true);
+				set_cursor_position(storage.get_row_width(y), y, true, true);
+			}
+			orig_sel_x = x;
+			orig_sel_y = y;
+			focus();
+			Virtual::show_keyboard();
+			return true;
+		}
+		if (event.get_type() == EVENT_MOUSE_DRAG && (event.get_modifiers() & MOD_LBUTTON) != 0) {
+			var mx = event.get_x();
+			var my = event.get_y();
+			var y = max(0, min(my / row_height, storage.get_height()-1));
+			var x = iround(storage.get_position(mx, y));
+			if (selection_mode == 0) {
+				set_cursor_position(x, y, true, true);
+			}
+			else if (selection_mode == 1) {
+				var s = storage.get_row_text(y);
+				if (y < orig_sel_y || (y == orig_sel_y && x < orig_sel_x)) {
+					if (cursor_y > selection_y || (cursor_y == selection_y && cursor_x > selection_x)) {
+						var s2 = storage.get_row_text(orig_sel_y);
+						var x2 = find_word_start(s2, orig_sel_x, +1)+1;
+						set_cursor_position(x2, orig_sel_y, false, true);
+					}
+					x = find_word_start(s, x, -1);
+					set_cursor_position(x, y, true, true);
+				}
+				else {
+					if (cursor_y < selection_y || (cursor_y == selection_y && cursor_x < selection_x)) {
+						var s2 = storage.get_row_text(orig_sel_y);
+						var x1 = find_word_start(s2, orig_sel_x, -1);
+						set_cursor_position(x1, orig_sel_y, false, true);
+					}
+					x = find_word_start(s, x-1, +1)+1;
+					set_cursor_position(x, y, true, true);
+				}
+			}
+			else {
+				if (y < orig_sel_y || (y == orig_sel_y && x < orig_sel_x)) {
+					if (cursor_y > selection_y || (cursor_y == selection_y && cursor_x > selection_x)) {
+						set_cursor_position(storage.get_row_width(orig_sel_y), orig_sel_y, false, true);
+					}
+					set_cursor_position(0, y, true, true);
+				}
+				else {
+					if (cursor_y < selection_y || (cursor_y == selection_y && cursor_x < selection_x)) {
+						set_cursor_position(0, orig_sel_y, false, true);
+					}
+					set_cursor_position(storage.get_row_width(y), y, true, true);
+				}
+			}
+		}
+
+		event.translate(margin_left, 0);
+		return false;
+	}
+
+	static function @find_word_start(s: String, x: Integer, dir: Integer): Integer
+	{
+		var char_class = -1;
+		for (; x >= 0 && x < s.length; x+=dir) {
+			switch (s[x]) {
+				case ' ', '\t':
+					if (char_class != -1 && char_class != 0) break;
+					char_class = 0;
+					continue;
+
+				case 'A'..'Z', 'a'..'z', '0'..'9', '_':
+					if (char_class != -1 && char_class != 1) break;
+					char_class = 1;
+					continue;
+
+				default:
+					if (char_class != -1 && char_class != 2) break;
+					char_class = 2;
+					continue;
+			}
+			x -= dir;
+			break;
+		}
+		return x;
+	}
+
+	function @add_edit(edit: Edit)
+	{
+		if (edits_pos > 0) {
+			var last_edit = edits[edits_pos-1];
+			if (last_edit.merge_with(edit)) {
+				edit.apply();
+				edits.set_length(edits_pos);
+				return;
+			}
+		}
+
+		edit.apply();
+		edits.set_length(edits_pos);
+		if (edits.length > MAX_EDITS) {
+			edits.remove(0);
+			edits_pos--;
+		}
+		edits[] = edit;
+		edits_pos++;
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN) {
+			var extend = (event.get_modifiers() & MOD_SHIFT) != 0;
+			switch (event.get_key()) {
+				case KEY_LEFT:
+					if (cursor_x == 0) {
+						if (cursor_y > 0) {
+							set_cursor_position(storage.get_row_width(cursor_y-1), cursor_y-1, extend, true);
+						}
+						else {
+							set_cursor_position(0, 0, extend, true);
+						}
+					}
+					else {
+						var x = cursor_x-1;
+						if ((event.get_modifiers() & MOD_CTRL) != 0) {
+							var s = storage.get_row_text(cursor_y);
+							x = find_word_start(s, x, -1);
+						}
+						set_cursor_position(x, cursor_y, extend, true);
+					}
+					if (popup) {
+						if (extend) {
+							popup.cancel();
+						}
+						else {
+							show_completion(true);
+						}
+					}
+					return true;
+
+				case KEY_RIGHT:
+					if (cursor_x >= storage.get_row_width(cursor_y)) {
+						if (cursor_y < storage.get_height()-1) {
+							set_cursor_position(0, cursor_y+1, extend, true);
+						}
+						else {
+							set_cursor_position(storage.get_row_width(cursor_y), cursor_y, extend, true);
+						}
+					}
+					else {
+						var x = cursor_x;
+						if ((event.get_modifiers() & MOD_CTRL) != 0) {
+							var s = storage.get_row_text(cursor_y);
+							x = find_word_start(s, x, +1);
+						}
+						set_cursor_position(x+1, cursor_y, extend, true);
+					}
+					if (popup) {
+						if (extend) {
+							popup.cancel();
+						}
+						else {
+							show_completion(true);
+						}
+					}
+					return true;
+
+				case KEY_UP:
+					if (popup) {
+						choicer.set_selected_index((choicer.get_selected_index()+choicer.get_count()-1) % choicer.get_count());
+						return true;
+					}
+					if (cursor_y > 0) {
+						set_cursor_position(min(iround(storage.get_position(visual_x, cursor_y-1)), storage.get_row_width(cursor_y-1)), cursor_y-1, extend, false);
+					}
+					else {
+						set_cursor_position(cursor_x, cursor_y, extend, false);
+					}
+					return true;
+
+				case KEY_DOWN:
+					if (popup) {
+						choicer.set_selected_index((choicer.get_selected_index()+1) % choicer.get_count());
+						return true;
+					}
+					if (cursor_y < storage.get_height()-1) {
+						set_cursor_position(min(iround(storage.get_position(visual_x, cursor_y+1)), storage.get_row_width(cursor_y+1)), cursor_y+1, extend, false);
+					}
+					else {
+						set_cursor_position(cursor_x, cursor_y, extend, false);
+					}
+					return true;
+
+				case KEY_HOME:
+					if (popup) {
+						popup.cancel();
+					}
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						set_cursor_position(0, 0, extend, true);
+					}
+					else {
+						var s = storage.get_row_text(cursor_y);
+						var start = 0;
+						for (var i=0; i<s.length; i++) {
+							switch (s[i]) {
+								case ' ', '\t':
+									continue;
+							}
+							start = i;
+							break;
+						}
+						var x = 0;
+						if (cursor_x == 0 || cursor_x > start) {
+							x = start;
+						}
+						set_cursor_position(x, cursor_y, extend, true);
+					}
+					return true;
+
+				case KEY_END:
+					if (popup) {
+						popup.cancel();
+					}
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						var y = storage.get_height()-1;
+						set_cursor_position(storage.get_row_width(y), y, extend, true);
+					}
+					else {
+						set_cursor_position(storage.get_row_width(cursor_y), cursor_y, extend, true);
+					}
+					return true;
+
+				case KEY_PAGE_UP: {
+					if (popup) {
+						popup.cancel();
+					}
+					var scroll = SubScrollView::get_scroll_view(this);
+					var amount = scroll.get_view_area().get_height() / row_height;
+					var bar = scroll.get_vertical_scrollbar();
+					if (bar) {
+						update_cursor();
+						bar.set_value(bar.get_value() - amount*row_height);
+					}
+					var y = max(0, cursor_y-amount);
+					set_cursor_position(min(iround(storage.get_position(visual_x, y)), storage.get_row_width(y)), y, extend, false);
+					return true;
+				}
+
+				case KEY_PAGE_DOWN: {
+					if (popup) {
+						popup.cancel();
+					}
+					var scroll = SubScrollView::get_scroll_view(this);
+					var amount = scroll.get_view_area().get_height() / row_height;
+					var bar = scroll.get_vertical_scrollbar();
+					if (bar) {
+						update_cursor();
+						bar.set_value(bar.get_value() + amount*row_height);
+					}
+					var y = min(cursor_y+amount, storage.get_height()-1);
+					set_cursor_position(min(iround(storage.get_position(visual_x, y)), storage.get_row_width(y)), y, extend, false);
+					return true;
+				}
+
+				case KEY_BACKSPACE: {
+					if (!editable) {
+						return false;
+					}
+					if (selection_x != -1 || cursor_x > 0 || cursor_y > 0) {
+						add_edit(BackspaceTextEdit::create(this));
+					}
+					if (popup) {
+						show_completion(true);
+					}
+					return true;
+				}
+
+				case KEY_DELETE: {
+					if (!editable) {
+						return false;
+					}
+					if (selection_x != -1 || cursor_x < storage.get_row_width(cursor_y) || cursor_y+1 < storage.get_height()) {
+						add_edit(DeleteTextEdit::create(this));
+					}
+					return true;
+				}
+
+				case KEY_ENTER: {
+					if (!editable) {
+						return false;
+					}
+					if (popup) {
+						apply_completion();
+						return true;
+					}
+					add_edit(EnterTextEdit::create(this));
+					return true;
+				}
+
+				case KEY_A: {
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						if (popup) {
+							popup.cancel();
+						}
+						set_cursor_position(0, 0, false, true);
+						var y = storage.get_height()-1;
+						set_cursor_position(storage.get_row_width(y), y, true, true);
+						return true;
+					}
+					return false;
+				}
+
+				case KEY_TAB: {
+					if (!editable) {
+						return false;
+					}
+					if (popup) {
+						popup.cancel();
+					}
+					if (selection_x != -1) {
+						var x1 = selection_x;
+						var y1 = selection_y;
+						var x2 = cursor_x;
+						var y2 = cursor_y;
+
+						if (y1 > y2) {
+							swap(&x1, &x2);
+							swap(&y1, &y2);
+						}
+						if (y1 == y2 && x1 > x2) {
+							swap(&x1, &x2);
+						}
+
+						if (x1 == storage.get_row_width(y1)) {
+							y1++;
+						}
+						if (x2 == 0) {
+							y2--;
+						}
+						if (y2 < y1) y2 = y1;
+
+						if ((event.get_modifiers() & MOD_SHIFT) != 0) {
+							add_edit(UnindentEdit::create(this, y1, y2));
+						}
+						else {
+							add_edit(IndentEdit::create(this, y1, y2));
+						}
+					}
+					else {
+						if ((event.get_modifiers() & MOD_SHIFT) != 0) {
+							return false;
+						}
+						add_edit(TypedTextEdit::create(this, "\t"));
+					}
+					return true;
+				}
+
+				case KEY_C:
+				case KEY_X: {
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						if (!editable && event.get_key() == KEY_X) {
+							return false;
+						}
+						if (popup) {
+							popup.cancel();
+						}
+						var s = get_selected_text();
+						if (s.length > 0) {
+							Clipboard::set_text(s);
+							if (event.get_key() == KEY_X) {
+								add_edit(TextEdit::create(this));
+							}
+						}
+						return true;
+					}
+					return false;
+				}
+
+				case KEY_V: {
+					if (popup) {
+						popup.cancel();
+					}
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						if (!editable) {
+							return false;
+						}
+						var s = Clipboard::get_text();
+						if (s != null && s.length > 0) {
+							add_edit(InsertTextEdit::create(this, s));
+						}
+						return true;
+					}
+					return false;
+				}
+
+				case KEY_Z: {
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						if (!editable) {
+							return false;
+						}
+						if (popup) {
+							popup.cancel();
+						}
+						if (edits_pos > 0) {
+							var edit = edits[--edits_pos];
+							edit.unapply();
+							return true;
+						}
+					}
+					return false;
+				}
+
+				case KEY_Y: {
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						if (!editable) {
+							return false;
+						}
+						if (popup) {
+							popup.cancel();
+						}
+						if (edits_pos < edits.length) {
+							var edit = edits[edits_pos++];
+							edit.apply();
+							return true;
+						}
+					}
+					return false;
+				}
+
+				case KEY_SPACE: {
+					if ((event.get_modifiers() & MOD_CTRL) != 0) {
+						if (!editable) {
+							return false;
+						}
+						if (selection_x >= 0) {
+							add_edit(TextEdit::create(this));
+						}
+						show_completion(false);
+						return true;
+					}
+					return false;
+				}
+
+				case KEY_ESCAPE: {
+					if (popup) {
+						popup.cancel();
+						return true;
+					}
+					if (Virtual::is_keyboard_visible()) {
+						Virtual::hide_keyboard(true);
+						return true;
+					}
+					return false;
+				}
+			}
+		}
+		else if (event.get_type() == EVENT_KEY_TYPED) {
+			if (!editable) {
+				return false;
+			}
+			var chars = event.get_chars();
+			var has_newlines = false;
+			for (var i=0; i<chars.length; i++) {
+				if (chars[i] == '\n') {
+					has_newlines = true;
+					break;
+				}
+			}
+			if (has_newlines) {
+				// required for web for pasting from clipboard:
+				add_edit(InsertTextEdit::create(this, chars));
+			}
+			else {
+				add_edit(TypedTextEdit::create(this, chars));
+			}
+			if (popup) {
+				show_completion(true);
+			}
+			return true;
+		}
+		return false;
+	}
+
+	function @show_completion(cancel_on_different_word: Boolean)
+	{
+		show_completion(cancel_on_different_word, null);
+	}
+
+	function @show_completion(cancel_on_different_word: Boolean, choices: CompletionDataImpl)
+	{
+		if (!choices) {
+			choices = CompletionDataImpl::create();
+			syntax.get_completion_data(SyntaxDataImpl::create(storage), cursor_x, cursor_y, choices);
+			choices.notify_func = EditorView::refresh_completion#2;
+			choices.notify_data = this;
+		}
+		if (choices.x1 >= 0 && choices.get_count() > 0) {
+			if (cancel_on_different_word && popup != null && (choices.x1 != cur_completion_x1 /*|| choices.x2 != cur_completion_x2*/ || cursor_y != cur_completion_y)) {
+				popup.cancel();
+				return;
+			}
+			cur_completion_x1 = choices.x1;
+			cur_completion_x2 = choices.x2;
+			cur_completion_y = cursor_y;
+
+			update_cursor();
+			var prev_scroll = -1;
+			var prev_selected: String = null;
+			var prev_selected_idx = -1;
+			if (popup) {
+				var scroll = SubScrollView::get_scroll_view(choicer);
+				var vert = scroll.get_vertical_scrollbar();
+				if (vert) {
+					prev_scroll = vert.get_value();
+				}
+				prev_selected = choicer.get_selected_value();
+				prev_selected_idx = choicer.get_selected_index();
+				popup.cancel();
+			}
+			var visible = PopupWindow::get_visible_area(this);
+			visible.x1 += iround(4*get_scale());
+			visible.y1 += iround(4*get_scale());
+			visible.x2 -= iround(5*get_scale());
+			visible.y2 -= iround(5*get_scale());
+			choicer = CompletionChoicer::create(this, font, row_height, syntax, choices);
+			var popup_x = margin_left + iround(storage.get_visual_position(choices.x1, cursor_y));
+			var popup_y = cursor_y*row_height;
+			var scroll = editor.create_scroll_view(choicer, true);
+			var scrollbar_size = scroll.create_scrollbar(scrollbar:SCROLL_VERT).get_default_size(get_scale());
+			var w = min(choicer.get_content_width() + scrollbar_size, visible.get_width());
+			var h = choicer.get_content_height();
+			var scroll_h1 = min(clamp((popup_y - visible.y1)/row_height, 0, 15)*row_height, h);
+			var scroll_h2 = min(clamp((visible.y2 - popup_y - row_height)/row_height, 0, 15)*row_height, h);
+			scroll.set_default_scale(get_scale());
+			scroll.set_content_size(w - scrollbar_size, h);
+			var rect = scroll.get_rect();
+			if (scroll_h1 > scroll_h2) {
+				scroll.set_rect(0, -scroll_h1, w, max(row_height, scroll_h1));
+			}
+			else {
+				scroll.set_rect(0, row_height, w, max(row_height, scroll_h2));
+			}
+			if (popup_x+w > visible.x2) {
+				popup_x = visible.x2 - w;
+			}
+			if (popup_x < 0) {
+				popup_x = 0;
+			}
+			if (prev_selected_idx >= 0) {
+				var vert = scroll.get_vertical_scrollbar();
+				if (vert != null && prev_scroll >= 0) {
+					vert.set_value(prev_scroll);
+				}
+				if (prev_selected) {
+					choicer.set_selected_value(prev_selected);
+				}
+				else {
+					choicer.set_selected_index(prev_selected_idx);
+				}
+			}
+			var border = CompletionBorder::create(scroll, get_scale());
+			popup = PopupWindow::show(this, popup_x, popup_y, border);
+			popup.set_cancel_action(EditorView::completion_closed#1, this);
+
+			if (choices.values.length == 1) {
+				apply_completion();
+			}
+		}
+		else if (cancel_on_different_word && popup != null) {
+			popup.cancel();
+		}
+	}
+
+	function @refresh_completion(choices: CompletionDataImpl)
+	{
+		if (popup != null && choicer.choices === choices) { //XXX
+			show_completion(true, choices);
+		}
+	}
+
+	function @apply_completion()
+	{
+		if (cur_completion_x1 > cursor_x || cur_completion_y != cursor_y || selection_x >= 0) {
+			popup.cancel();
+			return;
+		}
+
+		var value = choicer.get_selected_value();
+		if (value) {
+			var sel = choicer.get_selected_value_selection();
+			var x = cursor_x;
+			var y = cursor_y;
+			set_cursor_position(cur_completion_x1, cursor_y, false, true);
+			set_cursor_position(cur_completion_x2, cursor_y, true, true);
+			add_edit(CompleteTextEdit::create(this, value, x, y, sel[0], sel[1]));
+		}
+		if (popup) {
+			popup.cancel();
+		}
+	}
+
+	function @completion_closed()
+	{
+		popup = null;
+		choicer = null;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var x1 = cursor_x;
+		var y1 = cursor_y;
+		var x2 = selection_x;
+		var y2 = selection_y;
+		if (x2 >= 0 && (x1 != x2 || y1 != y2)) {
+			if (y1 > y2) {
+				swap(&x1, &x2);
+				swap(&y1, &y2);
+			}
+			if (y1 == y2 && x1 > x2) {
+				swap(&x1, &x2);
+			}
+		}
+		else {
+			x1 = -1;
+			y1 = -1;
+			x2 = -1;
+			y2 = -1;
+		}
+
+		var size = font.get_visual_size();
+		var height = size[0] + size[1];
+		var ascent = size[0] + (row_height - height)/2;
+
+		p.fill_rect(0, 0, get_width(), get_height(), 0xFFFFFFFF);
+
+		p.push();
+		p.translate(margin_left, 0);
+		storage.draw(p, row_height, ascent, x1, y1, x2, y2);
+		if (!cursor_blink && has_focus()) {
+			var cx = iround(storage.get_visual_position(cursor_x, cursor_y));
+			if (Web::is_painter_accelerated(p)) {
+				p.fill_rect(cx, cursor_y*row_height, max(1, iround(1*get_scale())), row_height, 0xFF000000);
+			}
+			else {
+				xor_rect(p, cx, cursor_y*row_height, max(1, iround(1*get_scale())), row_height);
+			}
+		}
+		p.pop();
+
+		if (margin_left > 0) {
+			var left = margin_left - iround(4*get_scale());
+			if (sticky_lines) {
+				p.push();
+				p.translate(-get_x(), 0);
+				p.fill_rect(0, 0, left, get_height(), 0xFFFFFFFF);
+			}
+			p.fill_rect(left, 0, max(1, iround(1*get_scale()- 0.1)), get_height(), 0xFFCCCCCC); //XXX
+
+			if (show_lines) {
+				var clip = p.get_clip_rect();
+				var clip_y1 = max(0, (clip.y1 / row_height)-1);
+				var clip_y2 = min((clip.y2 / row_height)+2, storage.get_height());
+				for (var i=clip_y1; i<clip_y2; i++) {
+					var s = (i+1)+" ";
+					font.draw_string(p, left - font.get_string_advance(s), i*row_height + ascent, s, 0xFF888888);
+				}
+			}
+			if (sticky_lines) {
+				p.pop();
+			}
+		}
+
+		draw_children(p);
+	}
+}
+
+class @Edit
+{
+	var @editor: EditorView;
+
+	constructor create(editor: EditorView)
+	{
+		this.editor = editor;
+	}
+
+	virtual function merge_with(other: Edit): Boolean
+	{
+		return false;
+	}
+
+	virtual function apply()
+	{
+	}
+
+	virtual function unapply()
+	{
+	}
+}
+
+class @TextEdit: Edit
+{
+	var @cursor_x: Integer;
+	var @cursor_y: Integer;
+	var @selection_x: Integer;
+	var @selection_y: Integer;
+	var @first_x: Integer;
+	var @first_y: Integer;
+	var @selected_text: String;
+
+	constructor create(editor: EditorView)
+	{
+		super::create(editor);
+		cursor_x = editor.cursor_x;
+		cursor_y = editor.cursor_y;
+		selection_x = editor.selection_x;
+		selection_y = editor.selection_y;
+
+		if (selection_x != -1) {
+			var x1 = selection_x;
+			var y1 = selection_y;
+			var x2 = cursor_x;
+			var y2 = cursor_y;
+
+			if (y1 > y2) {
+				swap(&x1, &x2);
+				swap(&y1, &y2);
+			}
+			if (y1 == y2 && x1 > x2) {
+				swap(&x1, &x2);
+			}
+
+			first_x = x1;
+			first_y = y1;
+
+			selected_text = editor.get_selected_text();
+		}
+		else {
+			first_x = cursor_x;
+			first_y = cursor_y;
+		}
+	}
+
+	override function apply()
+	{
+		if (selected_text) {
+			editor.remove(cursor_x, cursor_y, selection_x, selection_y);
+			editor.set_cursor_position(first_x, first_y, false, true);
+		}
+		else {
+			editor.set_cursor_position(cursor_x, cursor_y, false, true);
+		}
+	}
+
+	override function unapply()
+	{
+		if (selected_text) {
+			editor.insert(first_x, first_y, selected_text);
+			editor.set_cursor_position(selection_x, selection_y, false, true);
+			editor.set_cursor_position(cursor_x, cursor_y, true, true);
+		}
+		else {
+			editor.set_cursor_position(cursor_x, cursor_y, false, true);
+		}
+	}
+}
+
+class @InsertTextEdit: TextEdit
+{
+	var @text: String;
+	var @last_x: Integer;
+	var @last_y: Integer;
+
+	constructor create(editor: EditorView, text: String)
+	{
+		super::create(editor);
+		this.text = {text};
+
+		last_x = first_x;
+		last_y = first_y;
+		for (var i=0; i<text.length; i++) {
+			if (text[i] == '\n') {
+				last_x = 0;
+				last_y++;
+			}
+			else {
+				last_x++;
+			}
+		}
+	}
+
+	override function apply()
+	{
+		super.apply();
+		editor.insert(first_x, first_y, text);
+		editor.set_cursor_position(last_x, last_y, false, true);
+	}
+
+	override function unapply()
+	{
+		editor.remove(first_x, first_y, last_x, last_y);
+		super.unapply();
+	}
+}
+
+class @CompleteTextEdit: InsertTextEdit
+{
+	var @before_x: Integer;
+	var @before_y: Integer;
+	var @sel_start: Integer;
+	var @sel_end: Integer;
+
+	static function create(editor: EditorView, text: String, x: Integer, y: Integer, sel_start: Integer, sel_end: Integer): CompleteTextEdit
+	{
+		var s = editor.storage.get_row_text(y);
+		var prefix = {""};
+		for (var i=0; i<s.length; i++) {
+			var c = s[i];
+			switch (c) {
+				case ' ', '\t':
+					prefix[] = c;
+					continue;
+			}
+			break;
+		}
+
+		if (prefix.length > 0) {
+			text = {text};
+			for (var i=0; i<text.length; i++) {
+				if (text[i] == '\n') {
+					text.insert(i+1, prefix);
+					if (sel_start > i) {
+						sel_start += prefix.length;
+					}
+					if (sel_end > i) {
+						sel_end += prefix.length;
+					}
+					i += prefix.length;
+				}
+			}
+		}
+
+		var edit = new CompleteTextEdit: InsertTextEdit::create(editor, text);
+		edit.before_x = x;
+		edit.before_y = y;
+		edit.sel_start = sel_start;
+		edit.sel_end = sel_end;
+		return edit;
+	}
+
+	override function apply()
+	{
+		super.apply();
+		var x1 = first_x;
+		var y1 = first_y;
+		var x2 = first_x;
+		var y2 = first_y;
+		var text = this.text;
+		for (var i=0; i<text.length; i++) {
+			if (text[i] == '\n') {
+				if (i < sel_start) {
+					x1 = 0;
+					y1++;
+				}
+				if (i < sel_end) {
+					x2 = 0;
+					y2++;
+				}
+			}
+			else {
+				if (i < sel_start) {
+					x1++;
+				}
+				if (i < sel_end) {
+					x2++;
+				}
+			}
+		}
+		editor.set_cursor_position(x1, y1, false, true);
+		if (x1 != x2 || y1 != y2) {
+			editor.set_cursor_position(x2, y2, true, true);
+		}
+	}
+
+	override function unapply()
+	{
+		super.unapply();
+		editor.set_cursor_position(before_x, before_y, false, true);
+	}
+}
+
+class @TypedTextEdit: TextEdit
+{
+	var @marker;
+	var @text: String;
+
+	function @marker() {}
+
+	constructor create(editor: EditorView, text: String)
+	{
+		super::create(editor);
+		this.marker = TypedTextEdit::marker#1;
+		this.text = {text};
+		for (var i=0; i<this.text.length; i++) {
+			if (this.text[i] == '\n') {
+				this.text[i] = ' ';
+			}
+		}
+	}
+
+	static function @is_instance(obj): Boolean
+	{
+		return length(obj) >= TypedTextEdit::SIZE && (obj as TypedTextEdit).marker === TypedTextEdit::marker#1;
+	}
+
+	override function merge_with(other: TypedTextEdit): Boolean
+	{
+		if (!is_instance(other)) return false;
+		if (other.selected_text) return false;
+		if (other.first_x != first_x+text.length) return false;
+		if (other.first_y != first_y) return false;
+		text += other.text;
+		return true;
+	}
+
+	override function apply()
+	{
+		super.apply();
+		editor.insert(first_x, first_y, text);
+		editor.set_cursor_position(first_x+text.length, first_y, false, true);
+	}
+
+	override function unapply()
+	{
+		editor.remove(first_x, first_y, first_x+text.length, first_y);
+		super.unapply();
+	}
+}
+
+class @BackspaceTextEdit: TextEdit
+{
+	var @marker;
+	var @edit_x: Integer;
+	var @edit_y: Integer;
+	var @deleted_text: String;
+
+	function @marker() {}
+
+	constructor create(editor: EditorView)
+	{
+		super::create(editor);
+		this.marker = BackspaceTextEdit::marker#1;
+		deleted_text = {""};
+		edit_x = first_x;
+		edit_y = first_y;
+
+		if (!selected_text) {
+			if (edit_x > 0) {
+				edit_x--;
+				deleted_text[] = editor.storage.get_row_text(edit_y)[edit_x];
+			}
+			else if (edit_y > 0) {
+				edit_y--;
+				edit_x = editor.storage.get_row_width(edit_y);
+				deleted_text[] = '\n';
+			}
+		}
+	}
+
+	static function @is_instance(obj): Boolean
+	{
+		return length(obj) >= BackspaceTextEdit::SIZE && (obj as BackspaceTextEdit).marker === BackspaceTextEdit::marker#1;
+	}
+
+	override function merge_with(other: BackspaceTextEdit): Boolean
+	{
+		if (!is_instance(other)) return false;
+		if (selected_text) return false;
+		if (other.selected_text) return false;
+		if (other.first_x != edit_x || other.first_y != edit_y) return false;
+		deleted_text.insert(0, other.deleted_text);
+		edit_x = other.edit_x;
+		edit_y = other.edit_y;
+		return true;
+	}
+
+	override function apply()
+	{
+		super.apply();
+		editor.remove(edit_x, edit_y, first_x, first_y);
+	}
+
+	override function unapply()
+	{
+		editor.insert(edit_x, edit_y, deleted_text);
+		super.unapply();
+	}
+}
+
+class @DeleteTextEdit: TextEdit
+{
+	var @marker;
+	var @deleted_text: String;
+
+	function @marker() {}
+
+	constructor create(editor: EditorView)
+	{
+		super::create(editor);
+		this.marker = DeleteTextEdit::marker#1;
+		deleted_text = {""};
+
+		if (!selected_text) {
+			if (first_x < editor.storage.get_row_width(first_y)) {
+				deleted_text[] = editor.storage.get_row_text(first_y)[first_x];
+			}
+			else if (first_y+1 < editor.storage.get_height()) {
+				deleted_text[] = '\n';
+			}
+		}
+	}
+
+	static function @is_instance(obj): Boolean
+	{
+		return length(obj) >= DeleteTextEdit::SIZE && (obj as DeleteTextEdit).marker === DeleteTextEdit::marker#1;
+	}
+
+	override function merge_with(other: DeleteTextEdit): Boolean
+	{
+		if (!is_instance(other)) return false;
+		if (selected_text) return false;
+		if (other.selected_text) return false;
+		if (other.first_x != first_x || other.first_y != first_y) return false;
+		deleted_text += other.deleted_text;
+		return true;
+	}
+
+	override function apply()
+	{
+		super.apply();
+		var x = first_x;
+		var y = first_y;
+		for (var i=0; i<deleted_text.length; i++) {
+			if (x < editor.storage.get_row_width(y)) {
+				x++;
+			}
+			else {
+				x = 0;
+				y++;
+			}
+		}
+		editor.remove(first_x, first_y, x, y);
+	}
+
+	override function unapply()
+	{
+		editor.insert(first_x, first_y, deleted_text);
+		super.unapply();
+	}
+}
+
+class @EnterTextEdit: TextEdit
+{
+	var @marker;
+	var @edit_x: Integer;
+	var @edit_y: Integer;
+	var @cursor_x: Integer;
+	var @cursor_y: Integer;
+	var @inserted_text: String;
+
+	function @marker() {}
+
+	constructor create(editor: EditorView)
+	{
+		super::create(editor);
+		this.marker = EnterTextEdit::marker#1;
+
+		var s = editor.storage.get_row_text(first_y);
+		var start = s.length;
+		for (var i=0; i<s.length; i++) {
+			if (i == first_x) {
+				start = i;
+				break;
+			}
+			switch (s[i]) {
+				case ' ', '\t':
+					continue;
+			}
+			start = i;
+			break;
+		}
+		var extra_tab = false;
+		for (var i=first_x-1; i>=0; i--) {
+			var c = s[i];
+			if (c == ' ' || c == '\t') continue;
+			if (c == '{') extra_tab = true;
+			break;
+		}
+		if (extra_tab) {
+			for (var i=0; i<start; i++) {
+				var c = s[i];
+				if (c != ' ' && c != '\t') {
+					extra_tab = false;
+					break;
+				}
+			}
+		}
+		var extra_bracket = true;
+		if (extra_tab) {
+			if (first_y+1 < editor.storage.get_height()) {
+				var s2 = editor.storage.get_row_text(first_y+1);
+				if (s2.length > start) {
+					extra_bracket = false;
+				}
+			}
+		}
+		edit_x = start;
+		edit_y = first_y+1;
+		inserted_text = "\n"+s.extract(0, start);
+		cursor_x = edit_x;
+		cursor_y = edit_y;
+		if (extra_tab) {
+			if (extra_bracket) {
+				cursor_x++;
+				inserted_text += "\t\n"+s.extract(0, start)+"}";
+				edit_y++;
+				edit_x = start+1;
+			}
+			else {
+				edit_x++;
+				cursor_x++;
+				inserted_text[] = '\t';
+			}
+		}
+	}
+
+	static function @is_instance(obj): Boolean
+	{
+		return length(obj) >= EnterTextEdit::SIZE && (obj as EnterTextEdit).marker === EnterTextEdit::marker#1;
+	}
+
+	override function merge_with(other: EnterTextEdit): Boolean
+	{
+		if (!is_instance(other)) return false;
+		if (selected_text) return false;
+		if (other.selected_text) return false;
+		if (other.first_x != edit_x || other.first_y != edit_y) return false;
+		if (cursor_x != edit_x || cursor_y != edit_y) return false;
+		if (other.cursor_x != other.edit_x || other.cursor_y != other.edit_y) return false;
+		inserted_text += other.inserted_text;
+		edit_x = other.edit_x;
+		edit_y = other.edit_y;
+		cursor_x = other.cursor_x;
+		cursor_y = other.cursor_y;
+		return true;
+	}
+
+	override function apply()
+	{
+		super.apply();
+		editor.insert(first_x, first_y, inserted_text);
+		editor.set_cursor_position(cursor_x, cursor_y, false, true);
+	}
+
+	override function unapply()
+	{
+		editor.remove(first_x, first_y, edit_x, edit_y);
+		super.unapply();
+	}
+}
+
+class @IndentEdit: Edit
+{
+	var @y1: Integer;
+	var @y2: Integer;
+	var @cursor_x: Integer;
+	var @cursor_y: Integer;
+	var @selection_x: Integer;
+	var @selection_y: Integer;
+
+	constructor create(editor: EditorView, y1: Integer, y2: Integer)
+	{
+		super::create(editor);
+		this.y1 = y1;
+		this.y2 = y2;
+		cursor_x = editor.cursor_x;
+		cursor_y = editor.cursor_y;
+		selection_x = editor.selection_x;
+		selection_y = editor.selection_y;
+	}
+
+	override function apply()
+	{
+		for (var i=y1; i<=y2; i++) {
+			if (editor.storage.get_row_width(i) > 0) {
+				editor.insert(0, i, "\t");
+			}
+		}
+
+		var cur_x = cursor_x;
+		var cur_y = cursor_y;
+		var sel_x = selection_x;
+		var sel_y = selection_y;
+
+		if (sel_x > 0) {
+			sel_x = min(sel_x+1, editor.storage.get_row_width(sel_y));
+		}
+		if (cur_x > 0) {
+			cur_x = min(cur_x+1, editor.storage.get_row_width(cur_y));
+		}
+
+		editor.set_cursor_position(sel_x, sel_y, false, true);
+		editor.set_cursor_position(cur_x, cur_y, true, true);
+	}
+
+	override function unapply()
+	{
+		for (var i=y1; i<=y2; i++) {
+			if (editor.storage.get_row_width(i) > 0) {
+				editor.remove(0, i, 1, i);
+			}
+		}
+
+		editor.set_cursor_position(selection_x, selection_y, false, true);
+		editor.set_cursor_position(cursor_x, cursor_y, true, true);
+	}
+}
+
+class @UnindentEdit: Edit
+{
+	var @cursor_x: Integer;
+	var @cursor_y: Integer;
+	var @selection_x: Integer;
+	var @selection_y: Integer;
+	var @lines: Integer[];
+
+	constructor create(editor: EditorView, y1: Integer, y2: Integer)
+	{
+		super::create(editor);
+		cursor_x = editor.cursor_x;
+		cursor_y = editor.cursor_y;
+		selection_x = editor.selection_x;
+		selection_y = editor.selection_y;
+
+		lines = [];
+		for (var i=y1; i<=y2; i++) {
+			var s = editor.storage.get_row_text(i);
+			if (s.length > 0 && s[0] == '\t') {
+				lines[] = i;
+			}
+		}
+	}
+
+	override function apply()
+	{
+		var sel_x = selection_x;
+		var sel_y = selection_y;
+		var cur_x = cursor_x;
+		var cur_y = cursor_y;
+
+		foreach (var i in lines) {
+			editor.remove(0, i, 1, i);
+			if (i == sel_y) {
+				sel_x--;
+			}
+			if (i == cur_y) {
+				cur_x--;
+			}
+		}
+
+		editor.set_cursor_position(sel_x, sel_y, false, true);
+		editor.set_cursor_position(cur_x, cur_y, true, true);
+	}
+
+	override function unapply()
+	{
+		foreach (var i in lines) {
+			editor.insert(0, i, "\t");
+		}
+
+		editor.set_cursor_position(selection_x, selection_y, false, true);
+		editor.set_cursor_position(cursor_x, cursor_y, true, true);
+	}
+}
+
+class @CompletionBorder: SubView
+{
+	var @shadow: Image;
+
+	constructor create(view: SubView, scale: Float)
+	{
+		var radius = iround(5 * scale);
+		var rect = view.get_rect();
+		rect.x1 -= radius;
+		rect.y1 -= radius;
+		rect.x2 += radius+iround(1*scale);
+		rect.y2 += radius+iround(1*scale);
+		set_rect(rect);
+		view.set_rect(radius, radius, view.get_width(), view.get_height());
+		add(view);
+
+		shadow = Image::create(rect.get_width(), rect.get_height());
+		var p = Painter::create(shadow);
+		p.fill_rect(radius, radius, view.get_width(), view.get_height(), 0x80000000);
+		shadow.blur_gaussian(radius);
+	}
+
+	override function accept_mouse_event(event: MouseEvent): Boolean
+	{
+		var rect = get_child(0).get_rect();
+		return rect.contains(event.get_x(), event.get_y());
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var scale = get_scale();
+		p.draw_image(iround(1*scale), iround(1*scale), shadow);
+		draw_children(p);
+	}
+}
+
+class @CompletionChoicer: SubView
+{
+	var @editor: EditorView;
+	var @font: AbstractFont;
+	var @row_height: Integer;
+	var @syntax: Syntax;
+	var @choices: CompletionDataImpl;
+	var @selected: Integer;
+
+	constructor create(editor: EditorView, font: AbstractFont, row_height: Integer, syntax: Syntax, choices: CompletionDataImpl)
+	{
+		this.editor = editor;
+		this.font = font;
+		this.row_height = row_height;
+		this.syntax = syntax;
+		this.choices = choices;
+	}
+
+	function get_content_width(): Integer
+	{
+		return iceil(choices.get_max_width());
+	}
+
+	function get_content_height(): Integer
+	{
+		return choices.get_count() * row_height;
+	}
+
+	function get_count(): Integer
+	{
+		return choices.get_count();
+	}
+
+	function get_selected_index(): Integer
+	{
+		return selected;
+	}
+
+	function set_selected_index(idx: Integer)
+	{
+		repaint(0, selected*row_height, get_width(), row_height);
+		selected = max(0, min(idx, choices.text_starts.length-2));
+		repaint(0, selected*row_height, get_width(), row_height);
+		
+		var scroll = SubScrollView::get_scroll_view(this);
+		scroll.scroll_to_visible(0, selected*row_height, get_width(), row_height);
+	}
+
+	function get_selected_value(): String
+	{
+		if (selected >= choices.get_count()) {
+			return null;
+		}
+		return choices.values[selected];
+	}
+
+	function get_selected_value_selection(): Integer[]
+	{
+		if (selected >= choices.get_count()) {
+			return null;
+		}
+		return [choices.selections[selected*2+0], choices.selections[selected*2+1]];
+	}
+
+	function set_selected_value(value: String)
+	{
+		for (var i=0; i<choices.values.length; i++) {
+			if (choices.values[i] == value) {
+				set_selected_index(i);
+				break;
+			}
+		}
+	}
+	
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			var idx = event.get_y() / row_height;
+			if (idx >= 0 && idx < choices.get_count()) {
+				if (event.get_click_count() == 1) {
+					set_selected_index(idx);
+				}
+				else {
+					editor.apply_completion();
+				}
+				return true;
+			}
+		}
+		return false;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var clip = p.get_clip_rect();
+		var clip_y1 = (clip.y1 / row_height)-1;
+		var clip_y2 = (clip.y2 / row_height)+2;
+
+		p.fill_rect(0, 0, get_width(), get_height(), 0xFFFFFFFF);
+
+		var size = font.get_visual_size();
+		var height = size[0] + size[1];
+		var ascent = size[0] + (row_height - height)/2;
+
+		var text = choices.text;
+		var attrs = choices.attrs;
+		var text_starts = choices.text_starts;
+		var attr_starts = choices.attr_starts;
+
+		var count = text_starts.length-1;
+		for (var i=max(0, clip_y1); i<min(count, clip_y2); i++) {
+			if (i == selected) {
+				p.fill_rect(0, i*row_height, get_width(), row_height, 0xFF000066);
+			}
+			var off = text_starts[i];
+			var start = attr_starts[i];
+			var end = attr_starts[i+1];
+			var x = 0.0;
+			for (var j=start as Attribute; j<end; j++) {
+				var len = attrs[j].length;
+				var width = attrs[j].width;
+				var style = attrs[j].style;
+				syntax.draw_text(p, x, i*row_height, text, off, len, width, row_height, ascent, i == selected, style);
+				off += len;
+				x += width;
+			}
+		}
+	}
+}
+
+function @xor_rect(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+{
+	var tr = p.get_transform();
+	var rect = p.get_clip_rect();
+	rect.intersect(x, y, width, height);
+	rect.translate(iround(tr.m02), iround(tr.m12));
+	if (!rect.is_valid()) return;
+
+	var img = p.get_image();
+	var pixels = img.get_pixels();
+	var stride = img.get_stride();
+	var idx = rect.y1*stride + rect.x1;
+	var w = rect.get_width();
+	var h = rect.get_height();
+	stride -= w;
+	for (var i=0; i<h; i++) {
+		for (var j=0; j<w; j++) {
+			pixels[idx++] ^= 0xFFFFFF;
+		}
+		idx += stride;
+	}
+}

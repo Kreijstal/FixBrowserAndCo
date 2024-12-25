@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/console";</code>
+</p>
+
+<h2>ConsoleEvent class</h2>
+
+<h3 id="constants">Constants</h3>
+
+<dl>
+	<dt><code>
+		<b>EVENT_NONE</b><br>
+		<b>EVENT_CHAR_TYPED</b><br>
+		<b>EVENT_KEY_PRESSED</b><br>
+		<b>EVENT_CONSOLE_RESIZED</b><br>
+	</code></dt>
+	<dd>
+		The event types.
+	</dd>
+	<dt><code>
+		<b>MOD_CTRL</b><br>
+		<b>MOD_SHIFT</b><br>
+		<b>MOD_ALT</b><br>
+	</code></dt>
+	<dd>
+		The key modifiers.
+	</dd>
+	<dt><code>
+		<b>KEY_NONE</b><br>
+		<b>KEY_ESCAPE</b><br>
+		<b>KEY_F1</b><br>
+		<b>KEY_F2</b><br>
+		<b>KEY_F3</b><br>
+		<b>KEY_F4</b><br>
+		<b>KEY_F5</b><br>
+		<b>KEY_F6</b><br>
+		<b>KEY_F7</b><br>
+		<b>KEY_F8</b><br>
+		<b>KEY_F9</b><br>
+		<b>KEY_F10</b><br>
+		<b>KEY_F11</b><br>
+		<b>KEY_F12</b><br>
+		<b>KEY_PRINT_SCREEN</b><br>
+		<b>KEY_SCROLL_LOCK</b><br>
+		<b>KEY_PAUSE</b><br>
+		<b>KEY_GRAVE</b><br>
+		<b>KEY_NUM1</b><br>
+		<b>KEY_NUM2</b><br>
+		<b>KEY_NUM3</b><br>
+		<b>KEY_NUM4</b><br>
+		<b>KEY_NUM5</b><br>
+		<b>KEY_NUM6</b><br>
+		<b>KEY_NUM7</b><br>
+		<b>KEY_NUM8</b><br>
+		<b>KEY_NUM9</b><br>
+		<b>KEY_NUM0</b><br>
+		<b>KEY_MINUS</b><br>
+		<b>KEY_EQUAL</b><br>
+		<b>KEY_BACKSPACE</b><br>
+		<b>KEY_TAB</b><br>
+		<b>KEY_Q</b><br>
+		<b>KEY_W</b><br>
+		<b>KEY_E</b><br>
+		<b>KEY_R</b><br>
+		<b>KEY_T</b><br>
+		<b>KEY_Y</b><br>
+		<b>KEY_U</b><br>
+		<b>KEY_I</b><br>
+		<b>KEY_O</b><br>
+		<b>KEY_P</b><br>
+		<b>KEY_LBRACKET</b><br>
+		<b>KEY_RBRACKET</b><br>
+		<b>KEY_BACKSLASH</b><br>
+		<b>KEY_CAPS_LOCK</b><br>
+		<b>KEY_A</b><br>
+		<b>KEY_S</b><br>
+		<b>KEY_D</b><br>
+		<b>KEY_F</b><br>
+		<b>KEY_G</b><br>
+		<b>KEY_H</b><br>
+		<b>KEY_J</b><br>
+		<b>KEY_K</b><br>
+		<b>KEY_L</b><br>
+		<b>KEY_SEMICOLON</b><br>
+		<b>KEY_APOSTROPHE</b><br>
+		<b>KEY_ENTER</b><br>
+		<b>KEY_LSHIFT</b><br>
+		<b>KEY_Z</b><br>
+		<b>KEY_X</b><br>
+		<b>KEY_C</b><br>
+		<b>KEY_V</b><br>
+		<b>KEY_B</b><br>
+		<b>KEY_N</b><br>
+		<b>KEY_M</b><br>
+		<b>KEY_COMMA</b><br>
+		<b>KEY_PERIOD</b><br>
+		<b>KEY_SLASH</b><br>
+		<b>KEY_RSHIFT</b><br>
+		<b>KEY_LCONTROL</b><br>
+		<b>KEY_LMETA</b><br>
+		<b>KEY_LALT</b><br>
+		<b>KEY_SPACE</b><br>
+		<b>KEY_RALT</b><br>
+		<b>KEY_RMETA</b><br>
+		<b>KEY_RMENU</b><br>
+		<b>KEY_RCONTROL</b><br>
+		<b>KEY_INSERT</b><br>
+		<b>KEY_DELETE</b><br>
+		<b>KEY_HOME</b><br>
+		<b>KEY_END</b><br>
+		<b>KEY_PAGE_UP</b><br>
+		<b>KEY_PAGE_DOWN</b><br>
+		<b>KEY_LEFT</b><br>
+		<b>KEY_UP</b><br>
+		<b>KEY_RIGHT</b><br>
+		<b>KEY_DOWN</b><br>
+		<b>KEY_NUM_LOCK</b><br>
+		<b>KEY_NUMPAD_SLASH</b><br>
+		<b>KEY_NUMPAD_STAR</b><br>
+		<b>KEY_NUMPAD_MINUS</b><br>
+		<b>KEY_NUMPAD_PLUS</b><br>
+		<b>KEY_NUMPAD_ENTER</b><br>
+		<b>KEY_NUMPAD_DOT</b><br>
+		<b>KEY_NUMPAD0</b><br>
+		<b>KEY_NUMPAD1</b><br>
+		<b>KEY_NUMPAD2</b><br>
+		<b>KEY_NUMPAD3</b><br>
+		<b>KEY_NUMPAD4</b><br>
+		<b>KEY_NUMPAD5</b><br>
+		<b>KEY_NUMPAD6</b><br>
+		<b>KEY_NUMPAD7</b><br>
+		<b>KEY_NUMPAD8</b><br>
+		<b>KEY_NUMPAD9</b><br>
+	</code></dt>
+	<dd>
+		The available keys.
+	</dd>
+</dl>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create_none</b>(): ConsoleEvent<br>
+		static function <b>create_char_typed</b>(char: Integer): ConsoleEvent<br>
+		static function <b>create_key_pressed</b>(key: Integer, mod: Integer): ConsoleEvent<br>
+		static function <b>create_console_resized</b>(width: Integer, height: Integer): ConsoleEvent<br>
+	</code></dt>
+	<dd>
+		Creates a new event.
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>get_type</b>(): Integer</code></dt>
+	<dd>
+		Returns the type of the event.
+	</dd>
+	<dt><code>function <b>get_char</b>(): Integer</code></dt>
+	<dd>
+		Returns the character when the event type is EVENT_CHAR_TYPED.
+	</dd>
+	<dt><code>function <b>get_key</b>(): Integer</code></dt>
+	<dd>
+		Returns the key when the event type is EVENT_KEY_PRESSED.
+	</dd>
+	<dt><code>function <b>get_modifiers</b>(): Integer</code></dt>
+	<dd>
+		Returns the modifiers when the event type is EVENT_KEY_PRESSED.
+	</dd>
+	<dt><code>
+		function <b>get_width</b>(): Integer<br>
+		function <b>get_height</b>(): Integer<br>
+	</code></dt>
+	<dd>
+		Returns the size of the console when the event type is EVENT_CONSOLE_RESIZED.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the string representation of the event.
+	</dd>
+</dl>
+
+</body>
+</html>

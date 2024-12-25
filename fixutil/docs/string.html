@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/string";</code>
+</p>
+
+<h2>Extension functions</h2>
+
+<p>
+Note: use the <code>string_</code> prefix when not using classes.
+</p>
+
+<dl>
+	<dt><code>
+		function <b>String::substring</b>(start: Integer): String<br>
+		function <b>String::substring</b>(start: Integer, end: Integer): String<br>
+	</code></dt>
+	<dd>
+		Returns a substring for given range (the ending is exclusive). When no ending
+		index is provided the end of string is used.
+	</dd>
+	<dt><code>static function <b>String::join</b>(array: Dynamic[], delim: String): String</code></dt>
+	<dd>
+		Returns a string where each element of the array is converted to a string
+		if needed and appended into a new string using a given delimiter.
+	</dd>
+	<dt><code>
+		function <b>String::split</b>(char: Integer): String[]<br>
+		function <b>String::split</b>(char: Integer, multi: Boolean): String[]<br>
+	</code></dt>
+	<dd>
+		Splits the given string by the specified character. Optionally it can split by
+		multiple count of the character. An empty string results into an empty array.
+	</dd>
+	<dt><code>function <b>String::starts_with</b>(match: String): Boolean</code></dt>
+	<dd>
+		Returns true when the given string starts with the specified string.
+	</dd>
+	<dt><code>function <b>String::ends_with</b>(match: String): Boolean</code></dt>
+	<dd>
+		Returns true when the given string ends with the specified string.
+	</dd>
+	<dt><code>function <b>String::replace_char</b>(char: Integer, replacement: Integer): String</code></dt>
+	<dd>
+		Finds and replaces all characters and returns the result as a new string.
+	</dd>
+	<dt><code>function <b>String::replace_char_inplace</b>(char: Integer, replacement: Integer)</code></dt>
+	<dd>
+		A variant of the <code>String::replace_char</code> function that modifies the string in-place.
+	</dd>
+	<dt><code>function <b>String::replace_string</b>(search: String, replacement: Integer): String</code></dt>
+	<dd>
+		Finds and replaces all occurences of given string and returns the result as a new string.
+	</dd>
+	<dt><code>function <b>String::replace_string_inplace</b>(search: String, replacement: String)</code></dt>
+	<dd>
+		A variant of the <code>String::replace_string</code> function that modifies the string in-place.
+	</dd>
+	<dt><code>static function <b>String::char</b>(char: Integer): String</code></dt>
+	<dd>
+		Returns a new string with a single character.
+	</dd>
+	<dt><code>function <b>String::to_lower_case</b>(): String</code></dt>
+	<dd>
+		Returns a new string where each character is converted into a lower case variant (ASCII only).
+	</dd>
+	<dt><code>function <b>String::to_upper_case</b>(): String</code></dt>
+	<dd>
+		Returns a new string where each character is converted into a upper case variant (ASCII only).
+	</dd>
+	<dt><code>
+		function <b>String::trim</b>(): String<br>
+		function <b>String::trim</b>(is_whitespace_func): String<br>
+	</code></dt>
+	<dd>
+		Trims a whitespace (optionally defined by provided function) from the beginning
+		and ending of the string. The result is returned as a new string.
+	</dd>
+	<dt><code>
+		function <b>String::trim_inplace</b>()<br>
+		function <b>String::trim_inplace</b>(is_whitespace_func)<br>
+	</code></dt>
+	<dd>
+		Variants of <code>String::trim</code> functions that modify the original string in-place.
+	</dd>
+	<dt><code>
+		function <b>String::pad_left</b>(len: Integer): String<br>
+		function <b>String::pad_left</b>(len: Integer, char: Integer): String<br>
+	</code></dt>
+	<dd>
+		Pads the string from the left to given length using the specified character (or space when not provided).
+		No adjustment is done when the string is bigger. Returns the result as a new string.
+	</dd>
+	<dt><code>
+		function <b>String::pad_right</b>(len: Integer): String<br>
+		function <b>String::pad_right</b>(len: Integer, char: Integer): String<br>
+	</code></dt>
+	<dd>
+		Pads the string from the right to given length using the specified character (or space when not provided).
+		No adjustment is done when the string is bigger. Returns the result as a new string.
+	</dd>
+	<dt><code>
+		function <b>String::search_char</b>(char: Integer): Integer<br>
+		function <b>String::search_char</b>(char: Integer, start: Integer): Integer<br>
+		function <b>String::search_char</b>(char: Integer, start: Integer, end: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Searches for given character in a string (optionally within a range, the end is exclusive).
+		Returns the index or -1 when the character is not found.
+	</dd>
+	<dt><code>
+		function <b>String::rev_search_char</b>(char: Integer): Integer<br>
+		function <b>String::rev_search_char</b>(char: Integer, end: Integer): Integer<br>
+		function <b>String::rev_search_char</b>(char: Integer, start: Integer, end: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Variants of <code>String::search_char</code> functions that search from the end.
+	</dd>
+	<dt><code>
+		function <b>String::search_multi_char</b>(chars: String): Integer<br>
+		function <b>String::search_multi_char</b>(chars: String, start: Integer): Integer<br>
+		function <b>String::search_multi_char</b>(chars: String, start: Integer, end: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Variants of <code>String::search_char</code> functions that search multiple characters.
+	</dd>
+	<dt><code>
+		function <b>String::rev_search_multi_char</b>(chars: String): Integer<br>
+		function <b>String::rev_search_multi_char</b>(chars: String, end: Integer): Integer<br>
+		function <b>String::rev_search_multi_char</b>(chars: String, start: Integer, end: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Variants of <code>String::search_multi_char</code> functions that search from the end.
+	</dd>
+	<dt><code>
+		function <b>String::search_string</b>(search: String): Integer<br>
+		function <b>String::search_string</b>(search: String, start: Integer): Integer<br>
+		function <b>String::search_string</b>(search: String, start: Integer, end: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Searches for given string in a string (optionally within a range, the end is exclusive).
+		Returns the index or -1 when the character is not found.
+	</dd>
+	<dt><code>
+		function <b>String::rev_search_string</b>(search: String): Integer<br>
+		function <b>String::rev_search_string</b>(search: String, end: Integer): Integer<br>
+		function <b>String::rev_search_string</b>(search: String, start: Integer, end: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Variants of <code>String::search_string</code> functions that search from the end.
+	</dd>
+	<dt><code>function <b>String::contains</b>(search: String): Boolean</code></dt>
+	<dd>
+		Returns whether the string contains a string.
+	</dd>
+	<dt><code>static function <b>String::compare</b>(s1: String, s2: String): Integer</code></dt>
+	<dd>
+		Returns negative value when s1 is less than s2, zero when they're equal or positive value
+		when s1 is greater than s2.
+	</dd>
+	<dt><code>
+		static function <b>String::parse_hex_int</b>(s: String): Integer<br>
+		static function <b>String::parse_hex_int</b>(s: String, default_value: Integer): Integer<br>
+		static function <b>String::parse_hex_int</b>(s: String, off: Integer, len: Integer): Integer<br>
+		static function <b>String::parse_hex_int</b>(s: String, off: Integer, len: Integer, default_value: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Parses the string as a hexadecimal integer. You can optionally pass a default value to return
+		instead of an error.
+	</dd>
+	<dt><code>
+		static function <b>String::parse_long</b>(s: String): <a href="long.html">Long</a><br>
+		static function <b>String::parse_long</b>(s: String, default_value: <a href="long.html">Long</a>): <a href="long.html">Long</a><br>
+		static function <b>String::parse_long</b>(s: String, off: Integer, len: Integer): <a href="long.html">Long</a><br>
+		static function <b>String::parse_long</b>(s: String, off: Integer, len: Integer, default_value: <a href="long.html">Long</a>): <a href="long.html">Long</a><br>
+	</code></dt>
+	<dd>
+		Parses the string as a long. You can optionally pass a default value to return instead
+		of an error.
+	</dd>
+	<dt><code>
+		static function <b>String::parse_double</b>(s: String): <a href="double.html">Double</a><br>
+		static function <b>String::parse_double</b>(s: String, default_value: <a href="double.html">Double</a>): <a href="double.html">Double</a><br>
+		static function <b>String::parse_double</b>(s: String, off: Integer, len: Integer): <a href="double.html">Double</a><br>
+		static function <b>String::parse_double</b>(s: String, off: Integer, len: Integer, default_value: <a href="double.html">Double</a>): <a href="double.html">Double</a><br>
+	</code></dt>
+	<dd>
+		Parses the string as a double. You can optionally pass a default value to return instead
+		of an error.
+	</dd>
+	<dt><code>
+		static function <b>String::from_int</b>(value: Integer): String<br>
+		static function <b>String::from_int</b>(s: String, value: Integer): String<br>
+		static function <b>String::from_hex_int</b>(value: Integer): String<br>
+		static function <b>String::from_hex_int</b>(s: String, value: Integer): String<br>
+		static function <b>String::from_float</b>(value: Float): String<br>
+		static function <b>String::from_long</b>(value: <a href="long.html">Long</a>): String<br>
+		static function <b>String::from_long</b>(s: String, value: <a href="long.html">Long</a>): String<br>
+		static function <b>String::from_double</b>(value: <a href="double.html">Double</a>): String<br>
+		static function <b>String::from_double</b>(s: String, value: <a href="double.html">Double</a>): String<br>
+	</code></dt>
+	<dd>
+		Return the string representation of the number value. Optionally it can append it
+		into an existing string.
+	</dd>
+</dl>
+
+</body>
+</html>

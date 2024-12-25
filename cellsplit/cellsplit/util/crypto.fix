@@ -1,0 +1,529 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "native/extern";
+use "classes";
+
+import "io/stream";
+import "io/file";
+import "native/native";
+
+const @PROV_RSA_FULL = 1;
+const @CRYPT_VERIFYCONTEXT = 0xF0000000;
+
+extern "C" {
+	typedef int BOOL;
+	typedef uint8_t BYTE;
+	typedef uint32_t DWORD;
+	typedef void *LPCSTR;
+	typedef void *HCRYPTPROV;
+	
+	bind("advapi32");
+	BOOL STDCALL CryptAcquireContextA(HCRYPTPROV *phProv, LPCSTR szContainer, LPCSTR szProvider, DWORD dwProvType, DWORD dwFlags);
+	BOOL STDCALL CryptReleaseContext(HCRYPTPROV hProv, DWORD dwFlags);
+	BOOL STDCALL CryptGenRandom(HCRYPTPROV hProv, DWORD dwLen, /*BYTE*/void *pbBuffer);
+}
+
+var @sha256_table: Integer[];
+
+function get_random_bytes(len: Integer): Byte[]
+{
+	if (System::get_type() == SYSTEM_WINDOWS) {
+		Library::bind("advapi32");
+		var tmp = Memory::alloc(System::get_pointer_size());
+		if (CryptAcquireContextA(tmp, null, null, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT) == 0) {
+			throw error("can't acquire crypto context");
+		}
+		var prov = tmp.get_pointer(0);
+		var buf: Byte[] = Array::create_shared(len, 1);
+		if (CryptGenRandom(prov, len, Memory::from_shared_array(buf)) == 0) {
+			CryptReleaseContext(prov, 0);
+			throw error("can't get random data");
+		}
+		CryptReleaseContext(prov, 0);
+		return buf;
+	}
+	else {
+		var file = File::open(System::get_type() == SYSTEM_LINUX? "/dev/urandom" : "/dev/random", FILE_READ);
+		var buf: Byte[] = Array::create_shared(len, 1);
+		file.read(buf);
+		file.close();
+		return buf;
+	}
+
+	throw error("unsupported system");
+}
+
+macro @ror32(a, b)
+{{
+	var $a = a;
+	= ($a >>> (b)) | ($a << (32-(b)))
+}}
+
+function sha256(buf: Byte[]): Byte[]
+{
+	var k = sha256_table;
+	if (!k) {
+		k = [
+			0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+			0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+			0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+			0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+			0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+			0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+			0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+			0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+		];
+		sha256_table = k;
+	}
+	var len = buf.length;
+	buf = clone_data(buf);
+	buf[] = 0x80;
+	while ((buf.length & 63) != 56) {
+		buf[] = 0;
+	}
+	var hi = len >>> 29;
+	var lo = len << 3;
+	buf[] = hi >>> 24;
+	buf[] = (hi >>> 16) & 0xFF;
+	buf[] = (hi >>> 8) & 0xFF;
+	buf[] = hi & 0xFF;
+	buf[] = lo >>> 24;
+	buf[] = (lo >>> 16) & 0xFF;
+	buf[] = (lo >>> 8) & 0xFF;
+	buf[] = lo & 0xFF;
+
+	var w: Integer[] = Array::create(64, 4);
+	var s0 = 0x6a09e667;
+	var s1 = 0xbb67ae85;
+	var s2 = 0x3c6ef372;
+	var s3 = 0xa54ff53a;
+	var s4 = 0x510e527f;
+	var s5 = 0x9b05688c;
+	var s6 = 0x1f83d9ab;
+	var s7 = 0x5be0cd19;
+
+	for (var i=0; i<buf.length; ) {
+		for (var j=0; j<16; j++) {
+			w[j] = (buf[i++] << 24) | (buf[i++] << 16) | (buf[i++] << 8) | buf[i++];
+		}
+		for (var j=16; j<64; j++) {
+			var ss0 = ror32(w[j-15], 7) ^ ror32(w[j-15], 18) ^ (w[j-15] >>> 3);
+			var ss1 = ror32(w[j-2], 17) ^ ror32(w[j-2], 19) ^ (w[j-2] >>> 10);
+			w[j] = add32(add32(add32(w[j-16], ss0), w[j-7]), ss1);
+		}
+
+		var a = s0;
+		var b = s1;
+		var c = s2;
+		var d = s3;
+		var e = s4;
+		var f = s5;
+		var g = s6;
+		var h = s7;
+
+		for (var j=0; j<64; j++) {
+			var ss1 = ror32(e, 6) ^ ror32(e, 11) ^ ror32(e, 25);
+			var ch = (e & f) ^ ((~e) & g);
+			var tmp1 = add32(add32(add32(add32(h, ss1), ch), k[j]), w[j]);
+			var ss0 = ror32(a, 2) ^ ror32(a, 13) ^ ror32(a, 22);
+			var maj = (a & b) ^ (a & c) ^ (b & c);
+			var tmp2 = add32(ss0, maj);
+
+			h = g;
+			g = f;
+			f = e;
+			e = add32(d, tmp1);
+			d = c;
+			c = b;
+			b = a;
+			a = add32(tmp1, tmp2);
+		}
+
+		s0 = add32(s0, a);
+		s1 = add32(s1, b);
+		s2 = add32(s2, c);
+		s3 = add32(s3, d);
+		s4 = add32(s4, e);
+		s5 = add32(s5, f);
+		s6 = add32(s6, g);
+		s7 = add32(s7, h);
+	}
+
+	return [
+		s0 >>> 24, (s0 >>> 16) & 0xFF, (s0 >>> 8) & 0xFF, s0 & 0xFF,
+		s1 >>> 24, (s1 >>> 16) & 0xFF, (s1 >>> 8) & 0xFF, s1 & 0xFF,
+		s2 >>> 24, (s2 >>> 16) & 0xFF, (s2 >>> 8) & 0xFF, s2 & 0xFF,
+		s3 >>> 24, (s3 >>> 16) & 0xFF, (s3 >>> 8) & 0xFF, s3 & 0xFF,
+		s4 >>> 24, (s4 >>> 16) & 0xFF, (s4 >>> 8) & 0xFF, s4 & 0xFF,
+		s5 >>> 24, (s5 >>> 16) & 0xFF, (s5 >>> 8) & 0xFF, s5 & 0xFF,
+		s6 >>> 24, (s6 >>> 16) & 0xFF, (s6 >>> 8) & 0xFF, s6 & 0xFF,
+		s7 >>> 24, (s7 >>> 16) & 0xFF, (s7 >>> 8) & 0xFF, s7 & 0xFF
+	];
+}
+
+function hmac(hash_func, block_size: Integer, key: Byte[], message: Byte[]): Byte[]
+{
+	if (key.length > block_size) {
+		key = hash_func(key);
+	}
+	if (key.length < block_size) {
+		key = clone_data(key);
+		while (key.length < block_size) {
+			key[] = 0;
+		}
+	}
+
+	var outer_key: Byte[] = Array::create(block_size, 1);
+	var inner_key: Byte[] = Array::create(block_size, 1);
+	for (var i=0; i<block_size; i++) {
+		outer_key[i] = key[i] ^ 0x5C;
+		inner_key[i] = key[i] ^ 0x36;
+	}
+
+	inner_key.append(message);
+	outer_key.append(hash_func(inner_key));
+	return hash_func(outer_key);
+}
+
+function hmac_sha256(key: Byte[], message: Byte[]): Byte[]
+{
+	return hmac(sha256#1, 64, key, message);
+}
+
+function @clone_data(arr: Byte[]): Byte[]
+{
+	var new_arr = Array::create(arr.length, 1);
+	Array::copy(new_arr, 0, arr, 0, arr.length);
+	return new_arr;
+}
+
+class SHA256Cipher
+{
+	var @w: Integer[];
+	var @cipher: Byte[];
+	var @pos: Integer;
+
+	constructor create(key: Byte[])
+	{
+		if (key.length != 32) {
+			throw error("invalid key size");
+		}
+		w = Array::create(64, 4);
+		for (var i=0, j=0; j<8; j++) {
+			w[j] = (key[i++] << 24) | (key[i++] << 16) | (key[i++] << 8) | key[i++];
+		}
+		w[10] = 0x80000000;
+		w[15] = (32+8)*8;
+		cipher = Array::create(32, 1);
+		pos = cipher.length;
+		if (!sha256_table) {
+			sha256([]);
+		}
+	}
+
+	function @refill()
+	{
+		var k = sha256_table;
+		var w = this.w;
+		var s0 = 0x6a09e667;
+		var s1 = 0xbb67ae85;
+		var s2 = 0x3c6ef372;
+		var s3 = 0xa54ff53a;
+		var s4 = 0x510e527f;
+		var s5 = 0x9b05688c;
+		var s6 = 0x1f83d9ab;
+		var s7 = 0x5be0cd19;
+
+		for (var j=16; j<64; j++) {
+			var ss0 = ror32(w[j-15], 7) ^ ror32(w[j-15], 18) ^ (w[j-15] >>> 3);
+			var ss1 = ror32(w[j-2], 17) ^ ror32(w[j-2], 19) ^ (w[j-2] >>> 10);
+			w[j] = add32(add32(add32(w[j-16], ss0), w[j-7]), ss1);
+		}
+
+		var a = s0;
+		var b = s1;
+		var c = s2;
+		var d = s3;
+		var e = s4;
+		var f = s5;
+		var g = s6;
+		var h = s7;
+
+		for (var j=0; j<64; j++) {
+			var ss1 = ror32(e, 6) ^ ror32(e, 11) ^ ror32(e, 25);
+			var ch = (e & f) ^ ((~e) & g);
+			var tmp1 = add32(add32(add32(add32(h, ss1), ch), k[j]), w[j]);
+			var ss0 = ror32(a, 2) ^ ror32(a, 13) ^ ror32(a, 22);
+			var maj = (a & b) ^ (a & c) ^ (b & c);
+			var tmp2 = add32(ss0, maj);
+
+			h = g;
+			g = f;
+			f = e;
+			e = add32(d, tmp1);
+			d = c;
+			c = b;
+			b = a;
+			a = add32(tmp1, tmp2);
+		}
+
+		s0 = add32(s0, a);
+		s1 = add32(s1, b);
+		s2 = add32(s2, c);
+		s3 = add32(s3, d);
+		s4 = add32(s4, e);
+		s5 = add32(s5, f);
+		s6 = add32(s6, g);
+		s7 = add32(s7, h);
+
+		macro output(s) {
+			cipher[i++] = s >>> 24;
+			cipher[i++] = (s >>> 16) & 0xFF;
+			cipher[i++] = (s >>> 8) & 0xFF;
+			cipher[i++] = s & 0xFF;
+		}
+
+		var cipher = this.cipher;
+		var i = 0;
+		output(s0);
+		output(s1);
+		output(s2);
+		output(s3);
+		output(s4);
+		output(s5);
+		output(s6);
+		output(s7);
+
+		w[9]++;
+		pos = 0;
+	}
+
+	function process(buf: Byte[])
+	{
+		process(buf, 0, buf.length);
+	}
+
+	function process(buf: Byte[], off: Integer, len: Integer)
+	{
+		while (len > 0) {
+			if (pos == cipher.length) {
+				refill();
+			}
+			var pos = this.pos;
+			var amount = min(cipher.length - pos, len);
+			for (var i=0; i<amount; i++) {
+				buf[off++] ^= cipher[pos++];
+			}
+			this.pos = pos;
+			len -= amount;
+		}
+	}
+
+	function encrypt(out: Stream, data: Byte[], max_size: Integer)
+	{
+		if (max_size < 0) {
+			max_size = 0x7FFFFFFF;
+		}
+
+		var key = Array::create(32, 1);
+		process(key);
+		data = clone_data(data);
+		process(data);
+		var auth = hmac_sha256(key, data);
+
+		var len = data.length;
+		if (len > max_size) {
+			throw error("tried to encrypt bigger data");
+		}
+		for (;;) {
+			if (len < 0x80) {
+				out.write_ubyte(len);
+				break;
+			}
+			out.write_ubyte((len & 0x7F) | 0x80);
+			len >>>= 7;
+		}
+		out.write(data);
+		out.write(auth);
+	}
+	
+	function decrypt(in: Stream, max_size: Integer): Byte[]
+	{
+		if (max_size < 0) {
+			max_size = 0x7FFFFFFF;
+		}
+
+		var b, len = 0;
+		for (var i=0; i<5; i++) {
+			b = in.read_ubyte();
+			len |= (b & 0x7F) << (i*7);
+			if ((b & 0x80) == 0) {
+				break;
+			}
+		}
+		if ((b & 0x80) != 0) {
+			throw error("malformed size");
+		}
+		if (len > max_size) {
+			throw error("tried to decrypt bigger data");
+		}
+
+		var key = Array::create(32, 1);
+		process(key);
+
+		var data = Array::create(len, 1);
+		in.read(data);
+		var auth1 = Array::create(32, 1);
+		in.read(auth1);
+		var auth2 = hmac_sha256(key, data);
+		if (auth1 != auth2) {
+			throw error("encrypted data modified (possible man in the middle attack)");
+		}
+
+		process(data);
+		return data;
+	}
+
+	function get_packet_size(in: Byte[], in_off: Integer, in_len: Integer, max_size: Integer): Integer
+	{
+		var orig_off = in_off;
+
+		if (max_size < 0) {
+			max_size = 0x7FFFFFFF;
+		}
+
+		var b, len = 0;
+		for (var i=0; i<5; i++) {
+			if (in_len < 1) return in_off - orig_off + 1;
+			b = in[in_off++];
+			in_len--;
+			len |= (b & 0x7F) << (i*7);
+			if ((b & 0x80) == 0) {
+				break;
+			}
+		}
+		if ((b & 0x80) != 0) {
+			return in_off - orig_off;
+		}
+		if (len > max_size) {
+			return in_off - orig_off;
+		}
+		return in_off - orig_off + len + 32;
+	}
+}
+
+/*
+function @to_hex(value: Byte[]): String
+{
+	var hex = {""};
+	var len = value.length;
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}
+
+function @assert(value, result)
+{
+	if (value != result) {
+		throw error("assert failed (expected "+result+" but got "+value+")");
+	}
+}
+
+function @inc_counter(key: Byte[], pos: Integer)
+{
+	var value = (key[pos+0] << 24) | (key[pos+1] << 16) | (key[pos+2] << 8) | key[pos+3];
+	value++;
+	key[pos+0] = value >>> 24;
+	key[pos+1] = (value >>> 16) & 0xFF;
+	key[pos+2] = (value >>> 8) & 0xFF;
+	key[pos+3] = value & 0xFF;
+}
+
+function test_sha256()
+{
+	assert(to_hex(sha256("")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+	assert(to_hex(sha256("The quick brown fox jumps over the lazy dog")), "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592");
+	assert(to_hex(sha256("The quick brown fox jumps over the lazy cog")), "e4c4d8f3bf76b692de791a173e05321150f7a345b46484fe427f6acc7ecc81be");
+
+	var s = {"The quick brown fox jumps over the lazy dogXXXXXXXXXXX"};
+	assert(s.length, 54);
+	assert(to_hex(sha256(s)), "1cae4c8820ee51b27073d5646c67d01d57a52ed5e85164a13102ab8eb791fd6e");
+
+	s[] = 'X';
+	assert(s.length, 55);
+	assert(to_hex(sha256(s)), "c7fc6090180b031a6e65d47bc5d3b9e031e8560c49492167ad8eec69271873ba");
+
+	s[] = 'X';
+	assert(s.length, 56);
+	assert(to_hex(sha256(s)), "3ef19768b78665c271febd7d8d7726633562ec38d84c049ead7dfbb126d50863");
+
+	s[] = 'X';
+	assert(s.length, 57);
+	assert(to_hex(sha256(s)), "36709472cf4e77ecaa784541c968ae04fa95d96f270b2480082776707cb2366a");
+
+	s = "The quick brown fox jumps over the lazy dog";
+	s = {s, s, s, s};
+	s = {s, s, s, s};
+	assert(s.length, 43*16);
+	assert(to_hex(sha256(s)), "cc1231a093f8088969ea17cdbcf18cfba206ecc499cf32aea73c11bcb72a44b8");
+
+	assert(to_hex(hmac_sha256("key", "The quick brown fox jumps over the lazy dog")), "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8");
+
+	var key = "01234567890123456789012345678901";
+	var key_counter = clone_data(key);
+	for (var i=0; i<8; i++) {
+		key_counter[] = 0;
+	}
+	var cipher = SHA256Cipher::create(key);
+	for (var i=0; i<1024; i++) {
+		cipher.refill();
+		assert(sha256(key_counter), cipher.cipher);
+		inc_counter(key_counter, 32+4);
+	}
+
+	cipher = SHA256Cipher::create(key);
+	key_counter = clone_data(key);
+	for (var i=0; i<8; i++) {
+		key_counter[] = 0;
+	}
+	var orig = "The quick brown fox jumps over the lazy dog";
+	var buf1 = clone_data(orig);
+	cipher.process(buf1);
+	var buf2 = clone_data(orig);
+	var cipher2 = sha256(key_counter);
+	for (var i=0; i<32; i++) {
+		buf2[i] ^= cipher2[i];
+	}
+	inc_counter(key_counter, 32+4);
+	cipher2 = sha256(key_counter);
+	for (var i=32; i<buf2.length; i++) {
+		buf2[i] ^= cipher2[i-32];
+	}
+	assert(buf1, buf2);
+}
+*/

@@ -1,0 +1,8 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "cdn.neow.in")) return true;
+	if (domain_ends_with(dest, "neowin.s3.amazonaws.com")) return true;
+	return false;
+}

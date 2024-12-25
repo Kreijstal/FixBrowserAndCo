@@ -1,0 +1,2391 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "browser/richtext/model";
+
+const @DEBUG_PARTS    = 0;
+const @DEBUG_FLOATS   = 1;
+const @DEBUG_CLIPPING = 0;
+
+// note: keep synced between model.fix and view.fix
+const {
+	@FLOW_text,
+	@FLOW_off,
+	@FLOW_len,
+	@FLOW_style,
+	@FLOW_SIZE
+};
+
+const {
+	@LINEPARTS_flow,
+	@LINEPARTS_text,
+	@LINEPARTS_off,
+	@LINEPARTS_len,
+	@LINEPARTS_width,
+	@LINEPARTS_ascent_rel,
+	@LINEPARTS_descent_rel,
+	@LINEPARTS_overdraw,
+	@LINEPARTS_handler,
+	@LINEPARTS_data,
+	@LINEPARTS_SIZE
+};
+
+const {
+	@LINERUN_y,
+	@LINERUN_ascent,
+	@LINERUN_descent,
+	@LINERUN_start_part,
+	@LINERUN_end_part,
+	@LINERUN_draw_layers,
+	@LINERUN_SIZE
+};
+
+const {
+	FLOAT_LEFT  = 0x01,
+	FLOAT_RIGHT = 0x02
+};
+
+var @empty_line_part: EmptyLinePart;
+
+class BlockView
+{
+	var @layer: Layer;
+	var @block: Block;
+	var @mtv: ModelToView;
+	var @line_parts;
+	var @line_runs;
+	var @y: Integer;
+	var @width: Integer;
+	var @height: Integer;
+	var @margin_left: Integer;
+	var @margin_top: Integer;
+	var @margin_right: Integer;
+	var @margin_bottom: Integer;
+	var @floats: FloatLayer[];
+	var @overflow_left: Integer;
+	var @overflow_right: Integer;
+	var @overflow_inner: Integer;
+	var @overdraw: Integer;
+	var @last_mouse_id: Integer;
+	var @draw_layers: Integer[];
+	var @renderer: BlockRenderer;
+	
+	constructor @create(layer: Layer, block: Block, mtv: ModelToView)
+	{
+		this.layer = layer;
+		this.block = block;
+		this.mtv = mtv;
+		line_parts = [];
+		line_runs = [];
+		last_mouse_id = -1;
+	}
+
+	function get_layer(): Layer
+	{
+		return layer;
+	}
+
+	function get_block(): Block
+	{
+		return block;
+	}
+
+	function get_y(): Integer
+	{
+		return y;
+	}
+
+	function set_margins(left: Integer, top: Integer, right: Integer, bottom: Integer)
+	{
+		margin_left = left;
+		margin_top = top;
+		margin_right = right;
+		margin_bottom = bottom;
+	}
+
+	function get_margins(): Integer[]
+	{
+		return [margin_left, margin_top, margin_right, margin_bottom];
+	}
+
+	function get_left_margin(): Integer
+	{
+		return margin_left;
+	}
+
+	function get_top_margin(): Integer
+	{
+		return margin_top;
+	}
+
+	function get_right_margin(): Integer
+	{
+		return margin_right;
+	}
+
+	function get_bottom_margin(): Integer
+	{
+		return margin_bottom;
+	}
+
+	function get_left_overflow(): Integer
+	{
+		return overflow_left;
+	}
+
+	function get_right_overflow(): Integer
+	{
+		return overflow_right;
+	}
+
+	function get_inner_overflow(): Integer
+	{
+		return overflow_inner;
+	}
+
+	function set_renderer(renderer: BlockRenderer)
+	{
+		this.renderer = renderer;
+	}
+
+	function get_linerun_count(): Integer
+	{
+		return length(line_runs) / LINERUN_SIZE;
+	}
+
+	function get_linerun_y(idx: Integer): Integer
+	{
+		return line_runs[idx*LINERUN_SIZE+LINERUN_y];
+	}
+
+	function get_linerun_ascent(idx: Integer): Integer
+	{
+		return line_runs[idx*LINERUN_SIZE+LINERUN_ascent];
+	}
+
+	function get_linerun_descent(idx: Integer): Integer
+	{
+		return line_runs[idx*LINERUN_SIZE+LINERUN_descent];
+	}
+
+	function get_linerun_start_part(idx: Integer): Integer
+	{
+		return line_runs[idx*LINERUN_SIZE+LINERUN_start_part] / LINEPARTS_SIZE;
+	}
+
+	function get_linerun_end_part(idx: Integer): Integer
+	{
+		return line_runs[idx*LINERUN_SIZE+LINERUN_end_part] / LINEPARTS_SIZE;
+	}
+
+	function get_linepart_count(): Integer
+	{
+		return length(line_parts) / LINEPARTS_SIZE;
+	}
+
+	function get_linepart_flow(idx: Integer): Integer
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_flow] / FLOW_SIZE;
+	}
+
+	function get_linepart_text(idx: Integer): String
+	{
+		var off = idx*LINEPARTS_SIZE;
+		var text = line_parts[off+LINEPARTS_text];
+		if (!text) return null;
+		return array_extract(text, line_parts[off+LINEPARTS_off], line_parts[off+LINEPARTS_len]);
+	}
+
+	function get_linepart_raw_text(idx: Integer): String
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_text];
+	}
+
+	function get_linepart_offset(idx: Integer): Integer
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_off];
+	}
+
+	function get_linepart_length(idx: Integer): Integer
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_len];
+	}
+
+	function get_linepart_width(idx: Integer): Integer
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_width];
+	}
+
+	function get_linepart_ascent(idx: Integer): Integer
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_ascent_rel] & 0xFFFF;
+	}
+
+	function get_linepart_descent(idx: Integer): Integer
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_descent_rel] & 0xFFFF;
+	}
+
+	function get_linepart_handler(idx: Integer): Dynamic
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_handler];
+	}
+
+	function get_linepart_data(idx: Integer): Dynamic
+	{
+		return line_parts[idx*LINEPARTS_SIZE+LINEPARTS_data];
+	}
+
+	function get_part_index(id: Integer): Integer
+	{
+		var parts = line_parts;
+		var runs = line_runs;
+
+		var run_off = (id >>> 16) * LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+		var part_off = start + (id & 0xFFFF) * LINEPARTS_SIZE;
+		if (part_off >= end) return -1;
+
+		return part_off / LINEPARTS_SIZE;
+	}
+
+	function get_prev_part(id: Integer): Integer
+	{
+		var parts = line_parts;
+		var runs = line_runs;
+
+		var run_off = (id >>> 16) * LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+		var part_off = start + (id & 0xFFFF) * LINEPARTS_SIZE;
+		if (part_off >= end) return -1;
+
+		part_off -= LINEPARTS_SIZE;
+		if (part_off < start) {
+			run_off -= LINERUN_SIZE;
+			if (run_off < 0) {
+				return -1;
+			}
+			start = runs[run_off+LINERUN_start_part] as Integer;
+			end = runs[run_off+LINERUN_end_part] as Integer;
+			id = ((id - 0x10000) & 0xFFFF0000) | ((end - start) / LINEPARTS_SIZE - 1);
+		}
+		else {
+			id--;
+		}
+
+		return id;
+	}
+
+	function get_next_part(id: Integer): Integer
+	{
+		var parts = line_parts;
+		var runs = line_runs;
+
+		var run_off = (id >>> 16) * LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+		var part_off = start + (id & 0xFFFF) * LINEPARTS_SIZE;
+		if (part_off >= end) return -1;
+
+		id++;
+		part_off += LINEPARTS_SIZE;
+		if (part_off == end) {
+			run_off += LINERUN_SIZE;
+			if (run_off >= length(runs)) {
+				return -1;
+			}
+			id = (id + 0x10000) & 0xFFFF0000;
+		}
+
+		return id;
+	}
+
+	function @update(width: Integer)
+	{
+		var line = LineBuilder::create(this, width);
+		var flows = (block as Dynamic)[0];
+		var mtv = this.mtv;
+
+		if (layer.has_floats) {
+			line.floats = [];
+			foreach (var block in layer.blocks) {
+				if (block === this) break;
+				if (block.floats) {
+					array_append(line.floats, block.floats);
+				}
+			}
+			
+			line.last_left_float = null;
+			line.last_right_float = null;
+
+			foreach (var layer in line.floats) {
+				if (layer.side_size >= 0) {
+					line.last_left_float = layer;
+				}
+				else {
+					line.last_right_float = layer;
+				}
+			}
+
+			line.apply_floats();
+		}
+		
+		var block_style = block.get_style();
+		mtv.adjust_block_start(line, block_style);
+
+		for (var i=0; i<length(flows); i+=FLOW_SIZE) {
+			line.cur_flow = i;
+			mtv.add_line_parts(line, flows[i+FLOW_text], flows[i+FLOW_off], flows[i+FLOW_len], flows[i+FLOW_style]);
+		}
+
+		line.cur_flow = -FLOW_SIZE;
+
+		line.last_line = true;
+		line.next_line();
+
+		mtv.adjust_block_end(line, block_style);
+		
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		if (runs[run_off+LINERUN_end_part] - runs[run_off+LINERUN_start_part] > 0) {
+			line.next_line();
+		}
+		array_set_length(runs, length(runs) - LINERUN_SIZE);
+
+		this.width = width;
+		this.height = line.last_y;
+		this.overflow_left = line.overflow_left;
+		this.overflow_right = line.overflow_right;
+		this.overflow_inner = line.overflow_inner;
+		this.overdraw = line.overdraw;
+		this.draw_layers = line.draw_layers;
+
+		if (renderer) {
+			this.overdraw = max(this.overdraw, renderer.get_overdraw());
+		}
+
+		floats = line.block_floats;
+		if (floats) {
+			layer.has_floats = true;
+		}
+
+		if (draw_layers != null && overdraw > 0) {
+			for (var i=0; i<length(runs); i+=LINERUN_SIZE) {
+				if (runs[i+LINERUN_draw_layers]) {
+					var y1 = runs[i+LINERUN_y];
+					var y2 = y1 + runs[i+LINERUN_ascent] + runs[i+LINERUN_descent];
+					y1 -= overdraw;
+					y2 += overdraw;
+					for (var j=i-LINERUN_SIZE; j>=0; j-=LINERUN_SIZE) {
+						runs[j+LINERUN_draw_layers] = true;
+						var run_y1 = runs[j+LINERUN_y];
+						if (y1 >= (run_y1 as Integer)) break;
+					}
+					for (var j=i+LINERUN_SIZE; j<length(runs); j+=LINERUN_SIZE) {
+						runs[j+LINERUN_draw_layers] = true;
+						var run_y2 = runs[j+LINERUN_y] + runs[j+LINERUN_ascent] + runs[j+LINERUN_descent];
+						if (y2 <= (run_y2 as Integer)) break;
+					}
+				}
+			}
+		}
+	}
+
+	function @draw(p: Painter, layer: Integer)
+	{
+		if (layer != 0) {
+			var draw_layers = this.draw_layers;
+			if (draw_layers == null) return;
+
+			var found = false;
+			for (var i=0; i<length(draw_layers); i++) {
+				if (draw_layers[i] == layer) {
+					found = true;
+					break;
+				}
+			}
+			if (!found) return;
+		}
+
+		var parts = line_parts;
+		var runs = line_runs;
+		var margin_left = this.margin_left;
+		var margin_top = this.margin_top;
+		var id = 0;
+
+		for (var i=0; i<length(runs); i+=LINERUN_SIZE) {
+			var y = runs[i+LINERUN_y] as Integer;
+			var start = runs[i+LINERUN_start_part] as Integer;
+			var end = runs[i+LINERUN_end_part] as Integer;
+			var ascent = runs[i+LINERUN_ascent] as Integer;
+			var descent = runs[i+LINERUN_descent] as Integer;
+			var draw_layers = runs[i+LINERUN_draw_layers] as Boolean;
+
+			// TODO
+			//if (layer == 0 || draw_layers) {
+				var x = margin_left;
+				y += ascent + margin_top;
+
+				for (var j=start; j<end; j+=LINEPARTS_SIZE) {
+					var text = parts[j+LINEPARTS_text];
+					var off = parts[j+LINEPARTS_off];
+					var len = parts[j+LINEPARTS_len];
+					var width = parts[j+LINEPARTS_width];
+					var handler = parts[j+LINEPARTS_handler] as LinePart;
+					var data = parts[j+LINEPARTS_data];
+					if (DEBUG_CLIPPING != 0) {
+						var overdraw = parts[j+LINEPARTS_overdraw];
+						p.push();
+						p.clip(x-overdraw, y-ascent-overdraw, width+overdraw*2, ascent+descent+overdraw*2);
+					}
+					if (layer == 0) {
+						handler.paint(this, id, p, x, y, width, ascent, descent, text, off, len, data);
+					}
+					else {
+						handler.paint_layer(this, id, layer, p, x, y, width, ascent, descent, text, off, len, data);
+					}
+					if (DEBUG_CLIPPING != 0) {
+						p.pop();
+					}
+					x += width;
+					id = add32(id, 1);
+				}
+			//}
+
+			id = add32(id, 0x10000) & 0xFFFF0000;
+		}
+	}
+
+	function @draw_debug_parts(p: Painter)
+	{
+		var parts = line_parts;
+		var runs = line_runs;
+		var margin_left = this.margin_left;
+		var margin_top = this.margin_top;
+
+		for (var i=0; i<length(runs); i+=LINERUN_SIZE) {
+			var y = runs[i+LINERUN_y] as Integer;
+			var start = runs[i+LINERUN_start_part] as Integer;
+			var end = runs[i+LINERUN_end_part] as Integer;
+			var ascent = runs[i+LINERUN_ascent] as Integer;
+			var descent = runs[i+LINERUN_descent] as Integer;
+
+			var x = margin_left;
+			y += ascent + margin_top;
+
+			for (var j=start; j<end; j+=LINEPARTS_SIZE) {
+				var width = parts[j+LINEPARTS_width];
+				draw_rect(p, x, y-ascent, width, ascent+descent, 0x80006666);
+				x += width;
+			}
+
+			draw_rect(p, margin_left, y-ascent, width, ascent+descent, 0x80800080);
+			p.fill_rect(margin_left+1, y-1, width-2, 1, 0x80000080);
+		}
+	}
+
+	function @handle_mouse_event(event: MouseEvent, x: Integer, y: Integer): Boolean
+	{
+		var runs = line_runs;
+		var parts = line_parts;
+		var id = 0;
+
+		var type = event.get_type();
+		if ((event.is_drag_event() || type == EVENT_MOUSE_LEAVE) && last_mouse_id != -1) {
+			var run_off = (last_mouse_id >>> 16) * LINERUN_SIZE;
+			var part_idx = last_mouse_id & 0xFFFF;
+			if (run_off < length(runs)) {
+				var run_y = runs[run_off+LINERUN_y];
+				var start = runs[run_off+LINERUN_start_part] as Integer;
+				var end = runs[run_off+LINERUN_end_part] as Integer;
+				var ascent = runs[run_off+LINERUN_ascent] as Integer;
+				var descent = runs[run_off+LINERUN_descent] as Integer;
+				var part_x = 0;
+				var part_off = start + part_idx * LINEPARTS_SIZE;
+				for (var i=start; i<end; i+=LINEPARTS_SIZE) {
+					var width = parts[i+LINEPARTS_width];
+					if (i == part_off) {
+						var text = parts[i+LINEPARTS_text];
+						var off = parts[i+LINEPARTS_off];
+						var len = parts[i+LINEPARTS_len];
+						var handler = parts[i+LINEPARTS_handler] as LinePart;
+						var data = parts[i+LINEPARTS_data];
+						var new_event = clone(event) as MouseEvent;
+						new_event.set_position(x - part_x, y - run_y - ascent);
+						id = last_mouse_id;
+						if (type == EVENT_MOUSE_LEAVE) {
+							last_mouse_id = -1;
+						}
+						return handler.handle_mouse_event(this, id, part_x, run_y + ascent, width, ascent, descent, text, off, len, new_event, data);
+					}
+					part_x += width;
+				}
+			}
+		}
+
+		for (var i=0; i<length(runs); i+=LINERUN_SIZE) {
+			var run_y1 = runs[i+LINERUN_y];
+			var run_y2 = run_y1 + runs[i+LINERUN_ascent] + runs[i+LINERUN_descent];
+			if (y >= run_y1 && y < run_y2) {
+				var start = runs[i+LINERUN_start_part] as Integer;
+				var end = runs[i+LINERUN_end_part] as Integer;
+				var ascent = runs[i+LINERUN_ascent] as Integer;
+				var descent = runs[i+LINERUN_descent] as Integer;
+				var part_x = 0;
+				for (var j=start; j<end; j+=LINEPARTS_SIZE) {
+					var width = parts[j+LINEPARTS_width];
+					if (x >= part_x && x < part_x+width) {
+						var text = parts[j+LINEPARTS_text];
+						var off = parts[j+LINEPARTS_off];
+						var len = parts[j+LINEPARTS_len];
+						var handler = parts[j+LINEPARTS_handler] as LinePart;
+						var data = parts[j+LINEPARTS_data];
+						var new_event = clone(event) as MouseEvent;
+						new_event.set_position(x - part_x, y - run_y1 - ascent);
+						if (last_mouse_id != -1 && last_mouse_id != id) {
+							handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0), 0, 0);
+						}
+						last_mouse_id = id;
+						return handler.handle_mouse_event(this, id, part_x, run_y1 + ascent, width, ascent, descent, text, off, len, new_event, data);
+					}
+					part_x += width;
+					id = add32(id, 1);
+				}
+				if (last_mouse_id != -1) {
+					handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0), 0, 0);
+				}
+				last_mouse_id = -1;
+				return false;
+			}
+			id = add32(id, 0x10000) & 0xFFFF0000;
+		}
+		if (last_mouse_id != -1) {
+			handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0), 0, 0);
+		}
+		last_mouse_id = -1;
+		return false;
+	}
+
+	function draw_part(p: Painter, id: Integer, layer: Integer, x: Integer, y: Integer)
+	{
+		var parts = line_parts;
+		var runs = line_runs;
+
+		var run_off = (id >>> 16) * LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+		var ascent = runs[run_off+LINERUN_ascent] as Integer;
+		var descent = runs[run_off+LINERUN_descent] as Integer;
+		var part_off = start + (id & 0xFFFF) * LINEPARTS_SIZE;
+		if (part_off >= end) return;
+
+		var text = parts[part_off+LINEPARTS_text];
+		var off = parts[part_off+LINEPARTS_off];
+		var len = parts[part_off+LINEPARTS_len];
+		var width = parts[part_off+LINEPARTS_width];
+		var handler = parts[part_off+LINEPARTS_handler] as LinePart;
+		var data = parts[part_off+LINEPARTS_data];
+		if (layer == 0) {
+			handler.paint(this, id, p, x, y, width, ascent, descent, text, off, len, data);
+		}
+		else {
+			handler.paint_layer(this, id, layer, p, x, y, width, ascent, descent, text, off, len, data);
+		}
+	}
+
+	function repaint_part(id: Integer)
+	{
+		var run_idx = id >>> 16;
+		var part_idx = id & 0xFFFF;
+
+		var runs = line_runs;
+		var run_off = run_idx * LINERUN_SIZE;
+		if (run_off >= length(runs)) return;
+
+		var run_y = runs[run_off+LINERUN_y] as Integer;
+		var ascent = runs[run_off+LINERUN_ascent] as Integer;
+		var descent = runs[run_off+LINERUN_descent] as Integer;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+
+		var parts = line_parts;
+		var part_off = start + part_idx*LINEPARTS_SIZE;
+		if (part_off >= end) return;
+
+		var part_x = 0;
+		for (var i=start; i<part_off; i+=LINEPARTS_SIZE) {
+			part_x += parts[i+LINEPARTS_width];
+		}
+
+		var width = parts[part_off+LINEPARTS_width] as Integer;
+		var overdraw = parts[part_off+LINEPARTS_overdraw] as Integer;
+
+		layer.repaint(margin_left + part_x - overdraw, margin_top + this.y + run_y - overdraw, width + overdraw*2, ascent+descent + overdraw*2);
+	}
+
+	function repaint_part(id: Integer, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		var run_idx = id >>> 16;
+		var part_idx = id & 0xFFFF;
+
+		var runs = line_runs;
+		var run_off = run_idx * LINERUN_SIZE;
+		if (run_off >= length(runs)) return;
+
+		var run_y = runs[run_off+LINERUN_y] as Integer;
+		var ascent = runs[run_off+LINERUN_ascent] as Integer;
+		var descent = runs[run_off+LINERUN_descent] as Integer;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+
+		var parts = line_parts;
+		var part_off = start + part_idx*LINEPARTS_SIZE;
+		if (part_off >= end) return;
+
+		var part_x = 0;
+		for (var i=start; i<part_off; i+=LINEPARTS_SIZE) {
+			part_x += parts[i+LINEPARTS_width];
+		}
+
+		layer.repaint(margin_left + part_x + x, margin_top + this.y + run_y + ascent + y, width, height);
+	}
+
+	function get_selection_point(x: Integer, y: Integer, same_layer: Boolean, exact: Boolean): SelectionPoint
+	{
+		var runs = line_runs;
+		var parts = line_parts;
+
+		var id = 0;
+		for (var i=0; i<length(runs); i+=LINERUN_SIZE) {
+			var run_y1 = runs[i+LINERUN_y];
+			var run_y2 = run_y1 + runs[i+LINERUN_ascent] + runs[i+LINERUN_descent];
+			var cond: Boolean;
+			if (exact) {
+				cond = (y >= run_y1 && y < run_y2);
+			}
+			else {
+				cond = (y < run_y2 || i == length(runs)-LINERUN_SIZE);
+			}
+			if (cond) {
+				var start = runs[i+LINERUN_start_part] as Integer;
+				var end = runs[i+LINERUN_end_part] as Integer;
+				var ascent = runs[i+LINERUN_ascent] as Integer;
+				var descent = runs[i+LINERUN_descent] as Integer;
+				var part_x = 0;
+				for (var j=start; j<end; j+=LINEPARTS_SIZE) {
+					var width = parts[j+LINEPARTS_width];
+					if (exact) {
+						cond = (x >= part_x && x < part_x+width);
+					}
+					else {
+						cond = (x < (part_x+width) || j == end-LINEPARTS_SIZE); //XXX
+					}
+					if (cond) {
+						var text = parts[j+LINEPARTS_text];
+						var off = parts[j+LINEPARTS_off];
+						var len = parts[j+LINEPARTS_len];
+						var flow = parts[j+LINEPARTS_flow] / FLOW_SIZE;
+						var handler = parts[j+LINEPARTS_handler] as LinePart;
+						var data = parts[j+LINEPARTS_data];
+						return handler.get_selection_point(this, id, part_x, run_y1 + ascent, width, ascent, descent, text, off, len, x - part_x, y - (run_y1 + ascent), same_layer, exact, data);
+					}
+					part_x += width;
+					id = add32(id, 1);
+				}
+				return null;
+			}
+			id = add32(id, 0x10000) & 0xFFFF0000;
+		}
+		return null;
+	}
+}
+
+class Layer
+{
+	var @mtv: ModelToView;
+	var @blocks: BlockView[];
+	var @width: Integer;
+	var @height: Integer;
+	var @overflow_left: Integer;
+	var @overflow_right: Integer;
+	var @overdraw: Integer;
+	var @draw_layers: Integer[];
+	var @has_floats: Boolean;
+	var @last_mouse_float: FloatLayer;
+	var @last_mouse_block: BlockView;
+
+	constructor create(mtv: ModelToView)
+	{
+		this.mtv = mtv;
+		blocks = [];
+	}
+
+	static function create(blocks: Block[], mtv: ModelToView): Layer
+	{
+		var layer = create(mtv);
+		var prev_style;
+		foreach (var block in blocks) {
+			var view = BlockView::create(layer, block, mtv);
+			var style = block.get_style();
+			mtv.adjust_block(view, style, prev_style);
+			prev_style = style;
+			layer.blocks[] = view;
+		}
+		return layer;
+	}
+
+	function @add_draw_layer(idx: Integer)
+	{
+		var draw_layers = this.draw_layers;
+		if (!draw_layers) {
+			draw_layers = this.draw_layers = [0];
+		}
+		for (var i=length(draw_layers)-1; i>=0; i--) {
+			if (idx == draw_layers[i]) {
+				return;
+			}
+			if (idx > draw_layers[i]) {
+				array_insert(draw_layers, i+1, idx);
+				return;
+			}
+		}
+		array_insert(draw_layers, 0, idx);
+	}
+
+	function clear_blocks()
+	{
+		array_set_length(blocks, 0);
+	}
+
+	function add_block(block: Block)
+	{
+		var style = block.get_style();
+		var view = BlockView::create(this, block, mtv);
+		var prev_style = length(blocks) > 0? blocks[length(blocks)-1].get_block().get_style() : null;
+		mtv.adjust_block(view, style, prev_style);
+		blocks[] = view;
+	}
+
+	function get_width(): Integer
+	{
+		return width;
+	}
+
+	function get_height(): Integer
+	{
+		return height;
+	}
+
+	function get_left_overflow(): Integer
+	{
+		return overflow_left;
+	}
+
+	function get_right_overflow(): Integer
+	{
+		return overflow_right;
+	}
+
+	function get_overdraw(): Integer
+	{
+		return overdraw;
+	}
+
+	function get_block_count(): Integer
+	{
+		return length(blocks);
+	}
+
+	function get_block(idx: Integer): BlockView
+	{
+		return blocks[idx];
+	}
+
+	function update(width: Integer)
+	{
+		draw_layers = null;
+
+		width = max(0, width);
+		var overflow_left = 0;
+		var overflow_right = 0;
+		var overdraw = 0;
+
+		var y = 0;
+		foreach (var block in blocks) {
+			block.y = y;
+			block.update(width - block.margin_left - block.margin_right);
+			y += block.height + block.margin_top + block.margin_bottom;
+			overflow_left = max(overflow_left, block.overflow_left);
+			overflow_right = max(overflow_right, block.overflow_right);
+			overdraw = max(overdraw, block.overdraw);
+		
+			if (block.draw_layers) {
+				foreach (var idx in block.draw_layers) {
+					add_draw_layer(idx);
+				}
+			}
+		}
+
+		if (has_floats) {
+			foreach (var block in blocks) {
+				var floats = block.floats;
+				if (floats) {
+					foreach (var layer in floats) {
+						y = max(y, layer.y + layer.height);
+						overdraw = max(overdraw, layer.overdraw);
+					}
+				}
+			}
+		}
+
+		this.width = width;
+		this.height = y;
+		this.overflow_left = overflow_left;
+		this.overflow_right = overflow_right;
+		this.overdraw = overdraw;
+	}
+
+	virtual function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var event_x = event.get_x();
+		var event_y = event.get_y();
+
+		var type = event.get_type();
+		if (event.is_drag_event() || type == EVENT_MOUSE_LEAVE) {
+			if (last_mouse_float) {
+				var x = last_mouse_float.x;
+				var y = last_mouse_float.y;
+				event.translate(-x, -y);
+				var ret = last_mouse_float.handle_mouse_event(event);
+				event.translate(x, y);
+				if (type == EVENT_MOUSE_LEAVE) {
+					last_mouse_float = null;
+				}
+				return ret;
+			}
+			if (last_mouse_block) {
+				var block = last_mouse_block;
+				if (type == EVENT_MOUSE_LEAVE) {
+					last_mouse_block = null;
+				}
+				return block.handle_mouse_event(event, event_x - block.margin_left, event_y - block.y - block.margin_top);
+			}
+		}
+
+		if (has_floats) {
+			foreach (var block in blocks) {
+				var floats = block.floats;
+				if (floats) {
+					foreach (var layer in floats) {
+						var x1 = layer.x;
+						var y1 = layer.y;
+						var x2 = x1 + layer.width;
+						var y2 = y1 + layer.height;
+						x1 -= layer.overflow_left;
+						x2 += layer.overflow_right;
+						if (event_x >= x1 && event_y >= y1 && event_x < x2 && event_y < y2) {
+							if (last_mouse_float != null && last_mouse_float !== layer) {
+								last_mouse_float.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0));
+							}
+							if (last_mouse_block != null) {
+								last_mouse_block.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0), 0, 0);
+							}
+							last_mouse_float = layer;
+							last_mouse_block = null;
+							x1 += layer.overflow_left;
+							event.translate(-x1, -y1);
+							var ret = layer.handle_mouse_event(event);
+							event.translate(x1, y1);
+							return ret;
+						}
+					}
+				}
+			}
+		}
+
+		foreach (var block in blocks) {
+			var y1 = block.y;
+			var y2 = y1 + block.height + block.margin_top + block.margin_bottom;
+			if (event_y >= y1 && event_y < y2) {
+				if (last_mouse_float != null) {
+					last_mouse_float.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0));
+				}
+				if (last_mouse_block != null && last_mouse_block !== block) {
+					last_mouse_block.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0), 0, 0);
+				}
+				last_mouse_float = null;
+				last_mouse_block = block;
+				return block.handle_mouse_event(event, event_x - block.margin_left, event_y - y1 - block.margin_top);
+			}
+		}
+
+		if (last_mouse_float != null) {
+			last_mouse_float.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0));
+		}
+		if (last_mouse_block != null) {
+			last_mouse_block.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0), 0, 0);
+		}
+		last_mouse_float = null;
+		last_mouse_block = null;
+		return false;
+	}
+
+	virtual function draw(p: Painter)
+	{
+		draw_content(p);
+	}
+
+	function draw_content(p: Painter)
+	{
+		var clip = p.get_clip_rect();
+		if (!clip.is_valid()) return;
+
+		var draw_layers = this.draw_layers;
+		if (draw_layers) {
+			foreach (var block in blocks) {
+				if (block.y - overdraw >= clip.y2) break;
+				if (block.y + block.height + overdraw < clip.y1) continue;
+				var renderer = block.renderer;
+				if (renderer) {
+					renderer.paint_background(block, p, block.margin_left, block.y + block.margin_top, block.width, block.height);
+				}
+			}
+			foreach (var idx in draw_layers) {
+				foreach (var block in blocks) {
+					if (block.y - overdraw >= clip.y2) break;
+					if (block.y + block.height + overdraw < clip.y1) continue;
+					p.translate(0, block.y);
+					block.draw(p, idx);
+					p.translate(0, -block.y);
+				}
+			}
+			foreach (var block in blocks) {
+				if (block.y - overdraw >= clip.y2) break;
+				if (block.y + block.height + overdraw < clip.y1) continue;
+				var renderer = block.renderer;
+				if (renderer) {
+					renderer.paint_foreground(block, p, block.margin_left, block.y + block.margin_top, block.width, block.height);
+				}
+			}
+		}
+		else {
+			foreach (var block in blocks) {
+				if (block.y - overdraw >= clip.y2) break;
+				if (block.y + block.height + overdraw < clip.y1) continue;
+				p.translate(0, block.y);
+				var renderer = block.renderer;
+				if (renderer) {
+					renderer.paint_background(block, p, block.margin_left, block.margin_top, block.width, block.height);
+				}
+				block.draw(p, 0);
+				if (renderer) {
+					renderer.paint_foreground(block, p, block.margin_left, block.margin_top, block.width, block.height);
+				}
+				p.translate(0, -block.y);
+			}
+		}
+
+		if (DEBUG_PARTS != 0) {
+			foreach (var block in blocks) {
+				if (block.y - overdraw >= clip.y2) break;
+				if (block.y + block.height + overdraw < clip.y1) continue;
+				p.translate(0, block.y);
+				block.draw_debug_parts(p);
+				p.translate(0, -block.y);
+			}
+		}
+		
+		if (has_floats) {
+			foreach (var block in blocks) {
+				var floats = block.floats;
+				if (floats) {
+					foreach (var layer in floats) {
+						p.translate(layer.x, layer.y);
+						layer.draw(p);
+						if (DEBUG_FLOATS != 0) {
+							draw_rect(p, 0, 0, layer.width, layer.height, 0xFFFF4400);
+							draw_rect(p, 1, 1, layer.width-2, layer.height-2, 0xFFFF4400);
+						}
+						p.translate(-layer.x, -layer.y);
+					}
+				}
+			}
+		}
+	}
+
+	virtual function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+	}
+
+	function get_top_layer(): Layer
+	{
+		return get_top_layer(null);
+	}
+
+	virtual function get_top_layer(point: Integer[]): Layer
+	{
+		return this;
+	}
+
+	function get_selection_point(x: Integer, y: Integer, same_layer: Boolean, exact: Boolean): SelectionPoint
+	{
+		if (!same_layer && has_floats) {
+			foreach (var block in blocks) {
+				var floats = block.floats;
+				if (floats) {
+					foreach (var layer in floats) {
+						var x1 = layer.x;
+						var y1 = layer.y;
+						var x2 = x1 + layer.width;
+						var y2 = y1 + layer.height;
+						x1 -= layer.overflow_left;
+						x2 += layer.overflow_right;
+						if (x >= x1 && y >= y1 && x < x2 && y < y2) {
+							x1 += layer.overflow_left;
+							return layer.get_selection_point(x - x1, y - y1, same_layer, exact);
+						}
+					}
+				}
+			}
+		}
+
+		var blocks = this.blocks;
+		for (var i=0; i<length(blocks); i++) {
+			var block = blocks[i];
+			var y1 = block.y;
+			var y2 = y1 + block.height + block.margin_top + block.margin_bottom;
+			var cond: Boolean;
+			if (exact) {
+				cond = (y >= y1 && y < y2);
+			}
+			else {
+				cond = (y < y2 || i == length(blocks)-1);
+			}
+			if (cond) {
+				return block.get_selection_point(x - block.margin_left, y - y1 - block.margin_top, same_layer, exact);
+			}
+		}
+
+		return null;
+	}
+}
+
+class FloatLayer: Layer
+{
+	var @layer: Layer;
+	var @x: Integer;
+	var @y: Integer;
+	var @side_size: Integer;
+
+	constructor create(mtv: ModelToView)
+	{
+		super::create(mtv);
+	}
+
+	constructor create(blocks: Block[], mtv: ModelToView)
+	{
+		super::create(blocks, mtv);
+	}
+
+	override function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		layer.repaint(this.x + x, this.y + y, width, height);
+	}
+
+	override function get_top_layer(point: Integer[]): Layer
+	{
+		if (point) {
+			point[0] += x;
+			point[1] += y;
+		}
+		return layer;
+	}
+}
+
+class SelectionPoint
+{
+	var @layer: Layer;
+	var @block: BlockView;
+	var @flow_idx: Integer;
+	var @offset: Integer;
+
+	constructor create(layer: Layer, block: BlockView, flow_idx: Integer, offset: Integer)
+	{
+		this.layer = layer;
+		this.block = block;
+		this.flow_idx = flow_idx;
+		this.offset = offset;
+	}
+
+	function compare(sp: SelectionPoint): Integer
+	{
+		if (!this || !sp) {
+			throw error("can't compare invalid selection points");
+		}
+
+		if (layer !== sp.layer) {
+			throw error("different layers");
+		}
+
+		if (block !== sp.block) {
+			foreach (var bl in layer.blocks) {
+				if (bl === block) return -1;
+				if (bl === sp.block) return +1;
+			}
+			throw error("block not found in layer");
+		}
+
+		if (flow_idx != sp.flow_idx) {
+			return flow_idx - sp.flow_idx;
+		}
+		return offset - sp.offset;
+	}
+
+	function to_string(): String
+	{
+		if (!this) {
+			return "none";
+		}
+		return "layer=#"+((layer as Integer)|0)+" block="+((block as Integer)|0)+" flow_idx="+flow_idx+" offset="+offset;
+	}
+}
+
+class LineBuilder
+{
+	var @view: BlockView;
+	var @block: Block;
+	var @mtv: ModelToView;
+	var @flows;
+	var @line_parts;
+	var @line_runs;
+	var @floats: FloatLayer[];
+	var @block_floats: FloatLayer[];
+	var @last_left_float: FloatLayer;
+	var @last_right_float: FloatLayer;
+	var @cur_flow: Integer;
+	var @cur_width: Integer;
+	var @orig_width: Integer;
+	var @cur_float_left: Integer;
+	var @cur_float_right: Integer;
+	var @cur_x: Integer;
+	var @cur_ascent: Integer;
+	var @cur_descent: Integer;
+	var @last_y: Integer;
+	var @split_words: Boolean;
+	var @adjusting_line: Boolean;
+	var @last_line: Boolean;
+	var @tmp_parts;
+	var @ctx;
+	var @justify_space_pixels: Integer;
+	var @justify_space_count: Integer;
+	var @moving_from_floats: Boolean;
+	var @overflow_left: Integer;
+	var @overflow_right: Integer;
+	var @overflow_inner: Integer;
+	var @overdraw: Integer;
+	var @draw_layers: Integer[];
+	var @draw_layer_flow: Integer;
+
+	constructor @create(view: BlockView, width: Integer)
+	{
+		var parts = view.line_parts;
+		var runs = view.line_runs;
+
+		this.view = view;
+		block = view.block;
+		mtv = view.mtv;
+		flows = (view.block as Dynamic)[0];
+		line_parts = parts;
+		line_runs = runs;
+		cur_flow = -FLOW_SIZE;
+		cur_width = width;
+		orig_width = width;
+		//split_words = true;
+		tmp_parts = [];
+		draw_layer_flow = -1;
+
+		array_set_length(parts, 0);
+		array_set_length(runs, 0);
+
+		runs[] = 0; // y
+		runs[] = 0; // ascent
+		runs[] = 0; // descent
+		runs[] = 0; // start_part
+		runs[] = 0; // end_part
+		runs[] = false; // draw_layers
+	}
+
+	function set_context(ctx)
+	{
+		this.ctx = ctx;
+	}
+
+	function get_context(): Dynamic
+	{
+		return ctx;
+	}
+
+	function set_width(width: Integer)
+	{
+		this.cur_width = width;
+	}
+
+	function get_width(): Integer
+	{
+		return cur_width;
+	}
+
+	function get_current_x(): Integer
+	{
+		return cur_x;
+	}
+
+	function get_current_y(): Integer
+	{
+		return last_y + cur_ascent;
+	}
+
+	function get_remaining_width(): Integer
+	{
+		return cur_width - cur_x;
+	}
+
+	function set_split_words(split_words: Boolean)
+	{
+		this.split_words = split_words;
+	}
+	
+	function get_split_words(): Boolean
+	{
+		return split_words;
+	}
+
+	function get_block(): Block
+	{
+		return block;
+	}
+
+	function get_flow_idx(): Integer
+	{
+		return cur_flow / FLOW_SIZE;
+	}
+
+	function add_float(side: Integer, y: Integer, layer: FloatLayer)
+	{
+		var orig_width = max(0, this.orig_width);
+
+		if (layer.width > cur_width - cur_x) {
+			next_line();
+		}
+
+		var floats = this.floats;
+		if (!floats) {
+			floats = this.floats = [];
+		}
+
+		var side_size = layer.width;
+		if (side == FLOAT_RIGHT) {
+			side_size = -side_size;
+		}
+
+		var y1 = view.y + view.margin_top + last_y + y;
+		if (side == FLOAT_LEFT) {
+			if (last_left_float) {
+				y1 = max(y1, last_left_float.y);
+			}
+		}
+		else {
+			if (last_right_float) {
+				y1 = max(y1, last_right_float.y);
+			}
+		}
+		var y2 = y1 + layer.height;
+
+		var changed: Boolean;
+		do {
+			changed = false;
+			for (var i=0; i<length(floats); i++) {
+				var other = floats[i];
+				var other_y1 = other.y;
+				var other_y2 = other_y1 + other.height;
+				if (y1 < other_y2 && y2 > other_y1) {
+					var other_side_size = other.side_size;
+					if (side_size >= 0) {
+						if (other_side_size >= 0) {
+							var new_side_size = other_side_size + layer.width;
+							if (new_side_size > side_size) {
+								side_size = new_side_size;
+								changed = true;
+							}
+							if (side_size > orig_width) {
+								side_size = layer.width;
+								y1 = other.y + other.height;
+								y2 = y1 + layer.height;
+								changed = true;
+							}
+						}
+						else {
+							if (side_size - other_side_size > orig_width) {
+								side_size = layer.width;
+								y1 = other.y + other.height;
+								y2 = y1 + layer.height;
+								changed = true;
+							}
+						}
+					}
+					else {
+						if (other_side_size < 0) {
+							var new_side_size = other_side_size - layer.width;
+							if (new_side_size < side_size) {
+								side_size = new_side_size;
+								changed = true;
+							}
+							if (-side_size > orig_width) {
+								side_size = -layer.width;
+								y1 = other.y + other.height;
+								y2 = y1 + layer.height;
+								changed = true;
+							}
+						}
+						else {
+							if (other_side_size - side_size > orig_width) {
+								side_size = -layer.width;
+								y1 = other.y + other.height;
+								y2 = y1 + layer.height;
+								changed = true;
+							}
+						}
+					}
+				}
+			}
+		}
+		while (changed);
+
+		if (side == FLOAT_LEFT) {
+			layer.x = view.margin_left + side_size - layer.width;
+			last_left_float = layer;
+		}
+		else {
+			layer.x = view.margin_left + orig_width + side_size;
+			last_right_float = layer;
+		}
+		layer.y = y1;
+		layer.side_size = side_size;
+		floats[] = layer;
+
+		if (layer.x < 0) {
+			overflow_left = max(overflow_left, -layer.x + layer.overflow_left);
+		}
+		var total_width = orig_width + view.margin_left + view.margin_right;
+		if (layer.x + layer.width + layer.overflow_right > total_width) {
+			overflow_right = max(overflow_right, (layer.x + layer.width + layer.overflow_right) - total_width);
+		}
+
+		if (!block_floats) {
+			block_floats = [];
+		}
+		block_floats[] = layer;
+
+		if (apply_floats()) {
+			reflow_current_line();
+		}
+	}
+
+	function @apply_floats(): Boolean
+	{
+		var floats = this.floats;
+		if (!floats) return false;
+
+		var y1 = view.y + view.margin_top + last_y;
+		var y2 = y1 + max(1, cur_ascent + cur_descent);
+
+		var new_float_left = 0;
+		var new_float_right = 0;
+
+		for (var i=0; i<length(floats); i++) {
+			var layer = floats[i];
+			var float_y1 = layer.y;
+			var float_y2 = float_y1 + layer.height;
+			if (y1 < float_y2 && y2 > float_y1) {
+				var float_width = layer.side_size;
+				if (float_width >= 0) {
+					new_float_left = max(new_float_left, float_width);
+				}
+				else {
+					new_float_right = max(new_float_right, -float_width);
+				}
+			}
+		}
+
+		if (cur_float_left != new_float_left || cur_float_right != new_float_right) {
+			var old_sides = cur_float_left + cur_float_right;
+			var new_sides = new_float_left + new_float_right;
+			set_width(get_width() - (new_sides - old_sides));
+			cur_float_left = new_float_left;
+			cur_float_right = new_float_right;
+			return true;
+		}
+		return false;
+	}
+
+	function @reflow_current_line()
+	{
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part];
+		var end = runs[run_off+LINERUN_end_part];
+
+		var parts = line_parts;
+		var tmp_parts = this.tmp_parts;
+
+		array_append(tmp_parts, parts, start, end-start);
+		array_set_length(parts, start);
+		runs[run_off+LINERUN_end_part] = start;
+		cur_x = 0;
+		cur_ascent = 0;
+		cur_descent = 0;
+
+		var orig_cur_flow = cur_flow;
+
+		for (var i=0; i<length(tmp_parts); i+=LINEPARTS_SIZE) {
+			var flow = tmp_parts[i+LINEPARTS_flow];
+			var text = tmp_parts[i+LINEPARTS_text];
+			var off = tmp_parts[i+LINEPARTS_off];
+			var len = tmp_parts[i+LINEPARTS_len];
+			var width = tmp_parts[i+LINEPARTS_width];
+			var ascent = tmp_parts[i+LINEPARTS_ascent_rel] & 0xFFFF;
+			var descent = tmp_parts[i+LINEPARTS_descent_rel] & 0xFFFF;
+			var overdraw = tmp_parts[i+LINEPARTS_overdraw];
+			var handler = tmp_parts[i+LINEPARTS_handler] as LinePart;
+			var data = tmp_parts[i+LINEPARTS_data];
+
+			cur_flow = flow;
+			if (text) {
+				add_text(off, len, ascent, descent, overdraw, handler, data);
+			}
+			else {
+				add_part(width, ascent, descent, overdraw, handler, data);
+			}
+		}
+
+		cur_flow = orig_cur_flow;
+
+		array_set_length(tmp_parts, 0);
+	}
+
+	function @find_offset_from_floats(width: Integer, height: Integer): Integer
+	{
+		var floats = this.floats;
+		var orig_y = view.y + view.margin_top + last_y;
+		var y1 = orig_y;
+		var y2 = y1 + height;
+		var x1 = 0;
+		var x2 = orig_width;
+
+		var changed: Boolean;
+		do {
+			changed = false;
+			for (var i=0; i<length(floats); i++) {
+				var other = floats[i];
+				var other_y1 = other.y;
+				var other_y2 = other_y1 + other.height;
+				if (y1 < other_y2 && y2 > other_y1) {
+					var other_side_size = other.side_size;
+					if (other_side_size >= 0) {
+						x1 += other_side_size;
+					}
+					else {
+						x2 += other_side_size;
+					}
+					if (x2 - x1 < width) {
+						x1 = 0;
+						x2 = orig_width;
+						y1 = other.y + other.height;
+						y2 = y1 + height;
+						changed = true;
+					}
+				}
+			}
+		}
+		while (changed);
+
+		return y1 - orig_y;
+	}
+
+	function @move_from_floats(width: Integer, height: Integer)
+	{
+		if (moving_from_floats) return;
+		moving_from_floats = true;
+
+		var offset = find_offset_from_floats(width, height);
+
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+		if (end > start) {
+			next_line();
+		}
+
+		add_part(0, offset, 0, 0, LinePart::get_empty(), null);
+		next_line();
+
+		moving_from_floats = false;
+	}
+
+	function clear_floats(sides: Integer)
+	{
+		var left_side = (sides & FLOAT_LEFT) as Boolean;
+		var right_side = (sides & FLOAT_RIGHT) as Boolean;
+
+		var floats = this.floats;
+		var orig_y = view.y + view.margin_top + last_y;
+		var y = orig_y;
+
+		if (left_side && last_left_float != null) {
+			y = max(y, last_left_float.y + last_left_float.height);
+		}
+		if (right_side && last_right_float != null) {
+			y = max(y, last_right_float.y + last_right_float.height);
+		}
+
+		var offset = y - orig_y;
+		if (offset == 0) return;
+
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part] as Integer;
+		var end = runs[run_off+LINERUN_end_part] as Integer;
+		if (end > start) {
+			next_line();
+		}
+
+		add_part(0, offset, 0, 0, LinePart::get_empty(), null);
+		next_line();
+	}
+
+	function add_draw_layer(idx: Integer)
+	{
+		if (idx == 0) return;
+		var draw_layers = this.draw_layers;
+		if (!draw_layers) {
+			draw_layers = this.draw_layers = [0];
+		}
+		for (var i=length(draw_layers)-1; i>=0; i--) {
+			if (idx == draw_layers[i]) {
+				return;
+			}
+			if (idx > draw_layers[i]) {
+				array_insert(draw_layers, i+1, idx);
+				return;
+			}
+		}
+		array_insert(draw_layers, 0, idx);
+
+		var off = length(line_runs) - LINERUN_SIZE;
+		line_runs[off+LINERUN_draw_layers] = true;
+
+		draw_layer_flow = cur_flow;
+	}
+
+	function add_text(off: Integer, len: Integer, ascent: Integer, descent: Integer, overdraw: Integer, handler: LinePart, data)
+	{
+		if (adjusting_line) {
+			throw error("allowed only during inserting of parts");
+		}
+
+		var text = flows[cur_flow+FLOW_text];
+		var width = handler.get_text_width(text, off, len, data);
+
+		var parts = line_parts;
+		parts[] = cur_flow;
+		parts[] = text;
+		parts[] = off;
+		parts[] = len;
+		parts[] = width;
+		parts[] = (max(0, ascent - cur_ascent) << 16) | ascent;
+		parts[] = (max(0, descent - cur_descent) << 16) | descent;
+		parts[] = overdraw;
+		parts[] = handler;
+		parts[] = data;
+
+		var old_ascent = cur_ascent;
+		var old_descent = cur_descent;
+		cur_ascent = max(old_ascent, ascent);
+		cur_descent = max(old_descent, descent);
+		cur_x += width;
+
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		runs[run_off+LINERUN_end_part] = length(parts);
+
+		if (cur_x > cur_width) {
+			break_line();
+		}
+		else if (old_ascent != cur_ascent || old_descent != cur_descent) {
+			if (apply_floats()) {
+				break_line();
+			}
+		}
+	}
+
+	function add_part(width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, handler: LinePart, data)
+	{
+		if (adjusting_line) {
+			throw error("allowed only during inserting of parts");
+		}
+
+		if (cur_x > 0 && cur_x+width > cur_width) {
+			next_line();
+		}
+		if (cur_x+width > cur_width && cur_float_left + cur_float_right > 0) {
+			move_from_floats(width, ascent+descent);
+		}
+
+		var parts = line_parts;
+		parts[] = cur_flow;
+		parts[] = null;
+		parts[] = -1; // off
+		parts[] = -1; // len
+		parts[] = width;
+		parts[] = (max(0, ascent - cur_ascent) << 16) | ascent;
+		parts[] = (max(0, descent - cur_descent) << 16) | descent;
+		parts[] = overdraw;
+		parts[] = handler;
+		parts[] = data;
+
+		cur_ascent = max(cur_ascent, ascent);
+		cur_descent = max(cur_descent, descent);
+		cur_x += width;
+
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		runs[run_off+LINERUN_end_part] = length(parts);
+	}
+
+	function next_line()
+	{
+		var runs = line_runs;
+		var off = length(runs) - LINERUN_SIZE;
+		runs[off+LINERUN_ascent] = cur_ascent;
+		runs[off+LINERUN_descent] = cur_descent;
+		adjusting_line = true;
+		mtv.adjust_line(this, block.get_style());
+		if (cur_float_left > 0) {
+			insert_part(0, cur_float_left, 0, 0, LinePart::get_empty(), null);
+		}
+		adjusting_line = false;
+
+		var parts = line_parts;
+		var start = runs[off+LINERUN_start_part] as Integer;
+		var end = runs[off+LINERUN_end_part] as Integer;
+		var run_y = runs[off+LINERUN_y] as Integer;
+		var ascent = runs[off+LINERUN_ascent] as Integer;
+		var descent = runs[off+LINERUN_descent] as Integer;
+		var width = 0;
+		var id = (off / LINERUN_SIZE) << 16;
+		for (var i=start; i<end; i+=LINEPARTS_SIZE) {
+			var part_width = parts[i+LINEPARTS_width];
+			var part_overdraw = parts[i+LINEPARTS_overdraw];
+			var handler = parts[i+LINEPARTS_handler] as LinePart;
+			var data = parts[i+LINEPARTS_data];
+			var text = parts[i+LINEPARTS_text];
+			if (text) {
+				var text_off = parts[i+LINEPARTS_off];
+				var text_len = parts[i+LINEPARTS_len];
+				handler.text_added(view, id, view.margin_left+width, view.margin_top+run_y+ascent, part_width, ascent, descent, overdraw, text, text_off, text_len, data);
+			}
+			else {
+				handler.part_added(view, id, view.margin_left+width, view.margin_top+run_y+ascent, part_width, ascent, descent, overdraw, data);
+			}
+			width += part_width;
+			overdraw = max(overdraw, part_overdraw);
+			id = add32(id, 1);
+		}
+		
+		if (width > orig_width + view.margin_right) {
+			overflow_right = max(overflow_right, width - (orig_width + view.margin_right));
+		}
+		if (width > orig_width) {
+			overflow_inner = max(overflow_inner, width - orig_width);
+		}
+
+		last_y += cur_ascent + cur_descent;
+		cur_x = 0;
+		cur_ascent = 0;
+		cur_descent = 0;
+
+		var next_part = runs[off+LINERUN_end_part];
+		runs[] = last_y; // y
+		runs[] = 0; // ascent
+		runs[] = 0; // descent
+		runs[] = next_part; // start_part
+		runs[] = next_part; // end_part
+		if (draw_layer_flow != -1) {
+			// TODO
+			runs[] = (cur_flow == draw_layer_flow || cur_flow == (draw_layer_flow + FLOW_SIZE) || cur_flow < 0); // draw_layers //XXX
+		}
+		else {
+			runs[] = false; // draw_layers
+		}
+
+		apply_floats();
+	}
+
+	function @break_line()
+	{
+		var parts = line_parts;
+		var runs = line_runs;
+
+		for (;;) {
+			apply_floats();
+
+			var run_off = length(runs) - LINERUN_SIZE;
+			var start = runs[run_off+LINERUN_start_part] as Integer;
+			var end = runs[run_off+LINERUN_end_part] as Integer;
+
+			var x = cur_x;
+			var ascent = cur_ascent;
+			var descent = cur_descent;
+			var splitted = false;
+
+			for (var i=end-LINEPARTS_SIZE; i>=start; i-=LINEPARTS_SIZE) {
+				var text = parts[i+LINEPARTS_text];
+				var ascent_rel = parts[i+LINEPARTS_ascent_rel] >> 16;
+				var descent_rel = parts[i+LINEPARTS_descent_rel] >> 16;
+
+				if (!text) {
+					cur_ascent = ascent;
+					cur_descent = descent;
+					split_line(i);
+					splitted = true;
+					break;
+				}
+
+				var width = parts[i+LINEPARTS_width];
+				x -= width;
+				ascent -= ascent_rel;
+				descent -= descent_rel;
+
+				var off = parts[i+LINEPARTS_off];
+				var len = parts[i+LINEPARTS_len];
+				var handler = parts[i+LINEPARTS_handler] as LinePart;
+				var data = parts[i+LINEPARTS_data];
+
+				var char_off = int(handler.get_text_position(cur_width - x, text, off, len, data));
+				if (split_words && x == 0 && char_off == 0) {
+					char_off = 1;
+				}
+				if (char_off < 0) continue;
+
+				char_off = min(off+char_off, off+len);
+
+				var extra = 0;
+				for (var j=min(char_off, off+len-1); j>=off; j--) {
+					if (text[j] == ' ') {
+						char_off = j+1;
+						extra = 1;
+						break;
+					}
+				}
+				if (split_words && x == 0) {
+					if (char_off < 0) {
+						continue;
+					}
+				}
+				else {
+					if (extra == 0) continue;
+				}
+
+				if (char_off == off) {
+					cur_ascent = ascent;
+					cur_descent = descent;
+					split_line(i);
+				}
+				else {
+					cur_ascent = ascent + ascent_rel;
+					cur_descent = descent + descent_rel;
+					split_text(i, text, off, len, char_off, extra, handler, data);
+				}
+				splitted = true;
+				break;
+			}
+
+			if (cur_x <= cur_width) break;
+
+			if (!splitted) {
+				if (cur_float_left + cur_float_right > 0) {
+					var offset = find_offset_from_floats(cur_x, cur_ascent+cur_descent);
+					if (offset > 0) {
+						array_set_length(runs, length(runs)+LINERUN_SIZE);
+						array_copy(runs, run_off+LINERUN_SIZE, runs, run_off, LINERUN_SIZE);
+						runs[run_off+LINERUN_ascent] = offset;
+						runs[run_off+LINERUN_descent] = 0;
+						runs[run_off+LINERUN_end_part] = runs[run_off+LINERUN_start_part];
+						run_off += LINERUN_SIZE;
+						runs[run_off+LINERUN_y] += offset;
+						last_y += offset;
+						continue;
+					}
+				}
+
+				start = runs[run_off+LINERUN_start_part] as Integer;
+				end = runs[run_off+LINERUN_end_part] as Integer;
+
+				x = 0;
+				ascent = 0;
+				descent = 0;
+
+				for (var j=start; j<end; j+=LINEPARTS_SIZE) {
+					var text = parts[j+LINEPARTS_text];
+					var off = parts[j+LINEPARTS_off] as Integer;
+					var len = parts[j+LINEPARTS_len] as Integer;
+					var width = parts[j+LINEPARTS_width];
+					var part_ascent = parts[j+LINEPARTS_ascent_rel] & 0xFFFF;
+					var part_descent = parts[j+LINEPARTS_descent_rel] & 0xFFFF;
+					var handler = parts[j+LINEPARTS_handler] as LinePart;
+					var data = parts[j+LINEPARTS_data];
+					
+					var char_off = -1;
+					var extra = 0;
+					for (var k=off, n=off+len; k<n; k++) {
+						if (text[k] == ' ') {
+							char_off = k+1;
+							extra = 1;
+							break;
+						}
+					}
+					if (char_off == -1 && split_words) {
+						char_off = int(handler.get_text_position(cur_width - x, text, off, len, data));
+						if (char_off >= 0) {
+							if (char_off == 0) char_off = 1;
+							char_off += off;
+						}
+					}
+					
+					if (char_off == -1 || char_off >= off+len) {
+						x += width;
+						ascent = max(ascent, part_ascent);
+						descent = max(descent, part_descent);
+						continue;
+					}
+
+					if (char_off == off) {
+						cur_ascent = ascent;
+						cur_descent = descent;
+						split_line(j);
+					}
+					else {
+						cur_ascent = max(ascent, part_ascent);
+						cur_descent = max(descent, part_descent);
+						split_text(j, text, off, len, char_off, extra, handler, data);
+					}
+					splitted = true;
+					break;
+				}
+
+				if (!splitted) break;
+			}
+		}
+	}
+
+	function @split_text(part_off: Integer, text: String, off: Integer, len: Integer, char_off: Integer, extra: Integer, handler: LinePart, data)
+	{
+		var parts = line_parts;
+
+		var left_len = char_off-off;
+		var right_len = (off+len)-char_off;
+		var left_width = handler.get_text_width(text, off, left_len-extra, data);
+		var right_width = handler.get_text_width(text, char_off, right_len, data);
+
+		parts[part_off+LINEPARTS_width] = left_width;
+		parts[part_off+LINEPARTS_len] = left_len-extra;
+
+		if (right_len > 0) {
+			array_set_length(parts, length(parts)+LINEPARTS_SIZE);
+			array_copy(parts, part_off+LINEPARTS_SIZE, parts, part_off, length(parts)-part_off-LINEPARTS_SIZE);
+
+			var next = part_off+LINEPARTS_SIZE;
+			parts[next+LINEPARTS_width] = right_width;
+			parts[next+LINEPARTS_off] = char_off;
+			parts[next+LINEPARTS_len] = right_len;
+		}
+
+		if (left_width == 0) {
+			array_remove(parts, part_off, LINEPARTS_SIZE);
+			part_off -= LINEPARTS_SIZE;
+		}
+
+		split_line(part_off);
+	}
+
+	function @split_line(part_off: Integer)
+	{
+		var parts = line_parts;
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+
+		runs[run_off+LINERUN_end_part] = part_off+LINEPARTS_SIZE;
+		next_line();
+		part_off = runs[run_off+LINERUN_end_part];
+		run_off += LINERUN_SIZE;
+		runs[run_off+LINERUN_end_part] = length(parts);
+
+		var x = 0;
+		var ascent = 0;
+		var descent = 0;
+		for (var i=part_off; i<length(parts); i+=LINEPARTS_SIZE) {
+			var part_ascent = parts[i+LINEPARTS_ascent_rel] & 0xFFFF;
+			var part_descent = parts[i+LINEPARTS_descent_rel] & 0xFFFF;
+			parts[i+LINEPARTS_ascent_rel] = (max(0, part_ascent - ascent) << 16) | part_ascent;
+			parts[i+LINEPARTS_descent_rel] = (max(0, part_descent - descent) << 16) | part_descent;
+			ascent = max(ascent, part_ascent);
+			descent = max(descent, part_descent);
+			x += parts[i+LINEPARTS_width];
+		}
+		cur_x = x;
+		cur_ascent = ascent;
+		cur_descent = descent;
+	}
+
+	function get_line_number(): Integer
+	{
+		return (length(line_runs) - LINERUN_SIZE) / LINERUN_SIZE;
+	}
+
+	function is_first_line(): Boolean
+	{
+		return get_line_number() == 0;
+	}
+
+	function is_last_line(): Boolean
+	{
+		return last_line;
+	}
+
+	function get_part_count(): Integer
+	{
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		return (runs[run_off+LINERUN_end_part] - runs[run_off+LINERUN_start_part]) / LINEPARTS_SIZE;
+	}
+
+	function @part_offset(idx: Integer): Integer
+	{
+		var runs = line_runs;
+		var run_off = length(runs) - LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part];
+		var end = runs[run_off+LINERUN_end_part];
+		var part_off = start + idx * LINEPARTS_SIZE;
+		if (part_off < start || part_off >= end) {
+			throw error("invalid index");
+		}
+		return part_off;
+	}
+
+	function get_part_flow(idx: Integer): Integer
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_flow];
+	}
+
+	function get_part_text(idx: Integer): String
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_text];
+	}
+
+	function get_part_offset(idx: Integer): Integer
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_off];
+	}
+
+	function get_part_length(idx: Integer): Integer
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_len];
+	}
+
+	function get_part_width(idx: Integer): Integer
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_width];
+	}
+
+	function set_part_width(idx: Integer, width: Integer)
+	{
+		if (!adjusting_line) {
+			throw error("allowed only during adjusting of line");
+		}
+		line_parts[part_offset(idx)+LINEPARTS_width] = width;
+	}
+
+	function get_part_ascent(idx: Integer): Integer
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_ascent_rel] & 0xFFFF;
+	}
+
+	function get_part_descent(idx: Integer): Integer
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_descent_rel] & 0xFFFF;
+	}
+
+	function get_part_handler(idx: Integer): LinePart
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_handler];
+	}
+
+	function get_part_data(idx: Integer): Dynamic
+	{
+		return line_parts[part_offset(idx)+LINEPARTS_data];
+	}
+
+	function insert_part(idx: Integer, width: Integer, ascent: Integer, descent: Integer, handler: LinePart, data)
+	{
+		if (!adjusting_line) {
+			throw error("allowed only during adjusting of line");
+		}
+		
+		var runs = line_runs;
+		var parts = line_parts;
+		var run_off = length(runs) - LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part];
+		var end = runs[run_off+LINERUN_end_part];
+		var part_off = start + idx * LINEPARTS_SIZE;
+		if (part_off < start || part_off > end) {
+			throw error("invalid index");
+		}
+
+		array_set_length(parts, length(parts) + LINEPARTS_SIZE);
+		array_copy(parts, part_off + LINEPARTS_SIZE, parts, part_off, length(parts) - part_off - LINEPARTS_SIZE);
+
+		parts[part_off+LINEPARTS_flow] = -1;
+		parts[part_off+LINEPARTS_text] = null;
+		parts[part_off+LINEPARTS_off] = 0;
+		parts[part_off+LINEPARTS_len] = 0;
+		parts[part_off+LINEPARTS_width] = width;
+		parts[part_off+LINEPARTS_ascent_rel] = ascent;
+		parts[part_off+LINEPARTS_descent_rel] = descent;
+		parts[part_off+LINEPARTS_handler] = handler;
+		parts[part_off+LINEPARTS_data] = data;
+
+		runs[run_off+LINERUN_end_part] += LINEPARTS_SIZE;
+	}
+
+	function split_part(idx: Integer, split_off: Integer)
+	{
+		if (!adjusting_line) {
+			throw error("allowed only during adjusting of line");
+		}
+		
+		var runs = line_runs;
+		var parts = line_parts;
+		var run_off = length(runs) - LINERUN_SIZE;
+		var start = runs[run_off+LINERUN_start_part];
+		var end = runs[run_off+LINERUN_end_part];
+		var part_off = start + idx * LINEPARTS_SIZE;
+		if (part_off < start || part_off > end) {
+			throw error("invalid index");
+		}
+
+		array_set_length(parts, length(parts) + LINEPARTS_SIZE);
+		array_copy(parts, part_off + LINEPARTS_SIZE, parts, part_off, length(parts) - part_off - LINEPARTS_SIZE);
+
+		var handler = parts[part_off+LINEPARTS_handler] as LinePart;
+		var data = parts[part_off+LINEPARTS_data];
+
+		var text = parts[part_off+LINEPARTS_text];
+		var off = parts[part_off+LINEPARTS_off];
+		var len = parts[part_off+LINEPARTS_len];
+
+		parts[part_off+LINEPARTS_len] = split_off - off;
+		parts[part_off+LINEPARTS_width] = handler.get_text_width(text, off, split_off - off, data);
+
+		var next_off = part_off + LINEPARTS_SIZE;
+		parts[next_off+LINEPARTS_off] = split_off;
+		parts[next_off+LINEPARTS_len] = (off+len) - split_off;
+		parts[next_off+LINEPARTS_width] = handler.get_text_width(text, split_off, (off+len) - split_off, data);
+
+		runs[run_off+LINERUN_end_part] += LINEPARTS_SIZE;
+	}
+
+	function align_center()
+	{
+		var width = 0;
+		for (var i=0, n=get_part_count(); i<n; i++) {
+			width += get_part_width(i);
+		}
+
+		var off = (get_width() - width) / 2;
+		if (off > 0) {
+			insert_part(0, off, 0, 0, LinePart::get_empty(), null);
+		}
+	}
+
+	function align_right()
+	{
+		var width = 0;
+		for (var i=0, n=get_part_count(); i<n; i++) {
+			width += get_part_width(i);
+		}
+
+		var off = get_width() - width;
+		if (off > 0) {
+			insert_part(0, off, 0, 0, LinePart::get_empty(), null);
+		}
+	}
+
+	function align_justify()
+	{
+		if (is_last_line() && justify_space_count == 0) {
+			return;
+		}
+
+		var width = 0;
+		var spaces: Integer[];
+
+		for (var i=0, n=get_part_count(); i<n; i++) {
+			var text = get_part_text(i);
+			width += get_part_width(i);
+			if (text) {
+				var start = get_part_offset(i);
+				var end = start + get_part_length(i);
+				if (i == n-1) end--;
+				for (var j=start; j<end; j++) {
+					if (text[j] == ' ') {
+						split_part(i++, j);
+						if (!spaces) spaces = [];
+						spaces[] = i;
+						split_part(i++, j+1);
+						n += 2;
+					}
+				}
+			}
+		}
+		
+		if (spaces) {
+			var extra = get_width() - width;
+			if (is_last_line()) {
+				var avg_space_size = float(justify_space_pixels) / float(justify_space_count);
+				extra = min(iround(length(spaces) * avg_space_size), extra);
+			}
+			var per_space = float(extra) / float(length(spaces));
+			var amount = 0.0;
+			for (var i=0; i<length(spaces); i++) {
+				var idx = spaces[i];
+				amount = amount + per_space;
+				var w = iround(amount);
+				justify_space_pixels += w;
+				set_part_width(idx, get_part_width(idx) + w);
+				amount = amount - w;
+			}
+			justify_space_count += length(spaces);
+		}
+	}
+}
+
+class BlockRenderer
+{
+	constructor create()
+	{
+	}
+
+	virtual function get_overdraw(): Integer
+	{
+		return 0;
+	}
+
+	virtual function paint_background(block: BlockView, p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+	}
+
+	virtual function paint_foreground(block: BlockView, p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+	}
+}
+
+class LinePart
+{
+	constructor create()
+	{
+	}
+
+	static function get_empty(): LinePart
+	{
+		var handler = empty_line_part;
+		if (!handler) {
+			handler = EmptyLinePart::create();
+			empty_line_part = handler;
+		}
+		return handler;
+	}
+
+	virtual function get_text_width(text: String, off: Integer, len: Integer, data): Integer
+	{
+		return 0;
+	}
+
+	virtual function get_text_position(x: Integer, text: String, off: Integer, len: Integer, data): Float
+	{
+		return -1;
+	}
+
+	virtual function text_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, text: String, off: Integer, len: Integer, data)
+	{
+	}
+
+	virtual function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+	}
+
+	virtual function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		draw_rect(p, x, y - ascent, width, ascent+descent, 0xFFFF00FF);
+	}
+
+	virtual function paint_layer(block: BlockView, id: Integer, layer: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+	}
+
+	virtual function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		return false;
+	}
+
+	virtual function get_selection_point(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, sel_x: Integer, sel_y: Integer, same_layer: Boolean, exact: Boolean, data): SelectionPoint
+	{
+		var pos = get_text_position(sel_x, text, off, len, data);
+		if (!exact || pos >= 0.0) {
+			var part_idx = block.get_part_index(id);
+			var flow = block.get_linepart_flow(part_idx);
+			var start = 0;
+			if (text) {
+				start = off - block.block.get_flow_offset(flow);
+			}
+			return SelectionPoint::create(block.layer, block, flow, start + iround(pos));
+		}
+		return null;
+	}
+}
+
+class @EmptyLinePart: LinePart
+{
+	constructor @create()
+	{
+	}
+
+	override function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+	}
+}
+
+class ModelToView
+{
+	constructor create()
+	{
+	}
+
+	virtual function adjust_block(block: BlockView, style, prev_style)
+	{
+	}
+
+	virtual function adjust_block_start(line: LineBuilder, style)
+	{
+	}
+
+	virtual function adjust_block_end(line: LineBuilder, style)
+	{
+	}
+
+	virtual function add_line_parts(line: LineBuilder, text: String, off: Integer, len: Integer, style)
+	{
+	}
+
+	virtual function adjust_line(line: LineBuilder, style)
+	{
+	}
+}
+
+class ModelToViewProxy: ModelToView
+{
+	var @target: ModelToView;
+
+	constructor create(target: ModelToView)
+	{
+		this.target = target;
+	}
+
+	function get_target(): ModelToView
+	{
+		return target;
+	}
+
+	function set_target(target: ModelToView)
+	{
+		this.target = target;
+	}
+
+	override function adjust_block(block: BlockView, style, prev_style)
+	{
+		if (target) {
+			target.adjust_block(block, style, prev_style);
+		}
+	}
+
+	override function adjust_block_start(line: LineBuilder, style)
+	{
+		if (target) {
+			target.adjust_block_start(line, style);
+		}
+	}
+
+	override function adjust_block_end(line: LineBuilder, style)
+	{
+		if (target) {
+			target.adjust_block_end(line, style);
+		}
+	}
+
+	override function add_line_parts(line: LineBuilder, text: String, off: Integer, len: Integer, style)
+	{
+		if (target) {
+			target.add_line_parts(line, text, off, len, style);
+		}
+	}
+
+	override function adjust_line(line: LineBuilder, style)
+	{
+		if (target) {
+			target.adjust_line(line, style);
+		}
+	}
+}
+
+function @draw_rect(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)
+{
+	p.fill_rect(x, y, width, 1, color);
+	p.fill_rect(x, y+1, 1, height-1, color);
+	p.fill_rect(x, y+height-1, width, 1, color);
+	p.fill_rect(x+width-1, y+1, 1, height-2, color);
+}

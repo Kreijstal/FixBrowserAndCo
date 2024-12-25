@@ -1,0 +1,349 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/content/content_data";
+import "browser/view/content/background";
+
+var @table_line_part: TableLinePart;
+
+class TableObject: InlineObject
+{
+	var @cells_width: Integer;
+	var @cells_height: Integer;
+	var @cell_layers: TableLayer[];
+	var @full_height: Integer;
+	var @vertical_align: Float;
+	var @width: Size;
+	var @border_left: Integer;
+	var @border_top: Integer;
+	var @border_right: Integer;
+	var @border_bottom: Integer;
+	var @box_background: BackgroundView;
+	var @block: BlockView;
+	var @id: Integer;
+	var @cur_x: Integer;
+	var @cur_y: Integer;
+	var @last_mouse_cell: TableLayer;
+
+	constructor create(table: TableBox, box_background: BackgroundView, mtv: ModelToView, content_data: ContentData, mirror: MirrorState)
+	{
+		super::create(null, null, null, content_data, mirror);
+		this.cells_width = table.cells_width;
+		this.cells_height = table.cells_height;
+		cell_layers = Array::create(cells_width*cells_height, 4);
+		for (var i=0; i<cells_width*cells_height; i++) {
+			var cell = table.cells[i];
+			if (cell) {
+				var blocks: Block[] = [];
+				var para = Paragraph::create(ParagraphStyle::create());
+				para.add(cell);
+				blocks[] = para;
+				cell_layers[i] = TableLayer::create(this, blocks, mtv);
+				var (r, e) = cell_layers[i].update(100); // TODO
+				if (e) dump(e);
+			}
+		}
+		this.box_background = box_background;
+		vertical_align = table.vertical_align;
+		width = table.width;
+		if (table.box_background) {
+			var model = box_background.backgrounds[0];
+			border_left = model.border_left;
+			border_top = model.border_top;
+			border_right = model.border_right;
+			border_bottom = model.border_bottom;
+		}
+	}
+
+	/*
+	function get_layer(): Layer
+	{
+		return layer;
+	}
+	*/
+
+	function get_full_height(): Integer
+	{
+		return full_height+border_top+border_bottom;
+	}
+
+	function get_ascent(): Integer
+	{
+		var height = get_full_height();
+		var descent = int(float(height) * vertical_align);
+		return height - descent;
+	}
+
+	function add_to_line(line: LineBuilder)
+	{
+		var real_width = line.get_width();
+		if (width.is_pixels()) {
+			real_width = width.get_pixels();
+		}
+		else if (width.is_fraction()) {
+			real_width = iround(real_width * width.get_fraction());
+		}
+
+
+		var table_width = real_width - border_left - border_right;
+		log("real_width="+real_width+" table_width="+table_width);
+		var widths: Integer[] = Array::create(cells_width, 4);
+		for (var i=0; i<cells_height; i++) {
+			for (var j=0; j<cells_width; j++) {
+				var cell = cell_layers[i*cells_width+j];
+				if (cell) {
+					var cell_width = table_width;
+					var prev_calc_size = content_data.layout_calc_size;
+					if (width.is_auto() || prev_calc_size != null) {
+						content_data.layout_calc_size = CalcSize::create();
+						cell_width = 10000;
+					}
+					var (r, e) = cell.update(cell_width);
+					var calc_width = 0;
+					if (width.is_auto() || prev_calc_size != null) {
+						cell_width = content_data.layout_calc_size.max_width;
+					}
+					content_data.layout_calc_size = prev_calc_size;
+					if (e) throw e;
+
+					widths[j] = max(widths[j], cell_width);
+				}
+			}
+		}
+
+		if (width.is_auto() || content_data.layout_calc_size != null) {
+			table_width = 0;
+			foreach (var w in widths) {
+				table_width += w;
+			}
+			real_width = table_width + border_left + border_right;
+		}
+
+		var y = 0;
+		for (var i=0; i<cells_height; i++) {
+			var x = 0;
+			var max_height = 0;
+			for (var j=0; j<cells_width; j++) {
+				var cell = cell_layers[i*cells_width+j];
+				if (cell) {
+					cell.cur_x = x;
+					cell.cur_y = y;
+					cell.update(widths[j]);
+					max_height = max(max_height, cell.get_height());
+				}
+				x += widths[j];
+			}
+			y += max_height;
+		}
+
+		full_height = y;
+
+		var ascent = get_ascent();
+		var descent = get_full_height() - ascent;
+		line.add_part(real_width, ascent, descent, 0, TableLinePart::get(), this);
+
+		/*
+		var prev_calc_size = content_data.layout_calc_size;
+		if (width.is_auto() || prev_calc_size != null) {
+			content_data.layout_calc_size = CalcSize::create();
+			real_width = 10000;
+		}
+		var (r, e) = layer.update(real_width-border_left-border_right);
+		var calc_width = 0;
+		if (width.is_auto()) {
+			real_width = content_data.layout_calc_size.max_width + border_left + border_right;
+		}
+		else if (prev_calc_size) {
+			calc_width = content_data.layout_calc_size.max_width + border_left + border_right;
+		}
+		content_data.layout_calc_size = prev_calc_size;
+		if (e) throw e;
+
+		var height = get_full_height();
+		var descent = int(float(height) * vertical_align);
+		var ascent = height - descent;
+		var needs_newline = content_data.layout_calc_size != null && width.is_fraction() && width.get_fraction() == 1.0;
+		if (needs_newline) {
+			if (line.get_part_count() > 0) {
+				line.next_line();
+			}
+			real_width = calc_width;
+		}
+		var overdraw = layer.get_overdraw();
+		if (background) {
+			overdraw = max(overdraw, background.get_overdraw());
+		}
+		if (box_background) {
+			overdraw = max(overdraw, box_background.get_overdraw());
+		}
+		line.add_part(real_width+layer.get_right_overflow(), ascent, descent, overdraw, TableLinePart::get(), this);
+		if (needs_newline) {
+			line.next_line();
+		}
+		*/
+	}
+
+	function @handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var type = event.get_type();
+		if (event.is_drag_event() || type == EVENT_MOUSE_LEAVE) {
+			if (last_mouse_cell) {
+				var x = last_mouse_cell.cur_x;
+				var y = last_mouse_cell.cur_y;
+				event.translate(-x, -y);
+				var ret = last_mouse_cell.handle_mouse_event(event);
+				event.translate(x, y);
+				if (type == EVENT_MOUSE_LEAVE) {
+					last_mouse_cell = null;
+				}
+				return ret;
+			}
+		}
+
+		var event_x = event.get_x(); 
+		var event_y = event.get_y(); 
+
+		foreach (var cell in cell_layers) {
+			if (cell == null) continue;
+			var x1 = cell.cur_x;
+			var y1 = cell.cur_y;
+			var x2 = x1 + cell.get_width();
+			var y2 = y1 + cell.get_height();
+			x1 -= cell.get_left_overflow();
+			x2 += cell.get_right_overflow();
+			if (event_x >= x1 && event_y >= y1 && event_x < x2 && event_y < y2) {
+				if (last_mouse_cell != null && last_mouse_cell !== cell) {
+					last_mouse_cell.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0));
+				}
+				last_mouse_cell = cell;
+				x1 += cell.get_left_overflow();
+				event.translate(-x1, -y1);
+				var ret = cell.handle_mouse_event(event);
+				event.translate(x1, y1);
+				return ret;
+			}
+		}
+
+		if (last_mouse_cell) {
+			last_mouse_cell.handle_mouse_event(MouseEvent::create(EVENT_MOUSE_LEAVE, null, 0, 0, 0, 0, 0));
+		}
+		last_mouse_cell = null;
+		return false;
+	}
+}
+
+class TableLayer: Layer
+{
+	var @obj: TableObject;
+	var @cur_x: Integer;
+	var @cur_y: Integer;
+
+	constructor create(obj: TableObject, blocks: Block[], mtv: ModelToView)
+	{
+		super::create(blocks, mtv);
+		this.obj = obj;
+	}
+
+	override function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		obj.block.repaint_part(obj.id, x + obj.border_left + cur_x, y + obj.border_top - obj.get_ascent() + cur_y, width, height);
+	}
+
+	override function get_top_layer(point: Integer[]): Layer
+	{
+		if (point) {
+			point[0] += obj.cur_x + obj.border_left + cur_x;
+			point[1] += obj.cur_y + obj.border_top - obj.get_ascent() + obj.block.get_y() + cur_y;
+		}
+		return obj.block.get_layer().get_top_layer(point);
+	}
+}
+
+class TableLinePart: InlineLinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): TableLinePart
+	{
+		var handler = table_line_part;
+		if (!handler) {
+			handler = create();
+			table_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+		var obj = data as TableObject;
+		obj.mirror.part_added(block, id, x, y, width, ascent, descent, overdraw, 0, 0, data);
+		obj.block = block;
+		obj.id = id;
+		obj.cur_x = x;
+		obj.cur_y = y;
+	}
+
+	override function paint_content(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, hover: Boolean, data)
+	{
+		var obj = data as TableObject;
+
+		var part_ascent = obj.get_ascent();
+		//var part_height = obj.layer.get_height()+obj.border_top+obj.border_bottom;
+		var part_height = 100+obj.border_top+obj.border_bottom;
+		y -= part_ascent;
+		//width -= obj.layer.get_right_overflow();
+
+		if (obj.box_background) {
+			obj.box_background.draw(p, x, y, width, part_height, -1);
+		}
+
+		p.push();
+		p.translate(x+obj.border_left, y+obj.border_top);
+		p.fill_rect(0, 0, width, ascent+descent, 0x40000000);
+		p.fill_shape(Shape::rect(0.5, 0.5, width, ascent+descent).get_outline(1), 0xFF000000);
+		for (var i=0; i<obj.cells_width*obj.cells_height; i++) {
+			var cell = obj.cell_layers[i];
+			if (cell) {
+				p.translate(cell.cur_x, cell.cur_y);
+				cell.draw(p);
+				p.translate(-cell.cur_x, -cell.cur_y);
+			}
+		}
+		p.pop();
+	}
+
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		var obj = data as TableObject;
+		event.translate(0, obj.get_ascent());
+		return obj.handle_mouse_event(event);
+	}
+}

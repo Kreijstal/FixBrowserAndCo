@@ -1,0 +1,1120 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "task/channel";
+import "browser/html/html";
+import "browser/html/element";
+import "browser/html/element_query";
+import "browser/css/css";
+import "browser/css/value";
+import "browser/css/property";
+import "browser/css/selector";
+import "browser/css/stylesheet";
+import "browser/richtext/model";
+import "browser/view/model";
+import "browser/worker/css";
+import "browser/worker/fetch_comm";
+
+const @DEBUG_BLOCKS = 1;
+
+class @Context
+{
+	var @doc: Document;
+	var @element_styles: Value[Integer][Integer];
+	var @backgrounds: Background[Dynamic];
+	var @text_styles: TextStyle[Dynamic];
+	var @break_styles: TextStyle[Dynamic];
+	var @paragraph: Paragraph;
+	var @paragraph_style: ParagraphStyle;
+	var @text8: String;
+	var @text16: String;
+	var @text32: String;
+	var @prev_space: Boolean;
+	var @hover_group: HoverGroup;
+	var @resolver: Resolver;
+	var @table_next_row: Boolean;
+
+	constructor create(doc: Document, element_styles: Value[Integer][Integer])
+	{
+		this.doc = doc;
+		this.element_styles = element_styles;
+		backgrounds = {};
+		text_styles = {};
+		break_styles = {};
+	}
+}
+
+class @Resolver
+{
+	virtual function resolve(url: String, direct_link: Boolean): ResolveResult {}
+}
+
+class @ResolveResult
+{
+	var url: String;
+	var outside: Boolean;
+}
+
+function process_document(document: Element, url: String, reload: Boolean, status_func, status_data, resolver: Resolver, fetch_channel: Channel, cancel_check_func): Document
+{
+	var fetched_resources = Channel::create(1000);
+	var cur_resources = 0;
+	var total_resources = 0;
+	var external_sheets: Stylesheet[String] = {};
+
+	cancel_check_func = cancel_check_func;
+
+	macro handle_fetch(timeout) {
+		var $msg = fetched_resources.receive(timeout);
+		if (!Channel::is_timeout($msg)) {
+			if ($msg[0] == FETCH_CONTENT_CSS) {
+				external_sheets[$msg[1]] = $msg[2];
+				cur_resources++;
+			}
+			else {
+				total_resources--;
+			}
+		}
+		cancel_check_func();
+		if (status_func) {
+			status_func(status_data, "Downloading stylesheets ("+cur_resources+"/"+total_resources+")");
+		}
+	}
+	
+	foreach (var elem in element_query_all(document, "link[rel='stylesheet'][href]")) {
+		//log("elem="+elem.to_string());
+		var href = elem.get_attr("href");
+		var res = resolver.resolve(href, false);
+		if (!res.outside && !hash_contains(external_sheets, res.url)) {
+			elem.set_attr("href", res.url);
+			external_sheets[res.url] = null;
+			total_resources++;
+			handle_fetch(0);
+			//fetch_channel.send([res.url, reload, fetched_resources]);
+			while (!fetch_channel.send([res.url, reload, fetched_resources], 100)) {
+				handle_fetch(0);
+			}
+		}
+	}
+
+	while (cur_resources < total_resources) {
+		handle_fetch(-1);
+	}
+	
+	if (status_func) {
+		status_func(status_data, "Applying CSS...");
+	}
+	var default_sheet = css_parse(file_read("default.css"), null) as Stylesheet;
+	log(stylesheet_to_string(default_sheet));
+	//log(element_to_html(document));
+
+	var element_styles: Value[Integer][Integer] = {};
+	apply_css(document, [default_sheet], external_sheets, element_styles, cancel_check_func);
+
+	if (status_func) {
+		status_func(status_data, "Processing page...");
+	}
+
+	var body = element_query(document, "body");
+	//log(element_to_html(body));
+
+	var doc = Document::create();
+	doc.title = url;
+
+	var title = element_query(document, "html > head > title");
+	if (title) {
+		var text = title.get_first_child();
+		if (text != null && text.get_type() == "#text") {
+			doc.title = text.get_data();
+		}
+	}
+	
+	var page_background = Background::create();
+
+	var body_props = element_styles[(body as Integer)|0];
+	var body_background = create_background(body_props);
+	if (body_background) {
+		page_background.color = body_background.color | 0xFF000000;
+	}
+	else {
+		page_background.color = 0xFFFFFFFF;
+	}
+
+	var background = BackgroundBox::create(page_background);
+	doc.background = background;
+
+	var box = ContentBox::create(background);
+	doc.main = box;
+
+	var stack = Stack::create(background, box);
+
+	var ctx = Context::create(doc, element_styles);
+	ctx.resolver = resolver;
+
+	var style = ParagraphStyle::create();
+	style.margin_left = 0;
+	style.margin_top = 0;
+	style.margin_right = 0;
+	style.margin_bottom = 0;
+	ctx.paragraph_style = style;
+
+	var text_style = TextStyle::create(null, null);
+
+	ctx.text8 = {""};
+	ctx.text16 = {""};
+	ctx.text32 = {""};
+
+	ctx.prev_space = true;
+
+	ctx.paragraph = Paragraph::create(ctx.paragraph_style);
+	box.add(ctx.paragraph);
+
+	process_element(ctx, body, stack, ctx.paragraph, null, text_style, null);
+	remove_last_space(ctx.paragraph);
+
+	stack.flatten_to(doc.layers);
+	log("serialized="+length(serialize(doc)));
+	return doc;
+}
+
+function @process_element(ctx: Context, element: Element, stack_, paragraph: Paragraph, background: Background, use_text_style: TextStyle, use_mirror: Mirror)
+{
+	var stack = stack_ as Stack; //XXX
+
+	var type = element.get_type();
+	if (type == "style" || type == "script") return;
+
+	if (type[0] == '#') {
+		if (type == "#text") {
+			var text = element.get_data() as String;
+			text = collapse_whitespace(ctx, text, use_text_style.newlines);
+			if (length(text) > 0) {
+				add_text(ctx, paragraph, text, use_text_style, background, use_mirror);
+			}
+		}
+		return;
+	}
+
+	var props = ctx.element_styles[(element as Integer)|0];
+	var mirror: Mirror = null;
+	var nested: NestedBox = null;
+	var table: TableBox = null;
+	var add_nested = true;
+	var add_table = false;
+
+	if (type == "br") {
+		var break_key = (mirror as Integer)|0;
+		var break_style = hash_get(ctx.break_styles, break_key, null) as TextStyle;
+		if (!break_style) {
+			break_style = TextStyle::create(null, mirror);
+			break_style.newlines = true;
+			ctx.break_styles[break_key] = break_style;
+		}
+		paragraph.add("\n", 0, 1, break_style);
+		return;
+	}
+
+	if (type == "input") {
+		var field = FormTextField::create(Size::pixels(50), Size::pixels(25), get_vertical_align(props), background, use_mirror);
+		paragraph.add(field);
+		return;
+	}
+
+	if (type == "img") {
+		var src = element.get_attr("src");
+		if (src) {
+			var result = ctx.resolver.resolve(src, false);
+			var image_box = ImageBox::create(ctx.doc, result.url, result.outside, ctx.hover_group, get_vertical_align(props), background, use_mirror);
+			paragraph.add(image_box);
+		}
+		return;
+	}
+
+	var prev_group: HoverGroup;
+	if (type == "a") {
+		var href = element.get_attr("href");
+		if (href) {
+			prev_group = ctx.hover_group;
+			var result = ctx.resolver.resolve(href, true);
+			ctx.hover_group = HoverGroup::create(result.url);
+		}
+	}
+
+	var display = hash_get(props, PROP_DISPLAY, null) as Value;
+	if (display) {
+		if (display.type == VALUE_BLOCK || display.type == VALUE_INLINE_BLOCK) {
+			nested = NestedBox::create(display.type == VALUE_INLINE_BLOCK? background : null, get_background(ctx, props, null), use_mirror);
+			if (display.type == VALUE_INLINE_BLOCK) {
+				nested.width = Size::auto();
+			}
+			else {
+				remove_last_space(paragraph);
+			}
+			background = null;
+		}
+		else if (display.type == VALUE_TABLE_CELL) {
+			var cell = TableCell::create(display.type == VALUE_INLINE_BLOCK? background : null, get_background(ctx, props, null), null);
+			nested = cell;
+			remove_last_space(paragraph);
+			background = null;
+
+			var added_to_table = false;
+			var cnt = paragraph.get_flow_count();
+			if (cnt > 0) {
+				var prev_style = paragraph.get_flow_style(cnt-1) as InlineStyle;
+				if (prev_style.type == INLINE_TABLE) {
+					table = prev_style as TableBox;
+					if (ctx.table_next_row) {
+						table.cur_x = 0;
+						table.cur_y++;
+						ctx.table_next_row = false;
+					}
+					else {
+						table.cur_x++;
+					}
+					table.set_cell(table.cur_x, table.cur_y, cell);
+					added_to_table = true;
+				}
+			}
+			if (!added_to_table) {
+				ctx.table_next_row = false;
+				table = TableBox::create(null, null, use_mirror);
+				table.set_cell(0, 0, cell);
+				add_table = true;
+			}
+		}
+		else if (display.type == VALUE_TABLE_ROW) {
+			ctx.table_next_row = true;
+		}
+	}
+
+	var position = hash_get(props, PROP_POSITION, null) as Value;
+	if (position != null && position.type != VALUE_STATIC) {
+		var z_index = 0;
+		var z_index_value = hash_get(props, PROP_Z_INDEX, null) as Value;
+		if (z_index_value != null && z_index_value.type == VALUE_INTEGER) {
+			z_index = z_index_value.value;
+		}
+
+		var pos_background = BackgroundBox::create(null);
+		if (position.type == VALUE_FIXED) {
+			pos_background.fixed = true;
+		}
+
+		var pos_box = ContentBox::create(pos_background);
+
+		var left = hash_get(props, PROP_LEFT, null) as Value;
+		var top = hash_get(props, PROP_TOP, null) as Value;
+		var right = hash_get(props, PROP_RIGHT, null) as Value;
+		var bottom = hash_get(props, PROP_BOTTOM, null) as Value;
+
+		if (position.type == VALUE_RELATIVE) {
+			mirror = Mirror::create(pos_box);
+			if (nested) {
+				nested.mirror = mirror;
+				mirror = null;
+			}
+
+			if (left) {
+				pos_background.left = get_size(left);
+			}
+			else if (right) {
+				pos_background.right = get_size(right);
+			}
+			if (top) {
+				pos_background.top = get_size(top);
+			}
+			else if (bottom) {
+				pos_background.bottom = get_size(bottom);
+			}
+		}
+		else {
+			if (nested) {
+				nested.mirror = null;
+			}
+			else {
+				nested = NestedBox::create(null, get_background(ctx, props, null), null);
+				nested.width = Size::auto();
+				background = null;
+			}
+
+			var box_para = Paragraph::create(ctx.paragraph_style);
+			box_para.add(nested);
+			pos_box.add(box_para);
+
+			var anchor = Anchor::create(pos_box, use_mirror);
+			anchor.align_baselines = !is_block(display);
+
+			pos_background.left = get_size(left);
+			pos_background.top = get_size(top);
+			pos_background.right = get_size(right);
+			pos_background.bottom = get_size(bottom);
+
+			paragraph.add(anchor);
+			add_nested = false;
+		}
+
+		var new_stack = Stack::create(pos_background, pos_box);
+		stack.add(new_stack, z_index);
+		stack = new_stack;
+	}
+
+	if (table) {
+		if (add_table) {
+			paragraph.add(table);
+		}
+		paragraph = Paragraph::create(ctx.paragraph_style);
+		nested.box.add(paragraph);
+	}
+	else if (nested) {
+		if (add_nested) {
+			paragraph.add(nested);
+		}
+		paragraph = Paragraph::create(ctx.paragraph_style);
+		nested.box.add(paragraph);
+	}
+	else {
+		background = get_background(ctx, props, background);
+		if (!mirror) {
+			mirror = use_mirror;
+		}
+	}
+
+	var text_key = [(element as Integer)|0, (background as Integer)|0, (mirror as Integer)|0];
+	var text_style = hash_get(ctx.text_styles, text_key, null) as TextStyle;
+	if (!text_style) {
+		text_style = create_text_style(ctx, element, props, background, mirror);
+		ctx.text_styles[text_key] = text_style;
+	}
+
+	for (var elem = element.get_first_child(); elem; elem = elem.get_next()) {
+		process_element(ctx, elem, stack, paragraph, background, text_style, mirror);
+	}
+
+	if (nested) {
+		remove_last_space(paragraph);
+	}
+
+	if (ctx.hover_group) {
+		ctx.hover_group = prev_group;
+	}
+
+	ctx.table_next_row = false;
+}
+
+function @remove_last_space(paragraph: Paragraph): Boolean
+{
+	var cnt = paragraph.get_flow_count();
+	if (cnt > 0) {
+		var idx = cnt-1;
+		var style = paragraph.get_flow_style(idx) as InlineStyle;
+		if (style.type == INLINE_TEXT) {
+			var text = paragraph.get_flow_raw_text(idx);
+			var off = paragraph.get_flow_offset(idx);
+			var len = paragraph.get_flow_length(idx);
+			if (text[off+len-1] == ' ') {
+				if (len == 1) {
+					paragraph.remove(idx);
+				}
+				else {
+					paragraph.set(idx, text, off, len-1, style);
+				}
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+function @get_background(ctx: Context, props: Value[Integer], parent: Background): Background
+{
+	var key = ((props as Integer)|0) as Dynamic;
+	if (parent) {
+		key = [key, (parent as Integer)|0];
+	}
+	var background = hash_get(ctx.backgrounds, key, null) as Background;
+	if (!background) {
+		background = create_background(props);
+		if (parent) {
+			if (background) {
+				background.parent = parent;
+			}
+			else {
+				background = parent;
+			}
+		}
+		ctx.backgrounds[key] = background;
+	}
+	return background;
+}
+
+function @create_background(props: Value[Integer]): Background
+{
+	var background: Background;
+
+	if (DEBUG_BLOCKS != 0) {
+		var display = hash_get(props, PROP_DISPLAY, null) as Value;
+		if (display != null && (display.type == VALUE_BLOCK || display.type == VALUE_INLINE_BLOCK)) {
+			if (!background) {
+				background = Background::create();
+			}
+			background.border_left = 5;
+			background.border_top = 5;
+			background.border_right = 5;
+			background.border_bottom = 5;
+			background.color_left = 0xFF0000CC;
+			background.color_top = 0xFF0000CC;
+			background.color_right = 0xFF0000CC;
+			background.color_bottom = 0xFF0000CC;
+		}
+	}
+
+	foreach (var prop, value in props) {
+		switch (prop) {
+			case PROP_BACKGROUND_COLOR:
+				if (!background) {
+					background = Background::create();
+				}
+				background.color = get_color(value);
+				break;
+
+			case PROP_BACKGROUND: {
+				if (!background) {
+					background = Background::create();
+				}
+				for (var i=0, n=value.child_count(); i<n; i++) {
+					var v = value.child_get(i);
+					if (v.is_color()) {
+						background.color = get_color(v);
+					}
+				}
+				break;
+			}
+
+			macro parse_border() {
+				if (!background) {
+					background = Background::create();
+				}
+
+				var border_size = 0;
+				var border_style = BORDER_STYLE_NONE;
+				var border_color = 0xFF000000;
+
+				for (var i=0, n=value.child_count(); i<n; i++) {
+					var value2 = value.child_get(i);
+					switch (value2.type) {
+						case VALUE_THIN: border_size = 1; break;
+						case VALUE_MEDIUM: border_size = 3; break;
+						case VALUE_THICK: border_size = 5; break;
+						case VALUE_LENGTH: {
+							var size = get_size(value2);
+							if (size.is_pixels()) {
+								border_size = size.get_pixels();
+								if (border_size < 0) {
+									border_size = -1;
+								}
+							}
+							break;
+						}
+						
+						case VALUE_NONE: border_style = BORDER_STYLE_NONE; break;
+						case VALUE_SOLID: border_style = BORDER_STYLE_SOLID; break;
+						case VALUE_RIDGE: border_style = BORDER_STYLE_RIDGE; break;
+						case VALUE_INSET: border_style = BORDER_STYLE_INSET; break;
+						case VALUE_HIDDEN: border_style = BORDER_STYLE_HIDDEN; break;
+						case VALUE_DOTTED: border_style = BORDER_STYLE_DOTTED; break;
+						case VALUE_DASHED: border_style = BORDER_STYLE_DASHED; break;
+						case VALUE_DOUBLE: border_style = BORDER_STYLE_DOUBLE; break;
+						case VALUE_GROOVE: border_style = BORDER_STYLE_GROOVE; break;
+						case VALUE_OUTSET: border_style = BORDER_STYLE_OUTSET; break;
+						
+						case VALUE_COLOR_RGB:
+						case VALUE_COLOR_RGBA:
+							border_color = get_color(value2);
+							break;
+
+						case VALUE_COLOR_CURRENT: {
+							var color = hash_get(props, PROP_COLOR, null);
+							if (color) {
+								border_color = get_color(color);
+							}
+							break;
+						}
+					}
+				}
+			}
+
+			case PROP_BORDER: {
+				parse_border();
+				background.border_left = border_size;
+				background.border_top = border_size;
+				background.border_right = border_size;
+				background.border_bottom = border_size;
+				background.style_left = border_style;
+				background.style_top = border_style;
+				background.style_right = border_style;
+				background.style_bottom = border_style;
+				background.color_left = border_color;
+				background.color_top = border_color;
+				background.color_right = border_color;
+				background.color_bottom = border_color;
+				break;
+			}
+
+			case PROP_BORDER_LEFT: {
+				parse_border();
+				background.border_left = border_size;
+				background.style_left = border_style;
+				background.color_left = border_color;
+				break;
+			}
+
+			case PROP_BORDER_TOP: {
+				parse_border();
+				background.border_top = border_size;
+				background.style_top = border_style;
+				background.color_top = border_color;
+				break;
+			}
+
+			case PROP_BORDER_RIGHT: {
+				parse_border();
+				background.border_right = border_size;
+				background.style_right = border_style;
+				background.color_right = border_color;
+				break;
+			}
+
+			case PROP_BORDER_BOTTOM: {
+				parse_border();
+				background.border_bottom = border_size;
+				background.style_bottom = border_style;
+				background.color_bottom = border_color;
+				break;
+			}
+
+			case PROP_PADDING: {
+				if (value.type != VALUE_GROUP) {
+					// TODO: VALUE_INITIAL is not handled
+					break;
+				}
+				if (!background) {
+					background = Background::create();
+				}
+				var top = get_size(value.child_get(0));
+				var right = get_size(value.child_get(1));
+				var bottom = get_size(value.child_get(2));
+				var left = get_size(value.child_get(3));
+				if (left.is_pixels()) {
+					background.padding_left = left.get_pixels();
+				}
+				if (top.is_pixels()) {
+					background.padding_top = top.get_pixels();
+				}
+				if (right.is_pixels()) {
+					background.padding_right = right.get_pixels();
+				}
+				if (bottom.is_pixels()) {
+					background.padding_bottom = bottom.get_pixels();
+				}
+				break;
+			}
+
+			case PROP_BOX_SHADOW: {
+				if (value.type == VALUE_NONE) {
+					break;
+				}
+				if (!background) {
+					background = Background::create();
+				}
+				var shadow: Shadow;
+				if (value.type == VALUE_MULTIPLE) {
+					for (var i=0, n=value.child_count(); i<n; i++) {
+						var prev = shadow;
+						shadow = parse_shadow(value.child_get(i), true);
+						shadow.next = prev;
+					}
+				}
+				else {
+					shadow = parse_shadow(value, true);
+				}
+				background.shadow = shadow;
+				break;
+			}
+		}
+	}
+
+	/*
+	// TODO
+	if (background) {
+		background.margin_left = 30;
+		background.margin_right = 30;
+	}
+	*/
+
+	return background;
+}
+
+function @create_text_style(ctx: Context, element: Element, props: Value[Integer], background: Background, mirror: Mirror): TextStyle
+{
+	var style = TextStyle::create(background, mirror);
+
+	foreach (var prop, value in props) {
+		switch (prop) {
+			case PROP_FONT_FAMILY: {
+				array_set_length(style.font_family, 0);
+				if (value.type == VALUE_MULTIPLE) {
+					for (var i=0, n=value.child_count(); i<n; i++) {
+						style.font_family[] = value.child_get(i).value;
+					}
+				}
+				else {
+					style.font_family[] = value.value;
+				}
+				break;
+			}
+
+			case PROP_FONT_SIZE: {
+				style.font_size = get_font_size(ctx, element, value);
+				break;
+			}
+
+			case PROP_FONT_WEIGHT: {
+				if (get_font_weight(value)) {
+					style.font_style |= FONT_STYLE_BOLD;
+				}
+				else {
+					style.font_style &= ~FONT_STYLE_BOLD;
+				}
+				break;
+			}
+
+			case PROP_FONT_STYLE: {
+				if (get_font_style(value)) {
+					style.font_style |= FONT_STYLE_ITALIC;
+				}
+				else {
+					style.font_style &= ~FONT_STYLE_ITALIC;
+				}
+				break;
+			}
+
+			case PROP_COLOR:
+				style.color = get_color(value);
+				break;
+
+			case PROP_TEXT_SHADOW: {
+				if (value.type == VALUE_NONE) {
+					break;
+				}
+				var shadow: Shadow;
+				if (value.type == VALUE_MULTIPLE) {
+					for (var i=0, n=value.child_count(); i<n; i++) {
+						var prev = shadow;
+						shadow = parse_shadow(value.child_get(i), false);
+						shadow.next = prev;
+					}
+				}
+				else {
+					shadow = parse_shadow(value, false);
+				}
+				style.shadow = shadow;
+				break;
+			}
+
+			case PROP_WHITE_SPACE:
+				switch (value.type) {
+					case VALUE_PRE:
+					case VALUE_PRE_WRAP:
+					case VALUE_PRE_LINE:
+						style.newlines = true;
+						break;
+
+					default:
+						style.newlines = false;
+						break;
+				}
+				break;
+		}
+	}
+
+	if (ctx.hover_group) {
+		// TODO: apply proper style
+		var hover_background = Background::create();
+		hover_background.color = 0xFF000000;
+
+		if (background) {
+			hover_background.parent = background.parent;
+			hover_background.shadow = background.shadow;
+
+			hover_background.margin_left = background.margin_left;
+			hover_background.margin_right = background.margin_right;
+
+			hover_background.padding_left = background.padding_left;
+			hover_background.padding_top = background.padding_top;
+			hover_background.padding_right = background.padding_right;
+			hover_background.padding_bottom = background.padding_bottom;
+
+			hover_background.border_left = background.border_left;
+			hover_background.border_top = background.border_top;
+			hover_background.border_right = background.border_right;
+			hover_background.border_bottom = background.border_bottom;
+
+			hover_background.style_left = BORDER_STYLE_SOLID;
+			hover_background.style_top = BORDER_STYLE_SOLID;
+			hover_background.style_right = BORDER_STYLE_SOLID;
+			hover_background.style_bottom = BORDER_STYLE_SOLID;
+
+			hover_background.color_left = 0xFF000000;
+			hover_background.color_top = 0xFF000000;
+			hover_background.color_right = 0xFF000000;
+			hover_background.color_bottom = 0xFF000000;
+		}
+
+		style.hover = Hover::create(ctx.hover_group, 0xFFFFFFFF, hover_background);
+	}
+
+	return style;
+}
+
+function @parse_shadow(value: Value, box: Boolean): Shadow
+{
+	var idx = 0, cnt = value.child_count();
+	var off_x = get_pixels(value.child_get(idx++));
+	var off_y = get_pixels(value.child_get(idx++));
+	var blur = 0.0;
+	var spread = 0;
+	var color = 0xFF000000;
+	if (idx < cnt) {
+		var value2 = value.child_get(idx);
+		if (value2.type == VALUE_LENGTH) {
+			blur = float(get_pixels(value2));
+			idx++;
+			if (box && idx < cnt) {
+				value2 = value.child_get(idx);
+				if (value2.type == VALUE_LENGTH) {
+					spread = get_pixels(value2);
+					idx++;
+				}
+			}
+		}
+	}
+	if (idx < cnt) {
+		color = get_color(value.child_get(idx));
+	}
+	return Shadow::create(off_x, off_y, blur, spread, color);
+}
+
+function @get_color(value: Value): Integer
+{
+	if (value.type == VALUE_COLOR_RGB) {
+		return 0xFF000000 | value.value;
+	}
+	if (value.type == VALUE_COLOR_RGBA) {
+		var c = value.value;
+		var a = c >>> 24;
+		var r = (c >>> 16) & 0xFF;
+		var g = (c >>> 8) & 0xFF;
+		var b = c & 0xFF;
+		r = r * a / 255;
+		g = g * a / 255;
+		b = b * a / 255;
+		return (a << 24) | (r << 16) | (g << 8) | b;
+	}
+	return 0;
+}
+
+function @get_size(value: Value): Size
+{
+	if (value == null || value.type != VALUE_LENGTH) {
+		return Size::auto();
+	}
+
+	var len = value.value as Float;
+	var unit = (value as ValueLength).unit;
+
+	var font_size = 16.0;
+	var screen_width = 1024;
+	var screen_height = 768;
+
+	switch (unit) {
+		case UNIT_ZERO:    return Size::pixels(0);
+		case UNIT_PERCENT: return Size::fraction(len / 100.0);
+		case UNIT_EM:      return Size::pixels(iround(len * font_size));
+		case UNIT_EX:      return Size::pixels(iround(len * font_size * 0.625));
+		case UNIT_CH:      return Size::pixels(iround(len * font_size * 0.5));
+		case UNIT_REM:     return Size::pixels(iround(len * font_size));
+		case UNIT_VW:      return Size::pixels(iround(len / 100.0 * screen_width));
+		case UNIT_VH:      return Size::pixels(iround(len / 100.0 * screen_height));
+		case UNIT_VMIN:    return Size::pixels(iround(len / 100.0 * min(screen_width, screen_height)));
+		case UNIT_VMAX:    return Size::pixels(iround(len / 100.0 * max(screen_width, screen_height)));
+		case UNIT_CM:      return Size::pixels(iround(len * 96.0 / 2.54));
+		case UNIT_MM:      return Size::pixels(iround(len * 96.0 / 2.54 / 10.0));
+		case UNIT_Q:       return Size::pixels(iround(len * 96.0 / 2.54 / 40.0));
+		case UNIT_IN:      return Size::pixels(iround(len * 96.0));
+		case UNIT_PC:      return Size::pixels(iround(len * 96.0 / 6.0));
+		case UNIT_PT:      return Size::pixels(iround(len * 96.0 / 72.0));
+		case UNIT_PX:      return Size::pixels(iround(len));
+	}
+
+	return Size::auto();
+}
+
+function @get_pixels(value: Value): Integer
+{
+	var size = get_size(value);
+	if (size.is_pixels()) {
+		return size.get_pixels();
+	}
+	return 0;
+}
+
+function @get_font_size(ctx: Context, element: Element, value: Value): Integer
+{
+	switch (value.type) {
+		case VALUE_XX_SMALL: return 8;
+		case VALUE_X_SMALL:  return 10;
+		case VALUE_SMALL:    return 13;
+		case VALUE_MEDIUM:   return 16;
+		case VALUE_LARGE:    return 18;
+		case VALUE_X_LARGE:  return 24;
+		case VALUE_XX_LARGE: return 32;
+
+		case VALUE_SMALLER:
+		case VALUE_LARGER:
+		case VALUE_LENGTH: {
+			if (value.type != VALUE_LENGTH || (value as ValueLength).unit == UNIT_PERCENT) {
+				var factor = 1.0;
+				var elem = element;
+				var size = value;
+				for (;;) {
+					if (size) {
+						if (size.type == VALUE_SMALLER) {
+							factor = factor / 1.5;
+						}
+						else if (size.type == VALUE_LARGER) {
+							factor = factor * 1.5;
+						}
+						else if (size.type == VALUE_LENGTH && (size as ValueLength).unit == UNIT_PERCENT) {
+							factor = factor * ((value.value as Float) / 100.0);
+						}
+						else {
+							return max(1, iround(get_font_size(ctx, element, size) * factor));
+						}
+					}
+
+					elem = elem.get_parent();
+					if (!elem) {
+						return max(1, iround(16 * factor));
+					}
+
+					var styles = hash_get(ctx.element_styles, (elem as Integer)|0, null) as Value[Integer];
+					if (styles) {
+						size = hash_get(styles, PROP_FONT_SIZE, null) as Value;
+					}
+					else {
+						size = null;
+					}
+				}
+			}
+			break;
+		}
+	}
+	return max(1, get_pixels(value));
+}
+
+function @get_font_weight(value: Value): Boolean
+{
+	switch (value.type) {
+		case VALUE_BOLDER: return true;
+		case VALUE_LIGHTER: return false;
+		case VALUE_FONT_WEIGHT: return value.value >= 700;
+	}
+	return false;
+}
+
+function @get_font_style(value: Value): Boolean
+{
+	switch (value.type) {
+		case VALUE_NORMAL: return false;
+		case VALUE_ITALIC: return true;
+		case VALUE_OBLIQUE: return true;
+	}
+	return false;
+}
+
+function @get_vertical_align(props: Value[Integer]): Float
+{
+	var value = hash_get(props, PROP_VERTICAL_ALIGN, null) as Value;
+	if (value) {
+		switch (value.type) {
+			case VALUE_BASELINE:    return 0.0;
+			case VALUE_SUB:         return 0.0;
+			case VALUE_SUPER:       return 0.0;
+			case VALUE_TOP:         return 0.7;
+			case VALUE_TEXT_TOP:    return 0.7;
+			case VALUE_MIDDLE:      return 0.3;
+			case VALUE_BOTTOM:      return 0.3;
+			case VALUE_TEXT_BOTTOM: return 0.3;
+
+			/*
+			case VALUE_LENGTH:
+				switch ((value as ValueLength).unit) {
+					case UNIT_ZERO: return 0.0;
+					case UNIT_PERCENT: return fclamp((value.value as Float)/100.0, 0.0, 1.0);
+				}
+				break;
+			*/
+		}
+	}
+	return 0.3;
+}
+
+function @is_block(value: Value): Boolean
+{
+	if (!value) return false;
+	var type = value.type;
+	if (type == VALUE_BLOCK) return true;
+	if (type == VALUE_TABLE) return true;
+	return false;
+}
+
+function @collapse_whitespace(ctx: Context, text: String, newlines: Boolean): String
+{
+	var s = {""};
+	var prev = ctx.prev_space;
+	for (var i=0; i<length(text); i++) {
+		var c = text[i];
+		switch (c) {
+			case '\n':
+				if (newlines) {
+					s[] = c;
+					prev = false;
+					continue;
+				}
+				// fallthrough
+
+			case '\t', 0x0C, '\r', ' ':
+				if (!prev) {
+					s[] = ' ';
+				}
+				prev = true;
+				break;
+
+			default:
+				s[] = c;
+				prev = false;
+		}
+	}
+	ctx.prev_space = prev;
+	//log("text='"+s+"'");
+	return s;
+}
+
+function @add_text(ctx: Context, paragraph: Paragraph, text: String, style: TextStyle, background: Background, mirror: Mirror)
+{
+	if (background != null || mirror != null) {
+		var text_key = [(style as Integer)|0, (background as Integer)|0, (mirror as Integer)|0];
+		var new_style = hash_get(ctx.text_styles, text_key, null) as TextStyle;
+		if (!new_style) {
+			new_style = clone(style);
+			new_style.background = background;
+			new_style.mirror = mirror;
+			ctx.text_styles[text_key] = new_style;
+		}
+		style = new_style;
+	}
+
+	var len = length(text);
+	var max_value = 0;
+	for (var i=0; i<len; i++) {
+		max_value = max(max_value, text[i]);
+	}
+
+	var str;
+	if (max_value <= 0xFF) {
+		str = ctx.text8;
+	}
+	else if (max_value <= 0xFFFF) {
+		str = ctx.text16;
+	}
+	else {
+		str = ctx.text32;
+	}
+
+	var off = length(str);
+	array_append(str, text);
+
+	paragraph.add(str, off, len, style);
+}
+
+class Stack
+{
+	var @marker;
+	var @background: BackgroundBox;
+	var @layers: Dynamic[];
+
+	function @marker() {}
+
+	constructor create(background: BackgroundBox, content: ContentBox)
+	{
+		this.background = background;
+		marker = Stack::marker#1;
+		layers = [0, content];
+	}
+
+	static function @is_instance(obj): Boolean
+	{
+		return obj[0] === Stack::marker#1;
+	}
+
+	function add(obj, z_index: Integer)
+	{
+		for (var i=length(layers)-2; i>=0; i-=2) {
+			var layer_z_index = layers[i+0];
+			var layer = layers[i+1];
+			if (z_index >= layer_z_index) {
+				array_insert(layers, i+2, z_index);
+				array_insert(layers, i+3, obj);
+				return;
+			}
+		}
+		array_insert(layers, 0, z_index);
+		array_insert(layers, 1, obj);
+	}
+
+	function flatten_to(layers: Box[])
+	{
+		layers[] = background;
+		for (var i=0; i<length(this.layers); i+=2) {
+			var layer = this.layers[i+1];
+			if (is_instance(layer)) {
+				(layer as Stack).flatten_to(layers);
+			}
+			else {
+				layers[] = layer;
+			}
+		}
+	}
+}

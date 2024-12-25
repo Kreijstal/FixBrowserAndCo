@@ -1,0 +1,181 @@
+/*
+ * FixScript Classes v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const @class_SomeClass = "extend=Class_With_Underscores,prefix=somecls,struct=SCLS,static=create#2:static#0";
+const @field_SomeClass_field1 = "Integer";
+const @field_SomeClass_field2 = "Boolean";
+const @method_SomeClass_create_2 = "(Integer, Boolean): SomeClass";
+const @method_SomeClass_instance_function_3 = "(Integer, Boolean)";
+
+const @class_Class_With = "prefix=class_with";
+const @field_Class_With_field1 = "Integer";
+
+const @class_Class_With_Underscores = "prefix=class_with_underscores";
+const @field_Class_With_Underscores_field2 = "Integer";
+
+const @global_some_func_2 = "(SomeClass, Integer or String): Boolean";
+
+const @class_TestOperators2 = "prefix=testops";
+const @static_TestOperators2_create_1 = "(Integer): TestOperators2";
+const @operator_TestOperators2_add_1 = "add_testops_testops (TestOperators2, TestOperators2)";
+const @operator_TestOperators2_add_2 = "add_testops_int (TestOperators2, Integer)";
+const @operator_TestOperators2_add_3 = "add_int_testops (Integer, TestOperators2)";
+const @operator_TestOperators2_add_4 = "add_testops_dynamic (TestOperators2, Dynamic)";
+const @operator_TestOperators2_add_5 = "add_dynamic_testops (Dynamic, TestOperators2)";
+const @operator_TestOperators2_sub_1 = "sub_testops_testops (TestOperators2, TestOperators2)";
+const @operator_TestOperators2_sub_2 = "sub_testops_int (TestOperators2, Integer)";
+const @operator_TestOperators2_sub_3 = "sub_int_testops (Integer, TestOperators2)";
+const @operator_TestOperators2_mul_1 = "mul_testops_testops (TestOperators2, TestOperators2)";
+const @operator_TestOperators2_mul_2 = "mul_testops_int (TestOperators2, Integer)";
+const @operator_TestOperators2_mul_3 = "mul_int_testops (Integer, TestOperators2)";
+const @operator_TestOperators2_lt_1 = "lt (TestOperators2, TestOperators2)";
+const @operator_TestOperators2_cmp_1 = "cmp (TestOperators2, TestOperators2)";
+const @operator_TestOperators2_add_inplace_1 = "add_testops_inplace (TestOperators2)";
+const @operator_TestOperators2_add_inplace_2 = "add_int_inplace (Integer)";
+const @operator_TestOperators2_add_inplace_3 = "add_dynamic_inplace (Dynamic)";
+//const @operator_TestOperators2_add_4 = "add_int_int (Integer, Integer)"; // not allowed
+
+const {
+	SCLS_field1,
+	SCLS_field2,
+	SCLS_SIZE
+};
+
+const {
+	CLASS_WITH_field1
+};
+
+const {
+	CLASS_WITH_UNDERSCORES_field2
+};
+
+function somecls_create(a, b)
+{
+	var obj = object_create(SCLS_SIZE);
+	obj->SCLS_field1 = a;
+	obj->SCLS_field2 = b;
+	return obj;
+}
+
+function somecls_static()
+{
+}
+
+function somecls_instance_function(obj, a, b)
+{
+	obj->SCLS_field1 = a;
+	obj->SCLS_field2 = b;
+}
+
+function some_func(obj, a)
+{
+	return true;
+}
+
+function testops_create(value)
+{
+	return [value];
+}
+
+function testops_add_testops_testops(op1, op2)
+{
+	return [op1[0] + op2[0]];
+}
+
+function testops_add_testops_int(op1, op2)
+{
+	return [op1[0] + op2];
+}
+
+function testops_add_int_testops(op1, op2)
+{
+	return [op1 + op2[0]];
+}
+
+function testops_add_testops_dynamic(op1, op2)
+{
+	return [op1[0] + op2];
+}
+
+function testops_add_dynamic_testops(op1, op2)
+{
+	return [op1 + op2[0]];
+}
+
+function testops_sub_testops_testops(op1, op2)
+{
+	return [op1[0] - op2[0]];
+}
+
+function testops_sub_testops_int(op1, op2)
+{
+	return [op1[0] - op2];
+}
+
+function testops_sub_int_testops(op1, op2)
+{
+	return [op1 - op2[0]];
+}
+
+function testops_mul_testops_testops(op1, op2)
+{
+	return [op1[0] * op2[0]];
+}
+
+function testops_mul_testops_int(op1, op2)
+{
+	return [op1[0] * op2];
+}
+
+function testops_mul_int_testops(op1, op2)
+{
+	return [op1 * op2[0]];
+}
+
+function testops_lt(op1, op2)
+{
+	return op1[0] < op2[0];
+}
+
+function testops_cmp(op1, op2)
+{
+	var v1 = op1[0];
+	var v2 = op2[0];
+	return v1 < v2? -1 : v1 > v2? +1 : 0;
+}
+
+function testops_add_testops_inplace(this, value)
+{
+	this[0] += value[0];
+	return this;
+}
+
+function testops_add_int_inplace(this, value)
+{
+	this[0] += value;
+	return this;
+}
+
+function testops_add_dynamic_inplace(this, value)
+{
+	this[0] += value;
+	return this;
+}

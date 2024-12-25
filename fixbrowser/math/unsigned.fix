@@ -1,0 +1,89 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const @MIN_VALUE = 0x80000000;
+
+function uint_add(a, b)
+{
+	var (r, carry) = add32(a, b);
+	if (carry) {
+		return 0, error("integer overflow");
+	}
+	return r;
+}
+
+function uint_sub(a, b)
+{
+	var (r, borrow) = sub32(a, b);
+	if (borrow) {
+		return 0, error("integer overflow");
+	}
+	return r;
+}
+
+function uint_mul(a, b)
+{
+	var (lo, hi) = umul64(a, b);
+	if (hi) {
+		return 0, error("integer overflow");
+	}
+	return lo;
+}
+
+function uint_div(a, b)
+{
+	var (lo, hi) = udiv64(a, 0, b, 0);
+	return lo;
+}
+
+function uint_rem(a, b)
+{
+	var (lo, hi) = urem64(a, 0, b, 0);
+	return lo;
+}
+
+function uint_lt(a, b)
+{
+	return add32(MIN_VALUE, a) < add32(MIN_VALUE, b);
+}
+
+function uint_gt(a, b)
+{
+	return add32(MIN_VALUE, a) > add32(MIN_VALUE, b);
+}
+
+function uint_le(a, b)
+{
+	return add32(MIN_VALUE, a) <= add32(MIN_VALUE, b);
+}
+
+function uint_ge(a, b)
+{
+	return add32(MIN_VALUE, a) >= add32(MIN_VALUE, b);
+}
+
+function uint_to_string(a)
+{
+	var (lo, hi) = udiv64(a, 0, 10, 0);
+	var last = sub32(a, mul32(lo, 10));
+	if (lo) return {lo, last};
+	return {last};
+}

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixNative Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixNative Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "native/native";</code>
+</p>
+
+<h2>Library class</h2>
+
+<p>
+Native library.
+</p>
+
+<h3>Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>open</b>(name: String): Library</code></dt>
+	<dd>
+		Opens native library. The provided name is either just base name without
+		extension, then it will be searched in default native paths. Or you can
+		provide a full path to load it directly.
+	</dd>
+	<dt><code>function <b>close</b>()</code></dt>
+	<dd>
+		Closes the library.
+	</dd>
+</dl>
+
+<h3>Symbols</h3>
+
+<dl>
+	<dt><code>function <b>get_symbol</b>(name: String): <a href="pointer.html">Pointer</a></code></dt>
+	<dd>
+		Returns a pointer of a given symbol in the library, or <code>null</code> when not found.
+	</dd>
+	<dt><code>static function <b>get_symbol</b>(name: String): <a href="pointer.html">Pointer</a></code></dt>
+	<dd>
+		Returns a pointer of a given symbol in the current process (may not work on every platform),
+		or <code>null</code> when not found.
+	</dd>
+</dl>
+
+<h3>Binding</h3>
+
+<dl>
+	<dt><code>static function <b>bind</b>(base_name: String[, lib: Library])</code></dt>
+	<dd>
+		Binds a library (either loaded using the base name or with given reference)
+		to a logical name. Used for binding libraries when using the token processor
+		to directly declare functions in C syntax.
+	</dd>
+	<dt><code>static function <b>get_bound_symbol</b>(base_name: String, sym_name: String): <a href="pointer.html">Pointer</a></code></dt>
+	<dd>
+		Retrieves a pointer to a symbol using a logical name.
+	</dd>
+</dl>
+
+</body>
+</html>

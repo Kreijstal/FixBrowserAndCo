@@ -1,0 +1,185 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/font";
+import "image/rect";
+import "gui/view";
+import "gui/subview";
+import "gui/event";
+
+class Virtual
+{
+	static function is_present(): Boolean
+	{
+		var (r, e) = @virtual_is_present();
+		if (e) return false;
+		return r;
+	}
+
+	static function register_font(family: String, style: Integer, font: Font)
+	{
+		var (r, e) = @virtual_register_font(family, style, font);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_content_view(view: SubView)
+	{
+		var (r, e) = @virtual_set_content_view(view);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_content_opacity(opacity: Integer)
+	{
+		var (r, e) = @virtual_set_content_opacity(opacity);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_keyboard(keyboard: VirtualKeyboard)
+	{
+		var (r, e) = @virtual_set_keyboard(keyboard);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function show_keyboard()
+	{
+		var (r, e) = @virtual_show_keyboard();
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function hide_keyboard()
+	{
+		var (r, e) = @virtual_hide_keyboard();
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function hide_keyboard(deferred: Boolean)
+	{
+		if (deferred) {
+			if (is_keyboard_visible()) {
+				Timer::run_once(0, Virtual::hide_keyboard_deferred#1, null);
+			}
+		}
+		else {
+			hide_keyboard();
+		}
+	}
+
+	static function @hide_keyboard_deferred(data)
+	{
+		@virtual_hide_keyboard();
+	}
+
+	static function is_keyboard_visible(): Boolean
+	{
+		var (r, e) = @virtual_is_keyboard_visible();
+		if (!is_available(e)) {
+			return false;
+		}
+		return r;
+	}
+
+	static function get_visible_screen_area(view: SubView): Rect
+	{
+		var (r, e) = @virtual_get_visible_screen_area(view);
+		if (!is_available(e)) {
+			var point = [0, 0];
+			var top = view.point_to_top(point);
+			var rect = top.get_local_rect();
+			rect.translate(-point[0], -point[1]);
+			return rect;
+		}
+		return r;
+	}
+
+	static function post_key_event(key: KeyEvent)
+	{
+		var (r, e) = @virtual_post_key_event(key);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function force_quit()
+	{
+		var (r, e) = @virtual_force_quit();
+		if (!is_available(e)) {
+			return;
+		}
+	}
+}
+
+class VirtualKeyboard: SubView
+{
+	constructor create()
+	{
+	}
+
+	override function accept_mouse_event(event: MouseEvent): Boolean
+	{
+		return get_top_child_view(event.get_x(), event.get_y()) !== this;
+	}
+
+	override function accept_touch_event(event: TouchEvent): Boolean
+	{
+		return get_top_child_view(event.get_x(), event.get_y()) !== this;
+	}
+
+	virtual function show()
+	{
+	}
+
+	virtual function hide()
+	{
+	}
+
+	virtual function is_visible(): Boolean
+	{
+		return false;
+	}
+
+	virtual function get_visible_area(): Rect
+	{
+		return get_local_rect();
+	}
+}
+
+function @is_available(e): Boolean
+{
+	if (e) {
+		if (is_string(e)) return false;
+		throw e;
+	}
+	return true;
+}

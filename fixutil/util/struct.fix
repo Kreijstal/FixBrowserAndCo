@@ -1,0 +1,411 @@
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+
+const @global___struct_init_1 = "(Integer): Dynamic";
+const @global___struct_alloc_2 = "(Dynamic, Integer): Dynamic";
+const @global___struct_realloc_4 = "(Dynamic, Integer, Integer, Integer): Dynamic";
+const @global___struct_free_3 = "(Dynamic, Integer, Integer): Void";
+const @global_struct_get_free_size_1 = "(Dynamic): Integer";
+const @global_struct_get_occupancy_1 = "(Dynamic): Float";
+const @global_struct_dump_1 = "(Dynamic): Void";
+
+// array header:
+// 0 = first free block (0 = no block free)
+
+// free block header:
+// 0 = next free block
+// 1 = size
+
+macro struct_init(&arr, capacity)
+{
+	arr = __struct_init(capacity)
+}
+
+macro struct_alloc(&arr, type)
+{{
+	var ($arr, $off: Integer) = __struct_alloc(arr, type::SIZE);
+	if (!is_int($off)) {
+		throw $off;
+	}
+	arr = $arr;
+	= $off as type
+}}
+
+macro struct_free(&arr, type, str)
+{{
+	var $str = str;
+	if ($str > 0) {
+		__struct_free(arr, type::SIZE, $str as Integer);
+	}
+}}
+
+macro struct_alloc_array(&arr, type, num_elems)
+{{
+	var ($arr, $off: Integer) = __struct_alloc(arr, type::SIZE * (num_elems));
+	if (!is_int($off)) {
+		throw $off;
+	}
+	arr = $arr;
+	= $off as type
+}}
+
+macro struct_realloc_array(&arr, type, &str, &num_elems, new_num_elems)
+{{
+	var $new_num_elems = new_num_elems;
+	var ($arr, $off: Integer) = __struct_realloc(arr, type::SIZE * (num_elems), (str) as Integer, type::SIZE * $new_num_elems);
+	if (!is_int($off)) {
+		throw $off;
+	}
+	arr = $arr;
+	str = $off as type;
+	num_elems = $new_num_elems;
+}}
+
+macro struct_free_array(&arr, type, str, num_elems)
+{{
+	var $str = str;
+	if ($str > 0) {
+		__struct_free(arr, type::SIZE * (num_elems), $str as Integer);
+	}
+}}
+
+macro struct_raw_alloc(&arr, size)
+{{
+	var ($arr, $off) = __struct_alloc(arr, size);
+	if (!is_int($off)) {
+		return 0, $off;
+	}
+	arr = $arr;
+	= $off|0
+}}
+
+macro struct_raw_realloc(&arr, &size, &off, new_size)
+{{
+	var $new_size = new_size;
+	var ($arr, $off) = __struct_realloc(arr, size, off, $new_size);
+	if (!is_int($off)) {
+		return 0, $off;
+	}
+	arr = $arr;
+	off = $off;
+	size = $new_size;
+	= $off|0
+}}
+
+macro struct_raw_free(&arr, size, off)
+{{
+	var $off = off;
+	if ($off > 0) {
+		__struct_free(arr, size, $off);
+	}
+}}
+
+function __struct_init(capacity)
+{
+	var arr = array_create_shared(max(4, capacity), 4);
+	arr[0] = 1;
+	arr[2] = length(arr)-1;
+	return arr;
+}
+
+function __struct_alloc(arr, struct_size)
+{
+	struct_size = max(2, struct_size);
+	if (!arr) {
+		var cap = 16;
+		while (struct_size > cap-3) {
+			cap *= 2;
+		}
+		struct_init(&arr, cap);
+	}
+
+	var prev_block = 0;
+	var free_block = arr[0];
+	if (free_block) {
+		for (;;) {
+			var size = arr[free_block+1];
+			if (struct_size == size) {
+				arr[prev_block] = arr[free_block];
+				return arr, free_block;
+			}
+			if (struct_size+2 <= size) {
+				var new_block = free_block + struct_size;
+				arr[prev_block] = new_block;
+				arr[new_block] = arr[free_block];
+				arr[++new_block] = size - struct_size;
+				return arr, free_block;
+			}
+			var next_block = arr[free_block];
+			if (!next_block) break;
+			prev_block = free_block;
+			free_block = next_block;
+		}
+	}
+
+	var use_block = false;
+	if (free_block != 0 && free_block + arr[free_block+1] == length(arr)) {
+		use_block = true;
+	}
+
+	var size = use_block? arr[free_block+1] : 0;
+	var old_size = length(arr);
+	var new_size = old_size;
+	while (new_size - old_size + size < struct_size+2) {
+		if (new_size == 0x40000000) {
+			new_size = 0x7FFFFFFF;
+		}
+		else {
+			new_size *= 2;
+		}
+	}
+
+	var new_arr = array_create_shared(new_size, 4);
+	array_copy(new_arr, 0, arr, 0, old_size);
+	arr = new_arr;
+
+	if (use_block) {
+		var new_block = free_block + struct_size;
+		arr[new_block] = 0;
+		arr[new_block+1] = new_size - new_block;
+		arr[prev_block] = new_block;
+		return arr, free_block;
+	}
+	else {
+		var new_block = old_size + struct_size;
+		arr[new_block] = 0;
+		arr[new_block+1] = new_size - new_block;
+		arr[free_block] = new_block;
+		return arr, old_size;
+	}
+}
+
+function __struct_realloc(arr, struct_size, off, new_struct_size)
+{
+	struct_size = max(2, struct_size);
+	new_struct_size = max(2, new_struct_size);
+	
+	if (off <= 0) {
+		(arr, off) = __struct_alloc(arr, new_struct_size);
+		return arr, off;
+	}
+	if (new_struct_size == struct_size) {
+		return arr, off;
+	}
+	if (new_struct_size <= struct_size-2) {
+		__struct_free(arr, struct_size - new_struct_size, off + new_struct_size);
+		return arr, off;
+	}
+	var prev_block = 0;
+	var free_block = arr[0];
+	if (free_block) {
+		var end_off = off + struct_size;
+		var end_size = new_struct_size - struct_size;
+		for (;;) {
+			if (free_block > end_off) break;
+			if (free_block == end_off) {
+				var size = arr[free_block+1];
+				if (end_size == size) {
+					arr[prev_block] = arr[free_block];
+					return arr, off;
+				}
+				if (end_size+2 <= size) {
+					var new_block = free_block + end_size;
+					arr[prev_block] = new_block;
+					arr[new_block] = arr[free_block];
+					arr[++new_block] = size - end_size;
+					return arr, off;
+				}
+				break;
+			}
+			var next_block = arr[free_block];
+			if (!next_block) break;
+			prev_block = free_block;
+			free_block = next_block;
+		}
+	}
+
+	var new_off = struct_raw_alloc(&arr, new_struct_size);
+	array_copy(new_off, 0, off, 0, struct_size);
+	struct_raw_free(&arr, struct_size, off);
+	return arr, new_off;
+}
+
+function __struct_free(arr, struct_size, off)
+{
+	struct_size = max(2, struct_size);
+	if (off < 1 || off + struct_size > length(arr)) {
+		return 0, error("invalid pointer or size");
+	}
+	var prev_block = 0;
+	var free_block = arr[0];
+	if (free_block) {
+		if (free_block > off) {
+			if (off + struct_size == free_block) {
+				arr[off] = arr[free_block];
+				arr[off+1] = struct_size + arr[free_block+1];
+				arr[0] = off;
+			}
+			else {
+				if (off + struct_size > free_block) {
+					return 0, error("invalid pointer or size");
+				}
+				arr[off] = free_block;
+				arr[off+1] = struct_size;
+				arr[0] = off;
+			}
+			return;
+		}
+		var next_block;
+		for (;;) {
+			next_block = arr[free_block];
+			if (!next_block) {
+				var size = arr[free_block+1];
+				if (free_block + size == off) {
+					arr[free_block+1] = size+struct_size;
+				}
+				else {
+					if (free_block + size > off) {
+						return 0, error("invalid pointer or size");
+					}
+					arr[off] = 0;
+					arr[off+1] = struct_size;
+					arr[free_block] = off;
+				}
+				return;
+			}
+			else if (next_block > off) {
+				break;
+			}
+			prev_block = free_block;
+			free_block = next_block;
+		}
+		var size = arr[free_block+1];
+		if (free_block + size == off) {
+			if (off + struct_size == next_block) {
+				arr[free_block] = arr[next_block];
+				arr[free_block+1] += struct_size + arr[next_block+1];
+				return;
+			}
+			else {
+				if (off + struct_size > next_block) {
+					return 0, error("invalid pointer or size");
+				}
+				arr[free_block+1] += struct_size;
+				return;
+			}
+		}
+		else {
+			if (free_block + size > off) {
+				return 0, error("invalid pointer or size");
+			}
+			if (off + struct_size == next_block) {
+				arr[off] = arr[next_block];
+				arr[off+1] = struct_size + arr[next_block+1];
+				arr[free_block] = off;
+				return;
+			}
+			else {
+				if (off + struct_size > next_block) {
+					return 0, error("invalid pointer or size");
+				}
+				arr[off] = next_block;
+				arr[off+1] = struct_size;
+				arr[free_block] = off;
+				return;
+			}
+		}
+	}
+	else {
+		arr[off] = 0;
+		arr[off+1] = struct_size;
+		arr[0] = off;
+		return;
+	}
+}
+
+function struct_get_free_size(arr)
+{
+	if (!arr) {
+		return 0;
+	}
+	var free_block = arr[0];
+	var size = 0;
+	while (free_block) {
+		size += arr[free_block+1];
+		free_block = arr[free_block];
+	}
+	return size;
+}
+
+function struct_get_occupancy(arr)
+{
+	if (!arr) {
+		return 1.0;
+	}
+	var total = length(arr)-1;
+	var used = total - struct_get_free_size(arr);
+	return {float(used) / float(total)};
+}
+
+function struct_dump(arr)
+{
+	if (!arr) {
+		log("<empty>");
+		return;
+	}
+	var s = {""};
+	var next_block = arr[0];
+	var pos = 1;
+	if (next_block != 0) {
+		for (;;) {
+			while (pos < next_block) {
+				s[] = '#';
+				pos++;
+			}
+			var size = arr[next_block+1];
+			if (size < 2) return 0, error("invalid size");
+			s[] = '|';
+			for (var i=1; i<size; i++) {
+				s[] = '.';
+			}
+			pos += size;
+			next_block = arr[next_block];
+			if (next_block == 0) {
+				for (var i=pos; i<length(arr); i++) {
+					s[] = '#';
+				}
+				break;
+			}
+		}
+	}
+	else {
+		for (var i=1; i<length(arr); i++) {
+			s[] = '#';
+		}
+	}
+	if (length(s) != length(arr)-1) {
+		return 0, error("invalid total size");
+	}
+	array_append(s, {" free=", struct_get_free_size(arr), " (", iround({struct_get_occupancy(arr)*100.0}), "% used)"});
+	log(s);
+}

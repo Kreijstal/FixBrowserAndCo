@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/stream";</code>
+</p>
+
+<h2>Stream class</h2>
+
+<p>
+Synchronous stream.
+</p>
+
+<p>
+Subclasses:
+<a href="array_stream.html">ArrayStream</a>,
+<a href="buffered_stream.html">BufferedStream</a>,
+<a href="zstream.html">ZStream</a>,
+<a href="gzip_stream.html">GZipStream</a>,
+<a href="file.html">File</a>,
+<a href="tcp_connection.html">TCPConnection</a>,
+<a href="process_stream.html">ProcessStream</a>
+</p>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): Stream</code></dt>
+	<dd>
+		Creates a new instance of Stream class (for implementations only).
+	</dd>
+</dl>
+
+<h3 id="interface">Stream interface</h3>
+
+<dl>
+	<dt><code>virtual function <b>read_part</b>(buf: Byte[], off: Integer, len: Integer): Integer</code></dt>
+	<dd>
+		Reads part of the data from the stream. Returns how many bytes were actually read. Zero means
+		end of file.<br>
+		Override to implement reading of data in your stream, the default implementation throws
+		an error.
+	</dd>
+	<dt><code>virtual function <b>write_part</b>(buf: Byte[], off: Integer, len: Integer): Integer</code></dt>
+	<dd>
+		Writes part of the data to the stream. Returns how many bytes were actually written.<br>
+		Override to implement writing of data in your stream, the default implementation throws
+		an error.
+	</dd>
+	<dt><code>virtual function <b>flush</b>()</code></dt>
+	<dd>
+		Flushes any cached data to the underlying stream.
+	</dd>
+	<dt><code>virtual function <b>skip</b>(len: Integer)</code></dt>
+	<dd>
+		Skips (as by reading, but more efficiently) given amount of bytes.<br>
+		The default implementation just reads data into a temporary buffer.
+	</dd>
+	<dt><code>virtual function <b>close</b>()</code></dt>
+	<dd>
+		Closes the stream.
+	</dd>
+</dl>
+
+<h3 id="functions">Utility functions</h3>
+
+<dl>
+	<dt><code>function <b>read</b>(buf: Byte[])<br>function <b>read</b>(buf: Byte[], off: Integer, len: Integer)</code></dt>
+	<dd>
+		Reads all the requested data into given buffer by repeatedly calling <code>read_part</code> function.
+		If there is not enough data an error is thrown.
+	</dd>
+	<dt><code>function <b>write</b>(buf: Byte[])<br>function <b>write</b>(buf: Byte[], off: Integer, len: Integer)</code></dt>
+	<dd>
+		Writes all the data from given buffer by repeatedly calling <code>write_part</code> function.
+	</dd>
+	<dt><code>function <b>read_all</b>(): Byte[]<br>function <b>read_all</b>(buf: Byte[]): Byte[]</code></dt>
+	<dd>
+		Reads all the remaining data from the stream into the provided buffer (or creates a new one).
+	</dd>
+	<dt><code>function <b>read_part</b>(buf: Byte[]): Integer</code></dt>
+	<dd>
+		A variant of <code>read_part</code> function that tries to read the whole buffer.
+	</dd>
+	<dt><code>function <b>write_part</b>(buf: Byte[]): Integer</code></dt>
+	<dd>
+		A variant of <code>write_part</code> function that tries to write the whole buffer.
+	</dd>
+	<dt><code>
+		function <b>read_byte</b>(): Byte<br>
+		function <b>read_ubyte</b>(): Byte<br>
+		function <b>read_short_LE</b>(): Short<br>
+		function <b>read_ushort_LE</b>(): Short<br>
+		function <b>read_short_BE</b>(): Short<br>
+		function <b>read_ushort_BE</b>(): Short<br>
+		function <b>read_int_LE</b>(): Integer<br>
+		function <b>read_int_BE</b>(): Integer<br>
+		function <b>read_long_LE</b>(): <a href="util/long.html">Long</a><br>
+		function <b>read_long_LE</b>(out: <a href="util/long.html">Long</a>): <a href="util/long.html">Long</a><br>
+		function <b>read_long_BE</b>(): <a href="util/long.html">Long</a><br>
+		function <b>read_long_BE</b>(out: <a href="util/long.html">Long</a>): <a href="util/long.html">Long</a><br>
+		function <b>read_float_LE</b>(): Float<br>
+		function <b>read_float_BE</b>(): Float<br>
+		function <b>read_double_LE</b>(): <a href="util/double.html">Double</a><br>
+		function <b>read_double_LE</b>(out: <a href="util/double.html">Double</a>): <a href="util/double.html">Double</a><br>
+		function <b>read_double_BE</b>(): <a href="util/double.html">Double</a><br>
+		function <b>read_double_BE</b>(out: <a href="util/double.html">Double</a>): <a href="util/double.html">Double</a><br>
+	</code></dt>
+	<dd>
+		Reads a primitive type from the stream. There are two variants depending on what endianess you want
+		to use: LE (little endian) or BE (big endian). For <a href="util/long.html">Long</a> and <a href="util/double.html">Double</a>
+		types you can provide an existing instance to read to.
+	</dd>
+	<dt><code>
+		function <b>write_byte</b>(value: Byte)<br>
+		function <b>write_ubyte</b>(value: Byte)<br>
+		function <b>write_short_LE</b>(value: Short)<br>
+		function <b>write_short_BE</b>(value: Short)<br>
+		function <b>write_ushort_LE</b>(value: Short)<br>
+		function <b>write_ushort_BE</b>(value: Short)<br>
+		function <b>write_int_LE</b>(value: Integer)<br>
+		function <b>write_int_BE</b>(value: Integer)<br>
+		function <b>write_long_LE</b>(value: <a href="util/long.html">Long</a>)<br>
+		function <b>write_long_BE</b>(value: <a href="util/long.html">Long</a>)<br>
+		function <b>write_float_LE</b>(value: Float)<br>
+		function <b>write_float_BE</b>(value: Float)<br>
+		function <b>write_double_LE</b>(value: <a href="util/double.html">Double</a>)<br>
+		function <b>write_double_BE</b>(value: <a href="util/double.html">Double</a>)<br>
+	</code></dt>
+	<dd>
+		Writes a primitive type to the stream. There are two variants depending on what endianess you want
+		to use: LE (little endian) or BE (big endian).
+	</dd>
+	<dt><code>function <b>write_stream</b>(stream: Stream)</code></dt>
+	<dd>
+		Writes the whole stream (by reading it) to another stream.
+	</dd>
+	<dt><code>
+		function <b>write_null_string</b>(s: Byte[])<br>
+		function <b>write_null_string</b>(s: Byte[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Writes null terminated byte string.
+	</dd>
+</dl>
+
+</body>
+</html>

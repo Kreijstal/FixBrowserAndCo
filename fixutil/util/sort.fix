@@ -1,0 +1,379 @@
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+
+const @global_array_sort_ints_1 = "(Integer[]): Void";
+const @global_array_sort_ints_3 = "(Integer[], Integer, Integer): Void";
+const @global_array_sort_floats_1 = "(Float[]): Void";
+const @global_array_sort_floats_3 = "(Float[], Integer, Integer): Void";
+const @global_array_sort_strings_1 = "(String[]): Void";
+const @global_array_sort_strings_3 = "(String[], Integer, Integer): Void";
+const @global_array_sort_custom_3 = "(Dynamic, Dynamic, Dynamic): Void";
+const @global_array_sort_custom_5 = "(Dynamic, Integer, Integer, Dynamic, Dynamic): Void";
+const @global_array_quick_sort_custom_3 = "(Dynamic, Dynamic, Dynamic): Void";
+const @global_array_quick_sort_custom_5 = "(Dynamic, Integer, Integer, Dynamic, Dynamic): Void";
+const @global_general_sort_4 = "(Dynamic, Dynamic, Dynamic, Dynamic): Void";
+const @global_general_sort_6 = "(Dynamic, Integer, Integer, Dynamic, Dynamic, Dynamic): Void";
+const @global_general_quick_sort_4 = "(Dynamic, Dynamic, Dynamic, Dynamic): Void";
+const @global_general_quick_sort_6 = "(Dynamic, Integer, Integer, Dynamic, Dynamic, Dynamic): Void";
+
+macro array_swap(array, idx1, idx2)
+{
+	var $tmp = array[idx1];
+	array[idx1] = array[idx2];
+	array[idx2] = $tmp;
+}
+
+macro array_sort(array, cmp_expr)
+{{
+	var $array = array;
+	array_sort_range($array, 0, length($array), cmp_expr);
+}}
+
+macro array_quick_sort(array, cmp_expr)
+{{
+	var $array = array;
+	array_quick_sort_range($array, 0, length($array), cmp_expr);
+}}
+
+macro array_sort_range(array_value, off, len, cmp_expr)
+{
+	sort_algorithm(array_value, off, len, null,
+		{
+			var value1 = array[index1];
+			var value2 = array[index2];
+			= cmp_expr
+		},
+		array_swap(array, index1, index2);
+	);
+}
+
+macro array_quick_sort_range(array_value, off, len, cmp_expr)
+{
+	quick_sort_algorithm(array_value, off, len, null,
+		{
+			var value1 = array[index1];
+			var value2 = array[index2];
+			= cmp_expr
+		},
+		array_swap(array, index1, index2);
+	);
+}
+
+macro sort_algorithm(array_value, off, len, data_value, cmp_expr, swap_code)
+{{
+	var $off = off;
+	var $len = len;
+	var $indicies = array_create($len);
+	for (var $i=0; $i<$len; $i++) {
+		$indicies[$i] = $i;
+	}
+	$quicksort(array_value, $off, $len-1, $indicies, $off, data_value);
+
+	macro function $quicksort(array, $left, $right, $indicies, $off, data)
+	{
+		var $left_idx = $left|0, $right_idx = $right|0;
+		if ($right_idx > $left_idx) {
+			var $pivot = $left + (($right - $left) >> 1);
+			while ($left_idx <= $pivot && $right_idx >= $pivot) {
+				for (;;) {
+					var index1 = $left_idx;
+					var index2 = $pivot;
+					var $result = cmp_expr;
+					if ($result == 0) {
+						var $idx1 = $indicies[$left_idx - $off]|0;
+						var $idx2 = $indicies[$pivot - $off]|0;
+						if ($idx1 < $idx2 && $left_idx <= $pivot) {
+							$left_idx++;
+							continue;
+						}
+					}
+					else if ($result < 0 && $left_idx <= $pivot) {
+						$left_idx++;
+						continue;
+					}
+					break;
+				}
+				for (;;) {
+					var index1 = $pivot;
+					var index2 = $right_idx;
+					var $result = cmp_expr;
+					if ($result == 0) {
+						var $idx1 = $indicies[$pivot - $off]|0;
+						var $idx2 = $indicies[$right_idx - $off]|0;
+						if ($idx1 < $idx2 && $right_idx >= $pivot) {
+							$right_idx--;
+							continue;
+						}
+					}
+					else if ($result < 0 && $right_idx >= $pivot) {
+						$right_idx--;
+						continue;
+					}
+					break;
+				}
+				var index1 = $left_idx;
+				var index2 = $right_idx;
+				array_swap($indicies, index1 - $off, index2 - $off);
+				swap_code
+				$left_idx++;
+				$right_idx--;
+				if ($left_idx - 1 == $pivot) {
+					$pivot = $right_idx = $right_idx + 1;
+				}
+				else if ($right_idx + 1 == $pivot) {
+					$pivot = $left_idx = $left_idx - 1;
+				}
+			}
+			if ($pivot > 0) $quicksort(array, $left, $pivot - 1, $indicies, $off, data);
+			$quicksort(array, $pivot + 1, $right, $indicies, $off, data);
+		}
+	}
+}}
+
+macro quick_sort_algorithm(array_value, off, len, data_value, cmp_expr, swap_code)
+{
+	$quicksort(array_value, off, (len)-1, data_value);
+
+	macro function $quicksort(array, $left, $right, data)
+	{
+		var $left_idx = $left|0, $right_idx = $right|0;
+		if ($right_idx > $left_idx) {
+			var $pivot = $left + (($right - $left) >> 1);
+			while ($left_idx <= $pivot && $right_idx >= $pivot) {
+				for (;;) {
+					var index1 = $left_idx;
+					var index2 = $pivot;
+					var $result = cmp_expr;
+					if ($result && $left_idx <= $pivot) {
+						$left_idx++;
+						continue;
+					}
+					break;
+				}
+				for (;;) {
+					var index1 = $pivot;
+					var index2 = $right_idx;
+					var $result = cmp_expr;
+					if ($result && $right_idx >= $pivot) {
+						$right_idx--;
+						continue;
+					}
+					break;
+				}
+				var index1 = $left_idx;
+				var index2 = $right_idx;
+				swap_code
+				$left_idx++;
+				$right_idx--;
+				if ($left_idx - 1 == $pivot) {
+					$pivot = $right_idx = $right_idx + 1;
+				}
+				else if ($right_idx + 1 == $pivot) {
+					$pivot = $left_idx = $left_idx - 1;
+				}
+			}
+			if ($pivot > 0) $quicksort(array, $left, $pivot - 1, data);
+			$quicksort(array, $pivot + 1, $right, data);
+		}
+	}
+}
+
+function array_sort_ints(array)
+{
+	array_sort_ints(array, 0, length(array));
+}
+
+function array_sort_ints(array, off, len)
+{
+	array_quick_sort_range(array, off, len, {
+		= value1 < value2
+	});
+}
+
+function array_sort_floats(array)
+{
+	array_sort_floats(array, 0, length(array));
+}
+
+function array_sort_floats(array, off, len)
+{
+	array_quick_sort_range(array, off, len, {
+		= {value1 < value2}
+	});
+}
+
+function array_sort_strings(array)
+{
+	array_sort_strings(array, 0, length(array));
+}
+
+function array_sort_strings(array, off, len)
+{
+	array_quick_sort_range(array, off, len, {
+		var ret = 0;
+		var len1 = length(value1);
+		var len2 = length(value2);
+		for (var i=0, n=min(len1, len2); i<n; i++) {
+			var c1 = value1[i];
+			var c2 = value2[i];
+			if (c1 < c2) {
+				ret = -1;
+				break;
+			}
+			if (c1 > c2) {
+				ret = +1;
+				break;
+			}
+		}
+		if (ret == 0) {
+			if (len1 < len2) ret = -1;
+		}
+		= ret < 0
+	});
+}
+
+function array_sort_custom(array, cmp_func, data)
+{
+	array_sort_custom(array, 0, length(array), cmp_func, data);
+}
+
+function array_sort_custom(array_value, off, len, cmp_func, data)
+{
+	sort_algorithm(array_value, off, len, [cmp_func, data],
+		{
+			var value1 = array[index1];
+			var value2 = array[index2];
+			= data[0](data[1], value1, value2)
+		},
+		array_swap(array, index1, index2);
+	);
+}
+
+function array_quick_sort_custom(array, cmp_func, data)
+{
+	array_quick_sort_custom(array, 0, length(array), cmp_func, data);
+}
+
+function array_quick_sort_custom(array_value, off, len, cmp_func, data)
+{
+	quick_sort_algorithm(array_value, off, len, [cmp_func, data],
+		{
+			var value1 = array[index1];
+			var value2 = array[index2];
+			= data[0](data[1], value1, value2)
+		},
+		array_swap(array, index1, index2);
+	);
+}
+
+function general_sort(array, cmp_func, swap_func, data)
+{
+	general_sort(array, 0, length(array), cmp_func, swap_func, data);
+}
+
+function general_sort(array_value, off, len, cmp_func, swap_func, data_value)
+{
+	sort_algorithm(array_value, off, len, [cmp_func, swap_func, data_value],
+		{
+			= data[0](data[2], array, index1, index2)
+		},
+		data[1](data[2], array, index1, index2);
+	);
+}
+
+function general_quick_sort(array, cmp_func, swap_func, data)
+{
+	general_quick_sort(array, 0, length(array), cmp_func, swap_func, data);
+}
+
+function general_quick_sort(array_value, off, len, cmp_func, swap_func, data_value)
+{
+	quick_sort_algorithm(array_value, off, len, [cmp_func, swap_func, data_value],
+		{
+			= data[0](data[2], array, index1, index2)
+		},
+		data[1](data[2], array, index1, index2);
+	);
+}
+
+/*
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function @int_cmp(data, value1, value2)
+{
+	return value1 < value2? -1 : value1 > value2? +1 : 0;
+}
+
+function @int_cmp(data, array, index1, index2)
+{
+	var value1 = array[index1];
+	var value2 = array[index2];
+	return value1 < value2? -1 : value1 > value2? +1 : 0;
+}
+
+function @int_swap(data, array, index1, index2)
+{
+	array_swap(array, index1, index2);
+}
+
+function test_sort()
+{
+	var arr = [];
+	array_sort_ints(arr);
+	assert(arr, []);
+
+	arr = [1, 6, 4, 2, 7, 2, 4];
+	array_sort_ints(arr);
+	assert(arr, [1, 2, 2, 4, 4, 6, 7]);
+
+	arr = [1.0, 5.5, 3.2, 1.5, 7.0, 1.5, 3.2];
+	array_sort_floats(arr);
+	assert(arr, [1.0, 1.5, 1.5, 3.2, 3.2, 5.5, 7.0]);
+
+	arr = ["just", "testing", "how", "how123", "strings", "are", "sorted", ""];
+	array_sort_strings(arr);
+	assert(arr, ["", "are", "how", "how123", "just", "sorted", "strings", "testing"]);
+
+	arr = [];
+	for (var i=0; i<10000; i++) {
+		arr[] = i%2? i : -i;
+	}
+	var arr1 = clone(arr);
+	var arr2 = clone(arr);
+	var arr3 = clone(arr);
+	perf_reset();
+	array_sort_ints(arr1);
+	perf_log("sort_ints");
+	array_sort_custom(arr2, int_cmp#3, null);
+	perf_log("sort_custom");
+	general_sort(arr3, int_cmp#4, int_swap#4, null);
+	perf_log("general_sort");
+	assert(arr2, arr1);
+	assert(arr3, arr1);
+}
+*/

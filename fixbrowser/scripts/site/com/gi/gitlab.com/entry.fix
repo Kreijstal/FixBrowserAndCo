@@ -1,0 +1,13 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "gitlab-static.net")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	// TODO: handle better
+	add_style_to_element(document, "div.nav-sidebar", "display: none");
+}

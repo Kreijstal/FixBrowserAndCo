@@ -1,0 +1,170 @@
+import "util/common";
+import "util/string";
+import "util/extract";
+import "util/json";
+import "util/template";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "ytimg.com")) return true;
+	if (domain_ends_with(dest, "youtube-nocookie.com")) return true;
+	if (domain_ends_with(dest, "youtu.be")) return true;
+	if (domain_ends_with(dest, "yt.be")) return true;
+	if (domain_ends_with(dest, "googleusercontent.com")) return true;
+	return false;
+}
+
+function log(value)
+{
+	if (!is_string(value)) {
+		value = to_string(value);
+	}
+	else {
+		value = {value};
+	}
+	for (var i=0; i<length(value); i++) {
+		switch (value[i]) {
+			case 32 .. 126, '\n':
+				continue;
+
+			default:
+				value[i] = '?';
+		}
+	}
+	@log(value);
+}
+
+function dump(value)
+{
+	log(to_string(value, true));
+}
+
+/*
+function handle_request(request)
+{
+	var path = request_get_path(request);
+	if (string_search_char(path, '.') == -1) {
+		if (hash_get(request_get_params(request), "disable_polymer", null) == null) {
+			var url = link_with_params(request_get_url(request), {"disable_polymer": "1"});
+			request_set_redirect(request, url);
+			return;
+		}
+	}
+}
+*/
+
+function @parse_initial_data(data)
+{
+	var contents = json_get_object(data, "contents");
+	var renderer = json_get_object(contents, "twoColumnBrowseResultsRenderer");
+	var tabs = json_get_array(renderer, "tabs");
+	var videos = [];
+	//log({"num_tabs=", json_length(tabs)});
+	for (var i=0; i<json_length(tabs); i++) {
+		var tab = json_get_object(tabs, i);
+		var renderer2 = json_get_object(tab, "tabRenderer");
+		var content = json_get_object(renderer2, "content");
+		var renderer3 = json_get_object(content, "richGridRenderer");
+		var contents2 = json_get_array(renderer3, "contents");
+		parse_contents(contents2, videos);
+	}
+	return videos;
+}
+
+function @parse_contents(data, videos)
+{
+	for (var i=0; i<json_length(data); i++) {
+		var content = json_get_object(data, i);
+		//log({"keys=", json_get_keys(content)});
+		var item = json_get_object(content, "richItemRenderer");
+		if (item) {
+			parse_item_renderer(item, videos);
+		}
+		var section = json_get_object(content, "richSectionRenderer");
+		if (section) {
+			parse_section_renderer(section, videos);
+		}
+	}
+}
+
+function @parse_item_renderer(data, videos)
+{
+	var content = json_get_object(data, "content");
+	var renderer = json_get_object(content, "videoRenderer");
+	parse_video(renderer, videos);
+}
+
+function @parse_section_renderer(data, videos)
+{
+	var content = json_get_object(data, "content");
+	var renderer = json_get_object(content, "richShelfRenderer");
+	var title = json_get_string(json_get_object(json_get_array(json_get_object(renderer, "title"), "runs"), 0), "text");
+	var contents = json_get_array(renderer, "contents");
+	parse_contents(contents, videos);
+}
+
+function @parse_video(data, videos)
+{
+	var video_id = json_get_string(data, "videoId");
+	var title = json_get_string(json_get_object(json_get_array(json_get_object(data, "title"), "runs"), 0), "text");
+	var thumbnail = json_get_string(json_get_object(json_get_array(json_get_object(data, "thumbnail"), "thumbnails"), 0), "url");
+	if (video_id && title && thumbnail) {
+		videos[] = {
+			"id": video_id,
+			"title": title,
+			"thumbnail": thumbnail
+		};
+	}
+}
+
+function adjust_title_page(request, document)
+{
+	var videos = null;
+
+	var scripts = element_query_all(document, "script");
+	for (var i=0; i<length(scripts); i++) {
+		var script = scripts[i];
+		var code = element_extract_text(script);
+		var short_code = length(code) > 100? array_extract(code, 0, 100) : code;
+		//log({"script=", short_code});
+		
+		var idx = string_search_string(short_code, "window[\"ytInitialData\"] = ");
+		if (idx != -1) {
+			idx += length("window[\"ytInitialData\"] = ");
+			var idx2 = string_search_string(code, "window[\"ytInitialPlayerResponse\"]", length(code)-1000);
+			if (idx2 != -1) {
+				idx2 = string_rev_search_char(code, ';', length(code)-1000, idx2);
+				if (idx2 != -1) {
+					code = string_substring(code, idx, idx2);
+					var data = json_parse(code);
+					videos = parse_initial_data(data);
+					//show_json(element_query(document, "#search-container"), data);
+				}
+			}
+		}
+	}
+
+	var tpl = template_create("site/com/yo/youtube.com/title.tpl");
+	template_set(tpl, "data", html_escape(to_string(videos, true)));
+	
+	template_begin(tpl, "videos");
+	for (var i=0; i<length(videos); i++) {
+		var video = videos[i];
+		template_set(tpl, "id", video{"id"});
+		template_set(tpl, "url", {"https://www.youtube.com/watch?v=", video{"id"}});
+		template_set(tpl, "title", html_escape(video{"title"}));
+		template_set(tpl, "thumbnail", video{"thumbnail"});
+		template_next_record(tpl);
+	}
+	template_end(tpl);
+
+	request_replace_document(request, document_parse(template_process(tpl)));
+}
+
+function adjust_document(request, document)
+{
+	var path = request_get_path(request);
+	if (path == "/") {
+		adjust_title_page(request, document);
+	}
+}

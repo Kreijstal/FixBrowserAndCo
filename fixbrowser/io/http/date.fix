@@ -1,0 +1,326 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/string";
+import "util/date";
+
+const {
+	HTTP_DATE_day_of_week = DATE_SIZE,
+	HTTP_DATE_zone,
+	@HTTP_DATE_SIZE
+};
+
+function parse_http_date(s)
+{
+	var date = object_create(HTTP_DATE_SIZE);
+	var off = 0;
+
+	while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+		off++;
+	}
+
+	if (off+3 > length(s)) {
+		return 0, error("invalid date format");
+	}
+
+	var c1 = s[off+0];
+	var c2 = s[off+1];
+	var c3 = s[off+2];
+	switch (c1) {
+		case 'M':
+			if (c2 == 'o' && c3 == 'n') { date->HTTP_DATE_day_of_week = 1; break; }
+			break;
+
+		case 'T':
+			if (c2 == 'u' && c3 == 'e') { date->HTTP_DATE_day_of_week = 2; break; }
+			if (c2 == 'h' && c3 == 'u') { date->HTTP_DATE_day_of_week = 4; break; }
+			break;
+
+		case 'W':
+			if (c2 == 'e' && c3 == 'd') date->HTTP_DATE_day_of_week = 3; break;
+			break;
+
+		case 'F':
+			if (c2 == 'r' && c3 == 'i') date->HTTP_DATE_day_of_week = 5; break;
+			break;
+
+		case 'S':
+			if (c2 == 'a' && c3 == 't') { date->HTTP_DATE_day_of_week = 6; break; }
+			if (c2 == 'u' && c3 == 'n') { date->HTTP_DATE_day_of_week = 7; break; }
+			break;
+	}
+
+	if (date->HTTP_DATE_day_of_week) {
+		off += 3;
+
+		while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+			off++;
+		}
+
+		if (off >= length(s) || s[off] != ',') {
+			return 0, error("invalid date format");
+		}
+		off++;
+
+		while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+			off++;
+		}
+	}
+
+	if (off+2 > length(s)) {
+		return 0, error("invalid date format");
+	}
+	c1 = s[off+0];
+	c2 = s[off+1];
+	if (c1 < '0' || c1 > '9') {
+		return 0, error("invalid date format");
+	}
+	
+	if (c2 >= '0' && c2 <= '9') {
+		off += 2;
+		date->DATE_day = (c1-'0')*10 + (c2-'0');
+	}
+	else {
+		off++;
+		date->DATE_day = (c1-'0');
+	}
+
+	if (off >= length(s) || (s[off] != ' ' && s[off] != '\t')) {
+		return 0, error("invalid date format");
+	}
+
+	while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+		off++;
+	}
+
+	if (off+3 > length(s)) {
+		return 0, error("invalid date format");
+	}
+
+	c1 = s[off+0];
+	c2 = s[off+1];
+	c3 = s[off+2];
+	switch (c1) {
+		case 'J':
+			if (c2 == 'a' && c3 == 'n') { date->DATE_month = 1; break; }
+			if (c2 == 'u' && c3 == 'n') { date->DATE_month = 6; break; }
+			if (c2 == 'u' && c3 == 'l') { date->DATE_month = 7; break; }
+			break;
+		case 'F':
+			if (c2 == 'e' && c3 == 'b') { date->DATE_month = 2; break; }
+			break;
+		case 'M':
+			if (c2 == 'a' && c3 == 'r') { date->DATE_month = 3; break; }
+			if (c2 == 'a' && c3 == 'y') { date->DATE_month = 5; break; }
+			break;
+		case 'A':
+			if (c2 == 'p' && c3 == 'r') { date->DATE_month = 4; break; }
+			if (c2 == 'u' && c3 == 'g') { date->DATE_month = 8; break; }
+			break;
+		case 'S':
+			if (c2 == 'e' && c3 == 'p') { date->DATE_month = 9; break; }
+			break;
+		case 'O':
+			if (c2 == 'c' && c3 == 't') { date->DATE_month = 10; break; }
+			break;
+		case 'N':
+			if (c2 == 'o' && c3 == 'v') { date->DATE_month = 11; break; }
+			break;
+		case 'D':
+			if (c2 == 'e' && c3 == 'c') { date->DATE_month = 12; break; }
+			break;
+	}
+
+	if (!date->DATE_month) {
+		return 0, error("invalid date format");
+	}
+	off += 3;
+
+	while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+		off++;
+	}
+
+	if (off+4 > length(s)) {
+		return 0, error("invalid date format");
+	}
+
+	for (var i=0; i<4; i++) {
+		var c = s[off++];
+		if (c < '0' || c > '9') {
+			return 0, error("invalid date format");
+		}
+		date->DATE_year = date->DATE_year * 10 + (c - '0');
+	}
+
+	while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+		off++;
+	}
+
+	if (off+5 > length(s)) {
+		return 0, error("invalid date format");
+	}
+
+	c1 = s[off+0];
+	c2 = s[off+1];
+	c3 = s[off+2];
+	if (c1 < '0' || c1 > '9' || c2 < '0' || c2 > '9' || c3 != ':') {
+		return 0, error("invalid date format");
+	}
+	date->DATE_hour = (c1-'0')*10 + (c2-'0');
+
+	c1 = s[off+3];
+	c2 = s[off+4];
+	if (c1 < '0' || c1 > '9' || c2 < '0' || c2 > '9') {
+		return 0, error("invalid date format");
+	}
+	date->DATE_minute = (c1-'0')*10 + (c2-'0');
+
+	off += 5;
+
+	if (off < length(s) && s[off] == ':') {
+		if (off+3 > length(s)) {
+			return 0, error("invalid date format");
+		}
+
+		c1 = s[off+1];
+		c2 = s[off+2];
+		if (c1 < '0' || c1 > '9' || c2 < '0' || c2 > '9') {
+			return 0, error("invalid date format");
+		}
+		date->DATE_second = (c1-'0')*10 + (c2-'0');
+
+		off += 3;
+	}
+
+	while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+		off++;
+	}
+
+	if (off+1 > length(s)) {
+		return 0, error("invalid date format");
+	}
+
+	if (s[off] == '+' || s[off] == '-') {
+		if (off+5 > length(s)) {
+			return 0, error("invalid date format");
+		}
+		for (var i=1; i<5; i++) {
+			if (s[off+i] < '0' || s[off+i] > '9') {
+				return 0, error("invalid date format");
+			}
+		}
+		date->HTTP_DATE_zone = array_extract(s, off, 5);
+
+		off += 5;
+	}
+	else {
+		var start = off;
+		c1 = s[off];
+		c2 = off+1 < length(s)? s[off+1] : -1;
+		c3 = off+2 < length(s)? s[off+2] : -1;
+		switch (c1) {
+			case 'U':
+				if (c2 == 'T' && c3 == -1) { off += 2; break; }
+				break;
+			case 'G':
+				if (c2 == 'M' && c3 == 'T') { off += 3; break; }
+				break;
+			case 'E', 'C', 'M', 'P':
+				if (c2 == 'S' && c3 == 'T') { off += 3; break; }
+				if (c2 == 'D' && c3 == 'T') { off += 3; break; }
+				break;
+		}
+
+		if (off == start) {
+			return 0, error("invalid date format");
+		}
+		date->HTTP_DATE_zone = array_extract(s, start, off - start);
+	}
+
+	while (off < length(s) && (s[off] == ' ' || s[off] == '\t')) {
+		off++;
+	}
+
+	if (off != length(s)) {
+		return 0, error("invalid date format");
+	}
+
+	return date;
+}
+
+function http_date_to_string(date)
+{
+	var s;
+	switch (date->HTTP_DATE_day_of_week) {
+		case 0: s = {""}; break;
+		case 1: s = {"Mon, "}; break;
+		case 2: s = {"Tue, "}; break;
+		case 3: s = {"Wed, "}; break;
+		case 4: s = {"Thu, "}; break;
+		case 5: s = {"Fri, "}; break;
+		case 6: s = {"Sat, "}; break;
+		case 7: s = {"Sun, "}; break;
+		default: return 0, error("invalid date");
+	}
+	string_append(s, {date->DATE_day, " "});
+	switch (date->DATE_month) {
+		case 1: string_append(s, "Jan"); break;
+		case 2: string_append(s, "Feb"); break;
+		case 3: string_append(s, "Mar"); break;
+		case 4: string_append(s, "Apr"); break;
+		case 5: string_append(s, "May"); break;
+		case 6: string_append(s, "Jun"); break;
+		case 7: string_append(s, "Jul"); break;
+		case 8: string_append(s, "Aug"); break;
+		case 9: string_append(s, "Sep"); break;
+		case 10: string_append(s, "Oct"); break;
+		case 11: string_append(s, "Nov"); break;
+		case 12: string_append(s, "Dec"); break;
+		default: return 0, error("invalid date");
+	}
+	s[] = ' ';
+	string_append(s, string_pad_left({date->DATE_year}, 4, '0'));
+	s[] = ' ';
+	string_append(s, string_pad_left({date->DATE_hour}, 2, '0'));
+	s[] = ':';
+	string_append(s, string_pad_left({date->DATE_minute}, 2, '0'));
+	s[] = ':';
+	string_append(s, string_pad_left({date->DATE_second}, 2, '0'));
+	s[] = ' ';
+	string_append(s, date->HTTP_DATE_zone);
+	return s;
+}
+
+function http_date_compare(date1, date2)
+{
+	if (date1->HTTP_DATE_zone != date2->HTTP_DATE_zone) {
+		return 0, error("different timezones");
+	}
+
+	return date_compare(date1, date2);
+}
+
+function test_http_date()
+{
+	var date = parse_http_date("Wed, 28 Nov 2018 04:31:17 GMT");
+	dump(date);
+	log(http_date_to_string(date));
+}

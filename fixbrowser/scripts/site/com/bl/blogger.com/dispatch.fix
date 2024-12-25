@@ -1,0 +1,7 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	request_add_same_domain(request, "blogger.com");
+	request_add_same_domain(request, "blogspot.com");
+}

@@ -1,0 +1,934 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/http/url";
+import "browser/html/element";
+import "browser/css/css";
+import "browser/css/stylesheet";
+import "browser/css/property";
+import "browser/css/value";
+import "proxy/css/whitelist";
+import "util/string";
+
+const {
+	@WL_url_rewrite_func,
+	@WL_url_rewrite_data,
+	@WL_doc_url,
+	@WL_base_url,
+	@WL_image_domains,
+	@WL_unknown_types,
+	@WL_unknown_attrs,
+	@WL_needs_iframe_polyfill,
+	@WL_cached_colors,
+	@WL_SIZE
+};
+
+var @allowed_tags;
+
+function @rewrite_url(wl, value, direct_link)
+{
+	value = string_trim(value);
+	if (wl->WL_base_url) {
+		var url = url_create(value);
+		if (url_is_relative(url)) {
+			value = url_to_string(url_merge(wl->WL_base_url, url));
+		}
+	}
+	return wl->WL_url_rewrite_func(wl->WL_url_rewrite_data, value, direct_link);
+}
+
+function whitelist_document(doc, doc_url, url_rewrite_func, url_rewrite_data, image_domains)
+{
+	var wl = object_create(WL_SIZE);
+	wl->WL_url_rewrite_func = url_rewrite_func;
+	wl->WL_url_rewrite_data = url_rewrite_data;
+	wl->WL_doc_url = doc_url;
+	wl->WL_image_domains = image_domains;
+	wl->WL_unknown_types = {};
+	wl->WL_unknown_attrs = {};
+
+	init_allowed_tags();
+
+	if (element_get_type(doc) != "#document") return 0, error("invalid document");
+	remove_non_tags(doc);
+	if (element_get_children_count(doc) != 1) return 0, error("invalid document");
+
+	var html = element_get_first_child_tag(doc);
+	if (element_get_type(html) != "html") return 0, error("invalid document");
+
+	remove_non_tags(html);
+	if (element_get_children_count(html) != 2) return 0, error("invalid document");
+
+	var head = element_get_first_child(html);
+	var body = element_get_next(head);
+	if (element_get_type(head) != "head") return 0, error("invalid document");
+	if (element_get_type(body) != "body") return 0, error("invalid document");
+
+	element_set_attrs(html, null);
+	element_set_attrs(head, null);
+
+	whitelist_head(wl, head);
+	whitelist_body(wl, body);
+
+	if (wl->WL_needs_iframe_polyfill) {
+		var polyfill = {"\n", resource_get("polyfill_iframe.js")};
+		var script = element_create("script");
+		element_set_attr(script, "type", "text/javascript");
+		var text = element_create("#text", polyfill);
+		element_set_text_noescape(text);
+		element_append_child(script, text);
+		element_append_child(head, script);
+	}
+
+	sanitize_unicode(doc);
+}
+
+function @whitelist_style(wl, e)
+{
+	remove_tags(e);
+	if (element_get_children_count(e) == 1) {
+		var text = element_get_first_child(e);
+		if (element_get_type(text) == "#text") {
+			var s = element_get_data(text);
+			var (sheet, err) = css_parse(s, null);
+			if (!err) {
+				whitelist_stylesheet(sheet, rewrite_url#3, wl);
+				element_set_data(text, stylesheet_to_string(sheet));
+				element_set_text_noescape(text);
+				element_set_attrs(e, null);
+				return true;
+			}
+			log({"error during parsing CSS:\n", to_string(err, true)});
+		}
+	}
+	return false;
+}
+
+function @whitelist_head(wl, head)
+{
+	for (var e = element_get_first_child(head), next; e; e = next) {
+		next = element_get_next(e);
+
+		var type = element_get_type(e);
+
+		if (type == "title") {
+			remove_tags(e);
+			element_set_attrs(e, null);
+			if (element_get_children_count(e) == 1) {
+				var text = element_get_first_child(e);
+				if (element_get_type(text) == "#text") {
+					var s = string_trim(element_get_data(text));
+					if (length(s) > 0) {
+						element_set_data(text, s);
+						continue;
+					}
+				}
+			}
+		}
+
+		if (type == "style") {
+			if (whitelist_style(wl, e)) {
+				continue;
+			}
+		}
+		
+		if (type == "link") {
+			var rel = element_get_attr(e, "rel");
+			if (rel && string_to_lower_case(rel) == "stylesheet") {
+				var link_type = element_get_attr(e, "type");
+				var media = element_get_attr(e, "media");
+				if ((!link_type || link_type == "text/css")) {
+					var media_allowed = true;
+					if (media && length(string_trim(media)) > 0) {
+						media = css_parse_media_query(media);
+						media_allowed = media? whitelist_media_query(media) : false;
+					}
+					
+					var href = element_get_attr(e, "href");
+					if (href && media_allowed) {
+						href = rewrite_url(wl, href, false);
+						remove_children(e);
+						element_set_attrs(e, {"rel": "stylesheet", "type": "text/css", "href": href});
+						continue;
+					}
+				}
+			}
+		}
+		
+		if (type == "noscript") {
+			for (var e2 = element_get_first_child(e), next2; e2; e2 = next2) {
+				next2 = element_get_next(e2);
+				element_remove_child(e, e2);
+				element_insert_after(head, e2, e);
+			}
+			next = element_get_next(e);
+			element_remove_child(head, e);
+			continue;
+		}
+
+		if (type == "base") {
+			var href = element_get_attr(e, "href");
+			if (href && !wl->WL_base_url) {
+				wl->WL_base_url = url_create(href);
+				if (url_is_relative(wl->WL_base_url)) {
+					wl->WL_base_url = url_merge(wl->WL_doc_url, wl->WL_base_url);
+				}
+			}
+		}
+
+		if (type != "#text" && type != "#text-noescape") {
+			element_remove_child(head, e);
+		}
+	}
+}
+
+function @remove_tags(elem)
+{
+	for (var e = element_get_first_child(elem), next; e; e = next) {
+		next = element_get_next(e);
+
+		if (element_get_type(e)[0] != '#') {
+			element_remove_child(elem, e);
+		}
+	}
+}
+
+function @remove_non_tags(elem)
+{
+	for (var e = element_get_first_child(elem), next; e; e = next) {
+		next = element_get_next(e);
+
+		if (element_get_type(e)[0] == '#') {
+			element_remove_child(elem, e);
+		}
+	}
+}
+
+function @remove_children(elem)
+{
+	for (var e = element_get_first_child(elem), next; e; e = next) {
+		next = element_get_next(e);
+		element_remove_child(elem, e);
+	}
+}
+
+function @get_outside_img_domain(src)
+{
+	var domain = url_create(string_substring(src, 9))->URL_host;
+	return domain;
+}
+
+function @has_img_domain(wl, domain)
+{
+	var image_domains = wl->WL_image_domains;
+	if (image_domains) {
+		for (var i=0; i<length(image_domains); i++) {
+			if (image_domains[i] == domain) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+function @create_img_links(wl, domain)
+{
+	var s = {""};
+	
+	var image_domains = wl->WL_image_domains;
+	if (image_domains) {
+		for (var i=0; i<length(image_domains); i++) {
+			string_append(s, "/img/");
+			string_append(s, image_domains[i]);
+		}
+	}
+
+	string_append(s, "/img/");
+	string_append(s, domain);
+	s[] = '/';
+	string_append(s, url_to_string(wl->WL_doc_url));
+	return s;
+}
+
+function @whitelist_body(wl, elem)
+{
+	var type = element_get_type(elem);
+
+	if (type == "#text") {
+		return element_get_next(elem);
+	}
+
+	if (type[0] == '#' || type == "script") {
+		var parent = element_get_parent(elem);
+		var next = element_get_next(elem);
+		element_remove_child(parent, elem);
+		return next;
+	}
+
+	if (type == "style") {
+		if (whitelist_style(wl, elem)) {
+			return element_get_next(elem);
+		}
+	}
+
+	if (type == "link") {
+		var rel = element_get_attr(elem, "rel");
+		if (rel == "stylesheet") {
+			var link_type = element_get_attr(elem, "type");
+			var media = element_get_attr(elem, "media");
+			if ((!link_type || link_type == "text/css")) {
+				var media_allowed = true;
+				if (media) {
+					media = css_parse_media_query(media);
+					media_allowed = media? whitelist_media_query(media) : false;
+				}
+				
+				var href = element_get_attr(elem, "href");
+				if (href && media_allowed) {
+					href = rewrite_url(wl, href, false);
+					remove_children(elem);
+					element_set_attrs(elem, {"rel": "stylesheet", "type": "text/css", "href": href});
+					return element_get_next(elem);
+				}
+			}
+		}
+	}
+
+	var allowed_attrs = hash_get(allowed_tags, type, null);
+
+	if (!allowed_attrs) {
+		if (!hash_contains(wl->WL_unknown_types, type)) {
+			log({"type=", type});
+			wl->WL_unknown_types{type} = true;
+		}
+		var parent = element_get_parent(elem);
+		var after = elem;
+
+		for (var e = element_get_first_child(elem), next; e; e = next) {
+			next = element_get_next(e);
+			element_remove_child(elem, e);
+			element_insert_after(parent, e, after);
+			after = e;
+		}
+
+		var next = element_get_next(elem);
+		element_remove_child(parent, elem);
+		return next;
+	}
+	
+	var attrs = element_get_attrs(elem);
+	if (attrs) {
+		var new_attrs = null;
+		for (var i=0; i<length(attrs); i++) {
+			var (k, v) = hash_entry(attrs, i);
+			var func = hash_get(allowed_attrs, k, null);
+			var value = func? func(wl, v) : null;
+			if (value != v) {
+				if (!new_attrs) new_attrs = clone(attrs);
+				if (value) {
+					new_attrs{k} = value;
+				}
+				else {
+					var unknown_key = [type, k];
+					if (!hash_contains(wl->WL_unknown_attrs, unknown_key)) {
+						if (!string_starts_with(k, "data-")) {
+							log({"tag=", type, " attr=", k, " value='", v, "'"});
+						}
+						wl->WL_unknown_attrs{unknown_key} = true;
+					}
+					hash_remove(new_attrs, k);
+				}
+			}
+		}
+		if (new_attrs) {
+			element_set_attrs(elem, new_attrs);
+		}
+	}
+
+	/*
+	if (type == "img") {
+		var src = element_get_attr(elem, "src");
+		if (string_starts_with(src, "/outside/")) {
+			var domain = get_outside_img_domain(src);
+			if (has_img_domain(wl, domain)) {
+				element_set_attr(elem, "src", string_substring(src, 8));
+			}
+			else {
+				var link = element_create("a");
+				element_set_attr(link, "href", create_img_links(wl, domain));
+				element_set_attr(link, "title", {"Load all images from domain ", domain});
+				element_set_attr(link, "style", "display: inline-block; background: #262; color: #FFF; font: 16px sans-serif; padding: 8px 4px; border: 1px solid #222; border-radius: 5px; text-decoration: none; margin: 2px");
+				var text = element_create("#text", "IMG");
+
+				element_append_child(link, text);
+				element_insert_after(element_get_parent(elem), link, elem);
+				remove_children(elem);
+				return element_get_next(link);
+			}
+		}
+	}
+	*/
+
+	if (type == "iframe") {
+		var autoresize = element_get_attr(elem, "autoresize");
+		if (autoresize) {
+			var auto_width, auto_height;
+			if (autoresize == "width") {
+				auto_width = true;
+			}
+			else if (autoresize == "height") {
+				auto_height = true;
+			}
+			else if (autoresize == "both") {
+				auto_width = true;
+				auto_height = true;
+			}
+
+			if (auto_width || auto_height) {
+				element_set_attr(elem, "onload", {"autoResizeIFrame(this, ", auto_width? "true":"false", ", ", auto_height? "true":"false", ");"});
+				wl->WL_needs_iframe_polyfill = true;
+			}
+		}
+	}
+
+	for (var e = element_get_first_child(elem), next; e; e = next) {
+		next = whitelist_body(wl, e);
+	}
+	return element_get_next(elem);
+}
+
+function @sanitize_unicode_value(value)
+{
+	var mod = false;
+	for (var i=0; i<length(value); i++) {
+		switch (value[i]) {
+			case '\r':
+				if (!mod) {
+					value = {value};
+					mod = true;
+				}
+				array_remove(value, i--);
+				continue;
+
+			case '\t', '\n': continue;
+				
+			case 0x20 .. 0x7E: continue;
+			case 0xA1 .. 0xA7, 0xA9 .. 0xAC, 0xAE, 0xB0 .. 0xB3, 0xB5 .. 0xB7, 0xB9 .. 0xFF: continue;
+			case 0x100 .. 0x148, 0x14A .. 0x17F: continue;
+			case 0x180 .. 0x24F: continue;
+			case 0x250 .. 0x2AF: continue;
+
+			case 0xA0: continue; // &nbsp;
+			case 0x2014: continue; // long dash
+			case 0x201C, 0x201D: continue; // quotes
+			case 0x2022: continue; // bullet
+
+			case 0x2018:
+			case 0x2019:
+				if (!mod) {
+					value = {value};
+					mod = true;
+				}
+				value[i] = '\'';
+				continue;
+
+			default: {
+				if (!mod) {
+					value = {value};
+					mod = true;
+				}
+				value[i] = 0xFFFD;
+				continue;
+			}
+		}
+	}
+	return value;
+}
+
+function @sanitize_unicode(elem)
+{
+	var attrs = element_get_attrs(elem);
+	if (attrs) {
+		for (var i=0; i<length(attrs); i++) {
+			var (k, v) = hash_entry(attrs, i);
+			attrs{k} = sanitize_unicode_value(v);
+		}
+	}
+
+	var data = element_get_data(elem);
+	if (data) {
+		element_set_data(elem, sanitize_unicode_value(data));
+	}
+	
+	for (var e = element_get_first_child(elem); e; e = element_get_next(e)) {
+		sanitize_unicode(e);
+	}
+}
+
+function @add_tags(arr, attrs)
+{
+	for (var i=0; i<length(arr); i++) {
+		allowed_tags{arr[i]} = attrs;
+	}
+}
+
+function @add_tags(arr, base, attrs)
+{
+	attrs = merge_attrs(base, attrs);
+	for (var i=0; i<length(arr); i++) {
+		allowed_tags{arr[i]} = attrs;
+	}
+}
+
+function @merge_attrs(base, attrs)
+{
+	var new_attrs = clone(base);
+	for (var i=0; i<length(attrs); i++) {
+		var (k, v) = hash_entry(attrs, i);
+		new_attrs{k} = v;
+	}
+	return new_attrs;
+}
+
+function @handle_id_attr(wl, value)
+{
+	return filter_id_name(value);
+}
+
+function @handle_class_attr(wl, value)
+{
+	var parts = string_split(value, ' ');
+	var s = {""};
+	for (var i=0; i<length(parts); i++) {
+		var part = parts[i];
+		if (length(part) == 0) continue;
+
+		var name = filter_id_name(part);
+		if (!name) return null;
+
+		if (length(s) > 0) s[] = ' ';
+		string_append(s, name);
+	}
+	return s;
+}
+
+function @handle_style_attr(wl, value)
+{
+	var (props, err) = css_parse_inline_style(value);
+	if (err) {
+		log({"error during parsing CSS:\n", to_string(err, true)});
+		return null;
+	}
+	var s = {""};
+	for (var i=0; i<length(props); i++) {
+		if (!whitelist_property(props[i], rewrite_url#3, wl)) continue;
+		if (length(s) > 0) {
+			s[] = ' ';
+		}
+		string_append(s, property_to_string(props[i]));
+	}
+	return s;
+}
+
+function @handle_title_attr(wl, value)
+{
+	return value;
+}
+
+function @handle_anchor_href_attr(wl, value)
+{
+	return rewrite_url(wl, value, true);
+}
+
+function @handle_image_src_attr(wl, value)
+{
+	return rewrite_url(wl, value, false);
+}
+
+function @handle_image_alt_attr(wl, value)
+{
+	return value;
+}
+
+function @handle_form_action_attr(wl, value)
+{
+	return rewrite_url(wl, value, false);
+}
+
+function @handle_form_method_attr(wl, value)
+{
+	var s = string_to_lower_case(value);
+	if (s == "get") return s;
+	if (s == "post") return s;
+	return null;
+}
+
+function @handle_form_type_attr(wl, value)
+{
+	var s = string_to_lower_case(value);
+	if (s == "hidden") return s;
+	if (s == "password") return s;
+	if (s == "checkbox") return s;
+	if (s == "radio") return s;
+	if (s == "submit") return s;
+	if (s == "button") return s;
+	return "text";
+}
+
+function @handle_form_name_attr(wl, value)
+{
+	return value;
+}
+
+function @handle_form_value_attr(wl, value)
+{
+	return value;
+}
+
+function @handle_form_selected_attr(wl, value)
+{
+	return "selected";
+}
+
+function @handle_form_disabled_attr(wl, value)
+{
+	return "disabled";
+}
+
+function @handle_form_checked_attr(wl, value)
+{
+	return "checked";
+}
+
+function @handle_form_placeholder_attr(wl, value)
+{
+	return value;
+}
+
+function @handle_form_multiple_attr(wl, value)
+{
+	return "multiple";
+}
+
+function @handle_form_size_attr(wl, value)
+{
+	return limit_int_range(value, 1, 100);
+}
+
+function @handle_form_label_attr(wl, value)
+{
+	return filter_id_name(value);
+}
+
+function @handle_form_rows_attr(wl, value)
+{
+	return limit_int_range(value, 1, 100);
+}
+
+function @handle_form_cols_attr(wl, value)
+{
+	return limit_int_range(value, 1, 100);
+}
+
+function @handle_table_cell_spacing_padding_attr(wl, value)
+{
+	return limit_int_range(value, 0, 20);
+}
+
+function @handle_table_colspan_rowspan_attr(wl, value)
+{
+	return limit_int_range(value, 1, 50);
+}
+
+function @handle_table_nowrap_attr(wl, value)
+{
+	return "nowrap";
+}
+
+function @handle_border_attr(wl, value)
+{
+	return limit_int_range(value, 0, 20);
+}
+
+function @handle_width_height_attr(wl, value)
+{
+	var percent = false;
+	if (length(value) > 0 && value[length(value)-1] == '%') {
+		percent = true;
+		value = string_substring(value, 0, length(value)-1);
+	}
+	var result = limit_int_range(value, 0, percent? 200 : 2000);
+	if (result && percent) {
+		result[] = '%';
+	}
+	return result;
+}
+
+function @handle_align_attr(wl, value)
+{
+	var s = string_to_lower_case(value);
+	if (s == "left") return s;
+	if (s == "right") return s;
+	if (s == "center") return s;
+	if (s == "justify") return s;
+	return null;
+}
+
+function @handle_vertical_align_attr(wl, value)
+{
+	var s = string_to_lower_case(value);
+	if (s == "top") return s;
+	if (s == "middle") return s;
+	if (s == "bottom") return s;
+	if (s == "baseline") return s;
+	return null;
+}
+
+function @handle_iframe_src_attr(wl, value)
+{
+	return rewrite_url(wl, value, false);
+}
+
+function handle_iframe_autoresize_attr(wl, value)
+{
+	var s = string_to_lower_case(value);
+	if (s == "none") return s;
+	if (s == "width") return s;
+	if (s == "height") return s;
+	if (s == "both") return s;
+	return null;
+}
+
+function @handle_iframe_border_attr(wl, value)
+{
+	return limit_int_range(value, 0, 1);
+}
+
+function @handle_color(wl, value)
+{
+	if (!wl->WL_cached_colors) {
+		wl->WL_cached_colors = {};
+	}
+
+	var cached_color = hash_get(wl->WL_cached_colors, value, null);
+	if (cached_color) {
+		return cached_color;
+	}
+	
+	var sheet = css_parse({"* { color: ", value, "; }"}, null);
+	if (length(sheet->SHEET_rules) == 1) {
+		var props = sheet->SHEET_rules[0]->RULE_properties;
+		if (length(props) == 1) {
+			var prop_value = props[0]->PROP_value;
+			if (prop_value->VALUE_type == VALUE_COLOR_RGB) {
+				var color_value = value_to_string(prop_value);
+				wl->WL_cached_colors{value} = color_value;
+				return color_value;
+			}
+		}
+	}
+
+	wl->WL_cached_colors{value} = null;
+	return null;
+}
+
+function @limit_int_range(value, min, max) {
+	var (r, e) = string_parse_int(value);
+	if (e) return null;
+	if (r < min) r = min;
+	if (r > max) r = max;
+	return {r};
+}
+
+function @filter_id_name(value)
+{
+	for (var i=0; i<length(value); i++) {
+		switch (value[i]) {
+			case '0'..'9':
+			case '-', '_', ':', '.':
+				//if (i == 0) return null;
+			case 'A'..'Z':
+			case 'a'..'z':
+				continue;
+			default:
+				return null;
+		}
+	}
+	return value;
+}
+
+function @init_allowed_tags()
+{
+	if (allowed_tags) return;
+
+	var common_attrs = {
+		"id": handle_id_attr#2,
+		"class": handle_class_attr#2,
+		"style": handle_style_attr#2,
+		"title": handle_title_attr#2
+	};
+
+	allowed_tags = {};
+	add_tags(["body"], common_attrs);
+	add_tags(["h1", "h2", "h3", "h4", "h5", "h6"], common_attrs);
+	add_tags(["abbr", "address", "article", "aside", "section", "header", "footer", "nav"], common_attrs);
+	add_tags(["b", "i", "u", "strong", "em", "ins", "del", "s", "sub", "sup", "small"], common_attrs);
+	add_tags(["br", "hr", "wbr"], common_attrs);
+	add_tags(["pre", "code"], common_attrs);
+	add_tags(["p", "div", "span", "blockquote"], common_attrs);
+	add_tags(["ul", "ol", "li"], common_attrs);
+	add_tags(["dl", "dt", "dd"], common_attrs);
+	add_tags(["thead", "tbody", "tfoot"], common_attrs);
+	add_tags(["fieldset", "legend"], common_attrs);
+	add_tags(["details", "summary"], common_attrs);
+	add_tags(["center"], common_attrs);
+
+	add_tags(["a"], common_attrs, {
+		"href": handle_anchor_href_attr#2,
+		"name": handle_id_attr#2
+	});
+
+	add_tags(["img"], common_attrs, {
+		"src": handle_image_src_attr#2,
+		"alt": handle_image_alt_attr#2,
+		"width": handle_width_height_attr#2,
+		"height": handle_width_height_attr#2,
+		"border": handle_border_attr#2
+	});
+
+	add_tags(["form"], common_attrs, {
+		"action": handle_form_action_attr#2,
+		"method": handle_form_method_attr#2
+	});
+	add_tags(["input"], common_attrs, {
+		"type": handle_form_type_attr#2,
+		"name": handle_form_name_attr#2,
+		"value": handle_form_value_attr#2,
+		"checked": handle_form_checked_attr#2,
+		"placeholder": handle_form_placeholder_attr#2
+	});
+	add_tags(["textarea"], common_attrs, {
+		"name": handle_form_name_attr#2,
+		"rows": handle_form_rows_attr#2,
+		"cols": handle_form_cols_attr#2
+	});
+	add_tags(["select"], common_attrs, {
+		"name": handle_form_name_attr#2,
+		"size": handle_form_size_attr#2
+	});
+	add_tags(["option"], common_attrs, {
+		"value": handle_form_value_attr#2,
+		"selected": handle_form_selected_attr#2,
+		"disabled": handle_form_disabled_attr#2,
+		"multiple": handle_form_multiple_attr#2
+	});
+	add_tags(["optgroup"], common_attrs, {
+		"disabled": handle_form_disabled_attr#2,
+		"label": handle_form_label_attr#2
+	});
+
+	add_tags(["table"], common_attrs, {
+		"border": handle_border_attr#2,
+		"cellspacing": handle_table_cell_spacing_padding_attr#2,
+		"cellpadding": handle_table_cell_spacing_padding_attr#2,
+		"width": handle_width_height_attr#2,
+		"height": handle_width_height_attr#2,
+		"align": handle_align_attr#2,
+		"bgcolor": handle_color#2
+	});
+	add_tags(["tr"], common_attrs, {
+		"align": handle_align_attr#2,
+		"valign": handle_vertical_align_attr#2,
+		"bgcolor": handle_color#2
+	});
+	add_tags(["td", "th"], common_attrs, {
+		"width": handle_width_height_attr#2,
+		"height": handle_width_height_attr#2,
+		"align": handle_align_attr#2,
+		"valign": handle_vertical_align_attr#2,
+		"colspan": handle_table_colspan_rowspan_attr#2,
+		"rowspan": handle_table_colspan_rowspan_attr#2,
+		"nowrap": handle_table_nowrap_attr#2,
+		"bgcolor": handle_color#2
+	});
+
+	add_tags(["label"], common_attrs, {
+		"for": handle_id_attr#2
+	});
+
+	add_tags(["iframe"], common_attrs, {
+		"src": handle_iframe_src_attr#2,
+		"autoresize": handle_iframe_autoresize_attr#2,
+		"width": handle_width_height_attr#2,
+		"height": handle_width_height_attr#2,
+		"frameborder": handle_iframe_border_attr#2
+	});
+	/*
+	html_elem_types{"area"} = true;
+	html_elem_types{"audio"} = true;
+	html_elem_types{"base"} = true;
+	html_elem_types{"bdi"} = true;
+	html_elem_types{"bdo"} = true;
+	html_elem_types{"button"} = true;
+	html_elem_types{"canvas"} = true;
+	html_elem_types{"caption"} = true;
+	html_elem_types{"cite"} = true;
+	html_elem_types{"col"} = true;
+	html_elem_types{"colgroup"} = true;
+	html_elem_types{"data"} = true;
+	html_elem_types{"datalist"} = true;
+	html_elem_types{"dfn"} = true;
+	html_elem_types{"dialog"} = true;
+	html_elem_types{"embed"} = true;
+	html_elem_types{"figcaption"} = true;
+	html_elem_types{"figure"} = true;
+	html_elem_types{"kbd"} = true;
+	html_elem_types{"label"} = true;
+	html_elem_types{"link"} = true;
+	html_elem_types{"main"} = true;
+	html_elem_types{"map"} = true;
+	html_elem_types{"mark"} = true;
+	html_elem_types{"meta"} = true;
+	html_elem_types{"meter"} = true;
+	html_elem_types{"noscript"} = true;
+	html_elem_types{"object"} = true;
+	html_elem_types{"output"} = true;
+	html_elem_types{"param"} = true;
+	html_elem_types{"picture"} = true;
+	html_elem_types{"progress"} = true;
+	html_elem_types{"q"} = true;
+	html_elem_types{"rb"} = true;
+	html_elem_types{"rp"} = true;
+	html_elem_types{"rt"} = true;
+	html_elem_types{"rtc"} = true;
+	html_elem_types{"ruby"} = true;
+	html_elem_types{"samp"} = true;
+	html_elem_types{"script"} = true;
+	html_elem_types{"source"} = true;
+	html_elem_types{"style"} = true;
+	html_elem_types{"template"} = true;
+	html_elem_types{"time"} = true;
+	html_elem_types{"title"} = true;
+	html_elem_types{"track"} = true;
+	html_elem_types{"var"} = true;
+	html_elem_types{"video"} = true;
+	*/
+}

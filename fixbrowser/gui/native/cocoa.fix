@@ -1,0 +1,156 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "gui/view";
+
+const {
+	BS_PUSH                = 1,  // NSBezelStyleRounded
+	BS_GRADIENT            = 10, // NSBezelStyleSmallSquare
+	BS_ROUNDED_RECT        = 12, // NSBezelStyleRoundRect
+	BS_ROUNDED_TEXTURED    = 11, // NSBezelStyleTexturedRounded
+	BS_TEXTURED            = 8,  // NSBezelStyleTexturedSquare
+	BS_RECESSED            = 13, // NSBezelStyleRecessed
+	BS_DISCLOSURE_TRIANGLE = 5,  // NSBezelStyleDisclosure
+	BS_SQUARE              = 6,  // NSBezelStyleShadowlessSquare
+	BS_HELP                = 9,  // NSBezelStyleHelpButton
+	BS_DISCLOSURE          = 14, // NSBezelStyleRoundedDisclosure
+	BS_ROUND               = 7,  // NSBezelStyleCircular
+	BS_BEVEL               = 2,  // NSBezelStyleRegularSquare
+	BS_INLINE              = 15  // NSBezelStyleInline (10.7+)
+};
+
+const {
+   CS_REGULAR = 0, // NSControlSizeRegular
+   CS_SMALL   = 1, // NSControlSizeSmall
+   CS_MINI    = 2  // NSControlSizeMini
+};
+
+class Cocoa
+{
+	static function is_present(): Boolean
+	{
+		var (r, e) = @cocoa_is_present();
+		if (e) return false;
+		return r;
+	}
+
+	static function set_bezel_style(button: Button, style: Integer)
+	{
+		var (r, e) = @cocoa_set_bezel_style(button, style);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_control_size(control: View, size: Integer)
+	{
+		var (r, e) = @cocoa_set_control_size(control, size);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_about_handler(callback, data)
+	{
+		var (r, e) = @cocoa_set_about_handler(callback, data);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_preferences_handler(callback, data)
+	{
+		var (r, e) = @cocoa_set_preferences_handler(callback, data);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_menubar(menu: Menu)
+	{
+		var (r, e) = @cocoa_set_menubar(menu);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function create_notify_icon_with_template(name: String): NotifyIcon
+	{
+		return @cocoa_create_notify_icon_with_template(name);
+	}
+
+	static function set_notify_icon_color(icon: NotifyIcon, enable: Boolean)
+	{
+		var (r, e) = @cocoa_set_notify_icon_color(icon, enable);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_notify_icon_text(icon: NotifyIcon, text: String)
+	{
+		set_notify_icon_text(icon, text, 0.0);
+	}
+
+	static function set_notify_icon_text(icon: NotifyIcon, text: String, size: Float)
+	{
+		var (r, e) = @cocoa_set_notify_icon_text(icon, text, size);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_text_color(area: TextArea, from: Integer, to: Integer, background: Integer, foreground: Integer)
+	{
+		var (r, e) = @cocoa_set_text_color(area, from, to, background, foreground);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function create_search_field(): TextField
+	{
+		var (r, e) = @cocoa_create_search_field();
+		if (!is_available(e)) {
+			return TextField::create();
+		}
+		return r;
+	}
+
+	static function show_file_preview(table: Table, path: String)
+	{
+		var (r, e) = @cocoa_show_file_preview(table, path);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+}
+
+function @is_available(e): Boolean
+{
+	if (e) {
+		if (is_string(e)) return false;
+		throw e;
+	}
+	return true;
+}

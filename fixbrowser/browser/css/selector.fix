@@ -1,0 +1,825 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/css/parser";
+import "util/string";
+
+const @class_Selector = "static=create_combinator#3:create_type#2";
+const @field_Selector_type = "Integer";
+const @field_Selector_elem_namespace = "String";
+const @field_Selector_elem_name = "String";
+const @field_Selector_id_name = "String";
+const @field_Selector_class_name = "String";
+const @field_Selector_attrib_namespace = "String";
+const @field_Selector_attrib_name = "String";
+const @field_Selector_attrib_value = "String";
+const @field_Selector_pseudo_name = "String";
+const @field_Selector_func_name = "String";
+const @field_Selector_func_expr = "Dynamic";
+const @field_Selector_not_selector = "Selector";
+const @field_Selector_selectors = "Selector[]";
+const @field_Selector_first = "Selector";
+const @field_Selector_second = "Selector";
+
+// note: synchronize with native code
+const {
+	SEL_TYPE,
+	SEL_ID,
+	SEL_CLASS,
+	SEL_ATTRIB,
+	SEL_ATTRIB_PREFIX,
+	SEL_ATTRIB_SUFFIX,
+	SEL_ATTRIB_SUBSTRING,
+	SEL_ATTRIB_EXACT,
+	SEL_ATTRIB_INCLUDE,
+	SEL_ATTRIB_DASH,
+	SEL_PSEUDO_ELEMENT,
+	SEL_PSEUDO_CLASS,
+	SEL_FUNCTION_IDENT,
+	SEL_FUNCTION_STRING,
+	SEL_FUNCTION_ANB,
+	SEL_NOT,
+	SEL_SEQUENCE,
+
+	COMB_DESCENDANT,
+	COMB_CHILD,
+	COMB_NEXT_SIBLING,
+	COMB_SUBSEQUENT_SIBLING
+};
+
+// note: synchronize with native code
+const {
+	SELECTOR_type = 0,
+
+	// type selector:
+	SELECTOR_elem_namespace = 1,
+	SELECTOR_elem_name = 2,
+
+	// id selector:
+	SELECTOR_id_name = 1,
+
+	// class selector:
+	SELECTOR_class_name = 1,
+
+	// attrib selector:
+	SELECTOR_attrib_namespace = 1,
+	SELECTOR_attrib_name = 2,
+	SELECTOR_attrib_value = 3,
+
+	// pseudo selector:
+	SELECTOR_pseudo_name = 1,
+
+	// function selector:
+	SELECTOR_func_name = 1,
+	SELECTOR_func_expr = 2,
+
+	// not selector:
+	SELECTOR_not_selector = 1,
+
+	// selector sequence:
+	SELECTOR_selectors = 1,
+
+	// combinators:
+	SELECTOR_first = 1,
+	SELECTOR_second = 2,
+	
+	@SELECTOR_SIZE = 4
+};
+
+function selector_create_combinator(type, first, second)
+{
+	return create_combinator(type, first, second);
+}
+
+function selector_create_type(namespace, name)
+{
+	var sel = object_create(SELECTOR_SIZE);
+	sel->SELECTOR_type = SEL_TYPE;
+	sel->SELECTOR_elem_namespace = namespace;
+	sel->SELECTOR_elem_name = name;
+	return sel;
+}
+
+function @create_combinator(type, first, second)
+{
+	var sel = object_create(SELECTOR_SIZE);
+	sel->SELECTOR_type = type;
+	sel->SELECTOR_first = first;
+	sel->SELECTOR_second = second;
+	return sel;
+}
+
+function @consume_whitespace(par)
+{
+	var present = false;
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+		present = true;
+	}
+	back_token(par);
+	return present;
+}
+
+function parse_selectors_group(par)
+{
+	var group = [];
+	
+	group[] = parse_selector(par);
+
+	for (;;) {
+		consume_whitespace(par);
+
+		var token = next_token(par);
+		if (token == TOKEN_EOF) break;
+		if (token != TOKEN_COMMA) {
+			return 0, error("syntax error");
+		}
+
+		consume_whitespace(par);
+		group[] = parse_selector(par);
+	}
+
+	return group;
+}
+
+function @parse_selector(par)
+{
+	var selector = parse_simple_selector_sequence(par);
+
+	for (;;) {
+		var ws = consume_whitespace(par);
+
+		var token = next_token(par);
+		if (token == TOKEN_EOF || token == TOKEN_COMMA) {
+			back_token(par);
+			break;
+		}
+
+		if (token == TOKEN_DELIM) {
+			switch (par->TOKEN_value) {
+				case '+':
+					consume_whitespace(par);
+					selector = create_combinator(COMB_NEXT_SIBLING, selector, parse_simple_selector_sequence(par));
+					continue;
+
+				case '>':
+					consume_whitespace(par);
+					selector = create_combinator(COMB_CHILD, selector, parse_simple_selector_sequence(par));
+					continue;
+
+				case '~':
+					consume_whitespace(par);
+					selector = create_combinator(COMB_SUBSEQUENT_SIBLING, selector, parse_simple_selector_sequence(par));
+					continue;
+			}
+		}
+
+		if (ws) {
+			back_token(par);
+			selector = create_combinator(COMB_DESCENDANT, selector, parse_simple_selector_sequence(par));
+			continue;
+		}
+
+		return 0, error("syntax error");
+	}
+
+	return selector;
+}
+
+function @parse_simple_selector_sequence(par)
+{
+	var selectors = [];
+	
+	var sel = parse_type_selector(par);
+	if (sel) selectors[] = sel;
+
+	if (length(selectors) == 0) {
+		sel = parse_additional_selector(par, true);
+		if (!sel) {
+			return 0, error("syntax error");
+		}
+		selectors[] = sel;
+	}
+
+	while ((sel = parse_additional_selector(par, true))) {
+		selectors[] = sel;
+	}
+
+	if (length(selectors) == 1) {
+		return selectors[0];
+	}
+
+	sel = object_create(SELECTOR_SIZE);
+	sel->SELECTOR_type = SEL_SEQUENCE;
+	sel->SELECTOR_selectors = selectors;
+	return sel;
+}
+
+function @parse_type_selector(par)
+{
+	var namespace, name;
+
+	var token = next_token(par);
+	if (token == TOKEN_DELIM && par->TOKEN_value == '|') {
+		back_token(par);
+	}
+	else {
+		if (token == TOKEN_IDENT) {
+			name = par->TOKEN_value;
+		}
+		else if (token == TOKEN_DELIM && par->TOKEN_value == '*') {
+			name = "*";
+		}
+		else {
+			back_token(par);
+			return null;
+		}
+	}
+
+	token = next_token(par);
+	if (token == TOKEN_DELIM && par->TOKEN_value == '|') {
+		namespace = name;
+
+		token = next_token(par);
+		if (token == TOKEN_IDENT) {
+			name = par->TOKEN_value;
+		}
+		else if (token == TOKEN_DELIM && par->TOKEN_value == '*') {
+			name = "*";
+		}
+		else {
+			return 0, error("syntax error");
+		}
+	}
+	else {
+		back_token(par);
+	}
+
+	var sel = object_create(SELECTOR_SIZE);
+	sel->SELECTOR_type = SEL_TYPE;
+	sel->SELECTOR_elem_namespace = namespace? string_to_lower_case(namespace) : null;
+	sel->SELECTOR_elem_name = string_to_lower_case(name);
+	return sel;
+}
+
+function @parse_additional_selector(par, handle_not)
+{
+	var token = next_token(par);
+	if (token == TOKEN_HASH) {
+		var sel = object_create(SELECTOR_SIZE);
+		sel->SELECTOR_type = SEL_ID;
+		sel->SELECTOR_id_name = par->TOKEN_value;
+		return sel;
+	}
+	else if (token == TOKEN_DELIM && par->TOKEN_value == '.') {
+		token = next_token(par);
+		if (token != TOKEN_IDENT) {
+			return 0, error("syntax error");
+		}
+
+		var sel = object_create(SELECTOR_SIZE);
+		sel->SELECTOR_type = SEL_CLASS;
+		sel->SELECTOR_class_name = par->TOKEN_value;
+		return sel;
+	}
+	else if (token == COMPONENT_SIMPLE_BLOCK && par->TOKEN_value->SIMPLEBLOCK_associated_token == TOKEN_SQUARE_LBRACKET) {
+		var block = par->TOKEN_value;
+		rewind_buffer(block);
+
+		consume_whitespace(block);
+
+		var namespace, name;
+
+		token = next_token(block);
+		if (token == TOKEN_DELIM && block->TOKEN_value == '*') {
+			namespace = "*";
+			token = next_token(block);
+			if (token == TOKEN_DELIM && block->TOKEN_value == '|') {
+				token = next_token(block);
+				if (token == TOKEN_IDENT) {
+					name = block->TOKEN_value;
+				}
+				else {
+					return 0, error("syntax error");
+				}
+			}
+			else {
+				return 0, error("syntax error");
+			}
+		}
+		else {
+			if (token == TOKEN_IDENT) {
+				name = block->TOKEN_value;
+
+				token = next_token(block);
+				if (token == TOKEN_DELIM && block->TOKEN_value == '|') {
+					namespace = name;
+					token = next_token(block);
+					if (token != TOKEN_IDENT) {
+						return 0, error("syntax error");
+					}
+					name = block->TOKEN_value;
+				}
+				else {
+					back_token(block);
+				}
+			}
+			else if (token == TOKEN_DELIM && block->TOKEN_value == '|') {
+				token = next_token(block);
+				if (token != TOKEN_IDENT) {
+					return 0, error("syntax error");
+				}
+				name = block->TOKEN_value;
+			}
+			else {
+				return 0, error("syntax error");
+			}
+		}
+
+		consume_whitespace(block);
+		
+		token = next_token(block);
+		if (token == TOKEN_EOF) {
+			var sel = object_create(SELECTOR_SIZE);
+			sel->SELECTOR_type = SEL_ATTRIB;
+			sel->SELECTOR_attrib_namespace = namespace? string_to_lower_case(namespace) : null;
+			sel->SELECTOR_attrib_name = string_to_lower_case(name);
+			return sel;
+		}
+
+		var type = -1;
+		switch (token) {
+			case TOKEN_PREFIX_MATCH: type = SEL_ATTRIB_PREFIX; break;
+			case TOKEN_SUFFIX_MATCH: type = SEL_ATTRIB_SUFFIX; break;
+			case TOKEN_SUBSTRING_MATCH: type = SEL_ATTRIB_SUBSTRING; break;
+
+			case TOKEN_DELIM:
+				if (block->TOKEN_value == '=') {
+					type = SEL_ATTRIB_EXACT;
+				}
+				break;
+				
+			case TOKEN_INCLUDE_MATCH: type = SEL_ATTRIB_INCLUDE; break;
+			case TOKEN_DASH_MATCH: type = SEL_ATTRIB_DASH; break;
+		}
+
+		if (type == -1) {
+			return 0, error("syntax error");
+		}
+
+		consume_whitespace(block);
+
+		var value;
+		token = next_token(block);
+		if (token == TOKEN_IDENT || token == TOKEN_STRING) {
+			value = block->TOKEN_value;
+		}
+		else {
+			return 0, error("syntax error");
+		}
+
+		consume_whitespace(block);
+		token = next_token(block);
+		if (token != TOKEN_EOF) {
+			return 0, error("syntax error");
+		}
+
+		var sel = object_create(SELECTOR_SIZE);
+		sel->SELECTOR_type = type;
+		sel->SELECTOR_attrib_namespace = namespace? string_to_lower_case(namespace) : null;
+		sel->SELECTOR_attrib_name = string_to_lower_case(name);
+		sel->SELECTOR_attrib_value = value;
+		return sel;
+	}
+	else if (token == TOKEN_COLON) {
+		var double = false;
+		token = next_token(par);
+		if (token == TOKEN_COLON) {
+			double = true;
+			token = next_token(par);
+		}
+
+		if (token == TOKEN_IDENT) {
+			var name = par->TOKEN_value;
+			if (!double && is_compat_pseudo_element(name)) {
+				double = true;
+			}
+			var sel = object_create(SELECTOR_SIZE);
+			sel->SELECTOR_type = double? SEL_PSEUDO_ELEMENT : SEL_PSEUDO_CLASS;
+			sel->SELECTOR_pseudo_name = string_to_lower_case(name);
+			return sel;
+		}
+
+		if (double || token != COMPONENT_FUNCTION) {
+			return 0, error("syntax error");
+		}
+
+		var func = par->TOKEN_value;
+		var name = string_to_lower_case(func->FUNCTION_name);
+
+		rewind_buffer(func);
+		consume_whitespace(func);
+
+		if (handle_not && length(name) == 3 && string_to_lower_case(name) == "not") {
+			var not_sel = parse_type_selector(func);
+			if (!not_sel) {
+				not_sel = parse_additional_selector(func, false);
+				if (!not_sel) return 0, error("syntax error");
+			}
+
+			consume_whitespace(func);
+
+			token = next_token(func);
+			if (token != TOKEN_EOF) {
+				return 0, error("syntax error");
+			}
+
+			var sel = object_create(SELECTOR_SIZE);
+			sel->SELECTOR_type = SEL_NOT;
+			sel->SELECTOR_not_selector = not_sel;
+			return sel;
+		}
+
+		var sel = null;
+
+		token = next_token(func);
+
+		if (is_anb_syntax_start(func)) {
+			back_token(func);
+			sel = object_create(SELECTOR_SIZE);
+			sel->SELECTOR_type = SEL_FUNCTION_ANB;
+			sel->SELECTOR_func_name = name;
+			sel->SELECTOR_func_expr = parse_anb_syntax(func);
+		}
+		else if (token == TOKEN_IDENT) {
+			sel = object_create(SELECTOR_SIZE);
+			sel->SELECTOR_type = SEL_FUNCTION_IDENT;
+			sel->SELECTOR_func_name = name;
+			sel->SELECTOR_func_expr = func->TOKEN_value;
+		}
+		else if (token == TOKEN_STRING) {
+			sel = object_create(SELECTOR_SIZE);
+			sel->SELECTOR_type = SEL_FUNCTION_STRING;
+			sel->SELECTOR_func_name = name;
+			sel->SELECTOR_func_expr = func->TOKEN_value;
+		}
+
+		if (!sel) {
+			return 0, error("syntax error");
+		}
+
+		consume_whitespace(func);
+
+		token = next_token(func);
+		if (token != TOKEN_EOF) {
+			return 0, error("syntax error");
+		}
+
+		return sel;
+	}
+
+	back_token(par);
+	return null;
+}
+
+function @is_compat_pseudo_element(name)
+{
+	switch (length(name)) {
+		case 5: if (string_to_lower_case(name) == "after") return true;
+		case 6: if (string_to_lower_case(name) == "before") return true;
+		case 10: if (string_to_lower_case(name) == "first-line") return true;
+		case 12: if (string_to_lower_case(name) == "first-letter") return true;
+	}
+	return false;
+}
+
+function dump_selector_group(group)
+{
+	for (var i=0; i<length(group); i++) {
+		log({"group ", i, ":"});
+		dump_selector(group[i], 1);
+	}
+}
+
+function @str(s)
+{
+	if (!s) return "(none)";
+	return {"'", s, "'"};
+}
+
+function dump_selector(sel, level)
+{
+	var prefix = {""};
+	for (var i=0; i<level; i++) {
+		prefix[] = ' ';
+		prefix[] = ' ';
+	}
+
+	switch (sel->SELECTOR_type) {
+		case SEL_TYPE:
+			log({prefix, "type ns=", str(sel->SELECTOR_elem_namespace), " name=", str(sel->SELECTOR_elem_name)});
+			break;
+
+		case SEL_ID:
+			log({prefix, "id name=", str(sel->SELECTOR_id_name)});
+			break;
+
+		case SEL_CLASS:
+			log({prefix, "class name=", str(sel->SELECTOR_class_name)});
+			break;
+
+		case SEL_ATTRIB:
+			log({prefix, "attrib ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name)});
+			break;
+
+		case SEL_ATTRIB_PREFIX:
+			log({prefix, "attrib prefix ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			break;
+
+		case SEL_ATTRIB_SUFFIX:
+			log({prefix, "attrib suffix ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			break;
+
+		case SEL_ATTRIB_SUBSTRING:
+			log({prefix, "attrib substring ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			break;
+
+		case SEL_ATTRIB_EXACT:
+			log({prefix, "attrib exact ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			break;
+
+		case SEL_ATTRIB_INCLUDE:
+			log({prefix, "attrib include ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			break;
+
+		case SEL_ATTRIB_DASH:
+			log({prefix, "attrib dash ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			break;
+
+		case SEL_PSEUDO_ELEMENT:
+			log({prefix, "pseudo element name=", str(sel->SELECTOR_pseudo_name)});
+			break;
+
+		case SEL_PSEUDO_CLASS:
+			log({prefix, "pseudo class name=", str(sel->SELECTOR_pseudo_name)});
+			break;
+
+		case SEL_FUNCTION_IDENT:
+			log({prefix, "function name=", str(sel->SELECTOR_func_name), " ident=", sel->SELECTOR_func_expr});
+			break;
+
+		case SEL_FUNCTION_STRING:
+			log({prefix, "function name=", str(sel->SELECTOR_func_name), " string=", str(sel->SELECTOR_func_expr)});
+			break;
+
+		case SEL_FUNCTION_ANB:
+			log({prefix, "function name=", str(sel->SELECTOR_func_name), " anb=", serialize_anb_syntax(sel->SELECTOR_func_expr)});
+			break;
+
+		case SEL_NOT:
+			log({prefix, "negation:"});
+			dump_selector(sel->SELECTOR_not_selector, level+1);
+			break;
+
+		case SEL_SEQUENCE:
+			log({prefix, "sequence:"});
+			for (var i=0; i<length(sel->SELECTOR_selectors); i++) {
+				dump_selector(sel->SELECTOR_selectors[i], level+1);
+			}
+			break;
+
+		case COMB_DESCENDANT:
+			log({prefix, "descendant combinator:"});
+			dump_selector(sel->SELECTOR_first, level+1);
+			dump_selector(sel->SELECTOR_second, level+1);
+			break;
+
+		case COMB_CHILD:
+			log({prefix, "child combinator:"});
+			dump_selector(sel->SELECTOR_first, level+1);
+			dump_selector(sel->SELECTOR_second, level+1);
+			break;
+
+		case COMB_NEXT_SIBLING:
+			log({prefix, "next sibling combinator:"});
+			dump_selector(sel->SELECTOR_first, level+1);
+			dump_selector(sel->SELECTOR_second, level+1);
+			break;
+
+		case COMB_SUBSEQUENT_SIBLING:
+			log({prefix, "subsequent sibling combinator:"});
+			dump_selector(sel->SELECTOR_first, level+1);
+			dump_selector(sel->SELECTOR_second, level+1);
+			break;
+
+		default:
+			log({prefix, "unknown selector type ", sel->SELECTOR_type});
+			break;
+	}
+}
+
+function @serialize_selector(s, sel)
+{
+	switch (sel->SELECTOR_type) {
+		case SEL_TYPE:
+			string_append(s, css_serialize_type(sel->SELECTOR_elem_name));
+			break;
+
+		case SEL_ID:
+			s[] = '#';
+			string_append(s, css_escape(sel->SELECTOR_id_name));
+			break;
+
+		case SEL_CLASS:
+			s[] = '.';
+			string_append(s, css_escape(sel->SELECTOR_class_name));
+			break;
+
+		case SEL_ATTRIB:
+		case SEL_ATTRIB_PREFIX:
+		case SEL_ATTRIB_SUFFIX:
+		case SEL_ATTRIB_SUBSTRING:
+		case SEL_ATTRIB_EXACT:
+		case SEL_ATTRIB_INCLUDE:
+		case SEL_ATTRIB_DASH:
+			s[] = '[';
+			if (sel->SELECTOR_attrib_namespace) {
+				string_append(s, css_serialize_namespace(sel->SELECTOR_attrib_namespace));
+				s[] = '|';
+			}
+			string_append(s, css_escape(sel->SELECTOR_attrib_name));
+			if (sel->SELECTOR_type != SEL_ATTRIB) {
+				switch (sel->SELECTOR_type) {
+					case SEL_ATTRIB_PREFIX:    string_append(s, "^="); break;
+					case SEL_ATTRIB_SUFFIX:    string_append(s, "$="); break;
+					case SEL_ATTRIB_SUBSTRING: string_append(s, "*="); break;
+					case SEL_ATTRIB_EXACT:     string_append(s, "="); break;
+					case SEL_ATTRIB_INCLUDE:   string_append(s, "~="); break;
+					case SEL_ATTRIB_DASH:      string_append(s, "|="); break;
+				}
+				string_append(s, css_serialize_string(sel->SELECTOR_attrib_value));
+			}
+			s[] = ']';
+			break;
+
+		case SEL_PSEUDO_ELEMENT:
+			s[] = ':';
+			if (!is_compat_pseudo_element(sel->SELECTOR_pseudo_name)) {
+				s[] = ':';
+			}
+			string_append(s, css_escape(sel->SELECTOR_pseudo_name));
+			break;
+
+		case SEL_PSEUDO_CLASS:
+			s[] = ':';
+			string_append(s, css_escape(sel->SELECTOR_pseudo_name));
+			break;
+
+		case SEL_FUNCTION_IDENT:
+			s[] = ':';
+			string_append(s, css_escape(sel->SELECTOR_func_name));
+			s[] = '(';
+			string_append(s, css_escape(sel->SELECTOR_func_expr));
+			s[] = ')';
+			break;
+
+		case SEL_FUNCTION_STRING:
+			s[] = ':';
+			string_append(s, css_escape(sel->SELECTOR_func_name));
+			s[] = '(';
+			string_append(s, css_serialize_string(sel->SELECTOR_func_expr));
+			s[] = ')';
+			break;
+
+		case SEL_FUNCTION_ANB:
+			s[] = ':';
+			string_append(s, css_escape(sel->SELECTOR_func_name));
+			s[] = '(';
+			string_append(s, serialize_anb_syntax(sel->SELECTOR_func_expr));
+			s[] = ')';
+			break;
+
+		case SEL_NOT:
+			string_append(s, ":not(");
+			serialize_selector(s, sel->SELECTOR_not_selector);
+			s[] = ')';
+			break;
+
+		case SEL_SEQUENCE:
+			for (var i=0; i<length(sel->SELECTOR_selectors); i++) {
+				serialize_selector(s, sel->SELECTOR_selectors[i]);
+			}
+			break;
+
+		case COMB_DESCENDANT:
+			serialize_selector(s, sel->SELECTOR_first);
+			s[] = ' ';
+			serialize_selector(s, sel->SELECTOR_second);
+			break;
+
+		case COMB_CHILD:
+			serialize_selector(s, sel->SELECTOR_first);
+			s[] = ' ';
+			s[] = '>';
+			s[] = ' ';
+			serialize_selector(s, sel->SELECTOR_second);
+			break;
+
+		case COMB_NEXT_SIBLING:
+			serialize_selector(s, sel->SELECTOR_first);
+			s[] = ' ';
+			s[] = '+';
+			s[] = ' ';
+			serialize_selector(s, sel->SELECTOR_second);
+			break;
+
+		case COMB_SUBSEQUENT_SIBLING:
+			serialize_selector(s, sel->SELECTOR_first);
+			s[] = ' ';
+			s[] = '~';
+			s[] = ' ';
+			serialize_selector(s, sel->SELECTOR_second);
+			break;
+
+		default:
+			return 0, error({"unknown selector type ", sel->SELECTOR_type});
+	}
+}
+
+function serialize_selector(sel)
+{
+	var s = {""};
+	serialize_selector(s, sel);
+	return s;
+}
+
+function serialize_selector_group(group)
+{
+	var s = {""};
+	for (var i=0; i<length(group); i++) {
+		if (length(s) > 0) {
+			s[] = ',';
+			s[] = ' ';
+		}
+		serialize_selector(s, group[i]);
+	}
+	return s;
+}
+
+function selector_get_child_count(sel)
+{
+	switch (sel->SELECTOR_type) {
+		case SEL_NOT:
+			return 1;
+			
+		case SEL_SEQUENCE:
+			return length(sel->SELECTOR_selectors);
+
+		case COMB_DESCENDANT:
+		case COMB_CHILD:
+		case COMB_NEXT_SIBLING:
+		case COMB_SUBSEQUENT_SIBLING:
+			return 2;
+	}
+	return 0;
+}
+
+function selector_get_child(sel, idx)
+{
+	switch (sel->SELECTOR_type) {
+		case SEL_NOT:
+			if (idx == 0) return sel->SELECTOR_not_selector;
+			break;
+			
+		case SEL_SEQUENCE:
+			return sel->SELECTOR_selectors[idx];
+
+		case COMB_DESCENDANT:
+		case COMB_CHILD:
+		case COMB_NEXT_SIBLING:
+		case COMB_SUBSEQUENT_SIBLING:
+			if (idx == 0) return sel->SELECTOR_first;
+			if (idx == 1) return sel->SELECTOR_second;
+			break;
+	}
+	return 0, error("invalid child selector index");
+}

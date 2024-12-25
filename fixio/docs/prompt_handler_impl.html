@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/console";</code>
+</p>
+
+<h2>PromptHandlerImpl class</h2>
+
+<p>
+PromptHandlerImpl is used for providing properties used by the prompt implementations. To use
+just cast to it from the <a href="prompt_handler.html">PromptHandler</a> class.
+</p>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>set_done</b>(done: Boolean)</code></dt>
+	<dd>
+		Sets the done flag.
+	</dd>
+	<dt><code>function <b>set_internal_text</b>(text: String)</code></dt>
+	<dd>
+		Sets the current text to the internal value to avoid unneeded copies when the text is not
+		retrieved when handling of an event. The <code>get_text</code> method will create a copy
+		on a first use. The text updated flag is set to false.
+	</dd>
+	<dt><code>function <b>set_text_updated</b>(text_updated: Boolean)</code></dt>
+	<dd>
+		Sets a flag that is used to avoid using the same text between prompts. The prompt implementation
+		sets it to false after the prompt is done and will not use the text as an initial value unless
+		this flag is set. It is automatically set to true when the text is explicitly set using the
+		<code>set_text</code> function.
+	</dd>
+	<dt><code>function <b>is_text_updated</b>(): Boolean</code></dt>
+	<dd>
+		Returns the value of the flag.
+	</dd>
+	<dt><code>function <b>set_choice</b>(choice: Integer)</code></dt>
+	<dd>
+		Sets the choice number.
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,891 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/tls/record";
+import "io/tls/handshake";
+import "io/tls/cert";
+import "io/tls/prf";
+import "io/tls/util";
+import "io/crypto/rsa";
+import "io/crypto/dh";
+import "io/crypto/ecdsa";
+import "io/crypto/hmac";
+import "io/crypto/md5";
+import "io/crypto/sha1";
+import "io/crypto/sha256";
+import "io/crypto/sha512";
+import "math/bigint";
+import "util/array";
+
+const @SESSION_TIMEOUT = 300;
+
+const {
+	@TLS_record,
+	@TLS_hostname,
+	@TLS_port,
+	@TLS_sni_hostname,
+	@TLS_server_version,
+	@TLS_client_random,
+	@TLS_server_random,
+	@TLS_session_id,
+	@TLS_session_resumed,
+	@TLS_certs,
+	@TLS_cipher_suite,
+	@TLS_dh_params,
+	@TLS_master_secret,
+	@TLS_client_write_mac_secret,
+	@TLS_server_write_mac_secret,
+	@TLS_client_write_key,
+	@TLS_server_write_key,
+	@TLS_client_write_iv,
+	@TLS_server_write_iv,
+	@TLS_client_write_seq_lo,
+	@TLS_client_write_seq_hi,
+	@TLS_server_write_seq_lo,
+	@TLS_server_write_seq_hi,
+	@TLS_encrypt_state,
+	@TLS_decrypt_state,
+	@TLS_SIZE
+};
+
+const {
+	@STR_tls = STREAM_SIZE,
+	@STR_read_buf,
+	@STR_read_pos,
+	@STR_SIZE
+};
+
+function tls_create(stream, hostname, port)
+{
+	var tls = object_create(TLS_SIZE);
+	tls->TLS_record = record_create(stream);
+	tls->TLS_hostname = hostname;
+	tls->TLS_sni_hostname = hostname;
+	tls->TLS_port = port;
+	return tls;
+}
+
+function tls_set_sni_hostname(tls, hostname)
+{
+	tls->TLS_sni_hostname = hostname;
+}
+
+function @create_session_key(tls)
+{
+	return ["tls_session", tls->TLS_hostname, tls->TLS_port];
+}
+
+function tls_connect(tls)
+{
+	tls_connect(tls, null, null);
+}
+
+function tls_connect(tls, status_func, status_data)
+{
+	if (status_func) {
+		status_func(status_data, "Connecting using TLS...");
+	}
+	var cipher_suites = [
+		TLS_RSA_WITH_AES_128_GCM_SHA256,
+		TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,
+
+		TLS_RSA_WITH_AES_128_CBC_SHA,
+		TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+		TLS_DHE_RSA_WITH_AES_128_CBC_SHA
+	];
+	
+	var record = tls->TLS_record;
+	var buf = [];
+
+	tls->TLS_client_random = [];
+	append_uint32(tls->TLS_client_random, clock_get_real_time());
+	array_append(tls->TLS_client_random, crypto_random(28));
+
+	var session_id = 0;
+	var session_key = create_session_key(tls);
+	var session_data = global_get(session_key);
+	if (session_data) {
+		session_id = session_data[0];
+		tls->TLS_master_secret = session_data[1];
+	}
+
+	write_client_hello_packet(record, buf, tls->TLS_client_random, session_id, cipher_suites, tls->TLS_sni_hostname);
+	record_flush(record);
+
+	var type = read_handshake_packet(record, buf);
+	if (type != HT_SERVER_HELLO) {
+		return 0, error({"expected server hello packet (got ", type, ")"});
+	}
+
+	var packet = read_server_hello_packet(buf);
+	//log({"version=", packet->SHP_version >>> 8, ".", packet->SHP_version & 0xFF});
+	//log({"random=", packet->SHP_random});
+	//log({"session_id=", packet->SHP_session_id});
+	//log({"cipher_suite=", packet->SHP_cipher_suite});
+	tls->TLS_server_version = packet->SHP_version;
+	tls->TLS_server_random = packet->SHP_random;
+	tls->TLS_session_id = packet->SHP_session_id;
+	tls->TLS_cipher_suite = packet->SHP_cipher_suite;
+
+	switch (packet->SHP_version) {
+		case TLS_1_0:
+		case TLS_1_1:
+		case TLS_1_2:
+			break;
+
+		default:
+			return 0, error({"unsupported version (", packet->SHP_version >>> 8, ".", packet->SHP_version & 0xFF, ")"});
+	}
+
+	record_set_version(record, packet->SHP_version);
+
+	if (tls->TLS_session_id == session_id) {
+		tls->TLS_session_resumed = true;
+		tls->TLS_certs = session_data[2];
+		return;
+	}
+	else {
+		global_remove(session_key);
+	}
+
+	type = read_handshake_packet(record, buf);
+	if (type != HT_CERTIFICATE) {
+		return 0, error({"expected certificate packet (got ", type, ")"});
+	}
+	var certs = read_certificate_packet(buf);
+
+	tls->TLS_certs = [];
+	for (var i=0; i<length(certs); i++) {
+		tls->TLS_certs[] = certs[i];
+		tls->TLS_certs[] = null;
+	}
+
+	log({"cipher_suite=", cipher_suite_to_string(tls->TLS_cipher_suite)});
+
+	if (cipher_suite_is_dhe(tls->TLS_cipher_suite)) {
+		type = read_handshake_packet(record, buf);
+		if (type != HT_SERVER_KEY_EXCHANGE) {
+			return 0, error({"expected server key exchange packet (got ", type, ")"});
+		}
+
+		var signature_length;
+		if (tls->TLS_server_version < TLS_1_2) {
+			var cert = tls_get_cert(tls, 0);
+			if (cert->CERT_subject_algorithm != SIGALG_RSA_ENCRYPTION) {
+				return 0, error("only RSA algorithm is supported");
+			}
+			var pubkey = cert->CERT_subject_pubkey;
+			signature_length = length(pubkey->PUBKEY_modulus);
+		}
+
+		var skep;
+		if (cipher_suite_is_ecdhe(tls->TLS_cipher_suite)) {
+			skep = read_server_key_exchange_packet_ecdhe(buf, tls->TLS_server_version, signature_length);
+		}
+		else {
+			skep = read_server_key_exchange_packet_dhe(buf, tls->TLS_server_version, signature_length);
+		}
+
+		var signed_params = [];
+		array_append(signed_params, tls->TLS_client_random);
+		array_append(signed_params, tls->TLS_server_random);
+		array_append(signed_params, buf, 0, skep->SKEP_data_len);
+
+		var hash, rsa_hash_id;
+		switch (skep->SKEP_hash_alg) {
+			case HA_SHA1:   hash = sha1(signed_params);   rsa_hash_id = RSA_HASH_SHA1; break;
+			case HA_SHA224: hash = sha224(signed_params); rsa_hash_id = RSA_HASH_SHA224; break;
+			case HA_SHA256: hash = sha256(signed_params); rsa_hash_id = RSA_HASH_SHA256; break;
+			case HA_SHA384: hash = sha384(signed_params); rsa_hash_id = RSA_HASH_SHA384; break;
+			case HA_SHA512: hash = sha512(signed_params); rsa_hash_id = RSA_HASH_SHA512; break;
+			default:
+				return 0, error({"unknown hash algorithm (got ", skep->SKEP_hash_alg, ")"});
+		}
+
+		if (skep->SKEP_sign_alg == SA_RSA) {
+			var cert = tls_get_cert(tls, 0);
+			if (cert->CERT_subject_algorithm != SIGALG_RSA_ENCRYPTION) {
+				return 0, error("only RSA algorithm is supported");
+			}
+
+			var pubkey = cert->CERT_subject_pubkey;
+			if (length(skep->SKEP_sign_data) != length(pubkey->PUBKEY_modulus)) {
+				return 0, error("invalid signature");
+			}
+
+			if (tls->TLS_server_version < TLS_1_2) {
+				hash = array_join(md5(signed_params), hash);
+				rsa_hash_id = -1;
+			}
+
+			if (status_func) {
+				status_func(status_data, "Verifying RSA signature...");
+			}
+			if (!rsa_signature_verify(pubkey->PUBKEY_modulus, pubkey->PUBKEY_exponent, skep->SKEP_sign_data, rsa_hash_id, hash)) {
+				return 0, error("invalid signature");
+			}
+		}
+		else if (skep->SKEP_sign_alg == SA_ECDSA) {
+			// TODO: implement
+		}
+		else {
+			return 0, error({"unsupported signature algorithm: ", skep->SKEP_sign_alg});
+		}
+
+		tls->TLS_dh_params = skep;
+	}
+
+	var send_client_certificate = false;
+	type = read_handshake_packet(record, buf);
+	if (type == HT_CERTIFICATE_REQUEST) {
+		send_client_certificate = true;
+		type = read_handshake_packet(record, buf);
+	}
+
+	if (type != HT_SERVER_HELLO_DONE) {
+		return 0, error({"expected server hello done packet (got ", type, ")"});
+	}
+
+	if (send_client_certificate) {
+		write_client_certificate_packet(record, buf);
+	}
+}
+
+function tls_is_session_resumed(tls)
+{
+	return tls->TLS_session_resumed;
+}
+
+function tls_get_cert_count(tls)
+{
+	return length(tls->TLS_certs) / 2;
+}
+
+function tls_get_cert_binary(tls, idx)
+{
+	return tls->TLS_certs[idx*2];
+}
+
+function tls_get_cert(tls, idx)
+{
+	var cert = tls->TLS_certs[idx*2+1];
+	if (!cert) {
+		cert = cert_parse(tls->TLS_certs[idx*2]);
+		tls->TLS_certs[idx*2+1] = cert;
+	}
+	return cert;
+}
+
+function @create_encrypted_packet(tls, client, content_type, msg, msg_off, msg_len)
+{
+	var cs = tls->TLS_cipher_suite;
+
+	if (cipher_suite_is_aead(cs)) {
+		if (msg_off == 0 && msg_len == length(msg)) {
+			return msg;
+		}
+		return array_extract(msg, msg_off, msg_len);
+	}
+	else {
+		var buf = [];
+
+		array_set_length(buf, 8+5);
+		array_append(buf, msg, msg_off, msg_len);
+
+		var version = record_get_version(tls->TLS_record);
+		var len = length(buf) - (8+5);
+		if (len > 16384) {
+			return 0, error("record too long");
+		}
+		var seq_lo, seq_hi;
+		if (client) {
+			seq_lo = tls->TLS_client_write_seq_lo;
+			seq_hi = tls->TLS_client_write_seq_hi;
+		}
+		else {
+			seq_lo = tls->TLS_server_write_seq_lo;
+			seq_hi = tls->TLS_server_write_seq_hi;
+		}
+		buf[0] = seq_hi >>> 24;
+		buf[1] = (seq_hi >>> 16) & 0xFF;
+		buf[2] = (seq_hi >>> 8) & 0xFF;
+		buf[3] = seq_hi & 0xFF;
+		buf[4] = seq_lo >>> 24;
+		buf[5] = (seq_lo >>> 16) & 0xFF;
+		buf[6] = (seq_lo >>> 8) & 0xFF;
+		buf[7] = seq_lo & 0xFF;
+		buf[8] = content_type & 0xFF;
+		buf[9] = version >>> 8;
+		buf[10] = version & 0xFF;
+		buf[11] = len >>> 8;
+		buf[12] = len & 0xFF;
+		var mac = hmac_sha1(client? tls->TLS_client_write_mac_secret : tls->TLS_server_write_mac_secret, buf);
+
+		var (lo, c1) = add32(seq_lo, 1);
+		var (hi, c2) = add32(seq_hi, c1);
+		if (c2) return 0, error("sequence number overflow");
+		if (client) {
+			tls->TLS_client_write_seq_lo = lo;
+			tls->TLS_client_write_seq_hi = hi;
+		}
+		else {
+			tls->TLS_server_write_seq_lo = lo;
+			tls->TLS_server_write_seq_hi = hi;
+		}
+
+		array_set_length(buf, 0);
+		array_append(buf, msg, msg_off, msg_len);
+		array_append(buf, mac);
+		var block_len = cipher_suite_get_iv_size(tls->TLS_cipher_suite);
+		var pad_len = block_len - (length(buf) % block_len);
+		for (var i=0; i<pad_len; i++) {
+			buf[] = pad_len-1;
+		}
+		return buf;
+	}
+}
+
+function @send_encrypted_packet(tls, content_type, packet)
+{
+	var version = record_get_version(tls->TLS_record);
+	var cs = tls->TLS_cipher_suite;
+
+	if (cipher_suite_is_aes128_gcm(cs)) {
+		var len = length(packet);
+		if (len > 16384) {
+			return 0, error("record too long");
+		}
+
+		var iv = [];
+		var aad = [];
+		array_append(iv, tls->TLS_client_write_iv);
+
+		var seq_lo = tls->TLS_client_write_seq_lo;
+		var seq_hi = tls->TLS_client_write_seq_hi;
+		iv[] = seq_hi >>> 24;
+		iv[] = (seq_hi >>> 16) & 0xFF;
+		iv[] = (seq_hi >>> 8) & 0xFF;
+		iv[] = seq_hi & 0xFF;
+		iv[] = seq_lo >>> 24;
+		iv[] = (seq_lo >>> 16) & 0xFF;
+		iv[] = (seq_lo >>> 8) & 0xFF;
+		iv[] = seq_lo & 0xFF;
+		array_append(aad, iv, length(iv)-8, 8);
+		aad[] = content_type & 0xFF;
+		aad[] = version >>> 8;
+		aad[] = version & 0xFF;
+		aad[] = len >>> 8;
+		aad[] = len & 0xFF;
+		var (lo, c1) = add32(seq_lo, 1);
+		var (hi, c2) = add32(seq_hi, c1);
+		if (c2) return 0, error("sequence number overflow");
+		tls->TLS_client_write_seq_lo = lo;
+		tls->TLS_client_write_seq_hi = hi;
+
+		var tag = [];
+		array_set_length(tag, 16);
+		crypto_aes_gcm_encrypt(packet, iv, tls->TLS_client_write_key, aad, tag);
+		array_prepend(packet, iv, 4, 8);
+		array_append(packet, tag);
+	}
+	else if (cipher_suite_is_aes128_cbc(cs)) {
+		var state, iv;
+		if (version == TLS_1_0) {
+			state = tls->TLS_encrypt_state;
+		}
+		else {
+			iv = crypto_random(16);
+			state = crypto_aes128_init(tls->TLS_client_write_key, iv);
+		}
+
+		for (var i=0; i<length(packet); i+=16) {
+			crypto_aes_cbc_encrypt(state, packet, i);
+		}
+
+		if (version > TLS_1_0) {
+			array_prepend(packet, iv);
+		}
+	}
+	else {
+		return 0, error("cipher not implemented");
+	}
+	
+	record_write(tls->TLS_record, content_type, packet);
+}
+
+function @send_encrypted_message(tls, content_type, msg, msg_off, msg_len)
+{
+	send_encrypted_packet(tls, content_type, create_encrypted_packet(tls, true, content_type, msg, msg_off, msg_len));
+}
+
+function @create_finished_packet(tls, client, hash_msg, handshake_md5, handshake_sha1, handshake_sha256)
+{
+	var version = record_get_version(tls->TLS_record);
+	var prf_func = (version >= TLS_1_2? prf12#4 : prf#4);
+		
+	var handshake_messages;
+	if (version >= TLS_1_2) {
+		handshake_messages = sha256_finish(sha256_copy(handshake_sha256));
+	}
+	else {
+		handshake_messages = array_join(md5_finish(md5_copy(handshake_md5)), sha1_finish(sha1_copy(handshake_sha1)));
+	}
+	var verify_data = prf_func(tls->TLS_master_secret, client? "client finished" : "server finished", handshake_messages, 12);
+
+	var msg = array_join([HT_FINISHED, 0, 0, 12], verify_data);
+	if (hash_msg) {
+		if (version >= TLS_1_2) {
+			sha256_process(handshake_sha256, msg, 0, length(msg));
+		}
+		else {
+			md5_process(handshake_md5, msg, 0, length(msg));
+			sha1_process(handshake_sha1, msg, 0, length(msg));
+		}
+	}
+	return create_encrypted_packet(tls, client, CT_HANDSHAKE, msg, 0, length(msg));
+}
+
+function @receive_encrypted_message(tls, content_type, msg)
+{
+	var version = record_get_version(tls->TLS_record);
+	var cs = tls->TLS_cipher_suite;
+
+	var ct = record_read_packet(tls->TLS_record, msg);
+	if (ct < 0) return ct;
+	if (content_type >= 0 && ct != content_type) {
+		return 0, error({"expected content type ", content_type, " but got ", ct});
+	}
+
+	if (cipher_suite_is_aes128_gcm(cs)) {
+		var iv = [];
+		array_append(iv, tls->TLS_server_write_iv);
+		array_append(iv, msg, 0, 8);
+		array_remove(msg, 0, 8);
+
+		var tag = array_extract(msg, length(msg)-16, 16);
+		array_set_length(msg, length(msg)-16);
+
+		var len = length(msg);
+		if (len > 16384) {
+			return 0, error("record too long");
+		}
+
+		var aad = [];
+		var seq_lo = tls->TLS_server_write_seq_lo;
+		var seq_hi = tls->TLS_server_write_seq_hi;
+		aad[] = seq_hi >>> 24;
+		aad[] = (seq_hi >>> 16) & 0xFF;
+		aad[] = (seq_hi >>> 8) & 0xFF;
+		aad[] = seq_hi & 0xFF;
+		aad[] = seq_lo >>> 24;
+		aad[] = (seq_lo >>> 16) & 0xFF;
+		aad[] = (seq_lo >>> 8) & 0xFF;
+		aad[] = seq_lo & 0xFF;
+		aad[] = ct & 0xFF;
+		aad[] = version >>> 8;
+		aad[] = version & 0xFF;
+		aad[] = len >>> 8;
+		aad[] = len & 0xFF;
+		var (lo, c1) = add32(seq_lo, 1);
+		var (hi, c2) = add32(seq_hi, c1);
+		if (c2) return 0, error("sequence number overflow");
+		tls->TLS_server_write_seq_lo = lo;
+		tls->TLS_server_write_seq_hi = hi;
+
+		if (!crypto_aes_gcm_decrypt(msg, iv, tls->TLS_server_write_key, aad, tag)) {
+			return 0, error("decrypt error");
+		}
+		return ct;
+	}
+	else {
+		var state;
+		if (version == TLS_1_0) {
+			state = tls->TLS_decrypt_state;
+		}
+		else {
+			var iv = array_extract(msg, 0, 16);
+			array_remove(msg, 0, 16);
+			state = crypto_aes128_init(tls->TLS_server_write_key, iv);
+		}
+		for (var i=0; i<length(msg); i+=16) {
+			crypto_aes_cbc_decrypt(state, msg, i);
+		}
+		var pad_len = msg[length(msg)-1];
+		/*
+		for (var i=length(msg)-pad_len-1; i<length(msg); i++) {
+			if (msg[i] != pad_len) {
+				return 0, error("invalid padding");
+			}
+		}
+		*/
+		array_set_length(msg, length(msg)-pad_len-1);
+		var received_mac = array_extract(msg, length(msg)-20, 20);
+		array_set_length(msg, length(msg)-20);
+
+		var buf = [];
+		array_set_length(buf, 8+5);
+		array_append(buf, msg);
+
+		var len = length(buf) - (8+5);
+		if (len > 16384) {
+			return 0, error("record too long");
+		}
+		var seq_lo = tls->TLS_server_write_seq_lo;
+		var seq_hi = tls->TLS_server_write_seq_hi;
+		buf[0] = seq_hi >>> 24;
+		buf[1] = (seq_hi >>> 16) & 0xFF;
+		buf[2] = (seq_hi >>> 8) & 0xFF;
+		buf[3] = seq_hi & 0xFF;
+		buf[4] = seq_lo >>> 24;
+		buf[5] = (seq_lo >>> 16) & 0xFF;
+		buf[6] = (seq_lo >>> 8) & 0xFF;
+		buf[7] = seq_lo & 0xFF;
+		buf[8] = ct & 0xFF;
+		buf[9] = version >>> 8;
+		buf[10] = version & 0xFF;
+		buf[11] = len >>> 8;
+		buf[12] = len & 0xFF;
+		var mac = hmac_sha1(tls->TLS_server_write_mac_secret, buf);
+
+		var (lo, c1) = add32(seq_lo, 1);
+		var (hi, c2) = add32(seq_hi, c1);
+		if (c2) return 0, error("sequence number overflow");
+		tls->TLS_server_write_seq_lo = lo;
+		tls->TLS_server_write_seq_hi = hi;
+
+		if (received_mac != mac) {
+			return 0, error("decrypt error");
+		}
+		return ct;
+	}
+}
+
+function tls_open_stream(tls)
+{
+	return tls_open_stream(tls, null, null);
+}
+
+function tls_open_stream(tls, status_func, status_data)
+{
+	var buf = [];
+	var cs = tls->TLS_cipher_suite;
+	var version = record_get_version(tls->TLS_record);
+
+	if (cipher_suite_is_aead(cs) && version < TLS_1_2) {
+		return 0, error("AEAD cipher suites are unsupported in TLS < 1.2");
+	}
+
+	if (cipher_suite_is_rsa(cs) || cipher_suite_is_ecdsa(cs)) {
+		var prf_func = (version >= TLS_1_2? prf12#4 : prf#4);
+
+		var encrypted_premaster;
+		if (!tls->TLS_session_resumed) {
+			if (status_func) {
+				status_func(status_data, "Calculating premaster TLS secret...");
+			}
+			var cert = tls_get_cert(tls, 0);
+			if (cert->CERT_subject_algorithm != SIGALG_RSA_ENCRYPTION && !sigalg_is_ecdsa(cert->CERT_subject_algorithm)) {
+				return 0, error("certificate algorithm mismatch");
+			}
+
+			var premaster_secret;
+			
+			if (cipher_suite_is_ecdhe(tls->TLS_cipher_suite)) {
+				var skep = tls->TLS_dh_params;
+				var type = skep->SKEP_curve_type;
+
+				// TODO: check signature
+
+				var priv_key = ecdh_gen_private_key(type);
+				premaster_secret = ecdh_calc_secret(type, priv_key, skep->SKEP_curve_point);
+				encrypted_premaster = prepare_ecdh_public_key(ecdh_calc_public_key(type, priv_key), type);
+			}
+			else if (cipher_suite_is_dhe(tls->TLS_cipher_suite)) {
+				var skep = tls->TLS_dh_params;
+				var p = bigint_bytes_BE(skep->SKEP_dh_p);
+				var g = bigint_bytes_BE(skep->SKEP_dh_g);
+				var Ys = bigint_bytes_BE(skep->SKEP_dh_Ys);
+
+				// TODO: check signature
+				
+				// TODO: use full key size
+				//var priv_key = bigint_bytes_BE(crypto_random(length(cert->CERT_subject_pubkey->PUBKEY_modulus)));
+				var key_size = length(cert->CERT_subject_pubkey->PUBKEY_modulus);
+				key_size = max(64, key_size / 4);
+				var priv_key = bigint_bytes_BE(crypto_random(key_size));
+				log("using INSECURE debug mode for DHE!");
+
+				premaster_secret = bigint_to_bytes_BE(dh_calc_secret(p, Ys, priv_key));
+				encrypted_premaster = bigint_to_bytes_BE(dh_calc_public_key(p, g, priv_key));
+			}
+			else {
+				premaster_secret = array_join([TLS_LATEST_VERSION >> 8, TLS_LATEST_VERSION & 0xFF], crypto_random(46));
+
+				var pubkey = cert->CERT_subject_pubkey;
+				encrypted_premaster = rsa_encrypt(pubkey->PUBKEY_modulus, pubkey->PUBKEY_exponent, premaster_secret);
+			}
+
+			tls->TLS_master_secret = prf_func(premaster_secret, "master secret", array_join(tls->TLS_client_random, tls->TLS_server_random), 48);
+		}
+		else {
+			if (status_func) {
+				status_func(status_data, "TLS session resumed.");
+			}
+		}
+
+		if (status_func) {
+			status_func(status_data, "Finishing TLS handshake...");
+		}
+
+		var hash_size = cipher_suite_get_hash_size(cs);
+		var key_size = cipher_suite_get_key_size(cs);
+		var iv_size = (version == TLS_1_0 || cipher_suite_is_aead(cs)? cipher_suite_get_iv_size(cs) : 0);
+		var total_size = 2*hash_size + 2*key_size + 2*iv_size;
+		var key_block = prf_func(tls->TLS_master_secret, "key expansion", array_join(tls->TLS_server_random, tls->TLS_client_random), total_size);
+		var off = 0;
+		if (hash_size > 0) {
+			tls->TLS_client_write_mac_secret = array_extract(key_block, off, hash_size); off += hash_size;
+			tls->TLS_server_write_mac_secret = array_extract(key_block, off, hash_size); off += hash_size;
+		}
+		tls->TLS_client_write_key = array_extract(key_block, off, key_size); off += key_size;
+		tls->TLS_server_write_key = array_extract(key_block, off, key_size); off += key_size;
+		if (iv_size > 0) {
+			tls->TLS_client_write_iv = array_extract(key_block, off, iv_size); off += iv_size;
+			tls->TLS_server_write_iv = array_extract(key_block, off, iv_size); off += iv_size;
+		}
+
+		if (!tls->TLS_session_resumed) {
+			write_client_key_exchange_packet(tls->TLS_record, buf, encrypted_premaster, cipher_suite_is_ecdhe(tls->TLS_cipher_suite));
+		}
+		
+		array_set_length(buf, 1);
+		buf[0] = 0x01;
+		record_write(tls->TLS_record, CT_CHANGE_CIPHER_SPEC, buf);
+
+		if (version == TLS_1_0) {
+			tls->TLS_encrypt_state = crypto_aes128_init(tls->TLS_client_write_key, tls->TLS_client_write_iv);
+			tls->TLS_decrypt_state = crypto_aes128_init(tls->TLS_server_write_key, tls->TLS_server_write_iv);
+		}
+
+		var handshake_md5 = record_get_handshake_md5(tls->TLS_record);
+		var handshake_sha1 = record_get_handshake_sha1(tls->TLS_record);
+		var handshake_sha256 = record_get_handshake_sha256(tls->TLS_record);
+
+		var server_finished;
+		if (!tls->TLS_session_resumed) {
+			var client_finished = create_finished_packet(tls, true, true, handshake_md5, handshake_sha1, handshake_sha256);
+			server_finished = create_finished_packet(tls, false, false, handshake_md5, handshake_sha1, handshake_sha256);
+
+			send_encrypted_packet(tls, CT_HANDSHAKE, client_finished);
+			record_flush(tls->TLS_record);
+		}
+
+		array_set_length(buf, 1);
+		var ct_type = record_read(tls->TLS_record, buf, 0, length(buf));
+		if (ct_type == CT_ALERT) {
+			array_set_length(buf, 2);
+			record_read(tls->TLS_record, buf, 1, 1);
+			var level = buf[0];
+			var desc = buf[1];
+			return 0, error({"unhandled alert message encountered (level=", alert_get_level(level), ", desc=", alert_get_description(desc), ")"});
+		}
+		
+		if (ct_type != CT_CHANGE_CIPHER_SPEC || buf[0] != 0x01) {
+			return 0, error({"expected change cipher suite packet (got ", ct_type, ")"});
+		}
+
+		ct_type = record_read_packet(tls->TLS_record, buf);
+		if (ct_type != CT_HANDSHAKE) {
+			return 0, error({"expected finished message (got ", ct_type, ")"});
+		}
+
+		// TODO: merge with receive_encrypted_message
+		if (cipher_suite_is_aes128_gcm(cs)) {
+			var msg = buf;
+			var ct = CT_HANDSHAKE;
+
+			var iv = [];
+			array_append(iv, tls->TLS_server_write_iv);
+			array_append(iv, msg, 0, 8);
+			array_remove(msg, 0, 8);
+
+			var tag = array_extract(msg, length(msg)-16, 16);
+			array_set_length(msg, length(msg)-16);
+
+			var len = length(msg);
+			if (len > 16384) {
+				return 0, error("record too long");
+			}
+
+			var aad = [];
+			var seq_lo = tls->TLS_server_write_seq_lo;
+			var seq_hi = tls->TLS_server_write_seq_hi;
+			aad[] = seq_hi >>> 24;
+			aad[] = (seq_hi >>> 16) & 0xFF;
+			aad[] = (seq_hi >>> 8) & 0xFF;
+			aad[] = seq_hi & 0xFF;
+			aad[] = seq_lo >>> 24;
+			aad[] = (seq_lo >>> 16) & 0xFF;
+			aad[] = (seq_lo >>> 8) & 0xFF;
+			aad[] = seq_lo & 0xFF;
+			aad[] = ct & 0xFF;
+			aad[] = version >>> 8;
+			aad[] = version & 0xFF;
+			aad[] = len >>> 8;
+			aad[] = len & 0xFF;
+			var (lo, c1) = add32(seq_lo, 1);
+			var (hi, c2) = add32(seq_hi, c1);
+			if (c2) return 0, error("sequence number overflow");
+			tls->TLS_server_write_seq_lo = lo;
+			tls->TLS_server_write_seq_hi = hi;
+
+			if (!crypto_aes_gcm_decrypt(msg, iv, tls->TLS_server_write_key, aad, tag)) {
+				return 0, error("decrypt error");
+			}
+		}
+		else if (cipher_suite_is_aes128_cbc(cs)) {
+			var state;
+			if (version == TLS_1_0) {
+				state = tls->TLS_decrypt_state;
+			}
+			else {
+				var iv = array_extract(buf, 0, 16);
+				array_remove(buf, 0, 16);
+				state = crypto_aes128_init(tls->TLS_server_write_key, iv);
+			}
+			for (var i=0; i<length(buf); i+=16) {
+				crypto_aes_cbc_decrypt(state, buf, i);
+			}
+		}
+
+		if (tls->TLS_session_resumed) {
+			server_finished = create_finished_packet(tls, false, true, handshake_md5, handshake_sha1, handshake_sha256);
+		}
+
+		if (server_finished != buf) {
+			return 0, error("server finished message mismatch");
+		}
+
+		if (tls->TLS_session_resumed) {
+			var client_finished = create_finished_packet(tls, true, false, handshake_md5, handshake_sha1, handshake_sha256);
+
+			send_encrypted_packet(tls, CT_HANDSHAKE, client_finished);
+		}
+
+		if (status_func) {
+			status_func(status_data, "Finished TLS handshake.");
+		}
+
+		global_set(create_session_key(tls), [tls->TLS_session_id, tls->TLS_master_secret, tls->TLS_certs], SESSION_TIMEOUT);
+
+		var tls_stream = object_extend(stream_create(), STR_SIZE);
+		tls_stream->STREAM__vfunc__read_part__4 = read_part#4;
+		tls_stream->STREAM__vfunc__write_part__4 = write_part#4;
+		tls_stream->STREAM__vfunc__flush__1 = flush#1;
+		tls_stream->STREAM__vfunc__close__1 = close#1;
+		tls_stream->STR_tls = tls;
+		tls_stream->STR_read_buf = [];
+		return tls_stream;
+	}
+	else {
+		return 0, error({"unsupported cipher suite (", tls->TLS_cipher_suite, ")"});
+	}
+}
+
+function tls_abort_resumed_session(tls)
+{
+	global_remove(create_session_key(tls));
+	tls_force_close(tls);
+}
+
+function tls_close(tls)
+{
+	record_close(tls->TLS_record);
+}
+
+function tls_force_close(tls)
+{
+	var (r, e) = record_force_close(tls->TLS_record);
+}
+
+function @read_part(tls_stream, buf, off, len)
+{
+	var tls = tls_stream->STR_tls;
+	var read_pos = tls_stream->STR_read_pos;
+	var read_buf = tls_stream->STR_read_buf;
+
+	if (read_pos == length(read_buf)) {
+		var ct = receive_encrypted_message(tls, -1, read_buf);
+		if (ct < 0) return -1;
+		if (ct == CT_ALERT) {
+			if (length(read_buf) != 2) {
+				return 0, error("incorrect size for alert protocol");
+			}
+			var level = read_buf[0];
+			var desc = read_buf[1];
+			if (level == AL_WARNING && desc == AD_CLOSE_NOTIFY) {
+				array_set_length(read_buf, 0);
+				tls_stream->STR_read_pos = 0;
+				return -1;
+			}
+			return 0, error({"unhandled alert message encountered (level=", alert_get_level(level), ", desc=", alert_get_description(desc), ")"});
+		}
+		if (ct != CT_APPLICATION_DATA) {
+			return 0, error({"unknown message encountered (content type ", ct, ")"});
+		}
+		read_pos = 0;
+	}
+
+	var num = min(length(read_buf) - read_pos, len);
+	array_copy(buf, off, read_buf, read_pos, num);
+	tls_stream->STR_read_pos = read_pos + num;
+	return num;
+}
+
+function @write_part(tls_stream, buf, off, len)
+{
+	var total_len = len;
+	var tls = tls_stream->STR_tls;
+	while (len > 0) {
+		var num = min(len, 16384);
+		send_encrypted_message(tls, CT_APPLICATION_DATA, buf, off, num);
+		off += num;
+		len -= num;
+	}
+	return total_len;
+}
+
+function @flush(tls_stream)
+{
+	var tls = tls_stream->STR_tls;
+	record_flush(tls->TLS_record);
+}
+
+function @close(tls_stream)
+{
+	var tls = tls_stream->STR_tls;
+	send_encrypted_message(tls, CT_ALERT, [AL_WARNING, AD_CLOSE_NOTIFY], 0, 2);
+	tls_close(tls);
+}

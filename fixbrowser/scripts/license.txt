@@ -1,0 +1,2 @@
+All files here are licensed under CC0 license unless stated otherwise
+(this applies only to imported CSS files or other such external files).

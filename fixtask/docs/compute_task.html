@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/task";</code>
+</p>
+
+<h2>ComputeTask class</h2>
+
+<p>
+ComputeTask allows to run computation code in parallel on multiple CPU cores.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): ComputeTask<br>
+		static function <b>create</b>(finish_data): ComputeTask
+	</code></dt>
+	<dd>
+		Creates a new compute task. The provided data is passed to the finish function
+		and it's not cloned to the compute thread.
+	</dd>
+	<dt><code>virtual function <b>process</b>(): Dynamic</code></dt>
+	<dd>
+		Runs the computation code, the result is passed to <code>finish</code> function
+		in the main thread.
+	</dd>
+	<dt><code>virtual function <b>finish</b>(data, result)</code></dt>
+	<dd>
+		Finishes the computation. The data is reference in the current thread and the result
+		is cloned from the computation thread.
+	</dd>
+	<dt><code>function <b>run</b>()</code></dt>
+	<dd>
+		Runs the task in a computation thread. It also runs <code>finish</code> functions for any
+		finished tasks.
+	</dd>
+</dl>
+
+<h3 id="static">Static functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>run</b>(process_func, process_data)<br>
+		static function <b>run</b>(process_func, process_data, finish_func, finish_data)<br>
+	</code></dt>
+	<dd>
+		Runs the <code>process</code> function in the computation thread, passing the result
+		back to <code>finish</code> function in the main thread.
+	</dd>
+	<dt><code>static function <b>check_finished</b>()</code></dt>
+	<dd>
+		Checks for finished computation tasks to run their <code>finish</code> functions.
+	</dd>
+	<dt><code>static function <b>finish_all</b>()</code></dt>
+	<dd>
+		Waits for all unfinished computation tasks to finish and run their <code>finish</code> functions.
+	</dd>
+	<dt><code>static function <b>get_core_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the number of CPU cores available for computation.
+	</dd>
+	<dt id="run_parallel"><code>
+		static function <b>run_parallel</b>(start: Integer, end: Integer, func, data)<br>
+		static function <b>run_parallel</b>(start: Integer, end: Integer, min_iters: Integer, func, data)<br>
+	</code></dt>
+	<dd>
+		Runs the provided function in parallel dividing the interval (end is exclusive) between
+		the CPU cores. You can optionally pass the minimum iterations per CPU core. In case the
+		task is too lightweight and wouldn't need more than one CPU core it is directly run.
+		This function enables parallel readonly access (and readwrite for shared arrays) to the heap
+		from the compute heaps using the <a href="parent_ref.html">ParentRef</a> class.<br><hr>
+		The passed function must have this signature:<br>
+		<code>function func(data, from: Integer, to: Integer, core_id: Integer)</code><br>
+		The <code>from</code> and <code>to</code> represent a subinterval for given CPU core (end is exclusive).
+	</dd>
+</dl>
+
+</body>
+</html>

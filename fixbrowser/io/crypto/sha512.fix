@@ -1,0 +1,252 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const {
+	@STATE_total_word0 = 16,
+	@STATE_total_word1,
+	@STATE_total_word2,
+	@STATE_total_word3,
+	@STATE_sha384,
+	@STATE_buf,
+	@STATE_pos
+};
+
+function sha512_init()
+{
+	var buf = [];
+	array_set_length(buf, 128);
+	return [
+		0x6a09e667, 0xf3bcc908, 0xbb67ae85, 0x84caa73b, 0x3c6ef372, 0xfe94f82b, 0xa54ff53a, 0x5f1d36f1,
+		0x510e527f, 0xade682d1, 0x9b05688c, 0x2b3e6c1f, 0x1f83d9ab, 0xfb41bd6b, 0x5be0cd19, 0x137e2179,
+		0, 0, 0, 0, 0, buf, 0
+	];
+}
+
+function sha384_init()
+{
+	var buf = [];
+	array_set_length(buf, 128);
+	return [
+		0xcbbb9d5d, 0xc1059ed8, 0x629a292a, 0x367cd507, 0x9159015a, 0x3070dd17, 0x152fecd8, 0xf70e5939,
+		0x67332667, 0xffc00b31, 0x8eb44a87, 0x68581511, 0xdb0c2e0d, 0x64f98fa7, 0x47b5481d, 0xbefa4fa4,
+		0, 0, 0, 0, 1, buf, 0
+	];
+}
+
+function sha512_copy(state)
+{
+	return clone_deep(state);
+}
+
+function sha512_process(state, buf, off, len)
+{
+	var (word0, c1) = add32(state->STATE_total_word0, len << 3);
+	var (word1, c2) = add32(state->STATE_total_word1, len >>> 29, c1);
+	var (word2, c3) = add32(state->STATE_total_word2, c2);
+	var (word3, c4) = add32(state->STATE_total_word3, c3);
+	if (c4) return 0, error("message too long");
+	state->STATE_total_word0 = word0;
+	state->STATE_total_word1 = word1;
+	state->STATE_total_word2 = word2;
+	state->STATE_total_word3 = word3;
+
+	var state_buf = state->STATE_buf;
+	var pos = state->STATE_pos;
+	if (pos > 0) {
+		var num = min(128 - pos, len);
+		array_copy(state_buf, pos, buf, off, num);
+		pos += num;
+		off += num;
+		len -= num;
+		if (pos < 128) {
+			state->STATE_pos = pos;
+			return;
+		}
+		crypto_sha512(state, state_buf, 0);
+	}
+
+	while (len >= 128) {
+		crypto_sha512(state, buf, off);
+		off += 128;
+		len -= 128;
+	}
+
+	array_copy(state_buf, 0, buf, off, len);
+	state->STATE_pos = len;
+}
+
+function sha512_finish(state)
+{
+	var buf = state->STATE_buf;
+	var pos = state->STATE_pos;
+	buf[pos++] = 0x80;
+	if (pos > 112) {
+		while (pos < 128) {
+			buf[pos++] = 0;
+		}
+		crypto_sha512(state, buf, 0);
+		array_fill(buf, 0, 128, 0);
+	}
+	else {
+		while (pos < 112) {
+			buf[pos++] = 0;
+		}
+	}
+
+	var total_word0 = state->STATE_total_word0;
+	var total_word1 = state->STATE_total_word1;
+	var total_word2 = state->STATE_total_word2;
+	var total_word3 = state->STATE_total_word3;
+	buf[112] = total_word3 >>> 24;
+	buf[113] = (total_word3 >>> 16) & 0xFF;
+	buf[114] = (total_word3 >>> 8) & 0xFF;
+	buf[115] = total_word3 & 0xFF;
+	buf[116] = total_word2 >>> 24;
+	buf[117] = (total_word2 >>> 16) & 0xFF;
+	buf[118] = (total_word2 >>> 8) & 0xFF;
+	buf[119] = total_word2 & 0xFF;
+	buf[120] = total_word1 >>> 24;
+	buf[121] = (total_word1 >>> 16) & 0xFF;
+	buf[122] = (total_word1 >>> 8) & 0xFF;
+	buf[123] = total_word1 & 0xFF;
+	buf[124] = total_word0 >>> 24;
+	buf[125] = (total_word0 >>> 16) & 0xFF;
+	buf[126] = (total_word0 >>> 8) & 0xFF;
+	buf[127] = total_word0 & 0xFF;
+	crypto_sha512(state, buf, 0);
+
+	var h0 = state[0];
+	var h1 = state[1];
+	var h2 = state[2];
+	var h3 = state[3];
+	var h4 = state[4];
+	var h5 = state[5];
+	var h6 = state[6];
+	var h7 = state[7];
+	var h8 = state[8];
+	var h9 = state[9];
+	var h10 = state[10];
+	var h11 = state[11];
+	var h12 = state[12];
+	var h13 = state[13];
+	var h14 = state[14];
+	var h15 = state[15];
+	var hash = [
+		h0 >>> 24, (h0 >>> 16) & 0xFF, (h0 >>> 8) & 0xFF, h0 & 0xFF,
+		h1 >>> 24, (h1 >>> 16) & 0xFF, (h1 >>> 8) & 0xFF, h1 & 0xFF,
+		h2 >>> 24, (h2 >>> 16) & 0xFF, (h2 >>> 8) & 0xFF, h2 & 0xFF,
+		h3 >>> 24, (h3 >>> 16) & 0xFF, (h3 >>> 8) & 0xFF, h3 & 0xFF,
+		h4 >>> 24, (h4 >>> 16) & 0xFF, (h4 >>> 8) & 0xFF, h4 & 0xFF,
+		h5 >>> 24, (h5 >>> 16) & 0xFF, (h5 >>> 8) & 0xFF, h5 & 0xFF,
+		h6 >>> 24, (h6 >>> 16) & 0xFF, (h6 >>> 8) & 0xFF, h6 & 0xFF,
+		h7 >>> 24, (h7 >>> 16) & 0xFF, (h7 >>> 8) & 0xFF, h7 & 0xFF,
+		h8 >>> 24, (h8 >>> 16) & 0xFF, (h8 >>> 8) & 0xFF, h8 & 0xFF,
+		h9 >>> 24, (h9 >>> 16) & 0xFF, (h9 >>> 8) & 0xFF, h9 & 0xFF,
+		h10 >>> 24, (h10 >>> 16) & 0xFF, (h10 >>> 8) & 0xFF, h10 & 0xFF,
+		h11 >>> 24, (h11 >>> 16) & 0xFF, (h11 >>> 8) & 0xFF, h11 & 0xFF,
+		h12 >>> 24, (h12 >>> 16) & 0xFF, (h12 >>> 8) & 0xFF, h12 & 0xFF,
+		h13 >>> 24, (h13 >>> 16) & 0xFF, (h13 >>> 8) & 0xFF, h13 & 0xFF,
+		h14 >>> 24, (h14 >>> 16) & 0xFF, (h14 >>> 8) & 0xFF, h14 & 0xFF,
+		h15 >>> 24, (h15 >>> 16) & 0xFF, (h15 >>> 8) & 0xFF, h15 & 0xFF
+	];
+	if (state->STATE_sha384) {
+		array_set_length(hash, 48);
+	}
+	return hash;
+}
+
+function sha512(buf)
+{
+	return sha512(buf, 0, length(buf));
+}
+
+function sha512(buf, off, len)
+{
+	var state = sha512_init();
+	sha512_process(state, buf, off, len);
+	return sha512_finish(state);
+}
+
+function sha384(buf)
+{
+	return sha384(buf, 0, length(buf));
+}
+
+function sha384(buf, off, len)
+{
+	var state = sha384_init();
+	sha512_process(state, buf, off, len);
+	return sha512_finish(state);
+}
+
+function @to_hex(value)
+{
+	var hex = {""};
+	var len = length(value);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}
+
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_sha512()
+{
+	assert(to_hex(sha512("")), "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e");
+	assert(to_hex(sha512("The quick brown fox jumps over the lazy dog")), "07e547d9586f6a73f73fbac0435ed76951218fb7d0c8d788a309d785436bbb642e93a252a954f23912547d1e8a3b5ed6e1bfd7097821233fa0538f3db854fee6");
+	assert(to_hex(sha512("The quick brown fox jumps over the lazy cog")), "3eeee1d0e11733ef152a6c29503b3ae20c4f1f3cda4cb26f1bc1a41f91c7fe4ab3bd86494049e201c4bd5155f31ecb7a3c8606843c4cc8dfcab7da11c8ae5045");
+
+	var s = {"The quick brown fox jumps over the lazy dogXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"};
+	assert(length(s), 110);
+	assert(to_hex(sha512(s)), "0dc004a2d58b8edf79764928d17d004bd40fa46057a5d137a80214a8e5898f0c03034d1b3e3419fdbaba7871486dc171399e625f7f0a4a23fb7dbfc2f9ca0039");
+
+	s[] = 'X';
+	assert(length(s), 111);
+	assert(to_hex(sha512(s)), "30cc26ab9eb142750fbc09c24068226657a2aa76ccf7bee956cb379a6b871d8a4234951e89b26fbec657c8dbc18a44e653364d6a1228d3a0ee53fdba8071a7b4");
+
+	s[] = 'X';
+	assert(length(s), 112);
+	assert(to_hex(sha512(s)), "f6f6cb82856e047c15fbda636fb0d2e17e3b78787e50fe4e2aca74329a41cf46c131243d558519d6e6eaefbcf2f560b917ece246aa9991f7068c34d2a803d709");
+
+	s[] = 'X';
+	assert(length(s), 113);
+	assert(to_hex(sha512(s)), "e135210d0f762e8a18e2e32f4ab15b497b14e9e84e92e83e5222643d333317dd0c85be5bcbe0037f570326dc58946a27a2bc7b12c4fcb811d0ec3ddf28384aa6");
+
+	s = "The quick brown fox jumps over the lazy dog";
+	s = {s, s, s, s};
+	s = {s, s, s, s};
+	s = {s, s};
+	assert(length(s), 43*32);
+	assert(to_hex(sha512(s)), "44a0be9b558f8d73ef974fa2a603a4fe84ca1a3d36fa42fa68ee97ab2bbf90706f2e88d3052f3d7e18f81827ad670b3f3823fbe20fbe660ae9f02f220bef6445");
+
+	assert(to_hex(sha384("")), "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b");
+	assert(to_hex(sha384("The quick brown fox jumps over the lazy dog")), "ca737f1014a48f4c0b6dd43cb177b0afd9e5169367544c494011e3317dbf9a509cb1e5dc1e85a941bbee3d7f2afbc9b1");
+}

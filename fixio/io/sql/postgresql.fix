@@ -1,0 +1,723 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "io/tcp";
+import "io/stream";
+import "io/sql/connection";
+import "util/long";
+import "util/double";
+
+const {
+	@AUTH_TRUST = 0,
+	@AUTH_MD5   = 5
+};
+
+const {
+	@OID_INT4   = 23,
+	@OID_INT8   = 20,
+	@OID_FLOAT4 = 700,
+	@OID_FLOAT8 = 701,
+	@OID_TEXT   = 25,
+	@OID_BYTEA  = 17
+};
+
+const @COLIDX_SLOT_MASK  = 0x3FFF;
+const @COLIDX_IDX_SHIFT  = 14;
+const @COLIDX_IDX_MASK   = 0x0FFF;
+const @COLIDX_TYPE_SHIFT = 26;
+
+class PostgreSQLConnection: SQLConnection
+{
+	var @conn: BufferedStream;
+	var @packet: ArrayStream;
+	var @packet_id: Integer;
+	var @in_packet_buf: Byte[];
+	var @in_transaction: Boolean;
+	var @trans_count: Integer;
+
+	constructor open(hostname: String, port: Integer, username: String, password: String, database: String)
+	{
+		in_packet_buf = [];
+		packet = ArrayStream::create(in_packet_buf);
+
+		conn = BufferedStream::create(TCPConnection::open(hostname, port));
+		login(username, password, database);
+	}
+
+	function @login(username: String, password: String, database: String)
+	{
+		var packet = this.packet;
+		init_packet(-1);
+		packet.write_int_BE(0x30000);
+		packet.write_null_string("user");
+		packet.write_null_string(username);
+		packet.write_null_string("database");
+		packet.write_null_string(database);
+		packet.write_null_string("");
+		send_packet(true);
+
+		for (;;) {
+			var id = receive_packet();
+			if (id == 'R') break;
+		}
+
+		var type = packet.read_int_BE();
+		switch (type) {
+			case AUTH_TRUST: {
+				break;
+			}
+
+			case AUTH_MD5: {
+				var salt = Array::create(4, 1);
+				packet.read(salt);
+
+				var buf = [];
+				buf.append(password.to_utf8());
+				buf.append(username.to_utf8());
+				var pwd1 = to_hex(md5(buf));
+
+				buf.clear();
+				buf.append(pwd1);
+				buf.append(salt);
+				var pwd2 = to_hex(md5(buf));
+
+				init_packet('p');
+				packet.write_null_string("md5"+pwd2);
+				send_packet(true);
+
+				var id = receive_packet();
+				if (id != 'R' || packet.read_int_BE() != 0) {
+					throw error("authentication failed");
+				}
+				break;
+			}
+
+			default:
+				throw error("unsupported auth method "+type);
+		}
+
+		for (;;) {
+			var id = receive_packet();
+			if (id == 'Z') break;
+		}
+	}
+
+	override function close()
+	{
+		init_packet('X');
+		send_packet(true);
+		conn.close();
+	}
+
+	override function begin()
+	{
+		if (++trans_count == 1) {
+			update("BEGIN");
+		}
+	}
+
+	override function commit()
+	{
+		if (trans_count <= 0) {
+			throw error("no transaction is active");
+		}
+		if (--trans_count == 0) {
+			update("COMMIT");
+		}
+	}
+
+	override function rollback()
+	{
+		if (trans_count <= 0) {
+			throw error("no transaction is active");
+		}
+		if (--trans_count == 0) {
+			update("ROLLBACK");
+		}
+	}
+
+	override function in_transaction(): Boolean
+	{
+		return trans_count > 0;
+	}
+
+	function @prepare_query(query: String, sig: String, params: Dynamic[])
+	{
+		if (sig) {
+			if (!params || params.length != sig.length) {
+				throw error("bad signature");
+			}
+		}
+		else {
+			if (params) {
+				throw error("bad signature");
+			}
+		}
+		var packet = this.packet;
+		init_packet('P');
+		packet.write_null_string(""); // name
+		packet.write_null_string(replace_params(query)); // query
+		if (sig) {
+			packet.write_short_BE(sig.length);
+			foreach (var char in sig) {
+				var oid;
+				switch (char) {
+					case 'i': oid = OID_INT4; break;
+					case 'l': oid = OID_INT8; break;
+					case 'f': oid = OID_FLOAT4; break;
+					case 'd': oid = OID_FLOAT8; break;
+					case 's': oid = OID_TEXT; break;
+					case 'b': oid = OID_BYTEA; break;
+					default: throw error("bad signature");
+				}
+				packet.write_int_BE(oid);
+			}
+		}
+		else {
+			packet.write_short_BE(0);
+		}
+		send_packet(false);
+
+		init_packet('B');
+		packet.write_null_string(""); // portal
+		packet.write_null_string(""); // name
+		packet.write_short_BE(1);
+		packet.write_short_BE(1);
+		if (sig) {
+			packet.write_short_BE(sig.length);
+			for (var i=0; i<sig.length; i++) {
+				switch (sig[i]) {
+					case 'i':
+						packet.write_int_BE(4);
+						packet.write_int_BE(params[i] as Integer);
+						break;
+
+					case 'l':
+						packet.write_int_BE(8);
+						packet.write_long_BE(params[i] as Long);
+						break;
+
+					case 'f':
+						packet.write_int_BE(4);
+						packet.write_float_BE(params[i] as Float);
+						break;
+
+					case 'd':
+						packet.write_int_BE(8);
+						packet.write_double_BE(params[i] as Double);
+						break;
+
+					case 's': {
+						var utf = (params[i] as String).to_utf8();
+						packet.write_int_BE(utf.length+1);
+						packet.write_null_string(utf);
+						break;
+					}
+
+					case 'b': {
+						var binary = params[i] as Byte[];
+						packet.write_int_BE(binary.length);
+						packet.write(binary);
+						break;
+					}
+				}
+			}
+		}
+		else {
+			packet.write_short_BE(0);
+		}
+		packet.write_short_BE(1);
+		packet.write_short_BE(1);
+		send_packet(false);
+
+		init_packet('D');
+		packet.write_ubyte('S');
+		packet.write_null_string(""); // name
+		send_packet(false);
+
+		init_packet('E');
+		packet.write_null_string(""); // portal
+		packet.write_int_BE(0); // max length
+		send_packet(false);
+
+		init_packet('S');
+		send_packet(true);
+	}
+
+	function @replace_params(query: String): String
+	{
+		var s = {""};
+		var num_params = 0;
+		for (var i=0; i<query.length; i++) {
+			var c = query[i];
+			if (c == '?') {
+				s += "$"+(++num_params);
+				continue;
+			}
+			s[] = c;
+		}
+		return s;
+	}
+
+	override function query(query: String, sig: String, params: Dynamic[]): ResultSet
+	{
+		prepare_query(query, sig, params);
+
+		for (;;) {
+			var id = receive_packet();
+			if (id == 'T') break;
+		}
+
+		var rs = PostgreSQLResultSet::create();
+		var num_columns = packet.read_short_BE();
+		if (num_columns >= COLIDX_IDX_MASK) {
+			throw error("more than "+(COLIDX_IDX_MASK-1)+" columns");
+		}
+		var null_bits_size = (num_columns+31) >> 5;
+		var num_slots = null_bits_size;
+		for (var i=0; i<num_columns; i++) {
+			var name = String::from_utf8(packet.read_null_string());
+			var table_oid = packet.read_int_BE();
+			var attr_num = packet.read_short_BE();
+			var type_oid = packet.read_int_BE();
+			var type_size = packet.read_short_BE();
+			var type_mod = packet.read_int_BE();
+			var type_format = packet.read_short_BE();
+			var sql_type = SQL_TYPE_UNKNOWN;
+			var slot = num_slots;
+			if (slot >= COLIDX_SLOT_MASK) {
+				throw error("too many data slots");
+			}
+			switch (type_oid) {
+				case OID_INT4:   sql_type = SQL_TYPE_INTEGER; num_slots++; break;
+				case OID_INT8:   sql_type = SQL_TYPE_LONG;    num_slots+=2; break;
+				case OID_FLOAT4: sql_type = SQL_TYPE_FLOAT;   num_slots++; break;
+				case OID_FLOAT8: sql_type = SQL_TYPE_DOUBLE;  num_slots+=2; break;
+				case OID_TEXT:   sql_type = SQL_TYPE_STRING;  num_slots+=2; break;
+				case OID_BYTEA:  sql_type = SQL_TYPE_BINARY;  num_slots+=2; break;
+				default: throw error("unknown type for column "+i+" (oid="+type_oid+")");
+			}
+			//log("name="+name+" type="+sql_type+"(oid="+type_oid+") size="+type_size);
+			var colidx = (sql_type << COLIDX_TYPE_SHIFT) | (i << COLIDX_IDX_SHIFT) | slot;
+			rs.column_names[] = name;
+			rs.column_types[] = colidx;
+			if (!rs.column_indicies.contains(name)) {
+				rs.column_indicies[name] = colidx;
+			}
+		}
+
+		rs.column_count = num_columns;
+		rs.off = -num_slots;
+		rs.row_size = num_slots;
+
+		var buf = Array::create_shared(64, 4), pos = 0;
+		var byte_buf = Array::create_shared(64, 1), byte_pos = 0;
+
+		macro expand(&arr, elem_size) {
+			if (arr.length == 0x7FFFFFFF) {
+				throw error("data is too big");
+			}
+			var $new_arr = Array::create_shared(arr.length < 0x3FFFFFFF? arr.length*2 : 0x7FFFFFFF, elem_size);
+			Array::copy($new_arr, 0, arr, 0, arr.length);
+			arr = $new_arr;
+		}
+
+		var tmp_long = Long();
+
+		for (;;) {
+			var id = receive_packet();
+			if (id == 'C') break;
+
+			if (id == 'D') {
+				var num_columns2 = packet.read_short_BE();
+				if (num_columns2 != num_columns) {
+					throw error("incorrent number of columns");
+				}
+				var off = pos;
+				pos += num_slots;
+				while (pos > buf.length) {
+					expand(&buf, 4);
+				}
+				var null_bits = 0;
+				var slot = off + null_bits_size;
+				for (var i=0; i<num_columns; i++) {
+					if ((i & 31) == 0 && i > 0) {
+						buf[off+((i-1) >> 5)] = null_bits;
+						null_bits = 0;
+					}
+					var type = rs.column_types[i] >>> COLIDX_TYPE_SHIFT;
+					var len = packet.read_int_BE();
+					if (len == -1) {
+						null_bits |= 1 << (i & 31);
+						continue;
+					}
+					//log("type="+type+" len="+len);
+					switch (type) {
+						case SQL_TYPE_INTEGER:
+						case SQL_TYPE_FLOAT: {
+							if (len != 4) throw error("expected integer/float");
+							buf[slot++] = packet.read_int_BE();
+							break;
+						}
+
+						case SQL_TYPE_LONG:
+						case SQL_TYPE_DOUBLE: {
+							if (len != 8) throw error("expected long/double");
+							packet.read_long_BE(tmp_long);
+							buf[slot++] = tmp_long.lo;
+							buf[slot++] = tmp_long.hi;
+							break;
+						}
+
+						case SQL_TYPE_STRING:
+						case SQL_TYPE_BINARY: {
+							var byte_off = byte_pos;
+							byte_pos += len;
+							while (byte_pos > byte_buf.length) {
+								expand(&byte_buf, 1);
+							}
+							packet.read(byte_buf, byte_off, len);
+							buf[slot++] = byte_off;
+							buf[slot++] = len;
+							break;
+						}
+					}
+				}
+				if (num_columns > 0) {
+					buf[off+((num_columns-1) >> 5)] = null_bits;
+				}
+			}
+		}
+
+		rs.buf = buf;
+		rs.buf_len = pos;
+		if (byte_pos > 0) {
+			rs.byte_buf = byte_buf;
+		}
+
+		for (;;) {
+			var id = receive_packet();
+			if (id == 'Z') break;
+		}
+
+		return rs;
+	}
+
+	override function update(query: String, sig: String, params: Dynamic[])
+	{
+		prepare_query(query, sig, params);
+
+		for (;;) {
+			var id = receive_packet();
+			if (id == 'Z') {
+				throw error("update failed");
+			}
+			if (id == 'C') break;
+		}
+
+		var tag = packet.read_null_string();
+
+		for (;;) {
+			var id = receive_packet();
+			if (id == 'Z') break;
+		}
+	}
+
+	override function last_insert_id(): Long
+	{
+		return long_query("SELECT lastval()");
+	}
+
+	function @init_packet(id: Integer)
+	{
+		packet.reset();
+		if (id >= 0) {
+			packet.write_ubyte(id & 0xFF);
+		}
+		packet.write_int_BE(0);
+		packet_id = id;
+	}
+
+	function @send_packet(flush: Boolean)
+	{
+		var out = packet.get_output();
+
+		var idx = packet_id >= 0? 1 : 0;
+		var len = out.length-idx;
+		out[idx++] = (len >> 24) & 0xFF;
+		out[idx++] = (len >> 16) & 0xFF;
+		out[idx++] = (len >> 8) & 0xFF;
+		out[idx++] = len & 0xFF;
+
+		conn.write(out);
+
+		if (flush) {
+			conn.flush();
+		}
+	}
+
+	function @receive_packet(): Integer
+	{
+		var id = conn.read_ubyte();
+		var len = conn.read_int_BE();
+
+		in_packet_buf.set_length(len-4);
+		conn.read(in_packet_buf);
+
+		packet.reset();
+		packet.write_ubyte(0);
+		packet.write_int_BE(0);
+
+		if (id == 'E') {
+			var severity = "";
+			var message = {""};
+			for (;;) {
+				var type = packet.read_ubyte();
+				if (type == 0) break;
+
+				var msg = packet.read_null_string();
+				if (type == 'S') {
+					severity = msg+": ";
+				}
+				else if (type == 'M' || type == 'D' || type == 'H') {
+					if (message.length > 0) message[] = '\n';
+					message += msg;
+				}
+			}
+			throw error(severity+message);
+		}
+		return id;
+	}
+}
+
+function @null_value() {}
+
+class @PostgreSQLResultSet: ResultSet
+{
+	var @column_count: Integer;
+	var @column_names: String[];
+	var @column_types: Integer[];
+	var @column_indicies: Integer[String];
+	var @buf: Integer[];
+	var @buf_len: Integer;
+	var @byte_buf: Byte[];
+	var @off: Integer;
+	var @row_size: Integer;
+
+	constructor @create()
+	{
+		column_names = [];
+		column_types = [];
+		column_indicies = {};
+	}
+
+	override function close()
+	{
+	}
+
+	override function next(): Boolean
+	{
+		if (off+row_size >= buf_len) {
+			buf = null;
+			byte_buf = null;
+			return false;
+		}
+		off += row_size;
+		return true;
+	}
+
+	override function get_column_count(): Integer
+	{
+		return column_count;
+	}
+
+	override function get_column_name(idx: Integer): String
+	{
+		return column_names[idx];
+	}
+
+	override function get_column_index(name: String): Integer
+	{
+		return (column_indicies[name] >> COLIDX_IDX_SHIFT) & COLIDX_IDX_MASK;
+	}
+
+	override function get_column_type(name_or_idx: String or Integer): Integer
+	{
+		if (is_string(name_or_idx)) {
+			return column_indicies[name_or_idx] >>> COLIDX_TYPE_SHIFT;
+		}
+		return column_types[name_or_idx] >>> COLIDX_TYPE_SHIFT;
+	}
+
+	override function is_null(name_or_idx: String or Integer): Boolean
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = (column_indicies[name_or_idx] >> COLIDX_IDX_SHIFT) & COLIDX_IDX_MASK;
+		}
+		else if (name_or_idx < 0 || name_or_idx >= column_types.length) {
+			throw error("column index out of bounds");
+		}
+		return (buf[off + (name_or_idx >> 5)] & (1 << (name_or_idx & 31))) != 0;
+	}
+
+	macro @resolve_column(null_value)
+	{
+		var colidx = is_string(name_or_idx)? column_indicies[name_or_idx] : column_types[name_or_idx];
+		var idx = (colidx >> COLIDX_IDX_SHIFT) & COLIDX_IDX_MASK;
+		if ((buf[off + (idx >> 5)] & (1 << (idx & 31))) as Boolean) {
+			return null_value;
+		}
+		var slot = off + (colidx & COLIDX_SLOT_MASK);
+	}
+
+	override function get_optional_int(name_or_idx: String or Integer, def_value: Integer): Integer
+	{
+		resolve_column(def_value);
+		return buf[slot];
+	}
+	
+	override function get_optional_long(name_or_idx: String or Integer): Long
+	{
+		resolve_column(null);
+		return Long(buf[slot++], buf[slot]);
+	}
+	
+	override function get_optional_float(name_or_idx: String or Integer, def_value: Float): Float
+	{
+		resolve_column(def_value);
+		return (buf[slot] as Float) * 1.0;
+	}
+	
+	override function get_optional_double(name_or_idx: String or Integer): Double
+	{
+		resolve_column(null);
+		return Double(buf[slot++], buf[slot]);
+	}
+	
+	override function get_optional_string(name_or_idx: String or Integer): String
+	{
+		resolve_column(null);
+		var byte_off = buf[slot++];
+		var byte_len = buf[slot];
+		return String::from_utf8(byte_buf, byte_off, byte_len);
+	}
+	
+	override function get_optional_binary(name_or_idx: String or Integer): Byte[]
+	{
+		resolve_column(null);
+		var byte_off = buf[slot++];
+		var byte_len = buf[slot];
+		return byte_buf.extract(byte_off, byte_len);
+	}
+}
+
+function @md5(buf: Byte[]): Byte[]
+{
+	var len = buf.length;
+	buf = clone(buf);
+	buf[] = 0x80;
+	while ((buf.length & 63) != 56) {
+		buf[] = 0;
+	}
+
+	var M = [];
+	for (var i=0; i<buf.length; ) {
+		M[] = buf[i++] | (buf[i++] << 8) | (buf[i++] << 16) | (buf[i++] << 24);
+	}
+	M[] = len << 3;
+	M[] = len >>> 29;
+
+	var s = [
+		7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+		5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20,
+		4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+		6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+	];
+	var K = [
+		0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+		0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+		0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+		0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+		0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+		0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+		0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+		0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391
+	];
+
+	var s0 = 0x67452301;
+	var s1 = 0xefcdab89;
+	var s2 = 0x98badcfe;
+	var s3 = 0x10325476;
+
+	for (var i=0; i<M.length; i+=16) {
+		var a = s0;
+		var b = s1;
+		var c = s2;
+		var d = s3;
+
+		for (var j=0; j<64; j+=16) {
+			for (var k=j, n=j+16; k<n; k++) {
+				var f, g;
+				switch (j) {
+					case 0: f = (b & c) | ((~b) & d); g = k; break;
+					case 16: f = (d & b) | ((~d) & c); g = (5*k + 1) & 15; break;
+					case 32: f = b ^ c ^ d; g = (3*k + 5) & 15; break;
+					case 48: f = c ^ (b | (~d)); g = (7*k) & 15; break;
+				}
+				f = add32(f, add32(add32(a, K[k]), M[i+g]));
+				a = d;
+				d = c;
+				c = b;
+				var h = s[k];
+				b = add32(b, (f << h) | (f >>> (32-h)));
+			}
+		}
+
+		s0 = add32(s0, a);
+		s1 = add32(s1, b);
+		s2 = add32(s2, c);
+		s3 = add32(s3, d);
+	}
+
+	return [
+		s0 & 0xFF, (s0 >>> 8) & 0xFF, (s0 >>> 16) & 0xFF, s0 >>> 24,
+		s1 & 0xFF, (s1 >>> 8) & 0xFF, (s1 >>> 16) & 0xFF, s1 >>> 24,
+		s2 & 0xFF, (s2 >>> 8) & 0xFF, (s2 >>> 16) & 0xFF, s2 >>> 24,
+		s3 & 0xFF, (s3 >>> 8) & 0xFF, (s3 >>> 16) & 0xFF, s3 >>> 24
+	];
+}
+
+function @to_hex(value: Byte[]): String
+{
+	var hex = {""};
+	var len = value.length;
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}

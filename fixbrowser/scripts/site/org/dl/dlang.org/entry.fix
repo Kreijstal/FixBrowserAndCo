@@ -1,0 +1,12 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	var head = element_query(document, "head");
+	var style = element_create("style");
+	element_set_text(style, {
+		"a.expand-toggle:hover + ul.expand-content { display: block !important; } ",
+		"ul.expand-content:hover { display: block !important; }"
+	});
+	element_append_child(head, style);
+}

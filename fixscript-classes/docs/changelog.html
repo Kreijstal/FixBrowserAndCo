@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixScript Classes Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixScript Classes Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>ChangeLog</h2>
+
+<h3>Version 0.8 (2024/05/05):</h3>
+
+<ul>
+<li>Added automatic checking that given script is using classes when the API is being used</li>
+<li>Added ability to accept multiple different types in function parameters</li>
+<li>Added ability to use foreach on strings</li>
+<li>Added direct syntax for using structs with indicies</li>
+<li>Added support for length property in arrays, strings, hash tables and struct arrays</li>
+<li>Added support for first and last properties in struct arrays</li>
+<li>Added more precise types for built-in functions</li>
+<li>Added ability to call built-in functions for arrays, strings and hash tables with OOP syntax</li>
+<li>Added ability to define custom extension methods for arrays, strings and hash tables</li>
+<li>Added ability to import other scripts when using class definition attributes</li>
+<li>Added more strict handling of function return types</li>
+<li>Added ability to append new tokens during processing of classes in API</li>
+<li>Improved memory utilization of global metadata after processing</li>
+<li>Fixed importing of locals by not including transitively included locals</li>
+<li>Fixed custom inplace operators sometimes throwing an internal error during processing</li>
+<li>Fixed array and hash table literals to use appropriate type</li>
+<li>Fixed implicit type conversion to work with arrays and hash tables</li>
+<li>Fixed checking of types for non-overridable calls of built-in functions</li>
+<li>Fixed checking for member attributes with undefined class attributes</li>
+<li>Fixed checking of types when retrieving two result values from functions</li>
+<li>Fixed checking for unclosed classes and functions</li>
+<li>Fixed checking for duplicate classes</li>
+<li>Fixed parsing of ternary operator in extended operator</li>
+<li>Fixed propagation of errors when checking for script existence in import statement</li>
+<li>Fixed get_method_real_name method in ClassType to use proper base class (in API)</li>
+</ul>
+
+<h3>Version 0.7 (2022/12/27):</h3>
+
+<ul>
+<li>Added support for structs (packed data in arrays)</li>
+<li>Added ability to get offsets of fields in classes</li>
+<li>Added support for shorthand float operations</li>
+<li>Added operator overloading for appending to existing strings</li>
+<li>Added automatic calling of to_string methods in string concatenation</li>
+<li>Added support for operator overloading</li>
+<li>Improved error messages when parsing class attributes</li>
+<li>Changed comparison operators to be more strict about types</li>
+<li>Adjusted for syntax change to allow multiple semicolons (empty statements)</li>
+<li>Adjusted for tokenization change of numbers (separate leading plus/minus token)</li>
+<li>Fixed checking for incompatible types in math operations</li>
+<li>Fixed registering of global functions defined in attributes</li>
+</ul>
+
+<h3>Version 0.6 (2022/03/14):</h3>
+
+<ul>
+<li>Added ability to get real names of methods in API</li>
+<li>Added easier way to check for non-primitive types in API</li>
+<li>Added ability to check for assignability between types in API</li>
+<li>Improved error message when importing non-existing script</li>
+<li>Fixed parsing of extended operator with leading plus or minus sign</li>
+</ul>
+
+<h3>Version 0.5 (2021/10/03):</h3>
+
+<ul>
+<li>Adjusted for new symbol representation in tokens</li>
+<li>Fixed types for string_to_utf8 function</li>
+</ul>
+
+<h3>Version 0.4 (2021/05/12):</h3>
+
+<ul>
+<li>Added ability to directly define static methods using private constants</li>
+<li>Added access to constants, locals and variables in API</li>
+<li>Added basic support for import aliases</li>
+<li>Added automatic to_string implementation</li>
+<li>Added ability to define global functions using private constants</li>
+<li>Changed to use script_line function for error reporting</li>
+<li>Changed adjusting of function calls to include return type in API</li>
+<li>Fixed parsing of empty array with whitespace between braces</li>
+<li>Fixed adjusting of functions when called from methods (using API)</li>
+<li>Fixed bug in throw statement that prevented method calls</li>
+</ul>
+
+<h3>Version 0.3 (2020/10/13):</h3>
+
+<ul>
+<li>Added support for class definitions using private constants</li>
+<li>Added support for declaring of types when obtaining two results from a function call</li>
+<li>Added support for function references to class methods</li>
+<li>Added hiding of helper functions for calling virtual methods</li>
+<li>Added better syntax for constructors</li>
+<li>Added API for integration with other token processors</li>
+<li>Fixed reporting of unrecognized tokens in class body</li>
+<li>Fixed parsing of operator for array access using constant (-&gt;)</li>
+</ul>
+
+<h3>Version 0.2 (2020/02/06):</h3>
+
+<ul>
+<li>Added support for calling super methods</li>
+<li>Fixed foreach statement</li>
+<li>Fixed type checking of functions outside classes</li>
+<li>Fixed method calls preceeded by unary operators</li>
+<li>Fixed parsing of case statements</li>
+</ul>
+
+<h3>Version 0.1 (2019/12/26):</h3>
+
+<ul>
+<li>Initial release</li>
+</ul>
+
+</body>
+</html>

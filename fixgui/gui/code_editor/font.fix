@@ -1,0 +1,428 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/font";
+import "gui/view";
+import "gui/font";
+
+const {
+	FONT_NORMAL    = 0x00,
+	FONT_BOLD      = 0x01,
+	FONT_ITALIC    = 0x02,
+	FONT_UNDERLINE = 0x04,
+	FONT_STRIKE    = 0x08
+};
+
+class AbstractFont
+{
+	var @visual_size: Integer[];
+	
+	constructor create()
+	{
+	}
+
+	function with_size(size: Float): AbstractFont
+	{
+		return with_params(size, get_style());
+	}
+
+	function with_style(style: Integer): AbstractFont
+	{
+		return with_params(get_size(), style);
+	}
+
+	virtual function with_params(size: Float, style: Integer): AbstractFont
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_size(): Float
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_style(): Integer
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_ascent(): Float
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_descent(): Float
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_height(): Float
+	{
+		throw error("not implemented");
+	}
+
+	function get_string_advance(s: String): Float
+	{
+		return get_string_advance(s, 0, s.length);
+	}
+
+	virtual function get_string_advance(s: String, off: Integer, len: Integer): Float
+	{
+		throw error("not implemented");
+	}
+
+	function get_string_position(s: String, x: Float): Float
+	{
+		return get_string_position(s, 0, s.length, x);
+	}
+	
+	virtual function get_string_position(s: String, off: Integer, len: Integer, x: Float): Float
+	{
+		throw error("not implemented");
+	}
+
+	function draw_string(p: Painter, x: Float, y: Float, s: String, color: Integer)
+	{
+		draw_string(p, x, y, s, 0, s.length, color);
+	}
+	
+	virtual function draw_string(p: Painter, x: Float, y: Float, s: String, off: Integer, len: Integer, color: Integer)
+	{
+		throw error("not implemented");
+	}
+
+	function get_visual_size(): Integer[]
+	{
+		if (visual_size) {
+			return clone(visual_size);
+		}
+
+		var s = "AMXW01()";
+		var img = Image::create(max(1, iround(get_string_advance(s))), max(1, iround(get_height())));
+		var p = Painter::create(img);
+		var ascent = iround(get_ascent());
+		draw_string(p, 0, ascent, s, 0xFFFFFFFF);
+		var w = img.get_width();
+		var h = img.get_height();
+		var pixels = img.get_pixels();
+		var y1 = 0;
+		var y2 = h-1;
+
+		var idx = 0;
+		for (var i=0; i<h; i++) {
+			var found = false;
+			for (var j=0; j<w; j++) {
+				if (pixels[idx++] != 0) {
+					found = true;
+					break;
+				}
+			}
+			if (found) {
+				y1 = i;
+				break;
+			}
+		}
+
+		idx = w*h;
+		for (var i=h-1; i>=0; i--) {
+			var found = false;
+			for (var j=0; j<w; j++) {
+				if (pixels[--idx] != 0) {
+					found = true;
+					break;
+				}
+			}
+			if (found) {
+				y2 = i;
+				break;
+			}
+		}
+
+		visual_size = [ascent-y1, y2-ascent];
+		return clone(visual_size);
+	}
+}
+
+class SystemFontImpl: AbstractFont
+{
+	var @family: String;
+	var @size: Float;
+	var @style: Integer;
+	var @font: SystemFont;
+	
+	constructor create(family: String, size: Float, style: Integer)
+	{
+		this.family = {family};
+		this.size = size;
+		this.style = style;
+		font = SystemFont::create(family, size, style);
+	}
+	
+	override function with_params(size: Float, style: Integer): AbstractFont
+	{
+		return create(family, size, style);
+	}
+
+	override function get_size(): Float
+	{
+		return size;
+	}
+
+	override function get_style(): Integer
+	{
+		return style;
+	}
+	
+	override function get_ascent(): Float
+	{
+		return font.get_ascent();
+	}
+
+	override function get_descent(): Float
+	{
+		return font.get_descent();
+	}
+	
+	override function get_height(): Float
+	{
+		return font.get_height();
+	}
+
+	override function get_string_advance(s: String, off: Integer, len: Integer): Float
+	{
+		return font.get_string_advance(s, off, len);
+	}
+	
+	override function get_string_position(s: String, off: Integer, len: Integer, x: Float): Float
+	{
+		return font.get_string_position(s, off, len, iround(x));
+	}
+	
+	override function draw_string(p: Painter, x: Float, y: Float, s: String, off: Integer, len: Integer, color: Integer)
+	{
+		font.draw_string(p, iround(x), iround(y), s, off, len, color);
+		if ((style & FONT_UNDERLINE) != 0) { //XXX
+			var height = max(1, ifloor(size / 24.0));
+			p.fill_rect(iround(x), iround(y)+height, font.get_string_advance(s, off, len), height, color);
+		}
+		if ((style & FONT_STRIKE) != 0) { //XXX
+			var height = max(1, ifloor(size / 24.0));
+			p.fill_rect(iround(x), iround(y) - iround(font.get_ascent()*0.4), font.get_string_advance(s, off, len), height, color);
+		}
+	}
+}
+
+class TrueTypeFontImpl: AbstractFont
+{
+	var @variants: Font[];
+	var @size: Float;
+	var @style: Integer;
+	var @font: Font;
+	var @subpixel: Boolean;
+	var @gamma: Float;
+	var @cache: ShapeCache;
+
+	constructor @create()
+	{
+	}
+
+	static function create(variants: Font[], size: Float): TrueTypeFontImpl
+	{
+		return create(variants, size, false, 1.0);
+	}
+	
+	constructor create(variants: Font[], size: Float, subpixel: Boolean, gamma: Float)
+	{
+		variants = clone(variants);
+		variants.set_length(4);
+
+		if (!variants[0]) {
+			for (var i=0; i<4; i++) {
+				if (variants[i]) {
+					variants[0] = variants[i];
+					break;
+				}
+			}
+			if (!variants[0]) {
+				throw error("no font variants were provided");
+			}
+		}
+		if (!variants[1]) {
+			variants[1] = variants[0];
+		}
+		if (!variants[2]) {
+			variants[2] = variants[0];
+		}
+		if (!variants[3]) {
+			variants[3] = variants[1];
+		}
+
+		this.variants = variants;
+		this.size = size;
+		this.style = style;
+		this.font = variants[style & 3];
+		this.subpixel = subpixel;
+		this.gamma = gamma;
+		this.cache = ShapeCache::create();
+	}
+	
+	override function with_params(size: Float, style: Integer): AbstractFont
+	{
+		var new_font = TrueTypeFontImpl::create();
+		new_font.variants = variants;
+		new_font.size = size;
+		new_font.style = style;
+		new_font.font = variants[style & 3];
+		new_font.subpixel = subpixel;
+		new_font.gamma = gamma;
+		new_font.cache = ShapeCache::create();
+		return new_font;
+	}
+
+	override function get_size(): Float
+	{
+		return size;
+	}
+
+	override function get_style(): Integer
+	{
+		return style;
+	}
+	
+	override function get_ascent(): Float
+	{
+		return font.get_ascent() * size;
+	}
+
+	override function get_descent(): Float
+	{
+		return font.get_descent() * size;
+	}
+	
+	override function get_height(): Float
+	{
+		return font.get_height() * size;
+	}
+
+	override function get_string_advance(s: String, off: Integer, len: Integer): Float
+	{
+		return font.get_string_advance(s, off, len) * size;
+	}
+	
+	override function get_string_position(s: String, off: Integer, len: Integer, x: Float): Float
+	{
+		return font.get_string_position(s, off, len, x / size);
+	}
+	
+	override function draw_string(p: Painter, x: Float, y: Float, s: String, off: Integer, len: Integer, color: Integer)
+	{
+		var text = s.extract(off, len);
+		var shape = cache.get(text);
+		if (!shape) {
+			shape = font.get_string_shape(text, 0, 0, size, size);
+			cache.set(text, shape);
+		}
+		p.push();
+		p.translate(x, y);
+		p.set_subpixel_rendering(subpixel);
+		p.set_blend_gamma(gamma);
+		p.fill_shape(shape, color);
+		p.pop();
+		if ((style & FONT_UNDERLINE) != 0) { //XXX
+			var height = max(1, ifloor(size / 24.0));
+			p.fill_rect(iround(x), iround(y)+height, iround(get_string_advance(s, off, len)), height, color);
+		}
+		if ((style & FONT_STRIKE) != 0) { //XXX
+			var height = max(1, ifloor(size / 24.0));
+			p.fill_rect(iround(x), iround(y) - iround(font.get_ascent()*0.4), iround(get_string_advance(s, off, len)), height, color);
+		}
+	}
+}
+
+const @CACHE_TIMEOUT = 5;
+const @CACHE_CHECK = 0.1;
+
+class @ShapeCache
+{
+	var @shapes: Shape[String];
+	var @scheduled: Boolean;
+	var @counter: Integer;
+
+	constructor create()
+	{
+		shapes = {};
+	}
+
+	function get(s: String): Shape
+	{
+		var shape = shapes.get(s, null);
+		if (!shape) return null;
+
+		(shape as Dynamic[])[(shape as Dynamic[]).length-1] = float(CACHE_TIMEOUT);
+
+		if (!scheduled) {
+			scheduled = true;
+			Timer::run_once(0, ShapeCache::cleanup#1, this);
+		}
+		return shape;
+	}
+
+	function set(s: String, shape: Shape)
+	{
+		var len = (shape as Dynamic[]).length;
+		var new_shape = Array::create_shared(len+3, 4);
+		Array::copy(new_shape, 0, shape as Dynamic[], 0, (shape as Dynamic[]).length);
+		new_shape[len+0] = 0; // MOVE_TO
+		new_shape[len+1] = 0.0; // x
+		new_shape[len+2] = float(CACHE_TIMEOUT); // y (used as counter)
+		shapes[s] = new_shape as Shape;
+	}
+
+	function @cleanup()
+	{
+		scheduled = false;
+
+		var size = max(1, iround(shapes.length*CACHE_CHECK));
+		var start = counter;
+		var end = min(counter+size, shapes.length);
+
+		for (var i=start; i<end; i++) {
+			var (text, shape) = shapes.entry(i);
+			var idx = (shape as Dynamic[]).length-1;
+			var cnt = int((shape as Dynamic[])[idx] as Float)-1;
+			if (cnt <= 0) {
+				shapes.remove(text);
+				i--;
+				end--;
+				continue;
+			}
+			(shape as Dynamic[])[idx] = float(cnt);
+		}
+		
+		counter += size;
+		if (counter >= shapes.length) {
+			counter = 0;
+		}
+	}
+}

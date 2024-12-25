@@ -1,0 +1,16 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "wp.com")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	var imgs = element_query_all(document, "img[data-src]");
+	for (var i=0; i<length(imgs); i++) {
+		var img = imgs[i];
+		element_set_attr(img, "src", element_get_attr(img, "data-src"));
+	}
+}

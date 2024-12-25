@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/channel";</code>
+</p>
+
+<h2>Channel class</h2>
+
+<p>
+Channel allows to send messages between different tasks. The channel can be either
+synchronous (the message is directly exchanged between the tasks at synchronization
+point) or asynchronous by using a queue.
+</p>
+
+<p>
+When sending channels as a part of the message using the asynchronous variant of the
+channel the values are only weakly referenced to prevent memory leaks. An outside reference
+must be present (this is usually the case).
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): Channel<br>
+		static function <b>create</b>(size: Integer): Channel<br>
+	</code></dt>
+	<dd>
+		Creates a new channel. When the size is non-zero an asynchronous channel
+		is created with the given queue size.
+	</dd>
+	<dt><code>
+		function <b>send</b>(msg)<br>
+		function <b>send</b>(msg, timeout: Integer): Boolean<br>
+	</code></dt>
+	<dd>
+		Sends a message to the channel with an optional timeout (in milliseconds,
+		negative value disables the timeout). Returns true if the message was
+		delivered (when using timeout).
+	</dd>
+	<dt><code>
+		function <b>receive</b>(): Dynamic<br>
+		function <b>receive</b>(timeout: Integer): Dynamic<br>
+		function <b>receive</b>(timeout: Integer, timeout_value): Dynamic<br>
+	</code></dt>
+	<dd>
+		Receives a message from the channel with an optional timeout (in milliseconds,
+		negative value disables the timeout). If the message wasn't received within
+		the provided time limit a special marker value is returned which you can check
+		using the <code>is_timeout</code> function.
+	</dd>
+	<dt><code>
+		function <b>get_sender</b>(): Channel<br>
+		function <b>get_receiver</b>(): Channel<br>
+	</code></dt>
+	<dd>
+		Returns either the sender or receiver part of the channel to prevent inappropriate
+		usage.
+	</dd>
+		<dt><code>function <b>get_shared_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the reference count of the channel. Can be used to track liveness of the
+		channel in other tasks in a similar fashion as <a href="http://www.fixscript.org/docs#distributed-gc">shared arrays</a>
+		can be used.
+	</dd>
+	<dt><code>
+		function <b>set_size</b>(size: Integer)<br>
+		function <b>get_size</b>(): Integer<br>
+	</code></dt>
+	<dd>
+		Allows to adjust or get the queue size for asynchronous channels. The size can be
+		changed only in the heap that created the channel, cloning to different heap will
+		strip the ownership (even when the channel is cloned back to the original heap).
+		Sender and receiver parts of the channel also can't be used to set the size.
+	</dd>
+	<dt><code>function <b>call</b>(params: Dynamic[]): Dynamic</code></dt>
+	<dd>
+		Uses the channel to do a synchronous function call (from the caller's point of view
+		at least). The parameters (with appended internal return channel) are sent to the
+		channel. It then waits for a message in the return channel to return.
+		The returned value must be an array of one or two return values, or it can be
+		<code>null</code> to not return anything.
+	</dd>
+	<dt><code>function <b>call</b>(params: Dynamic[], func, data)</code></dt>
+	<dd>
+		Asynchronous variant of <code>call</code>. Uses <a href="dispatcher.html">Dispatcher</a>
+		to call the provided callback once the result is available. The callback
+		function receives the data as a first argument, the result as a second argument
+		and the error as a third argument.
+	</dd>
+	<dt><code>
+		function <b>handle</b>(func)<br>
+		function <b>handle</b>(func, error_func)<br>
+		function <b>handle</b>(func, error_func, timeout: Integer)<br>
+		function <b>handle_sync</b>(func)<br>
+	</code></dt>
+	<dd>
+		Starts an endless loop that handles receiving of messages. The callback function
+		receives the message as an argument. Optionally you can also pass an error callback
+		with the message as a first argument and the error as a second argument. You can
+		also pass a periodic timeout (in milliseconds), whenever it is reached the callback is called with
+		a special timeout value that can be checked by using the <code>is_timeout</code> function.
+		In the synchronous variant the return value of the callback is passed back unless
+		<a href="dispatcher.html#handle_async"><code>Dispatcher::handle_async</code></a>
+		function is used. Use <a href="dispatcher.html">Dispatcher</a> if you need more
+		features.
+	</dd>
+</dl>
+
+<h3 id="special">Special values</h3>
+
+<dl>
+	<dt><code>static function <b>is_timeout</b>(value): Boolean</code></dt>
+	<dd>
+		Returns true if the returned value is a special marker value denoting that a time
+		limit has been reached.
+	</dd>
+	<dt><code>static function <b>is_error</b>(value): Boolean</code></dt>
+	<dd>
+		Returns true if the returned value is a special marker value denoting that an
+		error has occurred.
+	</dd>
+</dl>
+
+</body>
+</html>

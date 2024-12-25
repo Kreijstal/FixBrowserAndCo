@@ -1,0 +1,109 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/http/url";
+
+const {
+	REQ_method,
+	REQ_path,
+	REQ_code,
+	REQ_status,
+	REQ_headers,
+	REQ_post_data,
+	@REQ_SIZE
+};
+
+const {
+	METHOD_GET,
+	METHOD_HEAD,
+	METHOD_POST,
+	METHOD_PUT,
+	METHOD_DELETE,
+	METHOD_CONNECT,
+	METHOD_OPTIONS,
+	METHOD_TRACE
+};
+
+function request_create()
+{
+	var req = object_create(REQ_SIZE);
+	req->REQ_headers = {};
+	return req;
+}
+
+function request_get_header(req, name)
+{
+	var value = hash_get(req->REQ_headers, name, null);
+	if (!value) return null;
+
+	if (length(value) != 1) {
+		return 0, error({"single value expected for header ", name});
+	}
+	return value[0];
+}
+
+function request_get_header_multiple(req, name)
+{
+	var value = hash_get(req->REQ_headers, name, null);
+	if (!value) return null;
+	return value;
+}
+
+function request_get_params(req)
+{
+	var params = {};
+
+	var url = url_create(req->REQ_path);
+	for (var i=0; i<url_get_param_count(url); i++) {
+		var name = url_get_param_name(url, i);
+		var value = url_get_param_value(url, i);
+		
+		var list = hash_get(params, name, null);
+		if (!list) {
+			list = [];
+			params{name} = list;
+		}
+		list[] = value;
+	}
+
+	return params;
+}
+
+function request_get_post_params(req)
+{
+	var params = {};
+	if (!req->REQ_post_data) return params;
+
+	var url = url_create({"?", req->REQ_post_data});
+	for (var i=0; i<url_get_param_count(url); i++) {
+		var name = url_get_param_name(url, i);
+		var value = url_get_param_value(url, i);
+		
+		var list = hash_get(params, name, null);
+		if (!list) {
+			list = [];
+			params{name} = list;
+		}
+		list[] = value;
+	}
+
+	return params;
+}

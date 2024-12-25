@@ -1,0 +1,174 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/rect";
+
+class ScrollCache
+{
+	var @img: Image;
+	var @scroll_x: Integer;
+	var @scroll_y: Integer;
+	var @painter_func;
+	var @painter_data;
+	var @dirty: Rect;
+
+	constructor create(width: Integer, height: Integer, painter_func, painter_data)
+	{
+		this.painter_func = painter_func;
+		this.painter_data = painter_data;
+		img = Image::create(max(1, width), max(1, height));
+		dirty = Rect::create();
+	}
+
+	function get_width(): Integer
+	{
+		return img.get_width();
+	}
+
+	function get_height(): Integer
+	{
+		return img.get_height();
+	}
+
+	function mark_dirty(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		dirty.union(x, y, width, height);
+	}
+
+	function reset(new_x: Integer, new_y: Integer)
+	{
+		scroll_x = new_x;
+		scroll_y = new_y;
+		dirty.clear();
+		repaint(scroll_x, scroll_y, img.get_width(), img.get_height());
+	}
+
+	function scroll(new_x: Integer, new_y: Integer)
+	{
+		if (abs(new_x - scroll_x) >= img.get_width() || abs(new_y - scroll_y) >= img.get_height()) {
+			reset(new_x, new_y);
+			return;
+		}
+
+		var old_x = scroll_x;
+		scroll_x = new_x;
+
+		if (new_x != old_x) {
+			var x1, x2;
+			if (new_x > old_x) {
+				x1 = old_x+img.get_width();
+				x2 = new_x+img.get_width();
+			}
+			else {
+				x1 = new_x;
+				x2 = old_x;
+			}
+			repaint(x1, scroll_y, x2-x1, img.get_height());
+		}
+
+		var old_y = scroll_y;
+		scroll_y = new_y;
+
+		if (new_y != old_y) {
+			var y1, y2;
+			if (new_y > old_y) {
+				y1 = old_y+img.get_height();
+				y2 = new_y+img.get_height();
+			}
+			else {
+				y1 = new_y;
+				y2 = old_y;
+			}
+			repaint(scroll_x, y1, img.get_width(), y2-y1);
+		}
+	}
+
+	function @repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		var x1 = max(scroll_x, x);
+		var y1 = max(scroll_y, y);
+		var x2 = min(x+width, scroll_x+img.get_width());
+		var y2 = min(y+height, scroll_y+img.get_height());
+		if (x1 >= x2 || y1 >= y2) return;
+
+		var p = Painter::create(img);
+		var dx1 = x1 % img.get_width();
+		var dy1 = y1 % img.get_height();
+		var dx2 = dx1 + (x2 - x1);
+		var dy2 = dy1 + (y2 - y1);
+		var orig_dx2 = dx2;
+		
+		if (dy2 > img.get_height()) {
+			if (dx2 > img.get_width()) {
+				p.push();
+				p.clip(0, 0, dx2 - img.get_width(), dy2 - img.get_height());
+				p.translate(- x - (img.get_width() - dx1), - y - (img.get_height() - dy1));
+				painter_func(painter_data, p);
+				p.pop();
+				dx2 = img.get_width();
+			}
+			if (dx1 < dx2) {
+				p.push();
+				p.clip(dx1, 0, dx2-dx1, dy2 - img.get_height());
+				p.translate(dx1 - x, - y - (img.get_height() - dy1));
+				painter_func(painter_data, p);
+				p.pop();
+			}
+			dx2 = orig_dx2;
+			dy2 = img.get_height();
+		}
+		if (dy1 < dy2) {
+			if (dx2 > img.get_width()) {
+				p.push();
+				p.clip(0, dy1, dx2 - img.get_width(), dy2-dy1);
+				p.translate(- x - (img.get_width() - dx1), dy1 - y);
+				painter_func(painter_data, p);
+				p.pop();
+				dx2 = img.get_width();
+			}
+			if (dx1 < dx2) {
+				p.push();
+				p.clip(dx1, dy1, dx2-dx1, dy2-dy1);
+				p.translate(dx1 - x, dy1 - y);
+				painter_func(painter_data, p);
+				p.pop();
+			}
+		}
+	}
+
+	function draw(p: Painter)
+	{
+		dirty.intersect(scroll_x, scroll_y, scroll_x+img.get_width(), scroll_y+img.get_height());
+		if (dirty.is_valid()) {
+			repaint(dirty.x1, dirty.y1, dirty.get_width(), dirty.get_height());
+			dirty.clear();
+		}
+
+		var tr = Transform::create();
+		p.fill_rect(scroll_x, scroll_y, img.get_width(), img.get_height(), Shader {
+			replace(sample_nearest(img, tr));
+		});
+	}
+}

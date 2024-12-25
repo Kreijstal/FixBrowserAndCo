@@ -1,0 +1,70 @@
+import "util/common";
+import "util/string";
+import "util/extract";
+
+function handle_redirect(request, new_url)
+{
+	if (string_starts_with(new_url, "https://guce.yahoo.com/consent?")) {
+		var cookies = hash_get(request_get_headers(request), "Set-Cookie", null);
+
+		var cookie_GUCS, cookie_B;
+		for (var i=0; i<length(cookies); i++) {
+			var value = extract_string(cookies[i], "GUCS=", ";");
+			if (value) cookie_GUCS = value;
+			value = extract_string(cookies[i], "B=", ";");
+			if (value) cookie_B = value;
+		}
+
+		// https://guce.yahoo.com/consent?brandType=nonEu&gcrumb=XXX&done=https%3A%2F%2Fwww.yahoo.com%2F
+		var http = http_open(new_url);
+		http_set_header(http, "Cookie", {"GUCS=", cookie_GUCS, "; B=", cookie_B});
+		http_connect(http);
+		var location = http_get_header(http, "Location");
+		stream_close(http);
+
+		// https://consent.yahoo.com/collectConsent?sessionId=XXX&lang=&inline=false
+		var doc = document_parse(http_get(location, null, {"Cookie": {"GUCS=", cookie_GUCS, "; B=", cookie_B}}));
+		var form = element_query(doc, "form");
+
+		var form_url = element_get_attr(form, "action");
+		form_url = url_to_string(url_merge(url_create(location), url_create(form_url)));
+
+		var params = {};
+		var elems = element_query_all(form, "input[type=hidden]");
+		for (var i=0; i<length(elems); i++) {
+			var name = element_get_attr(elems[i], "name");
+			var value = element_get_attr(elems[i], "value");
+			params{name} = value;
+		}
+		params{"agree"} = "agree";
+
+		http = http_open(form_url);
+		http_set_header(http, "Cookie", {"GUCS=", cookie_GUCS, "; B=", cookie_B});
+		http_set_post_params(http, params);
+		http_connect(http);
+		location = http_get_header(http, "Location");
+		stream_close(http);
+
+		// https://guce.yahoo.com/copyConsent?sessionId=XXX
+		http = http_open(location);
+		http_set_header(http, "Cookie", {"GUCS=", cookie_GUCS, "; B=", cookie_B});
+		http_connect(http);
+		cookies = http_get_header_multiple(http, "Set-Cookie");
+		stream_close(http);
+
+		var cookie_EuConsent = null, cookie_GUC = null;
+		for (var i=0; i<length(cookies); i++) {
+			var value = extract_string(cookies[i], "EuConsent=", ";");
+			if (value) cookie_EuConsent = value;
+			value = extract_string(cookies[i], "GUC=", ";");
+			if (value) cookie_GUC = value;
+		}
+
+		return http_get(request_get_url(request), null, {"Cookie": {
+			"GUCS=", cookie_GUCS,
+			"; B=", cookie_B,
+			"; GUC=", cookie_GUC,
+			"; EuConsent=", cookie_EuConsent
+		}});
+	}
+}

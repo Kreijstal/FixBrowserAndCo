@@ -1,0 +1,8 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	// TODO: doesn't work
+	if (domain_ends_with(dest, "licdn.com")) return true;
+	return false;
+}

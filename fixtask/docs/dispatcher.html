@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/channel";</code>
+</p>
+
+<h2>Dispatcher class</h2>
+
+<p>
+Dispatcher handles receiving of messages from multiple channels using callbacks.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>register</b>(channel: <a href="channel.html">Channel</a>, func, data)<br>
+		static function <b>register_sync</b>(channel: <a href="channel.html">Channel</a>, func, data)<br>
+	</code></dt>
+	<dd>
+		Registers receiving of messages from given channel using the provided callback.
+		The callback receives the data as a first argument and the message as a second.
+		In the synchronous variant the return value of the callback is passed back unless
+		<code>handle_async</code> function is used.
+	</dd>
+	<dt><code>static function <b>unregister</b>(channel: <a href="channel.html">Channel</a>)</code></dt>
+	<dd>
+		Unregisters receiving of messages from given channel.
+	</dd>
+	<dt><code>static function <b>run_later</b>(delay: Integer, func, data)</code></dt>
+	<dd>
+		Runs given function after the delay in milliseconds.
+	</dd>
+	<dt><code>static function <b>enter_loop</b>(): Dynamic</code></dt>
+	<dd>
+		Starts the dispatcher loop. It can be stopped by using the <code>leave_loop</code> function.
+	</dd>
+	<dt><code>
+		static function <b>leave_loop</b>()<br>
+		static function <b>leave_loop</b>(value: Dynamic)<br>
+	</code></dt>
+	<dd>
+		Stops the dispatcher loop with optional return value.
+	</dd>
+	<dt><code>
+		static function <b>dispatch</b>()<br>
+		static function <b>dispatch</b>(timeout: Integer): Boolean<br>
+	</code></dt>
+	<dd>
+		Runs a single iteration of the dispatcher loop to provide a way to use custom
+		loop. The variant with timeout returns true when it processed a message.
+	</dd>
+	<dt id="handle_async"><code>static function <b>handle_async</b>(): Dynamic</code></dt>
+	<dd>
+		Returns a value that can be used to stop sending of the return value in the
+		synchronous callback, turning it into a conditional asynchronous variant.
+	</dd>
+	<dt><code>static function <b>integrate_async</b>()</code></dt>
+	<dd>
+		Enables integration with FixIO async event loop if available. Currently this
+		integration is permanent and you will leak resources if used in a non-permanent
+		task.
+	</dd>
+</dl>
+
+</body>
+</html>

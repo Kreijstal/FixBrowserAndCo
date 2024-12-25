@@ -1,0 +1,13 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "cdn.evbstatic.com")) return true;
+	if (domain_ends_with(dest, "evbstatic.com")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	remove_element(document, "aside.eds-structure__right-drawer");
+}

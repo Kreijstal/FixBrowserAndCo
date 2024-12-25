@@ -1,0 +1,156 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/crypto/aes";
+import "util/base64";
+
+const @INITIAL_TIMEOUT_MINS = 5;
+const @NORMAL_TIMEOUT_HOURS = 4;
+
+const {
+	@SESSION_key,
+	@SESSION_created,
+	@SESSION_encrypted,
+	@SESSION_data,
+	@SESSION_updated,
+	@SESSION_SIZE
+};
+
+function @get_global_key(session)
+{
+	var key = session->SESSION_key;
+	return ["user_session", array_extract(key, 0, length(key)-16)];
+}
+
+function @create()
+{
+	for (;;) {
+		var session = object_create(SESSION_SIZE);
+		session->SESSION_key = crypto_random(4+16);
+		session->SESSION_created = true;
+		session->SESSION_data = {};
+		if (global_cond_swap(get_global_key(session), null, [], INITIAL_TIMEOUT_MINS*60) != null) {
+			continue;
+		}
+		return session;
+	}
+}
+
+function @encrypt_data(session, data)
+{
+	var key = session->SESSION_key;
+	return aes_gcm_encrypt(serialize(data), array_extract(key, length(key)-16, 16));
+}
+
+function @decrypt_data(session, encrypted)
+{
+	if (!encrypted || length(encrypted) == 0) return {};
+	var key = session->SESSION_key;
+	var decrypted = aes_gcm_decrypt(encrypted, array_extract(key, length(key)-16, 16));
+	if (!decrypted) return {};
+	return unserialize(decrypted);
+}
+
+function session_is_new(session)
+{
+	return session->SESSION_created;
+}
+
+function session_get_key(session)
+{
+	return base64_encode(session->SESSION_key);
+}
+
+function session_get_or_create(key)
+{
+	if (!key) {
+		return create();
+	}
+
+	var (raw_key, e) = base64_decode(key);
+	if (e || length(raw_key) != 4+16) {
+		return create();
+	}
+
+	var session = object_create(SESSION_SIZE);
+	session->SESSION_key = raw_key;
+
+	var gkey = get_global_key(session);
+	var encrypted = global_get(gkey);
+	if (!encrypted) {
+		return create();
+	}
+
+	global_cond_swap(gkey, encrypted, encrypted, NORMAL_TIMEOUT_HOURS*3600);
+	
+	session->SESSION_encrypted = encrypted;
+	session->SESSION_data = decrypt_data(session, encrypted);
+	return session;
+}
+
+function session_update(session)
+{
+	var updated = session->SESSION_updated;
+	if (!updated || length(updated) == 0) return;
+
+	var key = session->SESSION_key;
+	key = array_extract(key, length(key)-16, 16);
+
+	var gkey = get_global_key(session);
+
+	var encrypted = global_get(gkey);
+	for (;;) {
+		var new_encrypted;
+
+		if (encrypted == session->SESSION_encrypted) {
+			new_encrypted = encrypt_data(session, session->SESSION_data);
+		}
+		else {
+			var new_data = decrypt_data(session, encrypted);
+			for (var i=0; i<length(updated); i++) {
+				var (k, v) = hash_entry(updated, i);
+				new_data{k} = session->SESSION_data{k};
+			}
+			new_encrypted = encrypt_data(session, new_data);
+		}
+
+		var old_encrypted = global_cond_swap(gkey, encrypted, new_encrypted, NORMAL_TIMEOUT_HOURS*3600);
+		if (old_encrypted == encrypted) break;
+		encrypted = old_encrypted;
+	}
+	
+	hash_clear(session->SESSION_updated);
+}
+
+function session_get(session, key)
+{
+	return hash_get(session->SESSION_data, key, null);
+}
+
+function session_set(session, key, value)
+{
+	session->SESSION_data{key} = value;
+
+	if (!session->SESSION_updated) {
+		session->SESSION_updated = {};
+	}
+	session->SESSION_updated{key} = true;
+}

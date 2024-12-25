@@ -1,0 +1,177 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "image/image";
+import "image/font";
+import "gui/subview";
+import "util/string";
+import "cellsplit/gui/common";
+
+implement_MeasureView(GameLabel)
+
+class GameLabel: SubView
+{
+	var @label: String;
+	var @rows: String[];
+	var @font: Font;
+	var @font_size: Float;
+	var @centered: Boolean;
+	var @color: Integer;
+	
+	constructor create(label: String)
+	{
+		set_label(label);
+		font = get_normal_font();
+		font_size = DEFAULT_FONT_SIZE;
+		color = 0xFF000000;
+	}
+
+	function set_label(label: String)
+	{
+		this.label = {label};
+		rows = [];
+		foreach (var s in label.split('\n')) {
+			rows[] = s;
+		}
+		repaint();
+	}
+
+	function get_label(): String
+	{
+		return {label};
+	}
+
+	function set_font(font: Font)
+	{
+		this.font = font;
+	}
+
+	function get_font(): Font
+	{
+		return font;
+	}
+
+	function set_font_size(font_size: Float)
+	{
+		this.font_size = font_size;
+	}
+
+	function get_font_size(): Float
+	{
+		return font_size;
+	}
+
+	function set_centered(centered: Boolean)
+	{
+		this.centered = centered;
+		repaint();
+	}
+
+	function is_centered(): Boolean
+	{
+		return centered;
+	}
+
+	function set_color(color: Integer)
+	{
+		this.color = color;
+	}
+
+	function get_color(): Integer
+	{
+		return color;
+	}
+
+	function get_preferred_width(scale: Float): Integer
+	{
+		var font_size = this.font_size * scale;
+		var max_width = 0;
+		foreach (var s in rows) {
+			max_width = max(max_width, iround(font.get_string_advance(s) * font_size));
+		}
+		return max_width;
+	}
+
+	function get_preferred_height(scale: Float): Integer
+	{
+		var font_size = this.font_size * scale;
+		return iround(font_size * 1.5) * rows.length;
+	}
+
+	function as_measure_view(): MeasureView
+	{
+		return GameLabelMeasureView::create(this);
+	}
+
+	function reflow(width: Integer)
+	{
+		var font_size = this.font_size * get_scale();
+
+		rows.clear();
+		foreach (var s in label.split('\n')) {
+			for (;;) {
+				var pos = ifloor(font.get_string_position(s, width/font_size));
+				if (pos >= s.length) {
+					rows[] = s;
+					break;
+				}
+
+				var idx = s.rev_search_char(' ', pos);
+				if (idx < 0) {
+					idx = s.search_char(' ');
+				}
+				if (idx >= 0) {
+					rows[] = s.extract(0, idx);
+					s.remove(0, idx+1);
+				}
+				else {
+					rows[] = s;
+					break;
+				}
+			}
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var font_size = this.font_size * get_scale();
+		var row_height = iround(font_size * 1.5);
+		p.push();
+		p.set_subpixel_rendering(true);
+		p.set_blend_gamma(1.3);
+		var y = (row_height+font_size*0.65)/2.0;
+		y += (get_height() - row_height * rows.length) / 2;
+		foreach (var s in rows) {
+			var x = 0.0;
+			if (centered) {
+				var w = font.get_string_advance(s) * font_size;
+				x = (get_width()-w)/2.0;
+			}
+			p.fill_shape(font.get_string_shape(s, x, y, font_size, font_size), color);
+			y += row_height;
+		}
+		p.pop();
+		draw_children(p);
+	}
+}

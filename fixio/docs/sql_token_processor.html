@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; line-height: 120%; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>SQL token processor</h2>
+
+<p>
+This token processor adds an easy way to pass parameters to SQL queries. It also
+automatically imports the SQL classes (<code>"io/sql/connection"</code>) and
+enables support for the <a href="transaction.html"><code>transaction</code></a> statement.
+</p>
+
+<p>
+The SQL string literals can be split into multiple lines using the <code>+</code> operator.
+Use the <a href="param_string.html">ParamString</a> class for more complex concatenations. You
+can disable the SQL string literals by wrapping the literal in parenthesis.
+</p>
+
+<h3>Example</h3>
+
+<pre class="code">
+<span class="keyword">use</span> <span class="string">"io/sql"</span><span class="symbol">;</span>
+<span class="keyword">use</span> <span class="string">"classes"</span><span class="symbol">;</span>
+
+<span class="keyword">function</span> <span class="function">test</span><span class="symbol">(</span>sql<span class="symbol">:</span> SQLConnection<span class="symbol">,</span> id<span class="symbol">:</span> Integer<span class="symbol">)</span>
+<span class="symbol">{</span>
+    <span class="keyword">transaction</span> <span class="symbol">(</span>sql<span class="symbol">)</span> <span class="symbol">{</span>
+        <span class="keyword">var</span> rs <span class="symbol">=</span> sql<span class="symbol">.</span><span class="function">query</span><span class="symbol">(</span><span class="string">"SELECT * FROM test WHERE id=?"</span><span class="symbol">,</span> id<span class="symbol">);</span>
+        <span class="keyword">while</span> <span class="symbol">(</span>rs<span class="symbol">.</span><span class="function">next</span><span class="symbol">())</span> <span class="symbol">{</span>
+            <span class="function">log</span><span class="symbol">(</span><span class="string">"got "</span><span class="symbol">+</span>rs<span class="symbol">.</span><span class="function">get_string</span><span class="symbol">(</span><span class="string">"text_field"</span><span class="symbol">));</span>
+        <span class="symbol">}</span>
+        rs<span class="symbol">.</span><span class="function">close</span><span class="symbol">();</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+</pre>
+
+</body>
+</html>

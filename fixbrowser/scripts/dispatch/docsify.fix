@@ -1,0 +1,43 @@
+import "util/common";
+import "util/stream";
+import "util/string";
+
+function adjust_document(request, document)
+{
+	var url = request_get_url(request);
+	var s = {""};
+	append_page(s, url, ["_coverpage.md"]);
+	append_page(s, url, ["main.md", "README.md"]);
+	append_page(s, url, ["_sidebar.md"]);
+	request_replace_document(request, document_parse(s));
+}
+
+function @append_page(s, base, files)
+{
+	for (var i=0; i<length(files); i++) {
+		var markdown = fetch_page({base, files[i]});
+		if (markdown) {
+			string_append(s, show_markdown(markdown));
+			return true;
+		}
+	}
+	return false;
+}
+
+function @fetch_page(url)
+{
+	var http = http_open(url);
+	http_connect(http);
+	var content_type = http_get_header(http, "Content-Type");
+	if (string_starts_with(content_type, "text/html")) {
+		return null;
+	}
+	var content = stream_read_all(http, {""});
+	stream_close(http);
+	return content;
+}
+
+function @show_markdown(markdown)
+{
+	return {"<pre>", markdown, "</pre>"};
+}

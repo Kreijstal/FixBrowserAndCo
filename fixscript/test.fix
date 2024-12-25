@@ -1,0 +1,2499 @@
+/*
+ * FixScript v0.9 - https://www.fixscript.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "test_use";
+use "test_use_inner";
+
+import "test_import" : ti;
+import "test_use_inner";
+
+const XXX = 5;
+const @YYY = 6;
+
+const {
+	const_0,
+	@const_1,
+	const_2,
+	const_50 = 50,
+	@const_51,
+	const_LAST = 0x7FFFFFFF
+};
+
+const {
+	const_other = const_50,
+	const_other2,
+	const_other3 = ti:XXX
+};
+
+const const_other4 = const_50;
+const const_other5 = ti:XXX;
+
+const const_pos_int1 = +123;
+const const_pos_hex1 = +0x123;
+const const_pos_flt1 = +123.456;
+const const_neg_int1 = -123;
+const const_neg_hex1 = -0x123;
+const const_neg_flt1 = -123.456;
+const const_pos_int2 = + 123;
+const const_pos_hex2 = + 0x123;
+const const_pos_flt2 = + 123.456;
+const const_neg_int2 = - 123;
+const const_neg_hex2 = - 0x123;
+const const_neg_flt2 = - 123.456;
+
+const {
+	OBJ_first,
+	OBJ_second,
+	OBJ_third,
+	OBJ_SIZE
+};
+
+const {
+	SUBCLASS_other = OBJ_SIZE,
+	@SUBCLASS_SIZE
+};
+
+const {
+	SUBCLASS2_SIZE = OTHER_SIZE
+};
+
+const @function_test_3 = "test(a,b,c)";
+const @function_hidden_0 = "";
+
+var @local;
+var local1, local2;
+
+function array_set_length(arr, len);
+
+function callback(a)
+{
+	return 0 - a;
+}
+
+function assert(value)
+{
+	if (!value) {
+		return 0, error("assert failed");
+	}
+}
+
+function assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function assert_exception(func, msg)
+{
+	var (r, e) = func();
+	if (!e) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got none)"});
+	}
+	if (e[0] != msg) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got '", e[0], "')"});
+	}
+}
+
+function assert_exception(func, p1, msg)
+{
+	var (r, e) = func(p1);
+	if (!e) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got none)"});
+	}
+	if (e[0] != msg) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got '", e[0], "')"});
+	}
+}
+
+function assert_exception(func, p1, p2, msg)
+{
+	var (r, e) = func(p1, p2);
+	if (!e) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got none)"});
+	}
+	if (e[0] != msg) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got '", e[0], "')"});
+	}
+}
+
+function switch_test(value)
+{
+	var ret = "";
+	switch (value) {
+		case 1: ret = {ret, "1"}; break;
+		case 2,4: ret = {ret, "2,4+"};
+		case 5..8: ret = {ret, "5..8"}; break;
+		case 30: ret = {ret, "30"}; break;
+		default: ret = {ret, "default"};
+	}
+	return ret;
+}
+
+function overflow_test1()
+{
+	var a = 0x7FFFFFFF;
+	return a + 1;
+}
+
+function overflow_test2()
+{
+	var a = 0x80000000;
+	return a - 1;
+}
+
+function division_test1()
+{
+	return 1 / 0;
+}
+
+function division_test2()
+{
+	return 0x80000000 / -1;
+}
+
+function division_test3()
+{
+	return 1 % 0;
+}
+
+function division_test4()
+{
+	return 0x80000000 % -1;
+}
+
+function division_test5()
+{
+	var (lo, hi) = div64(1, 0, 0, 0);
+}
+
+function division_test6()
+{
+	var (lo, hi) = udiv64(1, 0, 0, 0);
+}
+
+function division_test7()
+{
+	var (lo, hi) = div64(0, 0x80000000, -1, -1);
+}
+
+function division_test8()
+{
+	var (lo, hi) = udiv64(0, 0x80000000, -1, -1);
+}
+
+function division_test9()
+{
+	var (lo, hi) = rem64(1, 0, 0, 0);
+}
+
+function division_test10()
+{
+	var (lo, hi) = urem64(1, 0, 0, 0);
+}
+
+function division_test11()
+{
+	var (lo, hi) = rem64(0, 0x80000000, -1, -1);
+}
+
+function division_test12()
+{
+	var (lo, hi) = urem64(0, 0x80000000, -1, -1);
+}
+
+function test_shared(shared, test)
+{
+	switch (test) {
+		case 0: shared[5] = -1; return;
+		case 1: shared[5] = 0x11223344; return;
+		case 2: shared[] = 0; return;
+		case 3: shared[5] = []; return;
+		case 4: shared[5] = -0.0; return;
+		case 5: array_set_length(shared, 20); return;
+	}
+}
+
+function test_string_set(s, c)
+{
+	s[0] = c;
+}
+
+function test_string_append(s, c)
+{
+	s[] = c;
+}
+
+function test_serialize(data)
+{
+	return serialize(data);
+}
+
+function test_unserialize(data)
+{
+	return unserialize(data);
+}
+
+function test_token_processing_funcs(test)
+{
+	switch (test) {
+		case 0: script_query("test_import", null, null, null, null); break;
+		case 1: script_line(123); break;
+		case 2: script_postprocess(null, null); break;
+		case 3: script_compile(null); break;
+		case 4: tokens_parse([], "", "", 0); break;
+		case 5: token_parse_string(""); break;
+		case 6: token_escape_string(""); break;
+	}
+}
+
+function assert_type_check(val, i, f, a, st, h, sh, c, fc, wk, han)
+{
+	assert(is_int(val), i);
+	assert(is_float(val), f);
+	assert(is_array(val), a);
+	assert(is_string(val), st);
+	assert(is_hash(val), h);
+	assert(is_shared(val), sh);
+	assert(is_const(val), c);
+	assert(is_funcref(val), fc);
+	assert(is_weakref(val), wk);
+	assert(is_handle(val), han);
+}
+
+function test_parse_int(p)
+{
+	switch (length(p)) {
+		case 1: return string_parse_int(p[0]);
+		case 2: return string_parse_int(p[0], p[1]);
+		case 3: return string_parse_int(p[0], p[1], p[2]);
+		case 4: return string_parse_int(p[0], p[1], p[2], p[3]);
+	}
+	return 0, error("invalid parameters");
+}
+
+function test_parse_float(p)
+{
+	switch (length(p)) {
+		case 1: return string_parse_float(p[0]);
+		case 2: return string_parse_float(p[0], p[1]);
+		case 3: return string_parse_float(p[0], p[1], p[2]);
+		case 4: return string_parse_float(p[0], p[1], p[2], p[3]);
+	}
+	return 0, error("invalid parameters");
+}
+
+function obj_create()
+{
+	var obj = object_create(OBJ_SIZE);
+	return obj;
+}
+
+function hidden()
+{
+	return error("test");
+}
+
+function nonhidden()
+{
+	return error("test");
+}
+
+function extract_stack_entry_parts(s)
+{
+	var idx = length(s)-1;
+	assert(s[idx--], ')');
+	var line_end = idx+1;
+	assert(s[idx] >= '0' && s[idx--] <= '9');
+	while (s[idx] >= '0' && s[idx] <= '9') {
+		idx--;
+	}
+	if (s[idx] == '-') idx--;
+	var line_start = idx+1;
+	var line = string_parse_int(array_extract(s, line_start, line_end - line_start));
+	assert(s[idx--], ':');
+	var fname_end = idx+1;
+	while (s[idx] != '(') {
+		idx--;
+	}
+	var fname_start = idx+1;
+	var fname = array_extract(s, fname_start, fname_end - fname_start);
+	assert(s[--idx], ' ');
+	assert(idx > 0);
+	return [array_extract(s, 0, idx), fname, line];
+}
+
+function test_lines()
+{
+	var normal = test_lines_helper("test1");
+	var added_virtual_function = test_lines_helper("test2");
+	return [normal, added_virtual_function];
+}
+
+function test_lines_helper(msg)
+{
+	return error(msg);
+}
+
+function strip_line_num(s)
+{
+	s = {s};
+	for (var i=length(s)-1; i>=0; i--) {
+		if (s[i] == ':') {
+			array_remove(s, i, length(s) - i - 1);
+			break;
+		}
+	}
+	return s;
+}
+
+function overrided_native_func1()
+{
+	return @overrided_native_func1() * 2;
+}
+
+function recursive_test()
+{
+	recursive_test();
+}
+
+function funcref_call_func(func, params)
+{
+	return funcref_call(func, params);
+}
+
+function get_stack()
+{
+	return error(null)[1];
+}
+
+function test(a,b,c)
+{
+	assert(XXX, 5);
+	assert(YYY, 6);
+
+	assert(const_0, 0);
+	assert(const_1, 1);
+	assert(const_2, 2);
+	assert(const_50, 50);
+	assert(const_51, 51);
+	assert(const_LAST, 0x7FFFFFFF);
+
+	assert(const_other, 50);
+	assert(const_other2, 51);
+	assert(const_other3, 505);
+	assert(const_other4, 50);
+	assert(const_other5, 505);
+
+	assert(const_pos_int1, + 123);
+	assert(const_pos_hex1, + 0x123);
+	assert(const_pos_flt1, + 123.456);
+	assert(const_neg_int1, - 123);
+	assert(const_neg_hex1, - 0x123);
+	assert(const_neg_hex1, - 291);
+	assert(const_neg_flt1, - 123.456);
+	assert(const_pos_int2, +123);
+	assert(const_pos_hex2, +0x123);
+	assert(const_pos_flt2, +123.456);
+	assert(const_neg_int2, -123);
+	assert(const_neg_hex2, -0x123);
+	assert(const_neg_hex2, -291);
+	assert(const_neg_flt2, -123.456);
+
+	assert(int(1e5), 100000);
+	assert(int(1e+5), 100000);
+	assert(int(1e005), 100000);
+	assert(int(1e+005), 100000);
+	assert(int(1.5e5), 150000);
+	assert(int(1.5e+5), 150000);
+	assert(int(1.5e005), 150000);
+	assert(int(1.5e+005), 150000);
+	assert(int({1.0 / 1e-5}), 100000);
+	assert(int({1.0 / 1e-005}), 100000);
+	assert(int({1.0 / 1.5e-5}), 66666);
+	assert(int({1.0 / 1.5e-005}), 66666);
+	assert(int({-1.0 / -1e-5}), 100000);
+	assert(int({-1.0 / -1e-005}), 100000);
+	assert(int({-1.0 / -1.5e-5}), 66666);
+	assert(int({-1.0 / -1.5e-005}), 66666);
+
+	assert(1 < 2,   1);
+	assert(1 <= 2,  1);
+	assert(1 > 2,   0);
+	assert(1 >= 2,  0);
+	assert(1 === 2, 0);
+	assert(1 !== 2, 1);
+	assert(1 == 2,  0);
+	assert(1 != 2,  1);
+
+	assert(2 < 1,   0);
+	assert(2 <= 1,  0);
+	assert(2 > 1,   1);
+	assert(2 >= 1,  1);
+	assert(2 === 1, 0);
+	assert(2 !== 1, 1);
+	assert(2 == 1,  0);
+	assert(2 != 1,  1);
+
+	assert(null, 0);
+	assert(false, 0);
+	assert(true, 1);
+
+	assert(0.0 != 0, 1);
+	assert(0.0 == -0.0, 1);
+
+	assert("aaa" == "aaa",       1);
+	assert("aaa" != "aaa",       0);
+	assert("aaa" === "aaa",      1);
+	assert("aaa" !== "aaa",      0);
+	assert("aaa" == "bbb",       0);
+	assert("aaa" != "bbb",       1);
+	assert("aaa" === "bbb",      0);
+	assert("aaa" !== "bbb",      1);
+	assert("aaa" == {"aa","a"},  1);
+	assert("aaa" != {"aa","a"},  0);
+	assert("aaa" === {"aa","a"}, 0);
+	assert("aaa" !== {"aa","a"}, 1);
+	assert("aaa" == {"aaa"},     1);
+	assert("aaa" != {"aaa"},     0);
+	assert("aaa" === {"aaa"},    0);
+	assert("aaa" !== {"aaa"},    1);
+	assert("test"|0 === "test",  0);
+	assert("test"|0 !== "test",  1);
+
+	assert(to_string("\ttesting\00\1F\"escaping\"\FF"), "\"\\ttesting\\00\\1F\\\"escaping\\\"\FF\"");
+
+	// TODO: should this behave this way?
+	assert([0x00, 0x01, 0x02, 0x03] == "\00\01\02\03");
+	assert([[0x00, 0x01, 0x02, 0x03]] == ["\00\01\02\03"]);
+
+	assert(length("A\u0000B"), 3);
+	assert(length("A\U000000B"), 3);
+	var s = "A\u0000B";
+	assert(s[0], 'A');
+	assert(s[1], 0);
+	assert(s[2], 'B');
+	s = "A\U000000B";
+	assert(s[0], 'A');
+	assert(s[1], 0);
+	assert(s[2], 'B');
+
+	assert('A', 65);
+	assert('~', 126);
+	assert('\n', 10);
+	assert('á', 225);
+	assert('\u00FF', 255);
+	assert('\uFFFF', 0xFFFF);
+	assert('\U10FFFF', 0x10FFFF);
+	assert('a', 0x61);
+	assert('ab', 0x6261);
+	assert('abc', 0x636261);
+	assert('abcd', 0x64636261);
+	assert('\u00FFbcá', 0xE16362FF);
+
+	assert(0 == 0.0,      0);
+	assert(0 === 0.0,     0);
+	assert(0.0 == -0.0,   1);
+	assert(-0.0 == 0.0,   1);
+	assert(0.0 === -0.0,  0);
+	assert({0 == 0.0},    1);
+	assert({0 != 0.0},    0);
+	assert({0 == -0.0},   1);
+	assert({0 != -0.0},   0);
+	assert({0.0 == -0.0}, 1);
+	assert({0.0 != -0.0}, 0);
+
+	assert(to_string(0.0),  "0.0");
+	//assert(to_string(-0.0), "-0.0"); // TODO
+
+	assert(1 + 2,   3);
+	assert(1 - 2,   -1);
+	assert(-1 * -2, 2);
+
+	assert({1.0 + 0.5 - 0.25}, 1.25);
+	assert({3.0 * 0.5 / 2.0},  0.75);
+
+	assert(-2.0, {0.0 - 2.0});
+	assert((-2.0)|0, 0xC0000000);
+
+	assert(-2.0 < -1.0,    0);
+	assert(-2.0 <= -1.0,   0);
+	assert(-2.0 > -1.0,    1);
+	assert(-2.0 >= -1.0,   1);
+	assert(-2.0 == -1.0,   0);
+	assert(-2.0 != -1.0,   1);
+
+	assert({-2.0 < -1.0},  1);
+	assert({-2.0 <= -1.0}, 1);
+	assert({-2.0 > -1.0},  0);
+	assert({-2.0 >= -1.0}, 0);
+	assert({-2.0 == -1.0}, 0);
+	assert({-2.0 != -1.0}, 1);
+
+	assert({-1, "test"}, "-1test");
+	assert({+1, "test"}, "1test");
+	assert({-1: 123}{-1}, 123);
+	assert({+1: 123}{+1}, 123);
+	assert({-1.0: 123}{-1.0}, 123);
+	assert({+1.0: 123}{+1.0}, 123);
+	assert({- 1: 123}{-1}, 123);
+	assert({+ 1: 123}{+1}, 123);
+	assert({- 1.0: 123}{- 1.0}, 123);
+	assert({+ 1.0: 123}{+1.0}, 123);
+	assert({(- 1): 123}{-1}, 123);
+	assert({(+ 1): 123}{+1}, 123);
+	assert(-(1.0), -0x3F800000);
+	assert(-(1.0), - 0x3F800000);
+	assert({(- 1.0): 123}{- 1.0}, 123);
+	assert({(+ 1.0): 123}{+1.0}, 123);
+	assert({1: 123, 2: 456}{2}, 456);
+	assert({1: 123, -2: -456}{-2}, -456);
+	assert({true? "aaa" : "bbb"}, "aaa");
+	assert({false? "aaa" : "bbb", "ccc"}, "bbbccc");
+	assert({true? 100 : 200 + 50}, "100");
+	assert({false? 100 : 200 + 50}, "250");
+	assert({200 + 50}, 0.0); // the integer values are treated as denormalized floats
+	assert({"aaa": true? "bbb" : "ccc"}, {"aaa": "bbb"});
+	assert({(true? "aaa" : "bbb") : "ccc"}, {"aaa": "ccc"});
+
+	var arr = [];
+	arr[] = 2;
+	arr[] = 3;
+	array_insert(arr, 0, 1);
+	assert([1, 2, 3], arr);
+
+	var hash = {};
+	hash{123} = 456;
+	hash{"aaa"} = "bbb";
+	hash{"zzz"} = "xxx";
+	assert({"zzz": "xxx", 123: 456, "aaa": "bbb" }, hash);
+	assert({"zzz": "xxx", 123: 768, "aaa": "bbb" } != hash, 1);
+	assert({"ZZZ": "xxx", 123: 456, "aaa": "bbb" } != hash, 1);
+
+	assert(!0, 1);
+	assert(!1, 0);
+	assert(!2, 0);
+
+	assert(~0, 0xFFFFFFFF);
+	assert(~-2, 1);
+	assert(- 2, -2); // unary negation vs constant
+	assert(+ 0, +0); // extra plus
+//	assert({- 2.0}, -2.0); // unary negation vs constant
+	assert({0.0 -2.0}, -2.0);
+	assert({0.0- 2.0}, -2.0);
+	assert({1.0 -0}, 1.0);
+	assert({1.0- 0}, 1.0);
+	assert(1- 2.0, -1073741823);
+	assert(1 -2.0, -1073741823);
+
+	var inc = 0;
+	assert(++inc, 1);
+	assert(++inc, 2);
+	assert(++inc, 3);
+
+	assert(inc++, 3);
+	assert(inc++, 4);
+	assert(inc++, 5);
+
+	++inc; assert(inc, 7);
+	++inc; assert(inc, 8);
+	++inc; assert(inc, 9);
+
+	inc++; assert(inc, 10);
+	inc++; assert(inc, 11);
+	inc++; assert(inc, 12);
+
+	arr = [0, 11, 22, 33];
+	assert(++arr[2], 23);
+	assert(++arr[2], 24);
+	assert(++arr[2], 25);
+
+	assert(arr[2]++, 25);
+	assert(arr[2]++, 26);
+	assert(arr[2]++, 27);
+
+	arr = [0, 1, 2, 3];
+	var idx = -1;
+	arr[++idx] = arr[++idx] + arr[++idx] * arr[++idx];
+	assert(arr[0], 7);
+	assert(idx, 3);
+	
+	var test = 790;
+	arr[0] = 5+test;
+	arr[3] = -23;
+	assert(arr[0], 795);
+	assert(arr[3], -23);
+
+	hash = { "test": 100 };
+	assert(++hash{"test"}, 101);
+	assert(++hash{"test"}, 102);
+	assert(++hash{"test"}, 103);
+
+	assert(hash{"test"}++, 103);
+	assert(hash{"test"}++, 104);
+	assert(hash{"test"}++, 105);
+
+	assert(0 && 0, 0);
+	assert(0 && 1, 0);
+	assert(1 && 0, 0);
+	assert(1 && 1, 1);
+
+	assert(0 || 0, 0);
+	assert(0 || 1, 1);
+	assert(1 || 0, 1);
+	assert(1 || 1, 1);
+
+	assert(XXX, 5);
+	assert(YYY, 6);
+	assert(ti:XXX, 505);
+	assert(IMPORT1, 100);
+	//assert(IMPORT2, 101); // can't be used
+
+	assert(local, 0);
+	local = 10;
+	assert(++local, 11);
+	assert(++local, 12);
+	assert(++local, 13);
+
+	assert(local++, 13);
+	assert(local++, 14);
+	assert(local++, 15);
+
+	assert(ti:local, 0);
+	ti:local = 20;
+	assert(ti:local, 20);
+	assert(local, 16);
+
+	arr = [];
+	assert(length(arr), 0);
+	arr[] = 5;
+	assert(length(arr), 1);
+	arr[] = 11;
+	assert(length(arr), 2);
+	arr[] = 1024;
+	assert(length(arr), 3);
+	arr[] = 1.2;
+	assert(length(arr), 4);
+	
+	assert(arr[0], 5);
+	assert(arr[1], 11);
+	assert(arr[2], 1024);
+	assert(arr[3], 1.2);
+
+	var num2 = 2, num5 = 5, num11 = 11;
+
+	var ab = num2;
+	assert(ab += num5, 7);
+	ab += num11;
+	assert(ab, 18);
+
+	local = num2;
+	assert(local += num5, 7);
+	local += num11;
+	assert(local, 18);
+
+	arr[3] = num2;
+	assert(arr[3] += num5, 7);
+	arr[3] += num11;
+	assert(arr[3], 18);
+
+	hash{"test"} = num2;
+	assert(hash{"test"} += num5, 7);
+	hash{"test"} += num11;
+	assert(hash{"test"}, 18);
+
+	ab += 1;
+	ab -= 1;
+	ab *= 1;
+	ab /= 1;
+	ab %= 1;
+	ab &= 1;
+	ab |= 1;
+	ab ^= 1;
+	ab <<= 1;
+	ab >>= 1;
+	ab >>>= 1;
+
+	assert(switch_test(-1.0), "default");
+	assert(switch_test(-1), "default");
+	assert(switch_test(0), "default");
+	assert(switch_test(1), "1");
+	assert(switch_test(2), "2,4+5..8");
+	assert(switch_test(3), "default");
+	assert(switch_test(4), "2,4+5..8");
+	assert(switch_test(5), "5..8");
+	assert(switch_test(6), "5..8");
+	assert(switch_test(7), "5..8");
+	assert(switch_test(8), "5..8");
+	assert(switch_test(9), "default");
+	assert(switch_test(29), "default");
+	assert(switch_test(30), "30");
+	assert(switch_test(31), "default");
+
+	switch (0) {
+		case XXX, ti:XXX:
+	}
+
+	assert_exception(overflow_test1#0, "integer overflow");
+	assert_exception(overflow_test2#0, "integer overflow");
+
+	assert_exception(division_test1#0, "division by zero");
+	assert_exception(division_test2#0, "integer overflow");
+	assert_exception(division_test3#0, "division by zero");
+	assert_exception(division_test4#0, "integer overflow");
+	assert_exception(division_test5#0, "division by zero");
+	assert_exception(division_test6#0, "division by zero");
+	assert_exception(division_test7#0, "integer overflow");
+	division_test8();
+	assert_exception(division_test9#0, "division by zero");
+	assert_exception(division_test10#0, "division by zero");
+	assert_exception(division_test11#0, "integer overflow");
+	division_test12();
+
+	assert(min(5, 10), 5);
+	assert(max(5, 10), 10);
+	assert(clamp(0, 5, 10), 5);
+	assert(clamp(5, 5, 10), 5);
+	assert(clamp(7, 5, 10), 7);
+	assert(clamp(10, 5, 10), 10);
+	assert(clamp(15, 5, 10), 10);
+	assert(abs(-5), 5);
+	assert(abs(6), 6);
+	assert(float(33), 33.0);
+	assert(int(33.0), 33);
+	assert(fabs(-2.5), 2.5);
+	assert(fabs(3.5), 3.5);
+	assert(fabs((0xFF<<23))|0, 0xFF<<23); // positive infinity
+	assert(fabs((0xFF<<23)|0x80000000)|0, 0xFF<<23); // negative infinity
+	assert(fabs((0xFF<<23)|(1<<22))|0, (0xFF<<23)|(1<<22)); // positive NaN
+	assert(fabs((0xFF<<23)|(1<<22)|0x80000000)|0, (0xFF<<23)|(1<<22)); // negative NaN
+	assert(fmin(5.0, 10.0), 5.0);
+	assert(fmax(5.0, 10.0), 10.0);
+	assert(fclamp(0.0, 5.0, 10.0), 5.0);
+	assert(fclamp(5.0, 5.0, 10.0), 5.0);
+	assert(fclamp(7.5, 5.0, 10.0), 7.5);
+	assert(fclamp(10.0, 5.0, 10.0), 10.0);
+	assert(fclamp(15.0, 5.0, 10.0), 10.0);
+	assert(floor(21.25), 21.0);
+	assert(floor(-21.25), -22.0);
+	assert(ifloor(21.25), 21);
+	assert(ifloor(-21.25), -22);
+	assert(ceil(21.25), 22.0);
+	assert(ceil(-21.25), -21.0);
+	assert(iceil(21.25), 22);
+	assert(iceil(-21.25), -21);
+	assert(round(21.25), 21.0);
+	assert(round(-21.25), -21.0);
+	assert(iround(21.25), 21);
+	assert(iround(-21.25), -21);
+
+	var lo, hi;
+
+	(lo, hi) = float(0x99, 0x12);
+	assert(lo, 0x00990000);
+	assert(hi, 0x42320000);
+	(lo, hi) = int(lo, hi);
+	assert(lo, 0x99);
+	assert(hi, 0x12);
+
+	(lo, hi) = fconv(1e16);
+	(lo, hi) = int(lo, hi);
+	assert(lo, 0x80000000);
+	assert(hi, 0x002386f2);
+
+	(lo, hi) = fconv(12.125);
+	assert(lo, 0x00000000);
+	assert(hi, 0x40284000);
+	assert(fconv(lo, hi), 12.125);
+
+	(lo, hi) = fadd(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000); // 1.25 + 0.75
+	assert(lo, 0x00000000); // 2.0
+	assert(hi, 0x40000000);
+
+	(lo, hi) = fadd(0x00000000, 0x3ff40000, 0.75);
+	assert(lo, 0x00000000); // 2.0
+	assert(hi, 0x40000000);
+
+	(lo, hi) = fsub(0x00000000, 0x3ff40000, 0.75);
+	assert(lo, 0x00000000); // 0.5
+	assert(hi, 0x3fe00000);
+
+	(lo, hi) = fmul(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000);
+	assert(lo, 0x00000000); // 0.9375
+	assert(hi, 0x3fee0000);
+	
+	(lo, hi) = fdiv(0x00000000, 0x3ff40000, 0.75);
+	assert(lo, 0xaaaaaaab); // 1.6666666666666667
+	assert(hi, 0x3ffaaaaa);
+
+	var (nan_lo, nan_hi) = fdiv(0, 0, 0, 0);
+	assert(fcmp_lt(nan_lo, nan_hi, nan_lo, nan_hi), 0);
+	assert(fcmp_le(nan_lo, nan_hi, nan_lo, nan_hi), 0);
+	assert(fcmp_gt(nan_lo, nan_hi, nan_lo, nan_hi), 0);
+	assert(fcmp_ge(nan_lo, nan_hi, nan_lo, nan_hi), 0);
+	assert(fcmp_eq(nan_lo, nan_hi, nan_lo, nan_hi), 0);
+	assert(fcmp_ne(nan_lo, nan_hi, nan_lo, nan_hi), 1);
+
+	assert(fcmp_lt(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000), 0); // 1.25, 0.75
+	assert(fcmp_le(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000), 0);
+	assert(fcmp_gt(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000), 1);
+	assert(fcmp_ge(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000), 1);
+	assert(fcmp_eq(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000), 0);
+	assert(fcmp_ne(0x00000000, 0x3ff40000, 0x00000000, 0x3fe80000), 1);
+
+	assert(fcmp_lt(0x00000000, 0x3ff40000, 0.75), 0);
+	assert(fcmp_le(0x00000000, 0x3ff40000, 0.75), 0);
+	assert(fcmp_gt(0x00000000, 0x3ff40000, 0.75), 1);
+	assert(fcmp_ge(0x00000000, 0x3ff40000, 0.75), 1);
+	assert(fcmp_eq(0x00000000, 0x3ff40000, 0.75), 0);
+	assert(fcmp_ne(0x00000000, 0x3ff40000, 0.75), 1);
+
+	assert(fcmp_lt(0x00000000, 0x3ff40000, 1.25), 0);
+	assert(fcmp_le(0x00000000, 0x3ff40000, 1.25), 1);
+	assert(fcmp_gt(0x00000000, 0x3ff40000, 1.25), 0);
+	assert(fcmp_ge(0x00000000, 0x3ff40000, 1.25), 1);
+	assert(fcmp_eq(0x00000000, 0x3ff40000, 1.25), 1);
+	assert(fcmp_ne(0x00000000, 0x3ff40000, 1.25), 0);
+
+	(lo, hi) = fconv(-2.5);
+	(lo, hi) = fabs(lo, hi);
+	assert(fconv(lo, hi), 2.5);
+
+	(lo, hi) = fconv(3.5);
+	(lo, hi) = fabs(lo, hi);
+	assert(fconv(lo, hi), 3.5);
+
+	var (lo1, hi1) = fconv(5.0);
+	var (lo2, hi2) = fconv(10.0);
+	var (lo3, hi3) = fmin(lo1, hi1, lo2, hi2);
+	var (lo4, hi4) = fmax(lo1, hi1, lo2, hi2);
+	assert(fconv(lo3, hi3), 5.0);
+	assert(fconv(lo4, hi4), 10.0);
+
+	(lo1, hi1) = fconv(0.0);
+	(lo2, hi2) = fconv(5.0);
+	(lo3, hi3) = fconv(10.0);
+	(lo4, hi4) = fclamp(lo1, hi1, lo2, hi2, lo3, hi3);
+	assert(fconv(lo4, hi4), 5.0);
+	(lo1, hi1) = fconv(5.0);
+	(lo4, hi4) = fclamp(lo1, hi1, lo2, hi2, lo3, hi3);
+	assert(fconv(lo4, hi4), 5.0);
+	(lo1, hi1) = fconv(7.5);
+	(lo4, hi4) = fclamp(lo1, hi1, lo2, hi2, lo3, hi3);
+	assert(fconv(lo4, hi4), 7.5);
+	(lo1, hi1) = fconv(10.0);
+	(lo4, hi4) = fclamp(lo1, hi1, lo2, hi2, lo3, hi3);
+	assert(fconv(lo4, hi4), 10.0);
+	(lo1, hi1) = fconv(15.0);
+	(lo4, hi4) = fclamp(lo1, hi1, lo2, hi2, lo3, hi3);
+	assert(fconv(lo4, hi4), 10.0);
+
+	(lo1, hi1) = fconv(0.0);
+	(lo2, hi2) = fclamp(lo1, hi1, 5.0, 10.0);
+	assert(fconv(lo2, hi2), 5.0);
+	(lo1, hi1) = fconv(5.0);
+	(lo2, hi2) = fclamp(lo1, hi1, 5.0, 10.0);
+	assert(fconv(lo2, hi2), 5.0);
+	(lo1, hi1) = fconv(7.5);
+	(lo2, hi2) = fclamp(lo1, hi1, 5.0, 10.0);
+	assert(fconv(lo2, hi2), 7.5);
+	(lo1, hi1) = fconv(10.0);
+	(lo2, hi2) = fclamp(lo1, hi1, 5.0, 10.0);
+	assert(fconv(lo2, hi2), 10.0);
+	(lo1, hi1) = fconv(15.0);
+	(lo2, hi2) = fclamp(lo1, hi1, 5.0, 10.0);
+	assert(fconv(lo2, hi2), 10.0);
+
+	(lo1, hi1) = fconv(21.25);
+	(lo2, hi2) = floor(lo1, hi1);
+	(lo3, hi3) = ifloor(lo1, hi1);
+	(lo4, hi4) = ceil(lo1, hi1);
+	var (lo5, hi5) = iceil(lo1, hi1);
+	var (lo6, hi6) = round(lo1, hi1);
+	var (lo7, hi7) = iround(lo1, hi1);
+	assert(fconv(lo2, hi2), 21.0);
+	assert(lo3, 21);
+	assert(hi3, 0);
+	assert(fconv(lo4, hi4), 22.0);
+	assert(lo5, 22);
+	assert(hi5, 0);
+	assert(fconv(lo6, hi6), 21.0);
+	assert(lo7, 21);
+	assert(hi7, 0);
+
+	(lo1, hi1) = fconv(-21.25);
+	(lo2, hi2) = floor(lo1, hi1);
+	(lo3, hi3) = ifloor(lo1, hi1);
+	(lo4, hi4) = ceil(lo1, hi1);
+	(lo5, hi5) = iceil(lo1, hi1);
+	(lo6, hi6) = round(lo1, hi1);
+	(lo7, hi7) = iround(lo1, hi1);
+	assert(fconv(lo2, hi2), -22.0);
+	assert(lo3, -22);
+	assert(hi3, -1);
+	assert(fconv(lo4, hi4), -21.0);
+	assert(lo5, -21);
+	assert(hi5, -1);
+	assert(fconv(lo6, hi6), -21.0);
+	assert(lo7, -21);
+	assert(hi7, -1);
+
+	assert(add32(0xFFFFFFFF, 2), 1);
+	assert(add32(0xFFFFFFFF, 2, 0), 1);
+	assert(add32(0xFFFFFFFF, 2, 1), 2);
+	assert(add32(0xFFFFFFFF, 2, 2), 1);
+	assert(sub32(0x80000001, 2), 0x7FFFFFFF);
+	assert(sub32(0x80000001, 2, 0), 0x7FFFFFFF);
+	assert(sub32(0x80000001, 2, 1), 0x7FFFFFFE);
+	assert(sub32(0x80000001, 2, 2), 0x7FFFFFFF);
+	assert(mul32(0x12345678, 0x87654321), 0x70b88d78);
+
+	var sum, carry, borrow;
+
+	(sum, carry) = add32(0xFFFFFFFE, 1);
+	assert(sum, 0xFFFFFFFF);
+	assert(carry, 0);
+
+	(sum, carry) = add32(0xFFFFFFFE, 2);
+	assert(sum, 0);
+	assert(carry, 1);
+
+	(sum, carry) = add32(0xFFFFFFFE, 1, 0);
+	assert(sum, 0xFFFFFFFF);
+	assert(carry, 0);
+
+	(sum, carry) = add32(0xFFFFFFFE, 1, 1);
+	assert(sum, 0);
+	assert(carry, 1);
+
+	(sum, carry) = add32(0xFFFFFFFF, 0, 1);
+	assert(sum, 0);
+	assert(carry, 1);
+
+	(sum, borrow) = sub32(1, 1);
+	assert(sum, 0);
+	assert(borrow, 0);
+
+	(sum, borrow) = sub32(1, 2);
+	assert(sum, 0xFFFFFFFF);
+	assert(borrow, 1);
+
+	(sum, borrow) = sub32(1, 1, 0);
+	assert(sum, 0);
+	assert(borrow, 0);
+
+	(sum, borrow) = sub32(1, 1, 1);
+	assert(sum, 0xFFFFFFFF);
+	assert(borrow, 1);
+
+	(sum, borrow) = sub32(0, 0, 1);
+	assert(sum, 0xFFFFFFFF);
+	assert(borrow, 1);
+
+	(lo, hi) = add64(0x88776655, 0x44332211, 0x12345678, 0x12345678);
+	assert(lo, 0x9aabbccd);
+	assert(hi, 0x56677889);
+
+	(lo, hi) = sub64(0x88776655, 0x44332211, 0x12345678, 0x12345678);
+	assert(lo, 0x76430fdd);
+	assert(hi, 0x31fecb99);
+
+	(lo, hi) = mul64(0xFFFFFFFF, 0xFFFFFFFF);
+	assert(lo, 1);
+	assert(hi, 0);
+
+	(lo, hi) = umul64(0xFFFFFFFF, 0xFFFFFFFF);
+	assert(lo, 1);
+	assert(hi, 0xFFFFFFFE);
+
+	(lo, hi) = mul64(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
+	assert(lo, 1);
+	assert(hi, 0);
+
+	(lo, hi) = mul64(0xFFFFFFFF, 0, 0xFFFFFFFF, 0);
+	assert(lo, 1);
+	assert(hi, 0xFFFFFFFE);
+
+	(lo, hi) = div64(-15, -1, -2, -1);
+	assert(lo, 7);
+	assert(hi, 0);
+
+	(lo, hi) = udiv64(-15, -1, -2, 1);
+	assert(lo, 0x80000000);
+	assert(hi, 0);
+
+	(lo, hi) = udiv64(0, 100, 5, 0);
+	assert(lo, 0);
+	assert(hi, 20);
+
+	(lo, hi) = rem64(-15, -1, -4, -1);
+	assert(lo, -3);
+	assert(hi, -1);
+
+	(lo, hi) = urem64(-15, -1, -2, 1);
+	assert(lo, 0xFFFFFFF1);
+	assert(hi, 0);
+
+	assert(iround({pow(5.0, 3.5)*1000.0}), 279508);
+	assert(iround({sqrt(2.0)*1000000.0}), 1414214);
+	assert(iround({cbrt(2.0)*1000000.0}), 1259921);
+	assert(iround({exp(2.0)*1000000.0}), 7389056);
+	assert(iround({ln(2.0)*1000000.0}), 693147);
+	assert(iround({log2(2.5)*1000000.0}), 1321928);
+	assert(iround({log10(2.0)*1000000.0}), 301030);
+	assert(iround({sin(0.5)*1000000.0}), 479426);
+	assert(iround({cos(0.5)*1000000.0}), 877583);
+	assert(iround({asin(0.5)*1000000.0}), 523599);
+	assert(iround({acos(0.5)*100000.0}), 104720);
+	assert(iround({tan(0.5)*100000.0}), 54630);
+	assert(iround({atan(0.5)*1000000.0}), 463648);
+	assert(iround({atan2(0.5, 2.0)*1000000.0}), 244979);
+
+	(lo, hi) = fconv(5.0);
+	(lo, hi) = pow(lo, hi, 3.5);
+	(lo, hi) = fmul(lo, hi, 1000000.0);
+	(lo, hi) = iround(lo, hi);
+	assert(lo, 279508497);
+	assert(hi, 0);
+
+	var mul_lo = 0xa2000000, mul_hi = 0x426d1a94; // 1e12
+	var (two_lo, two_hi) = fconv(2.0);
+
+	(lo, hi) = sqrt(two_lo, two_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 1414213562373 = 0x14945b27005
+	assert(lo, 0x45b27005);
+	assert(hi, 0x149);
+
+	(lo, hi) = cbrt(two_lo, two_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 1259921049895 = 0x12559258927
+	assert(lo, 0x59258927);
+	assert(hi, 0x125);
+
+	(lo, hi) = exp(two_lo, two_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 7389056098931 = 0x6b866106273
+	assert(lo, 0x66106273);
+	assert(hi, 0x6b8);
+
+	(lo, hi) = ln(two_lo, two_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 693147180560 = 0xa162ca9e10
+	assert(lo, 0x62ca9e10);
+	assert(hi, 0xa1);
+
+	(lo, hi) = fconv(2.5);
+	(lo, hi) = log2(lo, hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 1321928094887 = 0x133c90df4a7
+	assert(lo, 0xc90df4a7);
+	assert(hi, 0x133);
+
+	(lo, hi) = log10(two_lo, two_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 301029995664 = 0x4616c93490
+	assert(lo, 0x16c93490);
+	assert(hi, 0x46);
+
+	var (half_lo, half_hi) = fconv(0.5);
+
+	(lo, hi) = sin(half_lo, half_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 479425538604 = 0x6f9ffd2a2c
+	assert(lo, 0x9ffd2a2c);
+	assert(hi, 0x6f);
+
+	(lo, hi) = cos(half_lo, half_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 877582561890 = 0xcc53ff3262
+	assert(lo, 0x53ff3262);
+	assert(hi, 0xcc);
+
+	(lo, hi) = asin(half_lo, half_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 523598775598 = 0x79e8eb452e
+	assert(lo, 0xe8eb452e);
+	assert(hi, 0x79);
+
+	(lo, hi) = acos(half_lo, half_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 1047197551197 = 0xf3d1d68a5d
+	assert(lo, 0xd1d68a5d);
+	assert(hi, 0xf3);
+
+	(lo, hi) = tan(half_lo, half_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 546302489844 = 0x7f322a74f4
+	assert(lo, 0x322a74f4);
+	assert(hi, 0x7f);
+
+	(lo, hi) = atan(half_lo, half_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 463647609001 = 0x6bf38d10a9
+	assert(lo, 0xf38d10a9);
+	assert(hi, 0x6b);
+
+	(lo, hi) = atan2(half_lo, half_hi, two_lo, two_hi);
+	(lo, hi) = fmul(lo, hi, mul_lo, mul_hi);
+	(lo, hi) = iround(lo, hi);
+	// 244978663127 = 0x3909ddbed7
+	assert(lo, 0x09ddbed7);
+	assert(hi, 0x39);
+
+	arr = [1, 2, 3, [4, 5]];
+	var clone = clone(arr);
+	assert(arr == clone);
+	assert(arr !== clone);
+	assert(arr[3] == clone[3]);
+	assert(arr[3] === clone[3]);
+
+	clone = clone_deep(arr);
+	assert(arr == clone);
+	assert(arr !== clone);
+	assert(arr[3] == clone[3]);
+	assert(arr[3] !== clone[3]);
+
+	hash = {1:2, 3:4, 5:6, 7:{8:9, 10:11}};
+	clone = @clone(hash);
+	assert(hash == clone);
+	assert(hash !== clone);
+	assert(hash{7} == clone{7});
+	assert(hash{7} === clone{7});
+
+	clone = clone_deep(hash);
+	assert(hash == clone);
+	assert(hash !== clone);
+	assert(hash{7} == clone{7});
+	assert(hash{7} !== clone{7});
+
+	clone = @clone("test");
+	assert(to_string("test"), to_string(clone));
+
+	arr = [1, 2, 3];
+	assert(length(arr), 3);
+	array_set_length(arr, 10);
+	assert(length(arr), 10);
+	assert(arr == [1, 2, 3, 0, 0, 0, 0, 0, 0, 0]);
+	assert(arr != [1, 2, 3, 0, 0, 0, 0, 1, 0, 0]);
+	array_clear(arr);
+	assert(length(arr), 0);
+
+	arr = [];
+	array_set_length(arr, 10000);
+	for (var i=0; i<length(arr); i++) {
+		arr[i] = i*2;
+	}
+	array_copy(arr, 50, arr, 10, 6000);
+	for (var i=0; i<50; i++) {
+		assert(arr[i], i*2);
+	}
+	for (var i=50; i<50+6000; i++) {
+		assert(arr[i], (i-50+10)*2);
+	}
+	for (var i=50+6000; i<length(arr); i++) {
+		assert(arr[i], i*2);
+	}
+
+	arr = [];
+	array_set_length(arr, 10000);
+	for (var i=0; i<length(arr); i++) {
+		arr[i] = i*2;
+	}
+	array_copy(arr, 10, arr, 50, 6000);
+	for (var i=0; i<10; i++) {
+		assert(arr[i], i*2);
+	}
+	for (var i=10; i<10+6000; i++) {
+		assert(arr[i], (i-10+50)*2);
+	}
+	for (var i=10+6000; i<length(arr); i++) {
+		assert(arr[i], i*2);
+	}
+
+	arr = [1, 2, 3];
+	array_set_length(arr, 15);
+	array_fill(arr, 5, 5, "test");
+	arr[14] = 100;
+	assert(arr, [1, 2, 3, 0, 0, "test", "test", "test", "test", "test", 0, 0, 0, 0, 100]);
+	assert(array_extract(arr, 2, 5), [3, 0, 0, "test", {"te","st"}]);
+	array_insert(arr, 2, -5);
+	assert(arr, [1, 2, -5, 3, 0, 0, "test", "test", "test", "test", "test", 0, 0, 0, 0, 100]);
+	array_remove(arr, 1);
+	assert(arr, [1, -5, 3, 0, 0, "test", "test", "test", "test", "test", 0, 0, 0, 0, 100]);
+	array_remove(arr, 2, 7);
+	assert(arr, [1, -5, "test", 0, 0, 0, 0, 100]);
+	array_fill(arr, 123);
+	assert(arr, [123, 123, 123, 123, 123, 123, 123, 123]);
+
+	arr = array_create(5, 2);
+	arr[4] = 0xFFFF;
+	assert(length(arr), 5);
+	assert(arr[0], 0);
+	assert(arr[4], 0xFFFF);
+	arr[0] = -1;
+	assert(arr[0], -1);
+	array_append(arr, [1, 2, 3]);
+	assert(arr, [-1, 0, 0, 0, 0xFFFF, 1, 2, 3]);
+	array_append(arr, [1, 2, 3, 4, 5], 2, 1);
+	assert(arr, [-1, 0, 0, 0, 0xFFFF, 1, 2, 3, 3]);
+	array_replace_range(arr, 5, 8, [-1, -2]);
+	assert(arr, [-1, 0, 0, 0, 0xFFFF, -1, -2, 3]);
+	array_replace_range(arr, 5, 5, [11, 22, 33, 44, 55], 1, 3);
+	assert(arr, [-1, 0, 0, 0, 0xFFFF, 22, 33, 44, -1, -2, 3]);
+	array_insert_array(arr, 0, [123, 456]);
+	assert(arr, [123, 456, -1, 0, 0, 0, 0xFFFF, 22, 33, 44, -1, -2, 3]);
+	array_insert_array(arr, 7, [123, 456, 789], 1, 2);
+	assert(arr, [123, 456, -1, 0, 0, 0, 0xFFFF, 456, 789, 22, 33, 44, -1, -2, 3]);
+
+	assert(const_0, 0);
+	assert(const_1, 1);
+	assert(const_2, 2);
+	assert(const_50, 50);
+	assert(const_51, 51);
+	assert(const_LAST, 0x7FFFFFFF);
+	assert(const_other, 50);
+	assert(const_other2, 51);
+	assert(const_other3, 505);
+	assert(const_other4, 50);
+	assert(const_other5, 505);
+
+	log({"aaa"+0, " vs ", "aaa"+0, " vs ", "bbb"+0});
+	ti:test(1, 2, 3);
+	var ref = ti:test#3;
+	ref(1, 2, 3);
+	dump([1,2,3,{"aaa": "bbb", "ccc": "ddd", "eee": "fff"}]);
+	for (var i=0; i<5; i++) {
+		log({"test=", i});
+	}
+
+	var i=10;
+	while (i >= 1) {
+		log({"while=", i});
+		i = i - 2;
+		continue;
+	}
+
+	do {
+		log({"dowhile=", i});
+		i = i + 3;
+		continue;
+	}
+	while (i < 20);
+
+	i = 100;
+	for (;;) {
+		//log(i);
+		var tmp1, tmp2, tmp3;
+		if (--i) continue;
+		break;
+	}
+	//log("end");
+	test_forward();
+
+	var v5 = 5, v6 = 6, v7 = 7;
+	assert(0? (v5) : v6, 6);
+	assert(1? (v5) : v6, 5);
+
+	assert({v5:v6}, {5:6});
+
+	var sel = 0;
+	assert(sel == 0? v5 : sel == 1? v6 : v7, 5);
+	sel = 1;
+	assert(sel == 0? v5 : sel == 1? v6 : v7, 6);
+	sel = 2;
+	assert(sel == 0? v5 : sel == 1? v6 : v7, 7);
+
+	hash = {};
+	for (i=0; i<100; i++) {
+		hash{{"key=", i}} = {"value=", i};
+	}
+	for (i=0; i<100; i+=11) {
+		hash_remove(hash, {"key=", i});
+	}
+	assert(length(hash), 100-100/11-1);
+	assert(length(hash), 100- 100/11-1);
+	assert(hash_contains(hash, "key=0"), 0);
+	assert(hash_contains(hash, "key=50"), 1);
+	assert(hash_get(hash, "key=0", 123), 123);
+	assert(hash_get(hash, "key=50", 123), "value=50");
+	//dump(hash);
+	var keys = hash_keys(hash);
+	var values = hash_values(hash);
+	var pairs = hash_pairs(hash);
+	assert(length(keys), length(hash));
+	assert(length(values), length(hash));
+	assert(length(pairs), length(hash)*2);
+	var j;
+	for (i=0, j=0; i<length(hash); i++, j++) {
+		var (k, v) = hash_entry(hash, i);
+		if (j % 11 == 0) {
+			j++;
+		}
+		//log({"i=", i, " j=", j, " key=", k, " value=", v});
+		assert(k, {"key=", j});
+		assert(v, {"value=", j});
+		assert(keys[i], k);
+		assert(values[i], v);
+		assert(pairs[i*2+0], k);
+		assert(pairs[i*2+1], v);
+	}
+
+	hash_clear(hash);
+	assert(length(hash), 0);
+	assert(to_string(hash), "{}");
+
+	var obj = [10, 20, 30];
+	assert(obj[0], 10);
+	assert(obj[1], 20);
+	assert(obj[2], 30);
+	assert(obj[OBJ_first], 10);
+	assert(obj[OBJ_second], 20);
+	assert(obj[OBJ_third], 30);
+	assert(obj->OBJ_first, 10);
+	assert(obj->OBJ_second, 20);
+	assert(obj->OBJ_third, 30);
+	assert(obj->ti:ZERO, 10);
+
+	obj = object_create(2);
+	assert(obj, [0, 0]);
+	obj[0] = 1;
+	obj = object_extend(obj, 4);
+	assert(obj, [1, 0, 0, 0]);
+	assert(array_set_length(obj, 10), 0);
+	assert(length(obj), 10);
+
+	for (i=0; i<10; i++) {
+		perf_log({"test=", i});
+	}
+
+	log("reset");
+	perf_reset();
+
+	for (i=0; i<10; i++) {
+		perf_log({"test=", i});
+	}
+
+	assert(unserialize(serialize(123)), 123);
+	assert(unserialize(serialize(123.5)), 123.5);
+	assert(unserialize(serialize([])), []);
+	assert(unserialize(serialize([1,2])), [1,2]);
+	assert(unserialize(serialize([1024])), [1024]);
+	assert(unserialize(serialize([123.5])), [123.5]);
+	assert(unserialize(serialize([-1])), [-1]);
+	assert(unserialize(serialize([[], -1])), [[], -1]);
+	assert(unserialize(serialize({"test": 1, "other": []})), {"test": 1, "other": []});
+	assert(unserialize(serialize("\uFFFF")), "\uFFFF");
+	assert(unserialize(serialize("\U10FFFF")), "\U10FFFF");
+
+	assert(serialize(123),    [0x01, 0x7B]);
+	assert(serialize(123.5),  [0x04, 0x00,0x00,0xF7,0x42]);
+	assert(serialize(0.0),    [0x05]);
+	assert(serialize(-0.0),   [0x04, 0x00,0x00,0x00,0x80]);
+	assert(serialize([]),     [0x09]);
+	assert(serialize(""),     [0x0C]);
+	assert(serialize({}),     [0x0F]);
+	assert(serialize([1,2]),  [0x29, 0x01, 0x02]);
+	assert(serialize([1024]), [0x1A, 0x00,0x04]);
+	assert(serialize([-1]),   [0x1B, 0xFF,0xFF,0xFF,0xFF]);
+	assert(serialize(0),      [0x00]);
+	assert(serialize(255),    [0x01, 0xFF]);
+	assert(serialize(65535),  [0x02, 0xFF,0xFF]);
+	assert(serialize(65536),  [0x03, 0x00,0x00,0x01,0x00]);
+	assert(serialize({"test": 1, "other": []}), [
+		0x2F,
+			0x4C, 't','e','s','t',
+			0x01, 0x01,
+			0x5C, 'o','t','h','e','r',
+			0x09
+	]);
+	assert(serialize("x"), [0x1C, 'x']);
+	assert(serialize("\uABCD"), [0x1D, 0xCD,0xAB]);
+	assert(serialize("\U10ABCD"), [0x1E, 0xCD,0xAB,0x10,0x00]);
+
+	var serialized = serialize(array_create_shared(12, 2));
+	var expected = [0xC9];
+	for (i=0; i<12; i++) {
+		expected[] = 0x00;
+	}
+	assert(serialized, expected);
+
+	serialized = serialize(array_create_shared(250, 4));
+	expected = [0xD9,0xFA];
+	for (i=0; i<250; i++) {
+		expected[] = 0x00;
+	}
+	assert(serialized, expected);
+
+	arr = array_create_shared(250, 4);
+	array_fill(arr, 0x1234);
+	serialized = serialize(arr);
+	expected = [0xDA,0xFA];
+	for (i=0; i<250; i++) {
+		expected[] = 0x34;
+		expected[] = 0x12;
+	}
+	assert(serialized, expected);
+
+	arr = array_create_shared(250, 4);
+	array_fill(arr, -2);
+	serialized = serialize(arr);
+	expected = [0xDB,0xFA];
+	for (i=0; i<250; i++) {
+		expected[] = 0xFE;
+		expected[] = 0xFF;
+		expected[] = 0xFF;
+		expected[] = 0xFF;
+	}
+	assert(serialized, expected);
+
+	serialized = serialize(array_create_shared(60000, 4));
+	expected = [0xE9,0x60,0xEA];
+	for (i=0; i<60000; i++) {
+		expected[] = 0x00;
+	}
+	assert(serialized, expected);
+
+	serialized = serialize(array_create_shared(70000, 4));
+	expected = [0xF9,0x70,0x11,0x01,0x00];
+	for (i=0; i<70000; i++) {
+		expected[] = 0x00;
+	}
+	assert(serialized, expected);
+
+	arr = [123];
+	assert(serialize(arr), [0x19, 123]);
+	arr = [456];
+	assert(serialize(arr), [0x1A, (456) & 0xFF, (456) >> 8]);
+	arr = [456789];
+	assert(serialize(arr), [0x1B, (456789) & 0xFF, ((456789) >> 8) & 0xFF, (456789) >> 16, 0]);
+	arr[0] = 456;
+	assert(serialize(arr), [0x1A, (456) & 0xFF, (456) >> 8]);
+	arr[0] = 123;
+	assert(serialize(arr), [0x19, 123]);
+
+	arr = [0xFFFF];
+	array_clear(arr);
+	assert(serialize(arr), [0x09]);
+	arr = [-1];
+	array_clear(arr);
+	assert(serialize(arr), [0x09]);
+	arr = ["test"];
+	array_clear(arr);
+	assert(serialize(arr), [0x09]);
+
+	arr = {"\uFFFF"};
+	array_clear(arr);
+	assert(serialize(arr), [0x0C]);
+	arr = {""};
+	arr[] = -1;
+	array_clear(arr);
+	assert(serialize(arr), [0x0C]);
+	arr = {""};
+	arr[] = "test";
+	array_clear(arr);
+	assert(serialize(arr), [0x0C]);
+
+	assert_exception(test_unserialize#1, [0x1B, (456) & 0xFF, (456) >> 8, 0, 0], "bad format");
+	assert_exception(test_unserialize#1, [0x1B, 123, 0, 0, 0], "bad format");
+	assert_exception(test_unserialize#1, [0x1A, 123, 0], "bad format");
+	assert_exception(test_unserialize#1, [0x18, 0], "bad format");
+
+	assert_exception(test_unserialize#1, [0x01, 0x00], "bad format");
+	assert_exception(test_unserialize#1, [0x02, 0xFF, 0x00], "bad format");
+	assert_exception(test_unserialize#1, [0x03, 0xFF, 0xFF, 0x00, 0x00], "bad format");
+
+	assert_exception(test_unserialize#1, [0x04, 0x00,0x00,0x00,0x00], "bad format");
+	assert_exception(test_unserialize#1, [0x04, 0xFF,0xFF,0x7F,0x00], "bad format");
+	assert_exception(test_unserialize#1, [0x04, 0xFF,0xFF,0x7F,0x80], "bad format");
+
+	assert_exception(test_unserialize#1, [0x10], "bad format");
+	assert_exception(test_unserialize#1, [0x11, 0x01], "bad format");
+	assert_exception(test_unserialize#1, [0x12, 0x01,0x01], "bad format");
+	assert_exception(test_unserialize#1, [0x13, 0x01,0x01,0x01,0x01], "bad format");
+	assert_exception(test_unserialize#1, [0x14, 0x00,0x00,0x00,0x80], "bad format");
+	assert_exception(test_unserialize#1, [0x15], "bad format");
+	assert_exception(test_unserialize#1, [0x18, 0x06, 0x00,0x00,0x00,0x00], "bad format");
+	assert_exception(test_unserialize#1, [0x18, 0x17, 0x00,0x00], "bad format");
+
+	assert_exception(test_unserialize#1, [0x08], "bad format");
+	assert_exception(test_unserialize#1, [0x0A], "bad format");
+	assert_exception(test_unserialize#1, [0x0B], "bad format");
+	assert_exception(test_unserialize#1, [0x0D], "bad format");
+	assert_exception(test_unserialize#1, [0x0E], "bad format");
+
+	assert(unserialize([0x00]), 0);
+	assert(unserialize([0x01, 0x01]), 1);
+	assert(unserialize([0x02, 0x01, 0x01]), 0x0101);
+	assert(unserialize([0x03, 0x01, 0x01, 0x01, 0x01]), 0x01010101);
+	assert(unserialize([0x04, 0x00, 0x00, 0x00, 0x80])|0, 0x80000000);
+	assert(unserialize([0x05]), 0.0);
+	var many_refs = [0xF8,0x71,0x11,0x01,0x00];
+	for (i=0; i<70000; i++) {
+		many_refs[] = 0x09;
+	}
+	many_refs[] = 0x06;
+	many_refs[] = 0x70;
+	many_refs[] = 0x11;
+	many_refs[] = 0x01;
+	many_refs[] = 0x00;
+	assert(serialize(unserialize(many_refs)), many_refs);
+	assert(serialize(unserialize([0x18, 0x07, 0x00, 0x00])), [0x18, 0x07, 0x00, 0x00]);
+	/*
+	TODO: handle this?
+	arr = [];
+	arr[] = arr;
+	//assert(unserialize([0x18, 0x06, 0x00, 0x00, 0x00, 0x00]), arr);
+	assert(unserialize([0x18, 0x07, 0x00, 0x00]), arr);
+	*/
+
+	for (i=1; i<16; i++) {
+		assert_exception(test_unserialize#1, [0x00 | (i << 4)], "bad format");
+		assert_exception(test_unserialize#1, [0x01 | (i << 4), 0x01], "bad format");
+		assert_exception(test_unserialize#1, [0x02 | (i << 4), 0x01, 0x01], "bad format");
+		assert_exception(test_unserialize#1, [0x03 | (i << 4), 0x01, 0x01, 0x01, 0x01], "bad format");
+		assert_exception(test_unserialize#1, [0x04 | (i << 4), 0x00, 0x00, 0x00, 0x80], "bad format");
+		assert_exception(test_unserialize#1, [0x05 | (i << 4)], "bad format");
+		assert(many_refs[length(many_refs)-5] & 0x0F, 0x06);
+		many_refs[length(many_refs)-5] = 0x06 | (i << 4);
+		assert_exception(test_unserialize#1, many_refs, "bad format");
+		assert_exception(test_unserialize#1, [0x18, 0x07 | (i << 4), 0x00, 0x00], "bad format");
+	}
+
+	serialized = [0xD9,0x0C];
+	for (i=0; i<0x0C; i++) {
+		serialized[] = 0;
+	}
+	assert_exception(test_unserialize#1, serialized, "bad format");
+
+	serialized = [0xE9,0xFF,0x00];
+	for (i=0; i<0xFF; i++) {
+		serialized[] = 0;
+	}
+	assert_exception(test_unserialize#1, serialized, "bad format");
+
+	serialized = [0xF9,0xFF,0xFF,0x00,0x00];
+	for (i=0; i<0xFFFF; i++) {
+		serialized[] = 0;
+	}
+	assert_exception(test_unserialize#1, serialized, "bad format");
+
+	var f1 = {0x7FC00123 * 1.0}; // positive NaN
+	var f2 = {0xFFC00123 * 1.0}; // negative NaN
+	var f3 = {0x7F800000 * 1.0}; // positive infinity
+	var f4 = {0xFF800000 * 1.0}; // negative infinity
+	assert(f1|0, 0x7FC00123); // this may fail depending on the CPU or language implementation
+	assert(f2|0, 0xFFC00123);
+	assert(f3|0, 0x7F800000);
+	assert(f4|0, 0xFF800000);
+	assert(serialize(f1), [0x04, 0x00,0x00,0xC0,0x7F]);
+	assert(serialize(f2), [0x04, 0x00,0x00,0xC0,0xFF]);
+	assert(serialize(f3), [0x04, 0x00,0x00,0x80,0x7F]);
+	assert(serialize(f4), [0x04, 0x00,0x00,0x80,0xFF]);
+	assert(unserialize([0x04, 0x00,0x00,0xC0,0x7F])|0, 0x7FC00000);
+	assert(unserialize([0x04, 0x00,0x00,0xC0,0xFF])|0, 0xFFC00000);
+	assert(unserialize([0x04, 0x00,0x00,0x80,0x7F])|0, 0x7F800000);
+	assert(unserialize([0x04, 0x00,0x00,0x80,0xFF])|0, 0xFF800000);
+	assert_exception(test_unserialize#1, [0x04, 0x23,0x01,0xC0,0x7F], "bad format");
+	assert_exception(test_unserialize#1, [0x04, 0x23,0x01,0xC0,0xFF], "bad format");
+	assert_exception(test_unserialize#1, [0x04, 0x11,0x00,0x00,0x00], "bad format"); // positive denormalized float
+	assert_exception(test_unserialize#1, [0x04, 0x11,0x00,0x00,0x80], "bad format"); // negative denormalized float
+	assert_exception(test_unserialize#1, [0x04, 0x00,0x00,0x00,0x00], "bad format");
+
+	var duplicate_keys = [
+		0x2F,
+			0x03, 0x11,0x22,0x33,0x44,
+			0x01, 0x01,
+			0x03, 0x11,0x22,0x33,0x44,
+			0x01, 0x02
+	];
+	assert_exception(test_unserialize#1, duplicate_keys, "bad format");
+
+	arr = {"test"};
+	arr[] = [];
+	assert_exception(test_serialize#1, arr, "unserializable reference occurred");
+	assert_exception(test_serialize#1, [create_handle()], "unserializable reference occurred");
+	assert_exception(test_serialize#1, [test#3], "unserializable reference occurred");
+
+	assert(serialize([-1, []]), [
+		0x28,
+			0x03, 0xFF,0xFF,0xFF,0xFF,
+			0x09
+	]);
+
+	arr = "test";
+	assert_exception(test_string_set#2, arr, 'T', "write access to constant string");
+	assert_exception(test_string_append#2, arr, '!', "write access to constant string");
+	arr = {arr};
+	arr[0] = 'T';
+	arr[] = '!';
+	assert(arr, {"Te", "st!"});
+	var const_arr = string_const(arr);
+	assert(const_arr == arr);
+	assert(const_arr !== arr);
+	assert(const_arr === string_const(const_arr));
+	assert(const_arr === string_const({"Te", "st!"}));
+	assert(const_arr, {"Te", "st!"});
+	assert_exception(test_string_set#2, const_arr, 'T', "write access to constant string");
+	assert_exception(test_string_append#2, const_arr, '!', "write access to constant string");
+	assert("test" === string_const("test"));
+	assert(const_arr === @clone(const_arr));
+	assert(const_arr === clone_deep(const_arr));
+	assert([const_arr][0] === clone_deep([const_arr])[0]);
+	const_arr = string_const(arr, 1, 3);
+
+	assert(const_arr == array_extract(arr, 1, 3));
+	assert(const_arr !== arr);
+	assert(const_arr === string_const(const_arr));
+	assert(const_arr === string_const({"e", "st"}));
+	assert(const_arr, {"e", "st"});
+	assert_exception(test_string_set#2, const_arr, 'T', "write access to constant string");
+	assert_exception(test_string_append#2, const_arr, '!', "write access to constant string");
+	assert("test" === string_const("abctestdef", 3, 4));
+	assert(const_arr === @clone(const_arr));
+	assert(const_arr === clone_deep(const_arr));
+	assert([const_arr][0] === clone_deep([const_arr])[0]);
+
+	arr = [1];
+	arr[] = arr;
+	arr[] = "test";
+	arr[] = "test";
+	var unarr = unserialize(serialize(arr));
+	assert(length(unarr), 4);
+	assert(unarr[0], 1);
+	assert(unarr[1] === unarr);
+	assert(unarr[2], "test");
+	assert(unarr[3], {"te", "st"});
+	assert(unarr !== arr);
+	assert(serialize(arr), [
+		0x48,
+			0x01, 0x01,
+			0x07, 0x00,0x00,
+			0x4C, 't','e','s','t',
+			0x07, 0x01,0x00
+	]);
+
+	unarr = clone_deep(arr);
+	assert(length(unarr), 4);
+	assert(unarr !== arr);
+	assert(unarr[0], 1);
+	assert(unarr[1] === unarr);
+	assert(unarr[2], "test");
+	assert(unarr[3], {"te", "st"});
+	assert(unarr !== arr);
+
+	var buf = [];
+	serialize(buf, 123);
+	serialize(buf, [1, 2, 3]);
+
+	var pos = [0];
+	assert(unserialize(buf, pos), 123);
+	assert(unserialize(buf, pos), [1, 2, 3]);
+	assert(pos[0], length(buf));
+
+	assert(get_func_name(test_dynamic_func#1), ["test.fix", "test_dynamic_func#1", 1]);
+
+	var shared = array_create_shared(10, 2);
+	assert(length(shared), 10);
+	assert(shared, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+	assert(array_get_shared_count(shared), 1);
+	assert(array_get_element_size(shared), 2);
+	assert(array_get_element_size([]), 1);
+	assert(array_get_element_size([256]), 2);
+	assert(array_get_element_size([-1]), 4);
+	assert(array_get_element_size([1.0]), 4);
+	assert(array_get_element_size(array_create(0, 1)), 1);
+	assert(array_get_element_size(array_create(0, 2)), 2);
+	assert(array_get_element_size(array_create(0, 4)), 4);
+	assert(array_get_element_size(array_create_shared(0, 1)), 1);
+	assert(array_get_element_size(array_create_shared(0, 2)), 2);
+	assert(array_get_element_size(array_create_shared(0, 4)), 4);
+	var container = [[1, 2, 3], shared];
+	clone = clone_deep(container);
+	assert(clone == container);
+	assert(clone !== container);
+	assert(clone[0] !== container[0]);
+	assert(clone[1] === container[1]);
+	shared[5] = 0xFFFF;
+	shared[6] = 0.0;
+	for (i=0; i<6; i++) {
+		assert_exception(test_shared#2, shared, i, "invalid shared array operation");
+	}
+	shared = array_create_shared(10, 4);
+	shared[0] = 3.5;
+	assert(is_int(shared[0]));
+	assert(shared[0], 0x40600000);
+	assert({shared[0] * 1.0}, 3.5);
+	for (i=0; i<6; i++) {
+		switch (i) {
+			case 0, 1, 4: test_shared(shared, i); continue;
+		}
+		assert_exception(test_shared#2, shared, i, "invalid shared array operation");
+	}
+
+	// testing the token processing (do not try this at home):
+	assert("SoMe", "CHANGED!");
+	assert($test$, "test");
+
+	for (i=0; i<7; i++) {
+		assert_exception(test_token_processing_funcs#1, i, "cannot be called outside token processing");
+	}
+
+	assert_type_check(0,    1, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+	assert_type_check(0.0,  0, 1, 0, 0, 0, 0, 0, 0, 0, 0);
+	assert_type_check([],   0, 0, 1, 0, 0, 0, 0, 0, 0, 0);
+	assert_type_check("",   0, 0, 1, 1, 0, 0, 1, 0, 0, 0);
+	assert_type_check({""}, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0);
+	assert_type_check({},   0, 0, 0, 0, 1, 0, 0, 0, 0, 0);
+
+	assert_type_check(array_create_shared(0, 1),         0, 0, 1, 0, 0, 1, 0, 0, 0, 0);
+	assert_type_check(create_handle(),                   0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+	assert_type_check(assert#1,                          0, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+	assert_type_check(test_alt_heap_func_ref0(assert#1), 0, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+	assert_type_check(weakref_create([]),                0, 0, 0, 0, 0, 0, 0, 0, 1, 1);
+
+	assert(string_parse_int("0"), 0);
+	assert(string_parse_int("-1"), -1);
+	assert(string_parse_int("+1"), 1);
+	assert(string_parse_int("test", 123), 123);
+	assert(string_parse_int("test", 1, 0, 123), 123);
+	assert(string_parse_int("te456st", 2, 3), 456);
+	assert(string_parse_int("te456st", 2, 3, 123), 456);
+	assert_exception(test_parse_int#1, [""], "parse error");
+	assert_exception(test_parse_int#1, ["test"], "parse error");
+	assert_exception(test_parse_int#1, ["test", 0, 4], "parse error");
+	assert_exception(test_parse_int#1, ["test", -1, 0], "array out of bounds access");
+	assert_exception(test_parse_int#1, ["test", -1, 0, 0], "array out of bounds access");
+	assert_exception(test_parse_int#1, [null], "invalid array access");
+	assert_exception(test_parse_int#1, [null, 0], "invalid array access");
+
+	assert(string_parse_float("0"), 0.0);
+	assert(string_parse_float("1e-5"), 0.00001);
+	assert(string_parse_float("1e+5"), 100000.0);
+	assert(string_parse_float("-1.5"), -1.5);
+	assert(string_parse_float("+1.5"), 1.5);
+	assert(string_parse_float("test", 123.0), 123.0);
+	assert(string_parse_float("test", 1, 0, 123.0), 123.0);
+	assert(string_parse_float("te456st", 2, 3), 456.0);
+	assert(string_parse_float("te456st", 2, 3, 123.0), 456.0);
+	assert_exception(test_parse_float#1, [""], "parse error");
+	assert_exception(test_parse_float#1, ["test"], "parse error");
+	assert_exception(test_parse_float#1, ["test", 0, 4], "parse error");
+	assert_exception(test_parse_float#1, ["test", -1, 0], "array out of bounds access");
+	assert_exception(test_parse_float#1, ["test", -1, 0, 0], "array out of bounds access");
+	assert_exception(test_parse_float#1, [null], "invalid array access");
+	assert_exception(test_parse_float#1, [null, 0], "invalid array access");
+
+	(lo, hi) = string_parse_long("0");
+	assert(lo, 0);
+	assert(hi, 0);
+
+	(lo, hi) = string_parse_long("0", 0, 1, -1, -1);
+	assert(lo, 0);
+	assert(hi, 0);
+
+	(lo, hi) = string_parse_long("-1", 0, 2);
+	assert(lo, -1);
+	assert(hi, -1);
+
+	(lo, hi) = string_parse_long("+1", 0, 2, -1, -1);
+	assert(lo, 1);
+	assert(hi, 0);
+
+	(lo, hi) = string_parse_long("test");
+	assert(is_array(hi));
+
+	(lo, hi) = string_parse_long("test", 0, 4, 1<<31, 1<<31);
+	assert(lo, 1<<31);
+	assert(hi, 1<<31);
+
+	(lo, hi) = string_parse_long("test", 1, 0, 1<<31, 1<<31);
+	assert(lo, 1<<31);
+	assert(hi, 1<<31);
+
+	(lo, hi) = string_parse_long("te456st", 2, 3, 1<<31, 1<<31);
+	assert(lo, 456);
+	assert(hi, 0);
+
+	(lo, hi) = string_parse_long("-9223372036854775808");
+	assert(lo, 0);
+	assert(hi, 1<<31);
+
+	(lo, hi) = string_parse_long("9223372036854775807");
+	assert(lo, 0xFFFFFFFF);
+	assert(hi, 0x7FFFFFFF);
+
+	(lo, hi) = string_parse_long("9223372036854775808");
+	assert(is_array(hi));
+
+	(lo, hi) = string_parse_long("9223372036854775808", 0, length("9223372036854775808"), 1<<31, 1<<31);
+	assert(lo, 1<<31);
+	assert(hi, 1<<31);
+
+	(lo, hi) = string_parse_double("0");
+	assert(lo, 0);
+	assert(hi, 0);
+
+	(lo, hi) = string_parse_double("0", 0, 1);
+	assert(lo, 0);
+	assert(hi, 0);
+
+	(lo, hi) = string_parse_double("0", 0, 1, -1, -1);
+	assert(lo, 0);
+	assert(hi, 0);
+
+	(lo, hi) = string_parse_double("1e-5");
+	assert(lo, 0x88e368f1);
+	assert(hi, 0x3ee4f8b5);
+	assert(fconv(lo, hi), 0.00001);
+
+	(lo, hi) = string_parse_double("1e+5");
+	assert(lo, 0x00000000);
+	assert(hi, 0x40f86a00);
+	assert(fconv(lo, hi), 100000.0);
+
+	(lo, hi) = string_parse_double("test", 0, 4, -1, -1);
+	assert(lo, -1);
+	assert(hi, -1);
+
+	(lo, hi) = string_parse_double("te456st", 2, 3, -1, -1);
+	assert(lo, 0);
+	assert(hi, 0x407c8000);
+	assert(fconv(lo, hi), 456.0);
+
+	assert(string_from_long(0, 0), "0");
+	assert(string_from_long(-1, -1), "-1");
+	assert(string_from_long(1, 0), "1");
+	assert(string_from_long(0, 1<<31), "-9223372036854775808");
+	assert(string_from_long(0xFFFFFFFF, 0x7FFFFFFF), "9223372036854775807");
+	s = {"test"};
+	assert(string_from_long(s, 0, 0)|0, s|0);
+	assert(s, "test0");
+	assert(string_from_long(s, -1, -1)|0, s|0);
+	assert(s, "test0-1");
+	assert(string_from_long(s, 0xFFFFFFFF, 0x7FFFFFFF)|0, s|0);
+	assert(s, "test0-19223372036854775807");
+
+	assert(string_from_double(0, 0), "0.0");
+	//assert(string_from_double(0, 0x80000000), "-0.0"); // TODO
+	//assert(string_from_double(0x88e368f1, 0x3ee4f8b5), "1e-05"); // TODO
+	assert(string_from_double(0, 0x40f86a00), "100000.0");
+
+	var utf8_bytes = ['t','e','s','t', 0xFF, 0xC2,0xA2, 0xF0,0x90,0x8D,0x88];
+	var utf8_string = "test\uFFFD\u00A2\U010348";
+	assert(string_from_utf8(utf8_bytes), utf8_string);
+	assert(string_from_utf8(utf8_bytes, 5, 4), "\u00A2\uFFFD\uFFFD");
+	s = {"existing"};
+	var ret = string_from_utf8(s, utf8_bytes);
+	assert(ret === s);
+	assert(ret, {"existing", utf8_string});
+	s = {"existing"};
+	ret = string_from_utf8(s, utf8_bytes, 5, 4);
+	assert(ret === s);
+	assert(ret, "existing\u00A2\uFFFD\uFFFD");
+
+	var utf8_bytes2 = ['t','e','s','t', 0xEF,0xBF,0xBD, 0xC2,0xA2, 0xF0,0x90,0x8D,0x88];
+	assert(string_to_utf8(utf8_string), utf8_bytes2);
+	assert(string_to_utf8(utf8_string, 5, 2), [0xC2,0xA2, 0xF0,0x90,0x8D,0x88]);
+	arr = [0xFF,0x00,0x80];
+	ret = string_to_utf8(arr, utf8_string);
+	assert(ret === arr);
+	assert(ret, [0xFF,0x00,0x80, 't','e','s','t', 0xEF,0xBF,0xBD, 0xC2,0xA2, 0xF0,0x90,0x8D,0x88]);
+	arr = [0xFF,0x00,0x80];
+	ret = string_to_utf8(arr, utf8_string, 5, 2);
+	assert(ret === arr);
+	assert(ret, [0xFF,0x00,0x80, 0xC2,0xA2, 0xF0,0x90,0x8D,0x88]);
+
+	shared = array_create_shared(0, 1);
+	assert(array_get_shared_count(shared), 1);
+	var ref1 = test_alt_heap(shared, 0);
+	assert(array_get_shared_count(shared), 2);
+	var ref2 = test_alt_heap(shared, 1);
+	assert(array_get_shared_count(shared), 2);
+	assert(ref1 != 0);
+	assert(ref2 != 0);
+	assert(ref1 == ref2);
+	test_alt_heap(null, 0);
+	assert(array_get_shared_count(shared), 2);
+	test_alt_heap(null, 1);
+	assert(array_get_shared_count(shared), 1);
+
+	shared = array_create_shared(1, 4);
+	shared[0] = 1.0;
+	assert(shared[0] == 0x3F800000);
+	assert(shared[0] != 1.0);
+	assert({shared[0]*1.0} == 1.0);
+	array_copy(shared, 0, [2.0], 0, 1);
+	assert(shared[0] == 0x40000000);
+	assert(shared[0] != 2.0);
+	assert({shared[0]*1.0} == 2.0);
+
+	assert(array_extract(error("test")[1][0], 0, 11), "test(a,b,c)");
+	assert(length(hidden()[1]), 1);
+	var stack = nonhidden();
+	assert(length(stack), 2);
+	assert(stack[0] === "test");
+	assert(length(stack[1]), 2);
+	var stack_entry = extract_stack_entry_parts(stack[1][0]);
+	assert(stack_entry[0], "nonhidden#0");
+	assert(stack_entry[1], "test.fix");
+	stack_entry = extract_stack_entry_parts(stack[1][1]);
+	assert(stack_entry[0], "test(a,b,c)");
+	assert(stack_entry[1], "test.fix");
+
+	assert(length(unserialize(stack_trace_lines)), 4*5);
+	var result = test_lines();
+
+	assert(length(result[0][1]), 3);
+	assert(strip_line_num(result[0][1][0]), "test_lines_helper#1 (test.fix)");
+	assert(result[0][1][1], "test_lines#0 (some_virtual_file2.fix:200002)");
+	assert(strip_line_num(result[0][1][2]), "test(a,b,c) (test.fix)");
+
+	assert(length(result[1][1]), 5);
+	assert(strip_line_num(result[1][1][0]), "test_lines_helper#1 (test.fix)");
+	assert(result[1][1][1], "added_virtual_function2 (some_virtual_file4.fix:400000)");
+	assert(result[1][1][2], "added_virtual_function (some_virtual_file3.fix:300000)");
+	assert(result[1][1][3], "test_lines#0 (some_virtual_file2.fix:200003)");
+	assert(strip_line_num(result[1][1][4]), "test(a,b,c) (test.fix)");
+
+	assert({ =555 }, 555);
+	assert({ do {} while (false); =555 }, 555);
+	{
+		var cnt = 0;
+		assert({ for (var ii=0; ii<555; ii++) { cnt++; } =cnt }, 555);
+	}
+	assert({ var cnt = 0; for (var ii=0; ii<555; ii++) { cnt++; } =cnt }, 555);
+	assert({ var xxx=1, yyy=2; =555 }, 555);
+	s = {""};
+	arr = [0];
+	arr[{ s[]='A'; =0 }] = { s[]='B'; =1 } + { s[]='C'; =2 } * { s[]='D'; =3 };
+	assert(arr[0], 7);
+	assert(s, "ABCD");
+
+	assert(to_string(assert#1), "<test.fix:assert#1>");
+	assert(to_string(test_dynamic_func#1), "<test.fix:test_dynamic_func#1>");
+	assert(to_string(imported_func#0), "<test_import.fix:imported_func#0>");
+	assert(to_string(test#3), "<test.fix:test#3>");
+	assert(to_string(ti:test#3), "<test_import.fix:test#3>");
+
+	assert(test_alt_heap_func_ref1(assert#1), "<test.fix:assert#1>");
+	assert(test_alt_heap_func_ref2(assert#1, false), "<test.fix:assert#1> [unresolved]");
+	assert(test_alt_heap_func_ref2(assert#1, true), "<test.fix:assert#1>");
+
+	assert(dummy_native_func(), 123);
+	assert(@overrided_native_func1(), 123);
+	assert(@overrided_native_func2(), 123);
+	{ var (r, e) = @overrided_native_func1(); assert(r, 123); }
+	{ var (r, e) = @overrided_native_func2(); assert(r, 123); }
+	assert(overrided_native_func1(), 246);
+	assert(overrided_native_func2(), 246);
+	{ var (r, e) = overrided_native_func1(); assert(r, 246); }
+	{ var (r, e) = overrided_native_func2(); assert(r, 246); }
+
+	obj = {"test"};
+	assert(obj, "test");
+	assert(weakref_create(null), null);
+	var weak = weakref_create(obj);
+	assert(weakref_get(weak) === obj);
+	assert(weakref_create(obj) === weak);
+	assert(@clone(weak) === weak);
+	var copy = clone_deep([obj, weak]);
+	assert(weakref_get(copy[1]) === copy[0]);
+	heap_collect();
+	assert(weakref_get(weak) === obj);
+	obj = null;
+	heap_collect();
+	assert(weakref_get(weak) === null);
+
+	obj = {"test"};
+	hash = {};
+	hash{weakref_create(obj, hash)} = "true";
+	assert(length(hash), 1);
+	{
+		var (k, v) = hash_entry(hash, 0);
+		assert(v, "true");
+	}
+	obj = null;
+	heap_collect();
+	assert(length(hash), 0);
+
+	obj = {"test"};
+	hash = {};
+	hash{"key"} = weakref_create(obj, hash, "key");
+	assert(length(hash), 1);
+	{
+		var (k, v) = hash_entry(hash, 0);
+		assert(k, "key");
+	}
+	obj = null;
+	heap_collect();
+	assert(length(hash), 0);
+
+	obj = {"test"};
+	var list = [];
+	weak = weakref_create(obj, list);
+	assert(length(list), 0);
+	obj = null;
+	heap_collect();
+	assert(length(list), 1);
+	assert(list[0], weak);
+
+	obj = {"test"};
+	list = [];
+	weak = weakref_create(obj, list, "key");
+	assert(length(list), 0);
+	obj = null;
+	heap_collect();
+	assert(length(list), 1);
+	assert(list[0], "key");
+
+	var obj1 = {"obj1"};
+	var obj2 = {"obj2"};
+	hash = {};
+	var weak1 = weakref_create(obj1, hash);
+	var weak2 = weakref_create(obj2);
+	hash{weak1} = obj2;
+	heap_collect();
+	assert(length(hash), 1);
+	assert(weakref_get(weak1) === obj1);
+	assert(weakref_get(weak2) === obj2);
+	obj1 = null;
+	obj2 = null;
+	heap_collect();
+	assert(length(hash), 0);
+	assert(weakref_get(weak1) === null);
+	assert(weakref_get(weak2) === null);
+
+	assert_exception(funcref_call_func#2, obj_create#0, null, "invalid array access");
+	assert(is_array(funcref_call_func(obj_create#0, [])));
+	assert(funcref_call(callback#1, [5]), -5);
+	assert(funcref_call(assert_type_check#11, ["", 0, 0, 1, 1, 0, 0, 1, 0, 0, 0]), 0);
+	assert(length(get_stack()), 2);
+	assert(length(funcref_call(get_stack#0, [])), 3);
+	assert(length(run_later(get_stack#0)), 3);
+
+	arr = [];
+	var cur = arr;
+	for (i=0; i<10000; i++) {
+		var next = [];
+		cur[] = next;
+		cur = next;
+	}
+	serialized = serialize(arr);
+	assert(length(serialized), 10000*1+1);
+	var arr2 = unserialize(serialized);
+	assert(serialize(arr2) == serialized);
+	var arr3 = clone_deep(arr);
+	assert(serialize(arr3) == serialized);
+	arr = null;
+
+	hash = {};
+	cur = hash;
+	for (i=0; i<10000; i++) {
+		var next = {};
+		cur{next} = i;
+		cur = next;
+	}
+	serialized = serialize(hash);
+	assert(length(serialized), 10001*1+1+255*2+(10000-256)*3);
+	var hash2 = unserialize(serialized);
+	assert(serialize(hash2) == serialized);
+	var hash3 = clone_deep(hash);
+	assert(serialize(hash3) == serialized);
+	hash = null;
+	hash2 = null;
+	hash3 = null;
+
+	arr = [];
+	var handle = create_native_ref(arr);
+	arr[] = handle;
+	for (i=0; i<10000; i++) {
+		handle = create_native_ref(handle);
+		arr[] = handle;
+	}
+	var handle2 = clone_deep(handle);
+	arr = null;
+	handle = null;
+	handle2 = null;
+
+	var (r, e) = @some_nonexisting_function();
+	assert(r, 0);
+	assert(is_string(e), true);
+
+	(r, e) = test_nonexisting_function();
+	assert(r, 0);
+	assert(is_string(e), false);
+	assert(is_array(e), true);
+	assert(length(e), 2);
+
+	var heap = create_heap();
+	assert(is_handle(heap));
+	heap_reload_script(heap, "test.fix", "var @local; function test() { return [\"Hello!\", ++local]; }");
+	assert(heap_run_func(heap, "test.fix", "test#0"), ["Hello!", 1]);
+	heap_reload_script(heap, "test.fix", "var @local; function test() { return [\"world!\", ++local]; }");
+	assert(heap_run_func(heap, "test.fix", "test#0"), ["world!", 2]);
+	(r, e) = heap_reload_script(heap, "test.fix", "var @local; function test() { xxx; }");
+	assert(e, "test.fix(1): undefined variable name");
+	heap_reload_script(heap, "test.fix", "var @local; function test() { return error(\"test\")[1]; }");
+	assert(heap_run_func(heap, "test.fix", "test#0"), ["test#0 (test.fix:1)"]);
+	heap_reload_script(heap, "test_tokens_fname.fix", "function process_tokens(fname, tokens, src) { return 0, fname; }");
+	(r, e) = heap_reload_script(heap, "test.fix", "use \"test_tokens_fname\"; var @local; function test() { }");
+	assert(e, "test.fix");
+	heap_reload_script(heap, "test_script_line.fix", "function process_tokens(fname, tokens, src) { return 0, script_line(123); }");
+	(r, e) = heap_reload_script(heap, "test.fix", "use \"test_script_line\"; var @local; function test() { }");
+	assert(e, "test.fix(123)");
+
+	assert_exception(recursive_test#0, "stack overflow");
+
+	test_array_copy();
+	test_array_fill();
+
+	;;;; // multiple semicolons are allowed
+
+	1+2*3;         // lone expression is allowed
+	(1+2*3);       // lone expression is allowed
+
+	// for performance reasons lone extended operator is not allowed:
+	{};            // also empty block would take precedence before lone empty hash initializer anyway
+	/*
+	{""};          // lone concat operator
+	{"", 123};     // lone concat operator
+	{1.0*2.0};     // lone float expression
+	{1:2};         // lone hash initializer
+	{ var x; =x }; // lone statement expression
+	*/
+
+	// need to wrap it in parenthesis to work:
+	({});            // lone empty hash initializer
+	({""});          // lone concat operator
+	({"", 123});     // lone concat operator
+	({1.0*2.0});     // lone float expression
+	({1:2});         // lone hash initializer
+	({ var x; =x }); // lone statement expression
+
+	perf_reset();
+	arr = [$GENERATE_ARRAY_VALUES];
+	assert(length(arr), 65536);
+	for (i=0; i<length(arr); i++) {
+		if (arr[i] != i) {
+			assert(false);
+		}
+	}
+	perf_log("array");
+
+	hash = {$GENERATE_HASH_VALUES};
+	assert(length(hash), 65536);
+	for (i=0; i<length(hash); i++) {
+		var (k, v) = hash_entry(hash, i);
+		if (k != -v-1) {
+			assert(false);
+		}
+	}
+	perf_log("hash");
+
+	s = {$GENERATE_STRING_VALUES};
+	perf_log("string1");
+	var cmp = {""};
+	for (i=0; i<65536; i++) {
+		if (i > 0) cmp[] = ' ';
+		array_append(cmp, {i});
+	}
+	assert(s == cmp);
+	perf_log("string2");
+
+	perf_reset();
+	arr = [$GENERATE_NESTED_ARRAY_VALUES];
+	check_nested_array(arr, 256, 128);
+	perf_log("nested_array");
+
+	perf_reset();
+	hash = {$GENERATE_NESTED_HASH_VALUES};
+	check_nested_hash(hash, 256, 128);
+	perf_log("nested_hash");
+
+	perf_reset();
+	s = {$GENERATE_NESTED_STRING_VALUES};
+	perf_log("nested_string1");
+	cmp = {""};
+	var cnt = 256;
+	var levels = 128;
+	for (i=0; i<levels; i++) {
+		var cnt2 = cnt;
+		if (i < levels-1) cnt2--;
+		for (j=0; j<cnt2; j++) {
+			if (j > 0) cmp[] = ' ';
+			array_append(cmp, {j});
+		}
+	}
+	assert(s == cmp);
+	perf_log("nested_string2");
+
+	assert(postprocess_cnt, 123456);
+
+	return test_dynamic_func#1;
+}
+
+function @check_nested_array(arr, cnt, level)
+{
+	assert(length(arr), cnt);
+	if (level > 1) {
+		for (var i=0, n=length(arr)-1; i<n; i++) {
+			if (arr[i] != i) {
+				assert(false);
+			}
+		}
+		check_nested_array(arr[cnt-1], cnt, level-1);
+	}
+	else {
+		for (var i=0; i<length(arr); i++) {
+			if (arr[i] != i) {
+				assert(false);
+			}
+		}
+	}
+}
+
+function @check_nested_hash(hash, cnt, level)
+{
+	assert(length(hash), cnt);
+	if (level > 1) {
+		for (var i=0, n=length(hash)-1; i<n; i++) {
+			var (k, v) = hash_entry(hash, i);
+			if (k != -v-1) {
+				assert(false);
+			}
+		}
+		var (k, v) = hash_entry(hash, cnt-1);
+		check_nested_hash(v, cnt, level-1);
+	}
+	else {
+		for (var i=0; i<length(hash); i++) {
+			var (k, v) = hash_entry(hash, i);
+			if (k != -v-1) {
+				assert(false);
+			}
+		}
+	}
+}
+
+function @random(state)
+{
+	state[0] = add32(mul32(state[0], 0x1010101), 0x31415927);
+	return state[0] >>> 16;
+}
+
+function @copy_array(arr, values, flags, dest_off, src_off, count)
+{
+	array_copy(arr, dest_off, arr, src_off, count);
+	array_copy(values, dest_off, values, src_off, count);
+	array_copy(flags, dest_off, flags, src_off, count);
+
+	for (var i=0; i<length(values); i++) {
+		var value = arr[i];
+		var flag = 0;
+		if (is_float(value)) {
+			value = int(value);
+			flag = 1;
+		}
+		if (value != values[i]) {
+			return 0, error("invalid value");
+		}
+		if (flag != flags[i]) {
+			return 0, error("invalid flag");
+		}
+	}
+}
+
+function @test_array_copy()
+{
+	var rnd = [0];
+	var values = array_create(2048);
+	var flags = array_create(length(values));
+	for (var i=0; i<length(values); i++) {
+		values[i] = i;
+	}
+	for (var i=0; i<1000; i++) {
+		flags[random(rnd) % length(values)] = 1;
+	}
+	var arr = array_create(length(values));
+	for (var i=0; i<length(values); i++) {
+		if (flags[i]) {
+			arr[i] = float(i);
+		}
+		else {
+			arr[i] = i;
+		}
+	}
+	copy_array(arr, values, flags, 0, 0, 0);
+	copy_array(arr, values, flags, 32-5, 32, 20);
+	copy_array(arr, values, flags, 32, 32, 20);
+	for (var i=0; i<length(values); i++) {
+		copy_array(arr, values, flags, i, i, 1);
+	}
+	for (var i=0; i<1000; i++) {
+		var dest_off = random(rnd) % length(values);
+		var src_off = random(rnd) % length(values);
+		var count = random(rnd) % length(values);
+		count = min(count, length(values) - dest_off);
+		count = min(count, length(values) - src_off);
+		copy_array(arr, values, flags, dest_off, src_off, count);
+	}
+}
+
+function @array_fill_exception_test(arr)
+{
+	array_fill(arr, 512, 1024, "test");
+}
+
+function test_array_fill()
+{
+	var arr = [];
+	for (var i=0; i<10; i++) {
+		arr[] = i;
+	}
+	assert(arr, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+	array_fill(arr, 3, 5, 123);
+	assert(arr, [0, 1, 2, 123, 123, 123, 123, 123, 8, 9]);
+	array_fill(arr, 4, 3, 123.5);
+	assert(arr, [0, 1, 2, 123, 123.5, 123.5, 123.5, 123, 8, 9]);
+	array_fill(arr, 5, 2, "test");
+	assert(arr, [0, 1, 2, 123, 123.5, "test", "test", 123, 8, 9]);
+
+	array_set_length(arr, 2048);
+	for (var i=0; i<length(arr); i++) {
+		arr[i] = i;
+	}
+	array_fill(arr, 515, 1000, 123);
+	for (var i=0; i<length(arr); i++) {
+		if (i >= 515 && i < 515+1000) continue;
+		if (arr[i] != i) return 0, error("unexpected value");
+	}
+	for (var i=515; i<515+1000; i++) {
+		if (arr[i] != 123) return 0, error("unexpected value");
+	}
+	array_fill(arr, 515, 1000, 123.5);
+	for (var i=0; i<length(arr); i++) {
+		if (i >= 515 && i < 515+1000) continue;
+		if (arr[i] != i) return 0, error("unexpected value");
+	}
+	for (var i=515; i<515+1000; i++) {
+		if (arr[i] != 123.5) return 0, error("unexpected value");
+	}
+
+	for (var i=0; i<length(arr); i++) {
+		arr[i] = float(i);
+	}
+	array_fill(arr, 515, 1000, 123);
+	for (var i=0; i<length(arr); i++) {
+		if (i >= 515 && i < 515+1000) continue;
+		if (arr[i] != float(i)) return 0, error("unexpected value");
+	}
+	for (var i=515; i<515+1000; i++) {
+		if (arr[i] != 123) return 0, error("unexpected value");
+	}
+	array_fill(arr, 515, 1000, 123.5);
+	for (var i=0; i<length(arr); i++) {
+		if (i >= 515 && i < 515+1000) continue;
+		if (arr[i] != float(i)) return 0, error("unexpected value");
+	}
+	for (var i=515; i<515+1000; i++) {
+		if (arr[i] != 123.5) return 0, error("unexpected value");
+	}
+
+	arr = array_create_shared(length(arr), 4);
+	for (var i=0; i<length(arr); i++) {
+		arr[i] = i;
+	}
+	array_fill(arr, 515, 1000, 123);
+	for (var i=0; i<length(arr); i++) {
+		if (i >= 515 && i < 515+1000) continue;
+		if (arr[i] != i) return 0, error("unexpected value");
+	}
+	for (var i=515; i<515+1000; i++) {
+		if (arr[i] != 123) return 0, error("unexpected value");
+	}
+	array_fill(arr, 515, 1000, 123.5);
+	for (var i=0; i<length(arr); i++) {
+		if (i >= 515 && i < 515+1000) continue;
+		if (arr[i] != i) return 0, error("unexpected value");
+	}
+	for (var i=515; i<515+1000; i++) {
+		if (arr[i] != (123.5|0)) return 0, error("unexpected value");
+	}
+	assert_exception(array_fill_exception_test#1, arr, "invalid shared array operation");
+}
+
+function overrided_native_func2()
+{
+	return @overrided_native_func2() * 2;
+}
+
+function test_dynamic_func(value)
+{
+	log({"value from host: ", value});
+}
+
+function test_forward()
+{
+	log("forward main");
+}
+
+function test_nonexisting_function()
+{
+	@some_nonexisting_function();
+}
+
+////////////////
+__token_errors__
+////////////////
+
+// this section is processed using the token processor to validate how invalid tokens are parsed:
+
+
+for#0
+0xZ
+0.X
+1eX
+"\FX"
+"\uD800"
+"\uD80X"
+"\U123456"
+"\U00D800"
+"\U10FFXX"
+"test'x
+'test"x
+''
+'xx'
+'x\u0100'
+'abcd'
+'abcde'

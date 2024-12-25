@@ -1,0 +1,555 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/string";
+import "util/html";
+
+const @class_Element = "struct=ELEM,static=create#1:create#2:create#3";
+const @method_Element_create_1 = "(String): Element";
+const @method_Element_create_2 = "(String, Dynamic): Element";
+const @method_Element_create_3 = "(String, Dynamic, String[String]): Element";
+const @method_Element_clone_1 = "(): Element";
+const @method_Element_equals_2 = "(Element): Boolean";
+const @method_Element_get_type_1 = "(): String";
+const @method_Element_set_type_2 = "(String)";
+const @method_Element_is_type_2 = "(String): Boolean";
+const @method_Element_get_parent_1 = "(): Element";
+const @method_Element_get_prev_1 = "(): Element";
+const @method_Element_get_next_1 = "(): Element";
+const @method_Element_get_prev_tag_1 = "(): Element";
+const @method_Element_get_next_tag_1 = "(): Element";
+const @method_Element_get_first_child_1 = "(): Element";
+const @method_Element_get_last_child_1 = "(): Element";
+const @method_Element_get_first_child_tag_1 = "(): Element";
+const @method_Element_get_last_child_tag_1 = "(): Element";
+const @method_Element_get_children_count_1 = "(): Integer";
+const @method_Element_get_children_tag_count_1 = "(): Integer";
+const @method_Element_insert_before_3 = "(Element, Element)";
+const @method_Element_insert_after_3 = "(Element, Element)";
+const @method_Element_append_child_2 = "(Element)";
+const @method_Element_remove_child_2 = "(Element)";
+const @method_Element_set_attr_3 = "(String, String)";
+const @method_Element_set_attr_if_missing_3 = "(String, String)";
+const @method_Element_get_attr_2 = "(String): String";
+const @method_Element_get_attrs_1 = "(): String[String]";
+const @method_Element_set_attrs_2 = "(String[String])";
+const @method_Element_get_data_1 = "(): Dynamic";
+const @method_Element_set_data_2 = "(Dynamic)";
+const @method_Element_set_text_noescape_1 = "()";
+const @method_Element_contains_class_2 = "(String): Boolean";
+const @method_Element_to_string_1 = "(): String";
+const @method_Element_dump_1 = "()";
+const @method_Element_to_html_1 = "(): String";
+const @method_Element_to_html_2 = "(Boolean): String";
+
+// note: synchronize with native code
+const {
+	@ELEM_type,
+	@ELEM_parent,
+	@ELEM_first_child,
+	@ELEM_last_child,
+	@ELEM_prev,
+	@ELEM_next,
+	@ELEM_attrs,
+	@ELEM_data,
+	@ELEM_class_set,
+	@ELEM_SIZE
+};
+
+var @void_elems;
+
+function element_create(type)
+{
+	var elem = object_create(ELEM_SIZE);
+	elem->ELEM_type = type;
+	return elem;
+}
+
+function element_create(type, data)
+{
+	var elem = object_create(ELEM_SIZE);
+	elem->ELEM_type = type;
+	elem->ELEM_data = data? {data} : null;
+	return elem;
+}
+
+function element_create(type, data, attrs)
+{
+	var elem = object_create(ELEM_SIZE);
+	elem->ELEM_type = type;
+	elem->ELEM_data = data? {data} : null;
+	if (attrs && length(attrs) > 0) {
+		elem->ELEM_attrs = attrs;
+		element_update_class_set(elem);
+	}
+	return elem;
+}
+
+function element_clone(elem)
+{
+	return element_create(elem->ELEM_type, clone(elem->ELEM_data), clone_deep(elem->ELEM_attrs));
+}
+
+function element_equals(elem, other)
+{
+	if (elem->ELEM_type != other->ELEM_type) return false;
+	if (elem->ELEM_data != other->ELEM_data) return false;
+	if (elem->ELEM_attrs != other->ELEM_attrs) return false;
+	return true;
+}
+
+function element_get_type(elem)
+{
+	return elem->ELEM_type;
+}
+
+function element_set_type(elem, type)
+{
+	elem->ELEM_type = type;
+}
+
+function element_is_type(elem, type)
+{
+	return elem->ELEM_type == type;
+}
+
+function element_get_parent(elem)
+{
+	return elem->ELEM_parent;
+}
+
+function element_get_prev(elem)
+{
+	return elem->ELEM_prev;
+}
+
+function element_get_next(elem)
+{
+	return elem->ELEM_next;
+}
+
+function element_get_prev_tag(elem)
+{
+	var e = elem->ELEM_prev;
+	while (e && e->ELEM_type[0] == '#') {
+		e = e->ELEM_prev;
+	}
+	return e;
+}
+
+function element_get_next_tag(elem)
+{
+	var e = elem->ELEM_next;
+	while (e && e->ELEM_type[0] == '#') {
+		e = e->ELEM_next;
+	}
+	return e;
+}
+
+function element_get_first_child(elem)
+{
+	return elem->ELEM_first_child;
+}
+
+function element_get_last_child(elem)
+{
+	return elem->ELEM_last_child;
+}
+
+function element_get_first_child_tag(elem)
+{
+	var e = elem->ELEM_first_child;
+	if (!e || e->ELEM_type[0] != '#') return e;
+	return element_get_next_tag(e);
+}
+
+function element_get_last_child_tag(elem)
+{
+	var e = elem->ELEM_last_child;
+	if (!e || e->ELEM_type[0] != '#') return e;
+	return element_get_prev_tag(e);
+}
+
+function element_get_children_count(elem)
+{
+	var cnt = 0;
+	for (var e = elem->ELEM_first_child; e; e = e->ELEM_next) {
+		cnt++;
+	}
+	return cnt;
+}
+
+function element_get_children_tag_count(elem)
+{
+	var cnt = 0;
+	for (var e = element_get_first_child_tag(elem); e; e = element_get_next_tag(e)) {
+		cnt++;
+	}
+	return cnt;
+}
+
+function element_insert_before(parent, elem, before)
+{
+	if (elem->ELEM_parent) {
+		return 0, error("can't add element twice");
+	}
+
+	if (before) {
+		if (before->ELEM_parent !== parent) {
+			return 0, error("can't add element before element with other parent");
+		}
+
+		elem->ELEM_parent = parent;
+
+		if (before === parent->ELEM_first_child) {
+			elem->ELEM_next = before;
+			before->ELEM_prev = elem;
+			parent->ELEM_first_child = elem;
+			return;
+		}
+
+		before->ELEM_prev->ELEM_next = elem;
+		elem->ELEM_prev = before->ELEM_prev;
+		elem->ELEM_next = before;
+		before->ELEM_prev = elem;
+		return;
+	}
+
+	elem->ELEM_parent = parent;
+	
+	var last_child = parent->ELEM_last_child;
+	if (last_child) {
+		last_child->ELEM_next = elem;
+		elem->ELEM_prev = last_child;
+		parent->ELEM_last_child = elem;
+		return;
+	}
+
+	parent->ELEM_first_child = elem;
+	parent->ELEM_last_child = elem;
+}
+
+function element_insert_after(parent, elem, after)
+{
+	if (after && after->ELEM_parent !== parent) {
+		return 0, error("can't add element after element with other parent");
+	}
+	element_insert_before(parent, elem, after? element_get_next(after) : element_get_first_child(parent));
+}
+
+function element_append_child(parent, elem)
+{
+	element_insert_before(parent, elem, null);
+}
+
+function element_remove_child(parent, elem)
+{
+	if (!elem->ELEM_parent) {
+		return 0, error("element has no parent");
+	}
+	if (elem->ELEM_parent !== parent) {
+		return 0, error("element is not a child");
+	}
+
+	var prev = elem->ELEM_prev;
+	var next = elem->ELEM_next;
+	if (prev) {
+		prev->ELEM_next = next;
+	}
+	else {
+		parent->ELEM_first_child = next;
+	}
+	if (next) {
+		next->ELEM_prev = prev;
+	}
+	else {
+		parent->ELEM_last_child = prev;
+	}
+	elem->ELEM_parent = null;
+	elem->ELEM_prev = null;
+	elem->ELEM_next = null;
+}
+
+function element_set_attr(elem, attr, value)
+{
+	var attrs = elem->ELEM_attrs;
+	if (!attrs) {
+		attrs = elem->ELEM_attrs = {};
+	}
+	attrs{attr} = value;
+	if (attr == "class") {
+		element_update_class_set(elem, value);
+	}
+}
+
+function element_set_attr_if_missing(elem, attr, value)
+{
+	var attrs = elem->ELEM_attrs;
+	if (!attrs) {
+		attrs = elem->ELEM_attrs = {};
+	}
+	if (!hash_contains(attrs, attr)) {
+		attrs{attr} = value;
+		if (attr == "class") {
+			element_update_class_set(elem, value);
+		}
+	}
+}
+
+function element_get_attr(elem, attr)
+{
+	var attrs = elem->ELEM_attrs;
+	if (!attrs) return null;
+	return hash_get(attrs, attr, null);
+}
+
+function element_get_attrs(elem)
+{
+	return elem->ELEM_attrs;
+}
+
+function element_set_attrs(elem, attrs)
+{
+	elem->ELEM_attrs = attrs;
+	element_update_class_set(elem);
+}
+
+function element_get_data(elem)
+{
+	return elem->ELEM_data;
+}
+
+function element_set_data(elem, data)
+{
+	elem->ELEM_data = data;
+}
+
+function element_set_text_noescape(elem)
+{
+	if (elem->ELEM_type != "#text") {
+		return 0, error("not a text element");
+	}
+	elem->ELEM_type = "#text-noescape";
+}
+
+function @element_update_class_set(elem)
+{
+	var attrs = elem->ELEM_attrs;
+	if (attrs) {
+		element_update_class_set(elem, hash_get(attrs, "class", null));
+	}
+	else {
+		elem->ELEM_class_set = null;
+	}
+}
+
+function @element_update_class_set(elem, value)
+{
+	if (!value) {
+		elem->ELEM_class_set = null;
+		return;
+	}
+
+	var set;
+	var last = -1;
+	var len = length(value);
+
+	for (var i=0; i<len; i++) {
+		var c = value[i];
+		switch (c) {
+			case ' ', '\t', '\n', '\r', 0x0C:
+				if (i - last > 1) {
+					if (!set) {
+						set = {};
+					}
+					set{array_extract(value, last+1, i-last-1)} = true;
+				}
+				last = i;
+				continue;
+
+			default:
+				continue;
+		}
+	}
+	
+	if (len - last > 1) {
+		if (!set) {
+			set = {};
+		}
+		set{array_extract(value, last+1, len-last-1)} = true;
+	}
+
+	elem->ELEM_class_set = set;
+}
+
+function element_contains_class(elem, name)
+{
+	var set = elem->ELEM_class_set;
+	if (!set) return false;
+	return hash_contains(set, name);
+}
+
+function @element_to_string(s, elem, level)
+{
+	for (var i=0; i<level; i++) {
+		s[] = ' ';
+		s[] = ' ';
+	}
+	string_append(s, elem->ELEM_type);
+	if (elem->ELEM_data) {
+		s[] = ':';
+		s[] = ' ';
+		s[] = '\'';
+		string_append(s, elem->ELEM_data);
+		s[] = '\'';
+	}
+	var attrs = elem->ELEM_attrs;
+	if (attrs) {
+		for (var i=0; i<length(attrs); i++) {
+			var (k, v) = hash_entry(attrs, i);
+			s[] = ' ';
+			string_append(s, k);
+			s[] = '=';
+			s[] = '\'';
+			string_append(s, v);
+			s[] = '\'';
+		}
+	}
+	s[] = '\n';
+
+	for (var e = elem->ELEM_first_child; e; e = e->ELEM_next) {
+		element_to_string(s, e, level+1);
+	}
+	return s;
+}
+
+function element_to_string(elem)
+{
+	return element_to_string({""}, elem, 0);
+}
+
+function element_dump(elem)
+{
+	var s = element_to_string({""}, elem, 0);
+	array_set_length(s, length(s)-1);
+	log(s);
+}
+
+function @element_to_html(s, elem, recurse)
+{
+	var type = elem->ELEM_type;
+	if (type == "#document") {
+		string_append(s, "<!DOCTYPE html>\n");
+	}
+	else if (type == "#text") {
+		string_append(s, html_escape(elem->ELEM_data));
+	}
+	else if (type == "#text-noescape") {
+		string_append(s, elem->ELEM_data);
+	}
+	else if (type == "#comment") {
+		if (!string_contains(elem->ELEM_data, "-->")) {
+			string_append(s, "<!--");
+			string_append(s, elem->ELEM_data);
+			string_append(s, "-->");
+		}
+	}
+	else {
+		s[] = '<';
+		string_append(s, elem->ELEM_type);
+		var attrs = elem->ELEM_attrs;
+		if (attrs) {
+			for (var i=0; i<length(attrs); i++) {
+				var (k, v) = hash_entry(attrs, i);
+				s[] = ' ';
+				string_append(s, html_escape(k));
+				s[] = '=';
+				s[] = '"';
+				string_append(s, html_escape(v));
+				s[] = '"';
+			}
+		}
+		s[] = '>';
+	}
+
+	if (!recurse) return;
+
+	for (var e = elem->ELEM_first_child; e; e = e->ELEM_next) {
+		element_to_html(s, e, recurse);
+	}
+
+	if (elem->ELEM_type[0] != '#') {
+		if (!hash_contains(void_elems, elem->ELEM_type) || elem->ELEM_first_child !== null) {
+			s[] = '<';
+			s[] = '/';
+			string_append(s, elem->ELEM_type);
+			s[] = '>';
+		}
+	}
+}
+
+function element_to_html(elem)
+{
+	return element_to_html(elem, true);
+}
+
+function element_to_html(elem, recurse)
+{
+	if (!void_elems) {
+		void_elems = create_set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+	}
+
+	var s = {""};
+	element_to_html(s, elem, recurse);
+	return s;
+}
+
+function @create_set(arr)
+{
+	var set = {};
+	for (var i=0; i<length(arr); i++) {
+		set{arr[i]} = true;
+	}
+	return set;
+}
+
+function test_element()
+{
+	var document = element_create("#document");
+
+	var html = element_create("html");
+	element_append_child(document, html);
+
+	var head = element_create("head");
+	element_append_child(html, head);
+
+	var body = element_create("body");
+	element_append_child(html, body);
+
+	var p = element_create("p");
+	element_set_attr(p, "class", "first");
+	element_append_child(body, p);
+
+	var text = element_create("#text", "some text");
+	element_append_child(p, text);
+
+	element_dump(document);
+}

@@ -1,0 +1,300 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/subview/text_field";
+import "gui/subview/scrollview";
+import "gui/subview/scrollbar";
+import "gui/pure/scrollview";
+import "gui/code_editor/view";
+import "gui/code_editor/font";
+import "gui/code_editor/syntax";
+import "cellsplit/gui/common";
+import "cellsplit/gui/panel";
+import "cellsplit/gui/text_field";
+import "cellsplit/gui/button";
+import "util/string";
+
+class ChatPanel: SubView
+{
+	var @chat_func;
+	var @chat_data;
+	var @type_panel: TypePanel;
+	var @history_panel: HistoryPanel;
+
+	constructor create(chat_func, chat_data)
+	{
+		this.chat_func = chat_func;
+		this.chat_data = chat_data;
+		type_panel = TypePanel::create();
+		history_panel = HistoryPanel::create();
+		add(type_panel);
+		add(history_panel);
+	}
+
+	function hide()
+	{
+		var text_field = (type_panel.get_child(0) as TypeView).text_field;
+		text_field.focus();
+		text_field.unfocus();
+		var code_editor = (history_panel.get_child(0) as HistoryView).code_editor;
+		code_editor.focus();
+		code_editor.unfocus();
+		remove_self();
+	}
+
+	function add_line(text: String, style: Integer)
+	{
+		var code_editor = (history_panel.get_child(0) as HistoryView).code_editor;
+		var styles = (history_panel.get_child(0) as HistoryView).styles;
+		var row = max(0, code_editor.get_row_count()-1);
+		styles[] = style;
+		code_editor.set_cursor_position(code_editor.get_column_count(row), row);
+		if (code_editor.get_row_count() == 1 && code_editor.get_column_count(0) == 0) {
+			code_editor.insert_text(text);
+		}
+		else {
+			code_editor.insert_text("\n"+text);
+		}
+		code_editor.set_cursor_position(0, code_editor.get_row_count()-1);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		type_panel.set_rect(0, get_height()-iround(60*scale), get_width(), iround(60*scale));
+		history_panel.set_rect(0, 0, get_width(), get_height()-iround(70*scale));
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_ENTER) {
+			var text_field = (type_panel.get_child(0) as TypeView).text_field;
+			var text = text_field.get_text().trim();
+			if (text.length > 255) {
+				text.set_length(255);
+			}
+			text_field.set_text("");
+			hide();
+			if (text.length > 0) {
+				chat_func(chat_data, text);
+			}
+			return true;
+		}
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_ESCAPE) {
+			hide();
+			return true;
+		}
+		return false;
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		return handle_key_event(event);
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		if (event.get_type() == EVENT_FOCUS_GAINED) {
+			(type_panel.get_child(0) as TypeView).text_field.focus();
+		}
+	}
+}
+
+class @TypePanel: Panel
+{
+	constructor create()
+	{
+		super::create("Type to chat:");
+		set_content(TypeView::create());
+		set_moveable(false);
+	}
+}
+
+class @TypeView: SubView
+{
+	var @text_field: GameTextField;
+
+	constructor create()
+	{
+		text_field = GameTextField::create();
+		add(text_field);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		text_field.set_rect(0, 0, get_width(), get_height());
+	}
+}
+
+class @HistoryPanel: Panel
+{
+	constructor create()
+	{
+		super::create(null);
+		set_rect(0, 0, 600, 100);
+		set_content(HistoryView::create());
+		set_moveable(false);
+	}
+}
+
+class @HistoryView: SubView
+{
+	var @code_editor: CodeEditor;
+	var @styles: Integer[];
+
+	constructor create()
+	{
+		styles = [];
+		code_editor = CustomCodeEditor::create();
+		code_editor.set_syntax(StyleSyntax::create(styles));
+		code_editor.set_editable(false);
+		add(code_editor);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		var font = TrueTypeFontImpl::create([get_normal_font(), get_bold_font()], 12 * scale);
+		code_editor.set_font(font);
+		code_editor.set_rect(0, 0, get_width(), get_height());
+	}
+}
+
+class @CustomCodeEditor: CodeEditor
+{
+	constructor create()
+	{
+	}
+
+	override function create_scroll_view(content: SubView, popup: Boolean): SubScrollView
+	{
+		if (popup) {
+			return super.create_scroll_view(content, popup);
+		}
+		return CustomScrollView::create(content);
+	}
+}
+
+class @CustomScrollView: PureScrollView
+{
+	constructor create(content: SubView)
+	{
+		super::create(content);
+		set_border(false);
+	}
+
+	override function create_scrollbar(type: Integer): SubScrollBar
+	{
+		if (type == SCROLL_HORIZ) {
+			return HiddenScrollBar::create(type);
+		}
+		return super.create_scrollbar(type);
+	}
+}
+
+class @HiddenScrollBar: SubScrollBar
+{
+	constructor create(type: Integer)
+	{
+		super::create(type);
+	}
+
+	override function get_default_size(scale: Float): Integer
+	{
+		return 0;
+	}
+}
+
+class @StyleSyntax: Syntax
+{
+	var @styles: Integer[];
+	var @cached_font: AbstractFont;
+	var @cached_bold_font: AbstractFont;
+
+	constructor create(styles: Integer[])
+	{
+		this.styles = styles;
+	}
+
+	function @get_cached_font(): AbstractFont
+	{
+		var font = get_font();
+		if (font !== cached_font) {
+			cached_font = font;
+			cached_bold_font = font.with_style(FONT_BOLD);
+		}
+		return font;
+	}
+
+	override function process(attrs: [Attribute], s: String, off: Integer, len: Integer, syntax_state: Dynamic): Dynamic
+	{
+		var row = syntax_state as Integer;
+		if (styles.length == 0) {
+			return row+1;
+		}
+		var style = styles[clamp(row, 0, styles.length-1)];
+		var font = get_cached_font();
+		if (((style >>> 24) & 1) != 0) {
+			font = cached_bold_font;
+		}
+		attrs[] = {
+			.length: len,
+			.width: font.get_string_advance(s, off, len),
+			.style: style
+		};
+		return row+1;
+	}
+
+	override function get_position(s: String, off: Integer, len: Integer, width: Float, style: Dynamic, x: Float): Float
+	{
+		var font = get_cached_font();
+		if ((((style as Integer) >>> 24) & 1) != 0) {
+			font = cached_bold_font;
+		}
+		return font.get_string_position(s, off, len, x);
+	}
+
+	override function get_visual_position(s: String, off: Integer, len: Integer, width: Float, style: Dynamic, x: Integer): Float
+	{
+		var font = get_cached_font();
+		if ((((style as Integer) >>> 24) & 1) != 0) {
+			font = cached_bold_font;
+		}
+		return font.get_string_advance(s, off, x);
+	}
+
+	override function draw_text(p: Painter, x: Float, y: Integer, s: String, off: Integer, len: Integer, width: Float, height: Integer, ascent: Integer, selection: Boolean, style: Dynamic)
+	{
+		var color = 0xFF000000 | (style as Integer);
+		var font = get_cached_font();
+		if ((((style as Integer) >>> 24) & 1) != 0) {
+			font = cached_bold_font;
+		}
+		font.draw_string(p, x, y+ascent, s, off, len, selection? 0xFFFFFFFF : color);
+	}
+}

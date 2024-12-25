@@ -1,0 +1,257 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+class QuadTree
+{
+	var @log_size: Integer;
+	var @size: Integer;
+	var @root: Node;
+
+	constructor create(size: Integer)
+	{
+		var log_size = iceil(log2(size));
+		this.log_size = log_size;
+		this.size = 1 << log_size;
+		this.root = Node::create(log_size);
+	}
+
+	function add(obj, cx: Float, cy: Float, size: Float)
+	{
+		add(obj, ifloor(cx - size), ifloor(cy - size), iceil(cx + size), iceil(cy + size));
+	}
+
+	function add(obj, min_x: Integer, min_y: Integer, max_x: Integer, max_y: Integer)
+	{
+		var max_size = this.size-1;
+		min_x = max(0, min_x);
+		min_y = max(0, min_y);
+		max_x = min(max_x, max_size);
+		max_y = min(max_y, max_size);
+		if (min_x > max_x) return;
+		if (min_y > max_y) return;
+		root.add(obj, min_x, min_y, max_x, max_y);
+	}
+
+	function remove(obj, cx: Float, cy: Float, size: Float)
+	{
+		remove(obj, ifloor(cx - size), ifloor(cy - size), iceil(cx + size), iceil(cy + size));
+	}
+
+	function remove(obj, min_x: Integer, min_y: Integer, max_x: Integer, max_y: Integer)
+	{
+		var max_size = this.size-1;
+		min_x = max(0, min_x);
+		min_y = max(0, min_y);
+		max_x = min(max_x, max_size);
+		max_y = min(max_y, max_size);
+		if (min_x > max_x) return;
+		if (min_y > max_y) return;
+		root.remove(obj, min_x, min_y, max_x, max_y);
+	}
+
+	function get(cx: Float, cy: Float, size: Float, out_array)
+	{
+		get(ifloor(cx - size), ifloor(cy - size), iceil(cx + size), iceil(cy + size), out_array);
+	}
+
+	function get(min_x: Integer, min_y: Integer, max_x: Integer, max_y: Integer, out_array: Dynamic[])
+	{
+		var max_size = this.size-1;
+		min_x = max(0, min_x);
+		min_y = max(0, min_y);
+		max_x = min(max_x, max_size);
+		max_y = min(max_y, max_size);
+		out_array.clear();
+		if (min_x > max_x) return;
+		if (min_y > max_y) return;
+		root.get(min_x, min_y, max_x, max_y, out_array);
+	}
+}
+
+class @Node
+{
+	var @log_size: Integer;
+	var @log_size2: Integer;
+	var @quad0: Node;
+	var @quad1: Node;
+	var @quad2: Node;
+	var @quad3: Node;
+
+	constructor create(log_size: Integer)
+	{
+		this.log_size = log_size;
+		this.log_size2 = log_size-1;
+	}
+
+	function add(obj, min_x: Integer, min_y: Integer, max_x: Integer, max_y: Integer)
+	{
+		var log_size2 = this.log_size2;
+		var left = !((min_x >> log_size2) as Boolean) as Integer;
+		var right = max_x >> log_size2;
+		var top = !((min_y >> log_size2) as Boolean) as Integer;
+		var bottom = max_y >> log_size2;
+
+		if (((left & right) | (top & bottom)) as Boolean || log_size2 <= 4) {
+			(this as Dynamic[])[] = obj;
+			return;
+		}
+
+		macro handle_quad(quad_name) {
+			var quad = quad_name;
+			if (!quad) {
+				quad = Node::create(log_size2);
+				quad_name = quad;
+			}
+			quad.add(obj, min_x, min_y, max_x, max_y);
+		}
+
+		var half_size = 1 << log_size2;
+
+		if (top as Boolean) {
+			if (left as Boolean) {
+				handle_quad(quad0);
+			}
+			else {
+				min_x -= half_size;
+				max_x -= half_size;
+				handle_quad(quad1);
+			}
+		}
+		else {
+			min_y -= half_size;
+			max_y -= half_size;
+			if (left as Boolean) {
+				handle_quad(quad2);
+			}
+			else {
+				min_x -= half_size;
+				max_x -= half_size;
+				handle_quad(quad3);
+			}
+		}
+	}
+
+	function remove(obj, min_x: Integer, min_y: Integer, max_x: Integer, max_y: Integer): Boolean
+	{
+		var log_size2 = this.log_size2;
+		var left = !((min_x >> log_size2) as Boolean) as Integer;
+		var right = max_x >> log_size2;
+		var top = !((min_y >> log_size2) as Boolean) as Integer;
+		var bottom = max_y >> log_size2;
+
+		if (((left & right) | (top & bottom)) as Boolean || log_size2 <= 4) {
+			for (var i=Node::SIZE; i<length(this as Dynamic[]); i++) {
+				if ((this as Dynamic[])[i] === obj) {
+					(this as Dynamic[]).remove(i);
+					break;
+				}
+			}
+			if (length(this as Dynamic[]) > Node::SIZE) return false;
+			if (quad0) return false;
+			if (quad1) return false;
+			if (quad2) return false;
+			if (quad3) return false;
+			return true;
+		}
+
+		macro handle_quad(quad_name) {
+			var quad = quad_name;
+			if (quad) {
+				if (quad.remove(obj, min_x, min_y, max_x, max_y)) {
+					quad_name = null;
+				}
+			}
+		}
+
+		var half_size = 1 << log_size2;
+
+		if (top as Boolean) {
+			if (left as Boolean) {
+				handle_quad(quad0);
+			}
+			else {
+				min_x -= half_size;
+				max_x -= half_size;
+				handle_quad(quad1);
+			}
+		}
+		else {
+			min_y -= half_size;
+			max_y -= half_size;
+			if (left as Boolean) {
+				handle_quad(quad2);
+			}
+			else {
+				min_x -= half_size;
+				max_x -= half_size;
+				handle_quad(quad3);
+			}
+		}
+		return false;
+	}
+
+	function get(min_x: Integer, min_y: Integer, max_x: Integer, max_y: Integer, out_array: Dynamic[])
+	{
+		var log_size2 = this.log_size2;
+		var left = !((min_x >> log_size2) as Boolean) as Integer;
+		var right = max_x >> log_size2;
+		var top = !((min_y >> log_size2) as Boolean) as Integer;
+		var bottom = max_y >> log_size2;
+
+		if (length(this as Dynamic[]) > Node::SIZE) {
+			out_array.append(this as Dynamic[], Node::SIZE, length(this as Dynamic[]) - Node::SIZE);
+		}
+
+		macro handle_quad(quad_name, min_x, min_y, max_x, max_y) {
+			var quad = quad_name;
+			if (quad) {
+				quad.get(min_x, min_y, max_x, max_y, out_array);
+			}
+		}
+
+		var half_size = 1 << log_size2;
+		var max_half_size = half_size-1;
+
+		if (top as Boolean) {
+			var y1 = min_y;
+			var y2 = min(max_y, max_half_size);
+			if (left as Boolean) {
+				handle_quad(quad0, min_x, y1, min(max_x, max_half_size), y2);
+			}
+			if (right as Boolean) {
+				handle_quad(quad1, max(0, min_x - half_size), y1, max_x - half_size, y2);
+			}
+		}
+		if (bottom as Boolean) {
+			var y1 = max(0, min_y - half_size);
+			var y2 = max_y - half_size;
+			if (left as Boolean) {
+				handle_quad(quad2, min_x, y1, min(max_x, max_half_size), y2);
+			}
+			if (right as Boolean) {
+				handle_quad(quad3, max(0, min_x - half_size), y1, max_x - half_size, y2);
+			}
+		}
+	}
+}

@@ -1,0 +1,30 @@
+Version 0.2 (2024/11/09):
+- Added ability to merge cells and change mass in Bot Test (reset function)
+- Added ability to merge cells in Bot Test by pressing R
+- Added ability to query server for number of players
+- Added automatic numbering of players with default Unnamed nick
+- Added support for showing of server rules
+- Added sending of information about operating system from client to server
+- Added ability to register new account in case of expiration
+- Added collapsing of multiple spaces in chat messages on server
+- Added chat history
+- Added ability to use chat also by pressing Enter key
+- Added bouncing of viruses against world border
+- Added extra overlap needed to eat another cell like in the original game
+- Adjusted cell difference needed to eat another cell
+- Improved keyboard focus handling in Bot Test
+- Fixed client stop working when minimized
+- Fixed compilation when building on Windows
+- Fixed clipboard to take into account handling of CRLF on Windows (in Bot Test)
+- Fixed increasing of latency and/or bad movement in web version
+- Fixed sending of input packets to have a maximum rate of 50 packets per second
+- Fixed leaderboard positions
+- Fixed guarding against bad input coordinates from clients
+- Fixed disconnection when too many packets are queued by throttling the update rate
+- Fixed scaling of various GUI elements
+- Fixed chat to split longer messages into multiple lines
+- Fixed active game keys when in game menu
+- Fixed non-working clipboard on Linux
+
+Version 0.1 (2024/10/02):
+- Initial release

@@ -1,0 +1,33 @@
+import "util/common";
+import "util/json";
+import "util/template";
+
+function adjust_document(request, document)
+{
+	var url = request_get_url(request);
+
+	var json = json_parse(http_get(link_with_params(link_with_path(url, "/api/v1/videos/"), {
+		"start": "0",
+		"count": "25",
+		"sort": "-publishedAt",
+		"filter": "local"
+	})));
+
+	var total_videos = json_get_int(json, "total", 0);
+	log({"total=", total_videos});
+
+	var tpl = template_create("dispatch/peertube/videos.tpl");
+	template_set(tpl, "title", "PeerTube");
+
+	template_begin(tpl, "posts");
+	var videos = json_get_array(json, "data");
+	for (var i=0; i<json_length(videos); i++) {
+		var post = json_get_object(videos, i);
+		template_set(tpl, "name", json_get_string(post, "name"));
+		template_set(tpl, "thumbnail", link_with_path(url, json_get_string(post, "thumbnailPath")));
+		template_next_record(tpl);
+	}
+	template_end(tpl);
+
+	request_replace_document(request, document_parse(template_process(tpl)));
+}

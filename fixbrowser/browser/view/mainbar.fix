@@ -1,0 +1,176 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/font";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/subview/text_field";
+import "gui/pure/button";
+import "gui/pure/text_field";
+import "browser/view/view";
+
+class MainBar: SubView
+{
+	var @back: PureButton;
+	var @forward: PureButton;
+	var @reload: PureButton;
+	var @text: URLTextField;
+	var @go_action_func;
+	var @go_action_data;
+
+	var @history_flags: Integer;
+	var @history_data;
+	var @reload_func;
+	var @stop_func;
+
+	constructor create()
+	{
+		back = PureButton::create("Back");
+		forward = PureButton::create("Forward");
+		reload = PureButton::create("Reload");
+		text = URLTextField::create(this);
+		text.set_text("https://");
+		add(back);
+		add(forward);
+		add(reload);
+		add(text);
+		back.set_focusable(false);
+		forward.set_focusable(false);
+		reload.set_focusable(false);
+	}
+
+	function set_go_action(func, data)
+	{
+		go_action_func = func;
+		go_action_data = data;
+	}
+
+	function set_history_actions(back_func, forward_func, reload_func, stop_func, data)
+	{
+		back.set_click_action(back_func, data);
+		forward.set_click_action(forward_func, data);
+
+		this.history_data = data;
+		this.reload_func = reload_func;
+		this.stop_func = stop_func;
+		reload.set_click_action(MainBar::handle_reload_action#1, this);
+	}
+
+	function @handle_reload_action()
+	{
+		if ((history_flags & HISTORY_RELOAD) != 0) {
+			reload_func(history_data);
+		}
+		else if ((history_flags & HISTORY_STOP) != 0) {
+			stop_func(history_data);
+		}
+	}
+
+	function handle_history(url: String, flags: Integer)
+	{
+		if (url) {
+			text.set_text(url);
+			text.set_cursor_position(length(url));
+			text.unfocus();
+		}
+
+		back.set_enabled((flags & HISTORY_BACK) != 0);
+		forward.set_enabled((flags & HISTORY_FORWARD) != 0);
+
+		if ((flags & HISTORY_RELOAD) != 0) {
+			reload.set_label("Reload");
+			reload.set_enabled(true);
+		}
+		else if ((flags & HISTORY_STOP) != 0) {
+			reload.set_label("Stop");
+			reload.set_enabled(true);
+		}
+		else {
+			reload.set_label("Reload");
+			reload.set_enabled(false);
+		}
+
+		back.set_focusable(false);
+		forward.set_focusable(false);
+		reload.set_focusable(false);
+
+		this.history_flags = flags;
+	}
+
+	function focus_url_bar()
+	{
+		text.focus();
+	}
+
+	override function handle_resize()
+	{
+		var text_height = 22;
+		var text_y = (get_height() - text_height)/2;
+		back.set_rect(5, text_y, 40, text_height);
+		forward.set_rect(45, text_y, 55, text_height);
+		reload.set_rect(105, text_y, 50, text_height);
+		text.set_rect(160, text_y, get_width()-170, text_height);
+	}
+	
+	override function handle_paint(p: Painter)
+	{
+		var gradient = Image::create(1, 2);
+		var tr = Transform::create();
+		gradient.get_pixels()[0] = 0xFFE8E8E8;
+		gradient.get_pixels()[1] = 0xFFCCCCCC;
+		tr.scale(get_height());
+		tr.translate(0, -0.5);
+		p.fill_rect(0, 0, get_width(), get_height(), Shader {
+			blend(sample_bilinear(gradient, tr, CLAMP_Y));
+		});
+		p.fill_rect(0, get_height()-1, get_width(), 1, 0xFF666666);
+
+		draw_children(p);
+	}
+}
+
+class @URLTextField: PureTextField
+{
+	var @bar: MainBar;
+
+	constructor create(bar: MainBar)
+	{
+		this.bar = bar;
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_UP && event.get_key() == KEY_ENTER) {
+			if (bar.go_action_func) {
+				(bar.go_action_func)(bar.go_action_data, get_text());
+			}
+			return true;
+		}
+		return super.handle_key_event(event);
+	}
+}

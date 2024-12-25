@@ -1,0 +1,864 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "unpack";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/font";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/text_field";
+import "gui/pure/button";
+import "gui/pure/text_field";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/cache";
+import "browser/view/content/content_data";
+import "browser/view/content/text";
+import "browser/view/content/nested_box";
+import "browser/view/content/table";
+import "browser/view/content/subview";
+import "browser/view/content/background";
+import "browser/view/content/mirror";
+import "browser/view/content/image";
+
+const @USE_SCROLL_CACHE = 1;
+const @USE_DYNAMIC_CACHE = 1;
+
+class @WebModelToView: ModelToView
+{
+	var @content_data: ContentData;
+	var @background_box_map: MainBackground[Integer];
+	var @content_box_map: MainLayer[Integer];
+	var @backgrounds: BackgroundView[Integer];
+	var @text_styles: DefaultTextStyle[Integer];
+	var @subviews: SubViewObject[Integer];
+	var @images: ImageObject[Integer];
+	var @mirrors: MainLayer[Integer];
+	var @anchors;
+	var @next_background_idx: Integer;
+	var @next_background_value: BackgroundView;
+	var @reload: Boolean;
+
+	macro @save_layout_state()
+	{
+		var sav_next_background_idx = next_background_idx;
+		var sav_next_background_value = next_background_value;
+	}
+
+	macro @restore_layout_state()
+	{
+		next_background_idx = sav_next_background_idx;
+		next_background_value = sav_next_background_value;
+	}
+
+	constructor create(content_data: ContentData, background_box_map: MainBackground[Integer], content_box_map: MainLayer[Integer], reload: Boolean)
+	{
+		this.content_data = content_data;
+		this.background_box_map = background_box_map;
+		this.content_box_map = content_box_map;
+		this.reload = reload;
+		backgrounds = {};
+		text_styles = {};
+		subviews = {};
+		images = {};
+		mirrors = {};
+		anchors = [];
+	}
+
+	override function adjust_block(block: BlockView, style: ParagraphStyle, prev_style: ParagraphStyle)
+	{
+		if (!style || !prev_style) return;
+
+		var prev_margin = prev_style? prev_style.margin_bottom : 0;
+		var left = style.margin_left + style.padding_left;
+		var top = max(0, style.margin_top - prev_margin) + style.padding_top;
+		var right = style.margin_right + style.padding_right;
+		var bottom = style.margin_bottom + style.padding_bottom;
+		block.set_margins(left, top, right, bottom);
+	}
+
+	override function adjust_block_start(line: LineBuilder, style)
+	{
+		next_background_idx = -1;
+	}
+
+	override function adjust_block_end(line: LineBuilder, style)
+	{
+		next_background_idx = -1;
+		next_background_value = null;
+	}
+
+	override function add_line_parts(line: LineBuilder, text: String, off: Integer, len: Integer, style: InlineStyle)
+	{
+		if (MirrorObject::is_instance(style)) {
+			(style as MirrorObject).add_to_line(line);
+			return;
+		}
+		
+		switch (style.type) {
+			case INLINE_TEXT: {
+				var text_style = style as TextStyle;
+				var view_style: DefaultTextStyle = null;
+				var overdraw = 0;
+				if (text_style.background) {
+					var block = line.get_block();
+					var flow_idx = line.get_flow_idx();
+					var background: BackgroundView;
+					if (this.next_background_idx == flow_idx) {
+						background = this.next_background_value;
+					}
+					if (!background) {
+						background = BackgroundView::create(text_style.background);
+					}
+					overdraw = background.get_overdraw();
+					var hover_color = text_style.color;
+					var hover_background: BackgroundView = null;
+					if (text_style.hover) {
+						hover_color = text_style.hover.color;
+						hover_background = BackgroundView::create(text_style.hover.background);
+					}
+					view_style = DefaultTextStyle::create(get_font(text_style), text_style.color, background, text_style.shadow, hover_color, hover_background, text_style.hover, content_data, get_mirror_state(text_style.mirror));
+					view_style.text_start = off;
+					view_style.text_end = off+len;
+
+					// TODO: putting view information in the model is not nice but simplifies the code for now
+					var font = view_style.get_font();
+					text_style.background.inline_ascent = font.get_ascent();
+					text_style.background.inline_descent = font.get_descent();
+					if (text_style.hover) {
+						text_style.hover.background.inline_ascent = font.get_ascent();
+						text_style.hover.background.inline_descent = font.get_descent();
+					}
+
+					if (flow_idx+1 < block.get_flow_count()) {
+						var next_style = block.get_flow_style(flow_idx+1) as InlineStyle;
+						if (next_style.background != null) {
+							var next_background = BackgroundView::create(next_style.background);
+							this.next_background_idx = flow_idx+1;
+							this.next_background_value = next_background;
+							view_style.update_inline_connection(next_background);
+						}
+					}
+					var num_borders = length(background.backgrounds);
+					if (hover_background) {
+						num_borders = max(num_borders, length(hover_background.backgrounds));
+					}
+					for (var i=0; i<num_borders; i++) {
+						line.add_draw_layer(i+1);
+					}
+				}
+				else {
+					view_style = hash_get(text_styles, (text_style as Integer)|0, null) as DefaultTextStyle;
+					if (!view_style) {
+						var hover_color = text_style.color;
+						var hover_background: BackgroundView = null;
+						if (text_style.hover) {
+							hover_color = text_style.hover.color;
+							hover_background = BackgroundView::create(text_style.hover.background);
+						}
+						view_style = DefaultTextStyle::create(get_font(text_style), text_style.color, null, text_style.shadow, hover_color, hover_background, text_style.hover, content_data, get_mirror_state(text_style.mirror));
+
+						// TODO: putting view information in the model is not nice but simplifies the code for now
+						if (text_style.hover) {
+							var font = view_style.get_font();
+							text_style.hover.background.inline_ascent = font.get_ascent();
+							text_style.hover.background.inline_descent = font.get_descent();
+						}
+
+						text_styles[(text_style as Integer)|0] = view_style;
+					}
+					if (text_style.hover) {
+						var hover_background = view_style.hover_background;
+						var num_borders = length(hover_background.backgrounds);
+						for (var i=0; i<num_borders; i++) {
+							line.add_draw_layer(i+1);
+						}
+					}
+				}
+				var font = view_style.get_font();
+				if (text_style.newlines) {
+					var last = off;
+					var end = off+len;
+					var i = last;
+					for (; i<end; i++) {
+						if (text[i] == '\n') {
+							if (i > last) {
+								line.add_text(last, i-last, font.get_ascent(), font.get_descent(), overdraw, TextLinePart::get(), view_style);
+							}
+							line.next_line();
+							last = i+1;
+						}
+					}
+					if (i > last) {
+						line.add_text(last, i-last, font.get_ascent(), font.get_descent(), overdraw, TextLinePart::get(), view_style);
+					}
+				}
+				else {
+					line.add_text(off, len, font.get_ascent(), font.get_descent(), overdraw, TextLinePart::get(), view_style);
+				}
+				break;
+			}
+
+			case INLINE_ANCHOR: {
+				var anchor_style = style as Anchor;
+				var background = background_box_map[(anchor_style.box.parent as Integer)|0];
+				var layer = background.layer;
+				layer.update_auto((content_data.view as ContentView).width);
+				if (layer.get_width() > line.get_remaining_width()) {
+					line.next_line();
+				}
+				var anchor = AnchorLinePart::create(background, anchor_style.align_baselines);
+				line.add_part(0, 0, 0, 0, anchor, null);
+				anchors[] = AnchorLinePart::apply#1;
+				anchors[] = anchor;
+				break;
+			}
+
+			case INLINE_NESTED_BOX: {
+				var box_style = style as NestedBox;
+				var obj = NestedBoxObject::create(box_style, get_background_view(box_style.box_background), box_style.box.paragraphs as Block[], this, content_data, get_mirror_state(box_style.mirror)); //XXX
+				
+				update_background(line, box_style, obj);
+				save_layout_state();
+				var (r, e) = obj.add_to_line(line);
+				restore_layout_state();
+				if (e) throw e;
+				break;
+			}
+
+			case INLINE_TABLE: {
+				var table_style = style as TableBox;
+				var obj = TableObject::create(table_style, get_background_view(table_style.box_background), this, content_data, get_mirror_state(table_style.mirror)); //XXX
+				
+				update_background(line, table_style, obj);
+				save_layout_state();
+				var (r, e) = obj.add_to_line(line);
+				restore_layout_state();
+				if (e) throw e;
+				break;
+			}
+
+			case INLINE_FORM_TEXT_FIELD: {
+				var field_style = style as FormTextField;
+				var obj = hash_get(subviews, (field_style as Integer)|0, null) as SubViewObject;
+				if (!obj) {
+					var field = PureTextField::create();
+					field.set_text(field_style.text);
+					field.set_change_action(handle_text_field_change#1, [field, field_style]);
+					var real_height = 25;
+					if (field_style.height.is_pixels()) {
+						real_height = field_style.height.get_pixels();
+					}
+					var descent = iround(real_height * field_style.vertical_align);
+					var ascent = real_height - descent;
+					log("width="+field_style.width.to_string()+" ascent="+ascent+" descent="+descent);
+					obj = SubViewObject::create(field, field_style.width, ascent, descent, content_data, get_mirror_state(field_style.mirror));
+					subviews[(field_style as Integer)|0] = obj;
+				}
+				update_background(line, field_style, obj);
+				obj.add_to_line(line);
+				break;
+			}
+
+			case INLINE_IMAGE_BOX: {
+				var image_box = style as ImageBox;
+				var obj = hash_get(images, (image_box as Integer)|0, null) as ImageObject;
+				if (!obj) {
+					obj = ImageObject::create(image_box, reload, content_data, get_mirror_state(image_box.mirror));
+					images[(image_box as Integer)|0] = obj;
+				}
+				update_background(line, image_box, obj);
+				obj.add_to_line(line);
+				break;
+			}
+		}
+	}
+
+	override function adjust_line(line: LineBuilder, style)
+	{
+		var calc_size = content_data.layout_calc_size;
+		if (calc_size) {
+			var width = 0;
+			for (var i=0, n=line.get_part_count(); i<n; i++) {
+				width += line.get_part_width(i);
+			}
+			calc_size.max_width = max(calc_size.max_width, width);
+		}
+	}
+
+	function @get_font(style: TextStyle): SystemFont
+	{
+		var name = "Times New Roman";
+		foreach (var family in style.font_family) {
+			if (family == "serif") { name = "Times New Roman"; break; }
+			if (family == "sans-serif") { name = "Verdana"; break; }
+			if (family == "cursive") { name = "Comic Sans MS"; break; }
+			if (family == "fantasy") { name = "Microsoft Sans Serif"; break; }
+			if (family == "monospace") { name = "Courier New"; break; }
+			if (SystemFont::has_font(family)) {
+				name = family;
+				break;
+			}
+		}
+		var font_style = FONT_NORMAL;
+		if ((style.font_style & FONT_STYLE_BOLD) != 0) font_style |= FONT_BOLD;
+		if ((style.font_style & FONT_STYLE_ITALIC) != 0) font_style |= FONT_ITALIC;
+		return SystemFont::create(name, style.font_size, font_style);
+	}
+
+	function @get_background_view(background: Background): BackgroundView
+	{
+		if (!background) return null;
+		var view = hash_get(backgrounds, (background as Integer)|0, null) as BackgroundView;
+		if (!view) {
+			view = BackgroundView::create(background);
+			backgrounds[(background as Integer)|0] = view;
+		}
+		return view;
+	}
+
+	function @get_mirror_state(mirror: Mirror): MirrorState
+	{
+		if (!mirror) {
+			return null;
+		}
+		if (content_data.layout_calc_size) {
+			return null;
+		}
+		var layer = hash_get(mirrors, (mirror as Integer)|0, null) as MainLayer;
+		if (!layer) {
+			layer = content_box_map[(mirror.box as Integer)|0];
+			mirrors[(mirror as Integer)|0] = layer;
+			anchors[] = MainLayer::add_mirror_block#1;
+			anchors[] = layer;
+		}
+		return layer.get_mirror_state();
+	}
+
+	function @update_background(line: LineBuilder, style: InlineStyle, obj: InlineObject)
+	{
+		if (style.background) {
+			var block = line.get_block();
+			var flow_idx = line.get_flow_idx();
+			var background: BackgroundView;
+			if (this.next_background_idx == flow_idx) {
+				background = this.next_background_value;
+			}
+			if (!background) {
+				background = BackgroundView::create(style.background);
+			}
+
+			obj.background = background;
+
+			if (flow_idx+1 < block.get_flow_count()) {
+				var next_style = block.get_flow_style(flow_idx+1) as InlineStyle;
+				if (next_style.background != null) {
+					var next_background = BackgroundView::create(next_style.background);
+					this.next_background_idx = flow_idx+1;
+					this.next_background_value = next_background;
+					obj.update_inline_connection(next_background);
+				}
+			}
+			var num_borders = length(obj.background.backgrounds);
+			for (var i=0; i<num_borders; i++) {
+				line.add_draw_layer(i+1);
+			}
+		}
+	}
+}
+
+function @handle_text_field_change([field: PureTextField, style: FormTextField])
+{
+	style.text = field.get_text();
+}
+
+class @MainBackground
+{
+	var @marker;
+	var @box: BackgroundBox;
+	var @parent: MainBackground;
+	var @layer: MainLayer;
+	var @background: BackgroundView;
+	var @fixed: Boolean;
+	var @x: Integer;
+	var @y: Integer;
+	var @view: ContentView;
+
+	function @marker() {}
+
+	constructor create(view: ContentView, box: BackgroundBox)
+	{
+		this.view = view;
+		this.box = box;
+		marker = MainBackground::marker#1;
+		background = box.background? BackgroundView::create(box.background) : null;
+		fixed = box.fixed;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return (obj as MainBackground).marker === MainBackground::marker#1;
+	}
+
+	function get_cur_x(): Integer
+	{
+		if (fixed) {
+			var scroll_x = -view.get_x();
+			return scroll_x + x; 
+		}
+		else {
+			return x;
+		}
+	}
+
+	function get_cur_y(): Integer
+	{
+		if (fixed) {
+			var scroll_y = -view.get_y();
+			return scroll_y + y; 
+		}
+		else {
+			return y;
+		}
+	}
+}
+
+class @MainLayer: Layer
+{
+	var @background: MainBackground;
+	var @view: ContentView;
+	var @mirror: MirrorState;
+	var @block: Block;
+	var @mirror_width: Integer;
+	var @mirror_layer: Layer;
+
+	constructor create(view: ContentView, blocks: Block[], mtv: ModelToView)
+	{
+		super::create(blocks, mtv);
+		this.view = view;
+	}
+
+	override function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		x += background.get_cur_x();
+		y += background.get_cur_y();
+
+		view.mark_dirty(x, y, width, height);
+		view.repaint(x, y, width, height);
+	}
+
+	function update_auto(max_width: Integer)
+	{
+		var data = view.data;
+		var prev_calc_size = data.layout_calc_size;
+		data.layout_calc_size = CalcSize::create();
+		var (r, e) = update(max_width);
+		var width = data.layout_calc_size.max_width;
+		data.layout_calc_size = prev_calc_size;
+		update(width);
+	}
+
+	function get_mirror_state(): MirrorState
+	{
+		if (!mirror) {
+			mirror = MirrorState::create(this, MainLayer::part_added#12);
+		}
+		return mirror;
+	}
+
+	function @part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, min_layer: Integer, max_layer: Integer, data)
+	{
+		//log("mirror part added! x="+x+" y="+y+" width="+width+" ascent="+ascent+" descent="+descent);
+		if (!this.block) {
+			this.block = Block::create(null);
+			mirror_width = 0;
+			mirror_layer = block.get_layer();
+			background.x = 0;
+			background.y = block.get_y() + y - ascent;
+		}
+		mirror_width = max(mirror_width, x+width);
+		this.block.add(MirrorObject::create(block, id, x, y, width, ascent, descent, overdraw, min_layer, max_layer, data, mirror));
+	}
+
+	function add_mirror_block()
+	{
+		if (block) {
+			add_block(block);
+			update(mirror_width);
+			block = null;
+
+			var offset_x = 0;
+			var offset_y = 0;
+			var box = background.box;
+			if (box.left.is_pixels()) {
+				offset_x = box.left.get_pixels();
+			}
+			else if (box.right.is_pixels()) {
+				offset_x = -box.right.get_pixels();
+			}
+			if (box.top.is_pixels()) {
+				offset_y = box.top.get_pixels();
+			}
+			else if (box.bottom.is_pixels()) {
+				offset_y = -box.bottom.get_pixels();
+			}
+
+			var pos = [background.x, background.y];
+			mirror_layer.get_top_layer(pos);
+			background.x = pos[0] + offset_x;
+			background.y = pos[1] + offset_y;
+		}
+	}
+}
+
+class @AnchorLinePart: LinePart
+{
+	var @background: MainBackground;
+	var @align_baselines: Boolean;
+	var @block: BlockView;
+	var @x: Integer;
+	var @y: Integer;
+
+	constructor create(background: MainBackground, align_baselines: Boolean)
+	{
+		this.background = background;
+		this.align_baselines = align_baselines;
+	}
+
+	override function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+		this.block = block;
+		this.x = x;
+		this.y = block.get_y() + y;
+		if (align_baselines) {
+			var layer = background.layer;
+			var nested = layer.get_block(0).get_linepart_data(0) as NestedBoxObject;
+			var nested_layer = nested.get_layer();
+			if (nested_layer.get_block_count() > 0) {
+				var layer_block = nested_layer.get_block(0);
+				if (layer_block.get_linerun_count() > 0) {
+					var layer_ascent = layer_block.get_linerun_ascent(0);
+					this.y -= layer_ascent;
+				}
+			}
+		}
+	}
+
+	override function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+	}
+
+	function apply()
+	{
+		var pos = [x, y];
+		block.get_layer().get_top_layer(pos);
+		background.x = pos[0];
+		background.y = pos[1];
+	}
+}
+
+class ContentView: SubView
+{
+	var data: ContentData;
+	var @layers: Dynamic[];
+	var @main: MainLayer;
+	var @num_base_layers: Integer;
+	var @width: Integer;
+	var @scroll_cache: ScrollCache;
+	var @scroll_timer: Timer;
+	var @last_scroll_x: Integer;
+	var @last_scroll_y: Integer;
+	var @last_mouse_x: Integer;
+	var @last_mouse_y: Integer;
+	var @mtv: WebModelToView;
+
+	constructor create(document: Document, reload: Boolean)
+	{
+		set_focusable(true);
+		data = ContentData::create(this);
+		data.show_menu_func = ContentView::show_menu#5;
+		layers = [];
+		if (USE_DYNAMIC_CACHE != 0) {
+			scroll_timer = Timer::create(200, ContentView::remove_scroll_cache#1, this);
+			last_scroll_x = -1;
+			last_scroll_y = -1;
+		}
+
+		var map: MainBackground[Integer] = {};
+		var map2: MainLayer[Integer] = {};
+		var fixed_layers = false;
+
+		foreach (var box in document.layers) {
+			if (box.type == BOX_BACKGROUND) {
+				var bbox = box as BackgroundBox;
+				var background = MainBackground::create(this, bbox);
+				map[(bbox as Integer)|0] = background;
+			}
+		}
+
+		mtv = WebModelToView::create(data, map, map2, reload);
+
+		foreach (var box in document.layers) {
+			if (box.type == BOX_BACKGROUND) {
+				var bbox = box as BackgroundBox;
+				var background = map[(bbox as Integer)|0];
+				if (bbox.parent) {
+					background.parent = map[(bbox.parent as Integer)|0];
+				}
+				layers[] = background;
+
+				if (bbox.fixed) {
+					fixed_layers = true;
+				}
+			}
+			else {
+				var cbox = box as ContentBox;
+				var content = MainLayer::create(this, cbox.paragraphs as Block[], mtv); //XXX
+				content.background = map[(cbox.parent as Integer)|0];
+				content.background.layer = content;
+				layers[] = content;
+				if (cbox === document.main) {
+					main = content;
+				}
+				map2[(cbox as Integer)|0] = content;
+			}
+
+			if (!fixed_layers) {
+				num_base_layers++;
+			}
+		}
+	}
+	
+	function layout(width: Integer)
+	{
+		var anchors = mtv.anchors;
+		this.width = width;
+
+		array_set_length(anchors, 0);
+		foreach (var key, layer in mtv.mirrors) {
+			layer.clear_blocks();
+		}
+		hash_clear(mtv.mirrors);
+		main.update(width);
+		for (var i=0; i<length(anchors); i+=2) {
+			var func = anchors[i+0];
+			var data = anchors[i+1];
+			func(data);
+		}
+	}
+
+	function get_layout_width(): Integer
+	{
+		var width = 0;
+		foreach (var layer in layers) {
+			if (MainBackground::is_instance(layer)) continue;
+			var content = layer as MainLayer;
+			var x = content.background.x;
+			width = max(width, x + content.get_width() + content.get_right_overflow());
+		}
+		return width;
+	}
+
+	function get_layout_height(): Integer
+	{
+		var height = 0;
+		foreach (var layer in layers) {
+			if (MainBackground::is_instance(layer)) continue;
+			var content = layer as MainLayer;
+			var y = content.background.y;
+			height = max(height, y+content.get_height());
+		}
+		return height;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		if (USE_SCROLL_CACHE != 0 && num_base_layers > 1) {
+			var scroll_x = -get_x();
+			var scroll_y = -get_y();
+
+			if (USE_DYNAMIC_CACHE != 0 && (scroll_x != last_scroll_x || scroll_y != last_scroll_y)) {
+				last_scroll_x = scroll_x;
+				last_scroll_y = scroll_y;
+				scroll_timer.restart();
+			}
+
+			var parent = get_parent();
+			var width = parent.get_width();
+			var height = parent.get_height();
+			if (!scroll_cache || scroll_cache.get_width() != width || scroll_cache.get_height() != height) {
+				scroll_cache = ScrollCache::create(width, height, ContentView::paint_cache#2, this);
+				scroll_cache.reset(scroll_x, scroll_y);
+			}
+			else {
+				scroll_cache.scroll(scroll_x, scroll_y);
+			}
+			scroll_cache.draw(p);
+		}
+		else {
+			paint_cache(p);
+		}
+		draw_layers(p, num_base_layers, length(layers));
+		draw_children(p);
+	}
+
+	function mark_dirty()
+	{
+		if (USE_SCROLL_CACHE != 0 && scroll_cache != null) {
+			scroll_cache.mark_dirty(0, 0, get_layout_width() + scroll_cache.get_width(), get_layout_height() + scroll_cache.get_height());
+		}
+	}
+
+	function mark_dirty(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		if (USE_SCROLL_CACHE != 0 && scroll_cache != null) {
+			scroll_cache.mark_dirty(x, y, width, height);
+		}
+	}
+
+	function @paint_cache(p: Painter)
+	{
+		draw_layers(p, 0, num_base_layers);
+	}
+
+	function @draw_layers(p: Painter, from: Integer, to: Integer)
+	{
+		for (var i=from; i<to; i++) {
+			var layer = layers[i];
+			if (MainBackground::is_instance(layer)) {
+				var background = layer as MainBackground;
+				if (background === main.background) {
+					background.background.draw(p, 0, 0, get_width(), get_height(), -1);
+				}
+				else {
+					var content = background.layer;
+					if (background.background) {
+						background.background.draw(p, background.x, background.y, content.get_width(), content.get_height(), -1);
+					}
+				}
+			}
+			else {
+				var content = layer as MainLayer;
+				var background = content.background;
+				p.push();
+				p.translate(background.get_cur_x(), background.get_cur_y());
+				content.draw(p);
+				p.pop();
+			}
+		}
+	}
+
+	function @remove_scroll_cache(): Boolean
+	{
+		scroll_cache = null;
+		heap_collect();
+		return false;
+	}
+
+	override function accept_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_DOWN) {
+			focus();
+		}
+		return true;
+	}
+	
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		last_mouse_x = event.get_x();
+		last_mouse_y = event.get_y();
+
+		for (var i=length(layers)-1; i>=0; i--) {
+			var layer = layers[i];
+			if (MainBackground::is_instance(layer)) continue;
+
+			var content = layer as MainLayer;
+			var background = content.background;
+			var x = background.get_cur_x();
+			var y = background.get_cur_y();
+			event.translate(-x, -y);
+			var ret = content.handle_mouse_event(event);
+			event.translate(x, y);
+			if (ret) return true;
+		}
+		
+		if (event.get_type() == EVENT_MOUSE_UP && event.get_button() == MOUSE_BUTTON_RIGHT) {
+			focus();
+			var menu = Menu::create();
+			menu.add_item("Reload model", ContentView::handle_popup_menu#2, this, 0);
+			menu.show(this, event.get_x(), event.get_y());
+			return true;
+		}
+
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			if (data.focus_subview) {
+				var view = data.focus_subview;
+				data.focus_subview = null;
+				view.unfocus();
+			}
+		}
+
+		return false;
+	}
+
+	function @handle_popup_menu(id: Integer)
+	{
+		switch (id) {
+			case 0: data.reload_model(); break;
+		}
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (data.focus_subview) {
+			return data.focus_subview.process_event(event);
+		}
+		return false;
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		if (event.get_type() == EVENT_FOCUS_LOST) {
+			if (data.focus_subview) {
+				var view = data.focus_subview;
+				data.focus_subview = null;
+				view.unfocus();
+			}
+		}
+	}
+	
+	function @show_menu(content: MainLayer, x: Integer, y: Integer, menu: Menu)
+	{
+		if (content) {
+			var background = content.background;
+			menu.show(this, background.get_cur_x() + x, background.get_cur_y() + y);
+		}
+		else {
+			menu.show(this, last_mouse_x, last_mouse_y);
+		}
+	}
+}

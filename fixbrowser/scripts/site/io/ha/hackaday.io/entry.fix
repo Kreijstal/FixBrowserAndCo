@@ -1,0 +1,20 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	var imgs = element_query_all(document, "img.lazy[data-src]");
+	for (var i=0; i<length(imgs); i++) {
+		element_set_attr(imgs[i], "src", element_get_attr(imgs[i], "data-src"));
+	}
+
+	// TODO: incomplete
+	var links = element_query_all(document, "a.lazy[data-image]");
+	for (var i=0; i<length(links); i++) {
+		var img = element_create("img");
+		element_set_attr(img, "src", element_get_attr(links[i], "data-image"));
+		element_append_child(links[i], img);
+		element_set_attr(links[i], "style", "width: auto; height: auto");
+	}
+
+	add_style_to_element(document, "div.thumbs-holder", "overflow-x: scroll");
+}

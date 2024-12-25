@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/unsigned";</code>
+</p>
+
+<p>
+These functions provide unsigned arithmetic on 32-bit integers.
+</p>
+
+<h2>Global functions</h2>
+
+<dl>
+	<dt><code>function <b>uint_add</b>(a: Integer, b: Integer): Integer</code></dt>
+	<dd>
+		Adds two unsigned integers and returns the result, throwing an error on overflow.
+	</dd>
+	<dt><code>function <b>uint_sub</b>(a: Integer, b: Integer): Integer</code></dt>
+	<dd>
+		Subtracts two unsigned integers and returns the result, throwing an error on overflow.
+	</dd>
+	<dt><code>function <b>uint_mul</b>(a: Integer, b: Integer): Integer</code></dt>
+	<dd>
+		Multiplies two unsigned integers and returns the result, throwing an error on overflow.
+	</dd>
+	<dt><code>function <b>uint_div</b>(a: Integer, b: Integer): Integer</code></dt>
+	<dd>
+		Divides two unsigned integers and returns the quotient.
+	</dd>
+	<dt><code>function <b>uint_rem</b>(a: Integer, b: Integer): Integer</code></dt>
+	<dd>
+		Divides two unsigned integers and returns the remainder.
+	</dd>
+	<dt><code>function <b>uint_min</b>(a: Integer, b: Integer): Integer</code></dt>
+	<dd>
+		Returns the smaller number.
+	</dd>
+	<dt><code>function <b>uint_max</b>(a: Integer, b: Integer): Integer</code></dt>
+	<dd>
+		Returns the bigger number.
+	</dd>
+	<dt><code>
+		function <b>uint_cmp_lt</b>(a: Integer, b: Integer): Boolean<br>
+		function <b>uint_cmp_le</b>(a: Integer, b: Integer): Boolean<br>
+		function <b>uint_cmp_gt</b>(a: Integer, b: Integer): Boolean<br>
+		function <b>uint_cmp_ge</b>(a: Integer, b: Integer): Boolean<br>
+	</code></dt>
+	<dd>
+		Returns the result of unsigned comparison. There are 4 variants:<br>
+		<b>lt</b> - less than<br>
+		<b>le</b> - less than or equal<br>
+		<b>gt</b> - greater than<br>
+		<b>ge</b> - greater than or equal<br>
+	</dd>
+	<dt><code>function <b>uint_to_string</b>(value: Integer): String</code></dt>
+	<dd>
+		Returns the string representation of the value.
+	</dd>
+</dl>
+
+</body>
+</html>

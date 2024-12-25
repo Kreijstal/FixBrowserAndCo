@@ -1,0 +1,122 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/event";
+import "util/string";
+import "cellsplit/gui/common";
+import "cellsplit/gui/panel";
+import "cellsplit/gui/modal_window";
+import "cellsplit/gui/label";
+import "cellsplit/gui/button";
+
+class MessageBox: SubView
+{
+	var @modal: ModalWindow;
+	var @confirm_func;
+	var @confirm_data;
+
+	constructor show(parent: SubView, title: String, message_or_view: String or MeasureView)
+	{
+		var scale = parent.get_scale();
+		var content = ContentView::create(this, message_or_view);
+		var panel = Panel::create(title);
+		panel.set_moveable(false);
+		panel.set_rect(0, 0, content.get_preferred_width(scale), content.get_preferred_height(scale));
+		panel.set_content(content);
+		modal = ModalWindow::show(parent, panel);
+	}
+
+	function set_confirm_action(func, data)
+	{
+		confirm_func = func;
+		confirm_data = data;
+	}
+
+	function hide()
+	{
+		modal.hide();
+	}
+}
+
+class @ContentView: SubView
+{
+	var @box: MessageBox;
+	var @label: GameLabel;
+	var @content: MeasureView;
+	var @button: GameButton;
+
+	constructor create(box: MessageBox, message_or_view: String or MeasureView)
+	{
+		this.box = box;
+		if (is_string(message_or_view)) {
+			var message = message_or_view as String;
+			label = GameLabel::create(message);
+			label.set_centered(message.search_char('\n') < 0);
+			content = label.as_measure_view();
+		}
+		else {
+			content = message_or_view;
+		}
+		button = GameButton::create("OK");
+		button.set_click_action(ContentView::confirm#1, this);
+		add(content.as_view());
+		add(button);
+	}
+
+	function @confirm()
+	{
+		box.modal.hide();
+		if (box.confirm_func) {
+			(box.confirm_func)(box.confirm_data); //XXX
+		}
+	}
+
+	function get_preferred_width(scale: Float): Integer
+	{
+		return content.get_preferred_width(scale) + iround(20*scale);
+	}
+
+	function get_preferred_height(scale: Float): Integer
+	{
+		if (label) {
+			if (label.get_label().search_char('\n') >= 0) {
+				return label.get_preferred_height(scale) + iround(80*scale);
+			}
+			return iround(100*scale);
+		}
+		return content.get_preferred_height(scale) + iround(80*scale);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		content.as_view().set_rect(0, iround(5*scale), get_width(), content.get_preferred_height(scale));
+		var w = iround(50*scale);
+		var h = iround(25*scale);
+		button.set_rect((get_width()-w)/2, get_height() - iround(25*scale), w, h);
+	}
+}

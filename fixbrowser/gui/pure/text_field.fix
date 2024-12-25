@@ -1,0 +1,229 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/text_field";
+import "gui/event";
+import "gui/font";
+import "gui/native/common";
+import "gui/native/windows";
+import "gui/pure/common";
+
+class PureTextField: SubTextField
+{
+	var @font: SystemFont;
+	var @cursor_timer: Timer;
+	var @cursor_blink: Boolean;
+	
+	constructor create()
+	{
+		font = get_default_font();
+
+		var blink_interval = Common::get_cursor_blink_interval();
+		if (blink_interval > 0) {
+			cursor_timer = Timer::create(blink_interval, PureTextField::blink_cursor#1, weakref_create(this));
+		}
+	}
+
+	function set_font(font: SystemFont)
+	{
+		this.font = font;
+		repaint();
+	}
+
+	function get_font(): SystemFont
+	{
+		font = adjust_default_font(this, font);
+		return font;
+	}
+	
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_UP && event.get_button() == MOUSE_BUTTON_RIGHT && is_enabled()) {
+			focus();
+			var menu = Menu::create();
+			menu.add_item("Cut", PureTextField::handle_popup_menu#2, this, TFA_CUT);
+			menu.add_item("Copy", PureTextField::handle_popup_menu#2, this, TFA_COPY);
+			menu.add_item("Paste", PureTextField::handle_popup_menu#2, this, TFA_PASTE);
+			menu.add_item("Delete", PureTextField::handle_popup_menu#2, this, -1);
+			menu.add_separator();
+			menu.add_item("Select All", PureTextField::handle_popup_menu#2, this, TFA_SELECT_ALL);
+			// TODO: add disabling of menu items in read only mode
+			menu.show(this, event.get_x(), event.get_y());
+			return true;
+		}
+		return super.handle_mouse_event(event);
+	}
+
+	function @handle_popup_menu(id)
+	{
+		if (id == -1) {
+			if (is_enabled() && !is_read_only()) {
+				set_text("");
+			}
+		}
+		else {
+			do_action(id);
+		}
+	}
+	
+	override function paint_background(p: Painter)
+	{
+		var width = get_width();
+		var height = get_height();
+
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				var face_color = Windows::get_system_color(COLOR_BTNFACE);
+				var background_color = Windows::get_system_color(COLOR_WINDOW);
+				var highlight_color = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+				var light_color = Windows::get_system_color(COLOR_3DLIGHT);
+				var shadow_color = Windows::get_system_color(COLOR_BTNSHADOW);
+				var dark_shadow_color = Windows::get_system_color(COLOR_3DDKSHADOW);
+
+				p.clear_rect(0, 0, width, height, background_color);
+				draw_highlight_rect(p, 0, 0, width, height, shadow_color, highlight_color, face_color);
+				draw_highlight_rect(p, 1, 1, width-2, height-2, dark_shadow_color, light_color, face_color);
+				break;
+			}
+
+			case THEME_CUSTOM: {
+				custom_draw_button(p, 0, 0, width, height, 0, get_scale());
+				break;
+			}
+
+			default: {
+				super.paint_background(p);
+			}
+		}
+	}
+
+	override function get_border_rect(): Rect
+	{
+		return Rect(2, 2, get_width()-4, get_height()-4);
+	}
+
+	override function get_text_rect(): Rect
+	{
+		return Rect(4, 2, get_width()-8, get_height()-4);
+	}
+
+	override function get_text_position(s: String, off: Integer, len: Integer, x: Float): Integer
+	{
+		var font = get_font();
+		return iround(font.get_string_position(s, off, len, iround(x)));
+	}
+
+	override function get_text_advance(s: String, off: Integer, len: Integer): Float
+	{
+		var font = get_font();
+		return font.get_string_advance(s, off, len);
+	}
+
+	function @get_text_color(selection: Boolean): Integer
+	{
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				var normal_color = Windows::get_system_color(COLOR_WINDOWTEXT);
+				var selection_color = Windows::get_system_color(COLOR_HIGHLIGHTTEXT);
+				return selection? selection_color : normal_color;
+			}
+
+			default: {
+				return selection? 0xFFFFFFFF : 0xFF000000;
+			}
+		}
+	}
+
+	override function draw_text(p: Painter, x: Float, s: String, off: Integer, len: Integer, selection: Boolean)
+	{
+		var selection_color = 0xFF000040;
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				selection_color = Windows::get_system_color(COLOR_HIGHLIGHT);
+				break;
+			}
+		}
+
+		if (selection && !has_focus()) {
+			return;
+		}
+		var font = get_font();
+		var height = get_height()-4;
+		if (selection) {
+			var start = iround(x + font.get_string_advance(s, 0, off));
+			var end = iround(x + font.get_string_advance(s, 0, off+len));
+			p.fill_rect(start, 2, end-start, height-4, selection_color);
+			p.push();
+			p.clip(start, 0, end-start, height);
+		}
+		if (off+len < s.length) len++;
+		font.draw_string(p, iround(x), iround((get_height()+font.get_size()*0.65)/2.0)-2, s, 0, off+len, get_text_color(selection));
+		if (selection) {
+			p.pop();
+		}
+	}
+
+	override function draw_cursor(p: Painter, x: Float, selection: Boolean)
+	{
+		if (!cursor_blink) {
+			var height = get_height()-4;
+			p.fill_shape(Shape::rect(iround(x), 2, 1, height-4), get_text_color(selection));
+		}
+	}
+
+	static function @blink_cursor(weak): Boolean
+	{
+		var field = weakref_get(weak) as PureTextField;
+		if (!field) {
+			return false;
+		}
+		field.cursor_blink = !field.cursor_blink;
+		field.repaint();
+		return true;
+	}
+
+	override function reset_cursor_blink()
+	{
+		if (cursor_timer) {
+			cursor_timer.restart();
+		}
+		cursor_blink = false;
+	}
+
+	override function stop_cursor_blink()
+	{
+		if (cursor_timer) {
+			cursor_timer.stop();
+		}
+	}
+
+	override function show_text_cursor(show: Boolean)
+	{
+		set_cursor(show? CURSOR_TEXT : CURSOR_DEFAULT);
+	}
+}

@@ -1,0 +1,43 @@
+Version 0.6 (2024/05/05):
+- Added ability to create constant strings in Heap
+- Added ability to compare values in Heap
+- Added Barrier
+- Added support for WebAssembly
+- Adjusted for syntax improvements in classes
+- Fixed loading of scripts in Heap by checking for already loaded scripts first
+- Fixed obtaining of error when sending non-copyable reference through synchronous channel
+
+Version 0.5 (2022/12/27):
+- Improved returning of values from custom script native functions
+- Fixed lockup when sending channel messages by enabling reentrant locking on POSIX systems
+- Fixed integration with FixIO async event loop
+- Fixed counting of elapsed time for timeouts
+- Fixed concise reporting of token processor errors when reloading scripts
+
+Version 0.4 (2022/03/14):
+- Added running of compute tasks in parallel with ability to access parent heap concurrently
+- Added support for atomic operations on shared arrays
+- Added support for setting of stack size in Heap
+- Added Dispatcher
+- Added asynchronous variant of channel call
+- Added simple way to handle messages from single channel
+- Added optional integration with FixIO async event loop
+- Improved returning of errors in synchronous channel call
+- Renamed fixtask_get_cores_count to fixtask_get_core_count in C API
+- Changed setting of channel queue size to be possible in original heap only
+- Fixed passing of wrong core ID when using fixtask_run_on_compute_threads
+- Fixed comparison of channel handles with sender/receiver variants
+- Fixed lockup when sending messages to synchronous channels from multiple threads
+
+Version 0.3 (2021/10/03):
+- Added ability to start tasks using function handle directly
+- Added support for channels
+
+Version 0.2 (2021/05/12):
+- Added ability to create custom FixScript heaps
+- Added ComputeTask and Global classes
+- Fixed waiting on messages with timeout
+- Fixed overinflation of heap when sending messages between tasks
+
+Version 0.1 (2020/04/23):
+- Initial release

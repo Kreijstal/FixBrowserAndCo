@@ -1,0 +1,31 @@
+import "util/common";
+import "util/string";
+
+function adjust_document(request, document)
+{
+	var imgs = element_query_all(document, "img[data-src]");
+	for (var i=0; i<length(imgs); i++) {
+		var img = imgs[i];
+		element_set_attr(img, "src", element_get_attr(img, "data-src"));
+	}
+
+	imgs = element_query_all(document, "img.article-image");
+	for (var i=0; i<length(imgs); i++) {
+		element_set_attr(imgs[i], "style", "height: auto;");
+	}
+
+	imgs = element_query_all(document, "img.Card__img");
+	for (var i=0; i<length(imgs); i++) {
+		element_set_attr(imgs[i], "style", "width: 100%; height: 100%; padding: 0;");
+	}
+
+	rewrite_links(document, rewrite#3, null);
+}
+
+function @rewrite(elem, value, data)
+{
+	if (string_starts_with(value, "http://assets.atlasobscura.com/")) {
+		value = string_substring(value, 5);
+	}
+	return value;
+}

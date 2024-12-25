@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixImage Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixImage Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>C API</h2>
+
+<h3>Types</h3>
+
+<dl>
+	<dt><code>typedef void (*ImageFreeFunc)(void *data);</code></dt>
+	<dd>
+		Used for freeing both the pixels (must be referenced in the user data) and the user data associated with the image.
+	</dd>
+	<dt><code>typedef void (*MulticoreFunc)(int from, int to, void *data);</code></dt>
+	<dd>
+		Used for running the code on multiple cores.
+	</dd>
+</dl>
+
+<h3>Functions</h3>
+
+<dl>
+	<dt><code>Value fiximage_create(Heap *heap, int width, int height);</code></dt>
+	<dd>
+		Creates a new image.
+	</dd>
+	<dt><code>Value fiximage_create_from_pixels(Heap *heap, int width, int height, int stride, uint32_t *pixels, ImageFreeFunc free_func, void *user_data, int type);</code></dt>
+	<dd>
+		Creates a new image from given pixels. You must deallocate the pixels and the user data in case of a failure.
+		Use -1 as a type if you don't need custom types.
+	</dd>
+	<dt><code>Value fiximage_create_painter(Heap *heap, Value img, int offset_x, int offset_y);</code></dt>
+	<dd>
+		Creates a new painter for given image.
+	</dd>
+	<dt><code>int fiximage_get_data(Heap *heap, Value img, int *width, int *height, int *stride, uint32_t **pixels, void **user_data, int *type);</code></dt>
+	<dd>
+		Returns the data for given image. All output parameters are optional.
+	</dd>
+	<dt><code>int fiximage_get_painter_data(Heap *heap, Value p, float *tr, int *clip, Value *image);</code></dt>
+	<dd>
+		Returns the data for given painter. All output parameters are optional.
+	</dd>
+	<dt><code>void fiximage_register_functions(Heap *heap);</code></dt>
+	<dd>
+		Registers image functions to given heap.
+	</dd>
+	<dt><code>int fiximage_get_core_count();</code></dt>
+	<dd>
+		Returns the number of CPU cores.
+	</dd>
+	<dt><code>void fiximage_multicore_run(int from, int to, int min_iters, MulticoreFunc func, void *data);</code></dt>
+	<dd>
+		Runs the code on multiple CPU cores.
+	</dd>
+</dl>
+
+</body>
+</html>

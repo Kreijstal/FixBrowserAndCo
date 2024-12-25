@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/atomic_file";</code>
+</p>
+
+<h2>AtomicFile class</h2>
+
+<p>
+AtomicFile provides a way to do atomic updates of files using transactions. The
+class is designed as a layer on top of the regular <a href="file.html">File</a>.
+It is designed for creation of various custom file formats, the only requirement
+is that there are 32 bytes reserved somewhere in the file format header.
+</p>
+
+<p>
+Concurrent access is supported (either in read only mode where multiple readers
+can use the file at once, or a single writer). This is achieved using the file
+locks and works between different processes and (if the OS implementation is not
+faulty) over network file systems too.
+</p>
+
+<p>
+The maximum file size is based on the page size. In the default setting the
+limit is 16TB (4KB * 2<sup>32</sup>).
+</p>
+
+<p>
+It is recommended to use the <a href="transaction.html"><code>transaction</code></a>
+statement when working with the transactions.
+</p>
+
+<h3>Resiliency against failures</h3>
+
+<p>
+The implementation assumes that the file system (and the underlying layers and
+the hardware) is competent enough to not put garbage data into the file after
+synchronization and that the synchronization to the disk is guaranteed (it is
+actually written to the disk before it returns success). Therefore the
+implementation guards mainly against the partial writes (at byte granulity in
+any order or portions). The format uses CRC-32 checksum to detect corruption in
+the rollback.
+</p>
+
+<h3>Rollback</h3>
+
+<p>
+The rollback is appended at the end of the file (with a hole between the
+original file size and the rollback to allow growth) and contains the original
+content of pages. If the file resizes into the rollback or beyond, the rollback
+is atomically moved to the new end of the file, increasing a hole between the
+new file size and the new rollback to allow more growth without moving the
+rollback again.
+</p>
+
+<p>
+When there is a crash during the transaction the rollback is applied and
+the modified data is rewritten with its original content. After the rollback is
+applied the file is shrunk to remove the rollback. If there is a crash during
+applying of the rollback there is no problem, the process will repeat with the
+same result.
+</p>
+
+<p>
+The rollback may contain duplicate pages, this is a result of using nested
+transactions. However only the first encounter of each page is restored
+on recovery. Each original content of the page is written first then commited
+into the rollback. When multiple pages are written at once, all pages except
+the first are pre-committed as the recovery will stop at any uncommited or
+partial page (eg. when the file was shrunk to remove the rollback but before
+the rollback was fully deactivated).
+</p>
+
+<h3 id="constants">Constants</h3>
+
+<dl>
+	<dt><code><b>ATOMIC_FILE_HEADER_SIZE</b> = 32</code></dt>
+	<dd>
+		This is the size of the required header and is always 32 bytes.
+	</dd>
+</dl>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>open</b>(file: <a href="file.html">File</a>, header_offset: Integer): AtomicFile<br>
+		static function <b>open</b>(file: <a href="file.html">File</a>, header_offset: Integer, page_size: Integer): AtomicFile<br>
+	</code></dt>
+	<dd>
+		Creates a new instance of the atomic file with a given physical file. The header
+		offset must be always the same for the same file. Page size must be power
+		of two (the default value is 4096). The file is brought into a clean state
+		(rollback applied if present, the header written if the file is empty).
+		The page size can be changed to a different value (for example to use smaller
+		page when a lot of small changes are made, or bigger for big continuous
+		overwrites). Beware of the maximum file size when using smaller page sizes.
+	</dd>
+	<dt><code>function <b>close</b>()</code></dt>
+	<dd>
+		Closes the file, rollbacks any uncommited transactions.
+	</dd>
+	<dt><code>function <b>register_cache_handler</b>(flush_func, discard_func, data)</code></dt>
+	<dd>
+		Registers a cache handler. The flush function is called whenever unwritten
+		data needs to be written (before entering a nested transaction and before the
+		outmost commit) and the discard function is called whenever both the cached
+		and unwritten data (if it wasn't flushed) needs to be discarded (after the
+		outmost transaction and before rollback for write transactions). Both functions
+		take a single common parameter (data). The handlers are called in the opposite
+		order than they were registered allowing to update the cached data from higher
+		to lower abstraction layers.
+	</dd>
+</dl>
+
+<h3 id="transaction">Transaction functions</h3>
+
+<dl>
+	<dt><code>
+		function <b>begin</b>()<br>
+		function <b>begin</b>(write: Boolean)<br>
+		function <b>begin</b>(write: Boolean, timeout: Integer): Boolean<br>
+	</code></dt>
+	<dd>
+		Begins a new transaction. You can specify if it's read or write transaction
+		(the default is write). You can use nested transactions, however you can't
+		upgrade from a read transaction to a write transaction. If you need this to
+		preprocess some data while allowing a concurrent read access, do it in the
+		read transaction then commit it and begin a new write transaction, verify that
+		the file wasn't changed in an incompatible way (in such case just reprocess
+		the data again) and then you can write the results.
+	</dd>
+	<dt><code>function <b>commit</b>()</code></dt>
+	<dd>
+		Commits the transaction, making the changes permanent. This is required
+		to be called even for read transactions.
+	</dd>
+	<dt><code>function <b>rollback</b>()</code></dt>
+	<dd>
+		Rollbacks the transaction, clearing any changes made in the transaction.
+	</dd>
+	<dt><code>function <b>in_transaction</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when there is an active transaction.
+	</dd>
+	<dt><code>function <b>in_write_transaction</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when there is an active write transaction.
+	</dd>
+	<dt><code>function <b>set_on_rollback</b>(container, key, value)</code></dt>
+	<dd>
+		Sets the original value in a container (array or hash) with a given key
+		(or index) on rollback. In case of an array the key can be <code>-1</code>
+		to set the length of the array. For hash tables, if the value is <code>null</code>
+		the entry is removed. This function is provided to allow to reverse changes
+		to the in-memory structures related to the transaction.
+	</dd>
+	<dt><code>function <b>call_on_rollback</b>(func, data, param)</code></dt>
+	<dd>
+		In case the <code>set_on_rollback</code> function is insufficient, you can
+		register a call of a two parameter function (data is the first argument, and
+		the param is the second) on rollback.
+	</dd>
+</dl>
+
+<h3 id="data">Data access functions</h3>
+
+<dl>
+	<dt><code>
+		function <b>read</b>(offset: <a href="util/long.html">Long</a>, buf: Byte[])<br>
+		function <b>read</b>(offset: <a href="util/long.html">Long</a>, buf: Byte[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Reads a portion of the file at a given offset. Reading past the file length
+		is an error.
+	</dd>
+	<dt><code>
+		function <b>write</b>(offset: <a href="util/long.html">Long</a>, buf: Byte[])<br>
+		function <b>write</b>(offset: <a href="util/long.html">Long</a>, buf: Byte[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Writes a buffer (or it's portion) to the file at a given offset. Writing past
+		the file length will enlarge the file (zero length will trigger this too).
+	</dd>
+	<dt><code>function <b>get_length</b>(): <a href="util/long.html">Long</a></code></dt>
+	<dd>
+		Returns the (logical) length of the file.
+	</dd>
+	<dt><code>function <b>set_length</b>(new_size: <a href="util/long.html">Long</a>)</code></dt>
+	<dd>
+		Sets a new length of the file. The file cannot be made smaller than the header.
+	</dd>
+</dl>
+
+</body>
+</html>

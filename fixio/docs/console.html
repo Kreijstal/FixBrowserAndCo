@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/console";</code>
+</p>
+
+<h2>Console class</h2>
+
+<p>
+Console provides an advanced access to the console. To use the console it must be activated first.
+This gives an exclusive access to the console and changes how it behaves. This is incompatible
+with basic functions such as <code>print</code> and <code>log</code> and they are therefore disabled
+when the console is active. It is highly recommended to use the
+<a href="global_console.html#custom-logging">set_log_function</a> to implement custom logging.
+</p>
+
+<p>
+Due to the historical reasons and a huge variety of various terminal emulators both the printing
+of various characters outside ASCII and ability to recognize various keys and their modifiers
+can be limited. What works on one platform or a terminal emulator may not work in another.
+</p>
+
+<p>
+Use the <a href="global_console.html">global functions</a> to use the console in a simple way.
+</p>
+
+<h3 id="constants">Constants</h3>
+
+<dl>
+	<dt><code>
+		<b>COLOR_BLACK&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;0&nbsp;(0)<br>
+		<b>COLOR_DARK_RED&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;1&nbsp;(1)<br>
+		<b>COLOR_DARK_GREEN&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;2&nbsp;(2)<br>
+		<b>COLOR_DARK_YELLOW&nbsp;&nbsp;</b>=&nbsp;&nbsp;3&nbsp;(3)<br>
+		<b>COLOR_DARK_BLUE&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;4&nbsp;(4)<br>
+		<b>COLOR_DARK_MAGENTA&nbsp;</b>=&nbsp;&nbsp;5&nbsp;(5)<br>
+		<b>COLOR_DARK_CYAN&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;6&nbsp;(6)<br>
+		<b>COLOR_LIGHT_GRAY&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;7&nbsp;(7)<br>
+		<b>COLOR_DARK_GRAY&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;8&nbsp;(8)<br>
+		<b>COLOR_RED&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;&nbsp;9&nbsp;(9)<br>
+		<b>COLOR_GREEN&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;10&nbsp;(A)<br>
+		<b>COLOR_YELLOW&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;11&nbsp;(B)<br>
+		<b>COLOR_BLUE&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;12&nbsp;(C)<br>
+		<b>COLOR_MAGENTA&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;13&nbsp;(D)<br>
+		<b>COLOR_CYAN&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;14&nbsp;(E)<br>
+		<b>COLOR_WHITE&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</b>=&nbsp;15&nbsp;(F)<br>
+	</code></dt>
+	<dd>
+		The available colors.
+	</dd>
+</dl>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>is_present</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the console is present. A direct access to the console is not
+		possible when the standard streams are redirected or when the platform doesn't
+		support such functionality.
+	</dd>
+	<dt><code>static function <b>set_active</b>(active: Boolean)</code></dt>
+	<dd>
+		Activates or deactivates the console access. When activated the normal printing
+		and logging functions are disabled as they are incompatible with direct console
+		access. It is highly recommended to use the <a href="global_console.html#custom-logging">set_log_function</a>
+		to implement custom logging.
+	</dd>
+	<dt><code>static function <b>is_active</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the console is activated.
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>
+		static function <b>get_width</b>(): Integer<br>
+		static function <b>get_height</b>(): Integer<br>
+	</code></dt>
+	<dd>
+		Returns the size of the console (can be called even when the console is not
+		activated, may return <code>0</code> when the size can't be determined).
+	</dd>
+</dl>
+
+<h3 id="drawing">Drawing</h3>
+
+<dl>
+	<dt><code>static function <b>clear</b>()</code></dt>
+	<dd>
+		Clears the whole console and puts the cursor to the top-left position.
+	</dd>
+	<dt><code>
+		static function <b>put_text</b>(text: String)<br>
+		static function <b>put_text</b>(text: String, off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Puts a text (or it's portion) at the current cursor position and advances the cursor.
+		Wrapping to new lines is disabled.
+	</dd>
+	<dt><code>static function <b>get_cursor</b>(): Integer[]</code></dt>
+	<dd>
+		Returns the position of the cursor. On Windows the cursor Y can be negative when the
+		console window has not enough of history.
+	</dd>
+	<dt><code>static function <b>set_cursor</b>(x: Integer, y: Integer)</code></dt>
+	<dd>
+		Sets the position of the cursor.
+	</dd>
+	<dt><code>static function <b>move_cursor</b>(rel_x: Integer, rel_y: Integer)</code></dt>
+	<dd>
+		Moves the cursor in a relative way.
+	</dd>
+	<dt><code>
+		static function <b>show_cursor</b>()<br>
+		static function <b>hide_cursor</b>()<br>
+	</code></dt>
+	<dd>
+		Shows or hides the cursor.
+	</dd>
+	<dt><code>static function <b>reset_color</b>()</code></dt>
+	<dd>
+		Resets the current color to the default.
+	</dd>
+	<dt><code>static function <b>set_color</b>(background: Integer, foreground: Integer)</code></dt>
+	<dd>
+		Sets the current color.
+	</dd>
+	<dt><code>static function <b>scroll</b>(rel_y: Integer)</code></dt>
+	<dd>
+		Scrolls the console contents. When scrolling down (positive Y) new lines are inserted
+		at the bottom and the whole content including the history is moved upwards. The newly
+		uncovered area is set to the current color. In the opposite direction only the currently
+		visible portion is scrolled. The history is not affected, creating a discontinuity. For
+		this reason it is not recommended to scroll up.
+	</dd>
+</dl>
+
+<h3 id="events">Events</h3>
+
+<dl>
+	<dt><code>
+		static function <b>get_event</b>(): <a href="console_event.html">ConsoleEvent</a><br>
+		static function <b>get_event</b>(timeout: Integer): <a href="console_event.html">ConsoleEvent</a><br>
+	</code></dt>
+	<dd>
+		Waits for an event and returns it. Optionally you can set a timeout in milliseconds (0 returns
+		immediatelly, negative means indefinite waiting).
+	</dd>
+</dl>
+
+</body>
+</html>

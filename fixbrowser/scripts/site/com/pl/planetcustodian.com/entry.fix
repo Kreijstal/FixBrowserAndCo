@@ -1,0 +1,17 @@
+import "util/common";
+import "util/string";
+
+function adjust_document(request, document)
+{
+	if (request_get_domain(request) == "www.planetcustodian.com") {
+		rewrite_links(document, rewrite#3, null);
+	}
+}
+
+function @rewrite(elem, value, data)
+{
+	if (string_starts_with(value, "http://www.planetcustodian.com/")) {
+		value = string_substring(value, 5);
+	}
+	return value;
+}

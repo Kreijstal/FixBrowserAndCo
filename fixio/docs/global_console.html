@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/console"; <span style="color: #444">// not needed for print/progress/beep and the simple variant of prompt</span></code>
+</p>
+
+<h2>Console input/output</h2>
+
+<p>
+These functions provide basic access to the console. The functions are designed in a way
+to be both programmer and user friendly. They are synchronized so multiple tasks (threads)
+won't print over in a middle of the line and the output is locked during an active prompt.
+The built-in <code>log</code> function is augmented with this behavior as well.
+</p>
+
+<p>
+The state is tracked so for example the <code>progress</code> function (which replaces
+the current line if called repeatedly) will be correctly cleared when the other functions
+are called or when the process exits.
+</p>
+
+<p>
+The functions don't allow to use control characters (these are converted to <code>'?'</code>).
+The only supported control characters are a tab (<code>'\t'</code>) and a newline (<code>'\n'</code>)
+characters. The <code>progress</code> function disallows newlines as they can't work with it.
+If you need to output arbitrary characters use the <a href="process_stream.html">ProcessStream</a>
+class.
+</p>
+
+<p>
+Use the <a href="console.html">Console</a> class to use the console in an advanced way.
+</p>
+
+<h3>Global functions</h3>
+
+<dl>
+	<dt><code>function <b>print</b>(value)</code></dt>
+	<dd>
+		Prints given string (other values are converted) to the standard output stream with
+		added newline.<br>
+		Use the built-in <code>log</code> function to print to the standard error stream instead.
+	</dd>
+	<dt id="prompt"><code>
+		function <b>prompt</b>(msg: String): String<br>
+		function <b>prompt</b>(msg: String, handler: <a href="prompt_handler.html">PromptHandler</a>): String<br>
+	</code></dt>
+	<dd>
+		Shows a prompt with the given message (without newline) and returns the entered value from the user.
+		Optionally you can provide a prompt handler to support autocomplete functionality or other customization.
+	</dd>
+	<dt><code>function <b>progress</b>(msg: String)</code></dt>
+	<dd>
+		Shows a progress, repeated calls updates the same line.
+	</dd>
+	<dt><code>function <b>beep</b>()</code></dt>
+	<dd>
+		Emits a beep sound or an alternative notification such as blinking of the console.
+	</dd>
+</dl>
+
+<h3 id="custom-logging">Custom logging</h3>
+
+<dl>
+	<dt><code>function <b>set_log_function</b>(func)</code></dt>
+	<dd>
+		Sets a new logging function. The logging function receives a single parameter, it should
+		convert any non-string values into a string using the <code>to_string</code> built-in
+		function. The function can use the <code>log</code> function to produce an output
+		(it will use the default implementation when called from the custom log handler). To
+		revert back to the default logging function just pass <code>null</code> as a function.
+	</dd>
+</dl>
+
+<h3>Utility functions</h3>
+
+<dl>
+	<dt><code>
+		function <b>prompt_int</b>(msg: String): Integer<br>
+		function <b>prompt_long</b>(msg: String): <a href="util/long.html">Long</a><br>
+		function <b>prompt_float</b>(msg: String): Float<br>
+		function <b>prompt_double</b>(msg: String): <a href="util/double.html">Double</a><br>
+	</code></dt>
+	<dd>
+		A variant of a prompt that returns the entered value as a specific type. You need
+		to check if a valid value was entered by using the built-in functions (<code>is_int</code>
+		and <code>is_float</code>) or checking for <code>null</code> for the <a href="util/long.html">Long</a>
+		and <a href="util/double.html">Double</a> variants.
+	</dd>
+	<dt id="prompt_password"><code>
+		function <b>prompt_password</b>(msg: String): String<br>
+		function <b>prompt_password</b>(msg: String, replacement_char: Integer): String<br>
+		function <b>prompt_password</b>(msg: String, replacement_char: Integer, max_length: Integer): String<br>
+	</code></dt>
+	<dd>
+		Shows a prompt for entering a password. By default the <code>'*'</code> character is used as
+		a replacement character. You can also specify <code>0</code> to disable showing the length of
+		the password.<br><br>
+		<b>Note:</b> Special security precautions are used to make sure the password is only at one
+		place in the memory and is properly cleared on cancellation or an internal error. The maximum
+		length is 256 by default. When setting a different maximum length keep in mind that the maximum
+		capacity is allocated before use. It is advised to explicitly overwrite the password after use.
+	</dd>
+</dl>
+
+</body>
+</html>

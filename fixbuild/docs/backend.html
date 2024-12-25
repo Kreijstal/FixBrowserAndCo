@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixBuild Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; line-height: 1.2; -moz-tab-size: 4; tab-size: 4; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+		table, td, th { border: 2px solid #ccc; border-collapse: collapse; }
+		td, th { padding: 2px 6px; }
+		th { background-color: #ccc; }
+	</style>
+</head>
+<body>
+
+<h1>FixBuild Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>Backend API</h2>
+
+<p>
+The FixBuild binary can be called with special parameters that can retrieve data from it
+(only a single parameter can be used at once).
+</p>
+
+<dl>
+	<dt><code><b>--fixbuild-version</b></code></dt>
+	<dd>
+		Returns the FixBuild version on a single line.
+	</dd>
+	<dt><code><b>--fixbuild-script-list</b></code></dt>
+	<dd>
+		Returns the list of embedded scripts (each entry on a single line).
+	</dd>
+	<dt><code><b>--fixbuild-script-get</b> name</code></dt>
+	<dd>
+		Returns the original source code of the specified script.
+	</dd>
+</dl>
+
+</body>
+</html>

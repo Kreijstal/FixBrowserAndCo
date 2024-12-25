@@ -1,0 +1,249 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/file";
+import "io/stream";
+import "io/sql/connection";
+import "util/long";
+import "util/double";
+
+class SQLiteDatabase: SQLConnection
+{
+	var @handle;
+	var @trans_count: Integer;
+
+	static function is_present(): Boolean
+	{
+		var (r, e) = @sqlite_is_present();
+		return r;
+	}
+
+	constructor open(path: Path or String)
+	{
+		if (!is_present()) {
+			throw error("SQLite support is not present");
+		}
+		if (!is_string(path)) {
+			path = (path as Path).to_string();
+		}
+		handle = @sqlite_open(path);
+	}
+
+	override function close()
+	{
+		@sqlite_close(handle);
+	}
+
+	override function begin()
+	{
+		if (++trans_count == 1) {
+			update("BEGIN", null, null);
+		}
+	}
+
+	override function commit()
+	{
+		if (trans_count <= 0) {
+			throw error("no transaction is active");
+		}
+		if (--trans_count == 0) {
+			update("COMMIT", null, null);
+		}
+	}
+
+	override function rollback()
+	{
+		if (trans_count <= 0) {
+			throw error("no transaction is active");
+		}
+		if (--trans_count == 0) {
+			update("ROLLBACK", null, null);
+		}
+	}
+
+	override function in_transaction(): Boolean
+	{
+		return trans_count > 0;
+	}
+
+	override function query(query: String, sig: String, params: Dynamic[]): ResultSet
+	{
+		var stmt = @sqlite_exec(handle, query, sig, params);
+		return SQLiteResultSet::create(stmt);
+	}
+
+	override function update(query: String, sig: String, params: Dynamic[])
+	{
+		var stmt = @sqlite_exec(handle, query, sig, params);
+		if (stmt) {
+			@sqlite_finalize(stmt);
+		}
+	}
+
+	override function last_insert_id(): Long
+	{
+		var (lo, hi) = @sqlite_last_insert_rowid(handle);
+		if (is_string(hi)) throw error(hi);
+		if (!is_int(hi)) throw hi;
+		return Long(lo, hi);
+	}
+}
+
+function @null_value() {}
+
+class SQLiteResultSet: ResultSet
+{
+	var @stmt;
+	var @column_count: Integer;
+	var @column_names: String[];
+	var @column_indicies: Integer[String];
+
+	constructor @create(stmt)
+	{
+		this.stmt = stmt;
+	}
+
+	override function close()
+	{
+		@sqlite_finalize(stmt);
+	}
+
+	override function next(): Boolean
+	{
+		return @sqlite_step(stmt);
+	}
+
+	override function get_column_count(): Integer
+	{
+		if (column_count == 0) {
+			column_count = @sqlite_column_count(stmt);
+		}
+		return column_count;
+	}
+
+	override function get_column_name(idx: Integer): String
+	{
+		if (!column_names) {
+			column_names = Array::create(get_column_count());
+		}
+		if (!column_names[idx]) {
+			column_names[idx] = @sqlite_column_name(stmt, idx);
+		}
+		return column_names[idx];
+	}
+
+	override function get_column_index(name: String): Integer
+	{
+		if (!column_indicies) {
+			column_indicies = {};
+			if (!column_names) {
+				column_names = Array::create(get_column_count());
+			}
+			for (var i=column_names.length-1; i>=0; i--) {
+				if (!column_names[i]) {
+					column_names[i] = @sqlite_column_name(stmt, i);
+				}
+				column_indicies[column_names[i]] = i;
+			}
+		}
+		return column_indicies[name];
+	}
+
+	override function get_column_type(name_or_idx: String or Integer): Integer
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		return @sqlite_column_type(stmt, name_or_idx);
+	}
+
+	function get_data_type(name_or_idx: String or Integer): Integer
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		return @sqlite_data_type(stmt, name_or_idx);
+	}
+
+	override function is_null(name_or_idx: String or Integer): Boolean
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		return @sqlite_is_null(stmt, name_or_idx);
+	}
+
+	override function get_optional_int(name_or_idx: String or Integer, def_value: Integer): Integer
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		return @sqlite_get_int(stmt, name_or_idx, def_value);
+	}
+	
+	override function get_optional_long(name_or_idx: String or Integer): Long
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		var (lo, hi) = @sqlite_get_long(stmt, name_or_idx, null_value#0);
+		if (!is_int(hi)) throw hi;
+		if (lo === null_value#0) return null;
+		return Long(lo, hi);
+	}
+	
+	override function get_optional_float(name_or_idx: String or Integer, def_value: Float): Float
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		return @sqlite_get_float(stmt, name_or_idx, def_value) as Float;
+	}
+	
+	override function get_optional_double(name_or_idx: String or Integer): Double
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		var (lo, hi) = @sqlite_get_double(stmt, name_or_idx, null_value#0);
+		if (!is_int(hi)) throw hi;
+		if (lo === null_value#0) return null;
+		return Double(lo, hi);
+	}
+	
+	override function get_optional_string(name_or_idx: String or Integer): String
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		return @sqlite_get_string(stmt, name_or_idx);
+	}
+	
+	override function get_optional_binary(name_or_idx: String or Integer): Byte[]
+	{
+		if (is_string(name_or_idx)) {
+			name_or_idx = get_column_index(name_or_idx);
+		}
+		return @sqlite_get_binary(stmt, name_or_idx);
+	}
+}

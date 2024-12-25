@@ -1,0 +1,110 @@
+/*
+ * This file was written in 2024 by Martin Dvorak <jezek2@advel.cz>
+ * You can download latest version at http://public-domain.advel.cz/
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this file to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software. If not, see:
+ * http://creativecommons.org/publicdomain/zero/1.0/ 
+ */
+
+use "macros";
+use "classes";
+
+import "util/double";
+import "functions" : functions;
+
+function precise_create_variable(width: Integer): Fixed[]
+{
+	var data = Array::create(width, 4);
+	for (var i=0; i<width; i++) {
+		data[i] = Fixed::from_int(0);
+	}
+	return data;
+}
+
+function precise_get(data: Fixed[], result: Integer[])
+{
+	for (var i=0; i<data.length; i++) {
+		var ret = data[i].to_double();
+		result[i*2+0] = ret.lo;
+		result[i*2+1] = ret.hi;
+	}
+}
+
+function precise_set(data: Integer[], result: Fixed[])
+{
+	for (var i=0, j=0; i<data.length; j++) {
+		result[j] = Fixed::from_double(Double(data[i++], data[i++]));
+	}
+}
+
+function precise_fill(data: Fixed[], lo: Integer, hi: Integer)
+{
+	var value = Double(lo, hi);
+	for (var i=0; i<data.length; i++) {
+		data[i] = Fixed::from_double(value);
+	}
+}
+
+function precise_fill_inc(data: Fixed[], lo: Integer, hi: Integer, inc_lo: Integer, inc_hi: Integer, offset: Integer)
+{
+	var value = Double(lo, hi);
+	var inc = Double(inc_lo, inc_hi);
+	for (var i=0; i<data.length; i++) {
+		data[i] = Fixed::from_double(value + (i+offset) * inc);
+	}
+}
+
+macro @PRECISE_OP1(name)
+{
+	function precise_#name(src: Fixed[], dest: Fixed[])
+	{
+		for (var i=0; i<src.length; i++) {
+			dest[i] = name#_fixed(src[i]);
+		}
+	}
+}
+
+macro @PRECISE_OP2(name, op)
+{
+	function precise_#name(src1: Fixed[], src2: Fixed[], dest: Fixed[])
+	{
+		for (var i=0; i<src1.length; i++) {
+			var a = src1[i];
+			var b = src2[i];
+			dest[i] = op;
+		}
+	}
+}
+
+PRECISE_OP2(add, a + b)
+PRECISE_OP2(sub, a - b)
+PRECISE_OP2(mul, a * b)
+PRECISE_OP2(div, a / b)
+
+PRECISE_OP1(log)
+PRECISE_OP1(log2)
+PRECISE_OP1(log10)
+PRECISE_OP1(exp)
+PRECISE_OP2(pow, pow_fixed(a, b))
+PRECISE_OP1(sqrt)
+PRECISE_OP1(cbrt)
+PRECISE_OP1(sin)
+PRECISE_OP1(cos)
+PRECISE_OP1(tan)
+PRECISE_OP1(asin)
+PRECISE_OP1(acos)
+PRECISE_OP1(atan)
+
+PRECISE_OP2(min, a < b? a : b)
+PRECISE_OP2(max, a > b? a : b)
+
+function init()
+{
+	functions:init();
+}

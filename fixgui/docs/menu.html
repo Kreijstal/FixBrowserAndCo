@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/view";</code>
+</p>
+
+<h2>Menu class</h2>
+
+<p>
+This class is used for both main menu and popup menus.
+</p>
+
+<ul>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#properties">Properties</a></li>
+	<li><a href="#actions">Actions</a></li>
+</ul>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): Menu</code></dt>
+	<dd>
+		Creates a new menu.
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>
+		function <b>insert_item</b>(idx: Integer, title: String, action, data, id: Integer)<br>
+		function <b>insert_separator</b>(idx: Integer)<br>
+		function <b>insert_submenu</b>(idx: Integer, title: String, submenu: Menu)<br>
+		function <b>insert_item</b>(idx: Integer, item: <a href="#menu_item">MenuItem</a>)<br>
+	</code></dt>
+	<dd>
+		Inserts a menu item at the given index (use <code>-1</code> to insert at end).
+		The item can be either a regular item with attached callback, a separator,
+		a submenu, or a menu item object. The callback is taking two parameters, first
+		is <code>data</code> and second is <code>id</code>.
+	</dd>
+	<dt><code>
+		function <b>add_item</b>(title: String, action, data, id: Integer)<br>
+		function <b>add_separator</b>()<br>
+		function <b>add_submenu</b>(title: String, submenu: Menu)<br>
+		function <b>add_item</b>(item: <a href="#menu_item">MenuItem</a>)<br>
+	</code></dt>
+	<dd>
+		Adds a menu item at the end. This is just a shortcut for inserting
+		with the index set to <code>-1</code>.
+	</dd>
+	<dt><code>function <b>remove_item</b>(idx: Integer)</code></dt>
+	<dd>
+		Removes a menu item at given index.
+	</dd>
+	<dt><code>function <b>get_item_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the menu item count in this menu.
+	</dd>
+	<dt><code>function <b>get_item</b>(idx: Integer): <a href="#menu_item">MenuItem</a></code></dt>
+	<dd>
+		Returns the menu item object at given index.
+	</dd>
+	<dt><code>function <b>dump</b>()</code></dt>
+	<dd>
+		Dumps the hierarchy of the menu to the logging channel of the application.
+	</dd>
+</dl>
+
+<h3 id="actions">Actions</h3>
+
+<dl>
+	<dt><code>function <b>show</b>(view: <a href="view.html">View</a> or <a href="subview.html">SubView</a>, x: Integer, y: Integer)</code></dt>
+	<dd>
+		Shows the popup menu at given position in a view or a subview.
+	</dd>
+</dl>
+
+<h2 id="menu_item">MenuItem class</h2>
+
+<p>
+This class contains information about the menu item. It is just a container of information
+not a native handle.
+</p>
+
+<h3>Fields</h3>
+
+<dl>
+	<dt><code>var menu: Menu;</code></dt>
+	<dd>
+		The menu this item belongs to.
+	</dd>
+	<dt><code>var idx: Integer;</code></dt>
+	<dd>
+		The index in the menu.
+	</dd>
+	<dt><code>var title: String;</code></dt>
+	<dd>
+		The title of the menu item.
+	</dd>
+	<dt><code>var submenu: Menu;</code></dt>
+	<dd>
+		The submenu.
+	</dd>
+	<dt><code>
+		var action;<br>
+		var data;<br>
+		var id: Integer;<br>
+	</code></dt>
+	<dd>
+		The callback data.
+	</dd>
+</dl>
+
+<h3>Methods</h3>
+
+<dl>
+	<dt><code>function <b>is_separator</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when this menu item is a separator.
+	</dd>
+	<dt><code>function <b>update</b>()</code></dt>
+	<dd>
+		Updates the menu item. This is done by using the index therefore beware of updating
+		of wrong menu items if the order of items is changed in the menu.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the string representation of the menu item.
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/file";</code>
+</p>
+
+<h2>File class</h2>
+
+<p>
+File class represents an opened file. The reading and writing is unbuffered. You may want to wrap
+it in <a href="buffered_stream.html">BufferedStream</a> to get a better performance for small reads
+and writes.
+</p>
+
+<p>
+Inherits from <a href="stream.html">Stream</a>.
+</p>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): File</code></dt>
+	<dd>
+		Creates a new instance of file interface, intended for subclassing only.
+	</dd>
+	<dt><code>static function <b>open</b>(path: <a href="path.html">Path</a> or String, mode: Integer): File</code></dt>
+	<dd>
+		Opens a file with given mode. The mode is consisting of these flags:<br>
+		<b>FILE_READ</b> - open the file for reading<br>
+		<b>FILE_WRITE</b> - open the file for writing<br>
+		<b>FILE_CREATE</b> - create the file if it doesn't exist (requires write access)<br>
+		<b>FILE_TRUNCATE</b> - truncate the file if it exists (requires write access)<br>
+		<b>FILE_APPEND</b> - open for atomic writes at the end of the file (requires write access only)<br>
+		You can also use these common values:<br>
+		<b title="FILE_READ | FILE_WRITE" style="cursor: help; border-bottom: 1px dotted #000">FILE_OPEN_EXISTING</b> - open the file for reading/writing, give an error when it doesn't exist<br>
+		<b title="FILE_READ | FILE_WRITE | FILE_CREATE" style="cursor: help; border-bottom: 1px dotted #000">FILE_OPEN_ALWAYS</b> - open the file for reading/writing, create it when it doesn't exist<br>
+		<b title="FILE_READ | FILE_WRITE | FILE_CREATE | FILE_TRUNCATE" style="cursor: help; border-bottom: 1px dotted #000">FILE_OPEN_NEW</b> - open the file for reading/writing, create when it doesn't exist and truncate when it exists<br>
+		<b title="FILE_WRITE | FILE_CREATE | FILE_APPEND" style="cursor: help; border-bottom: 1px dotted #000">FILE_OPEN_APPEND</b> - open the file for atomic writing at the end, create when it doesn't exist<br>
+	</dd>
+</dl>
+
+<h3 id="common">Common functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>read_whole</b>(path: <a href="path.html">Path</a> or String): Byte[]<br>
+		static function <b>read_whole</b>(path: <a href="path.html">Path</a> or String, buf: Byte[]): Byte[]<br>
+	</code></dt>
+	<dd>
+		Reads the whole file into provided buffer (or a created one).
+	</dd>
+	<dt><code>
+		static function <b>write_whole</b>(path: <a href="path.html">Path</a> or String, buf: Byte[])<br>
+		static function <b>write_whole</b>(path: <a href="path.html">Path</a> or String, buf: Byte[], off: Integer, len: Integer)<br>
+	</code></dt>
+	<dd>
+		Writes the whole buffer (or portion) to the file.
+	</dd>
+</dl>
+
+<h3 id="interface">File interface</h3>
+
+<dl>
+	<dt><code>virtual function <b>get_length</b>(): <a href="util/long.html">Long</a></code></dt>
+	<dd>
+		Returns the length of the file.
+	</dd>
+	<dt><code>virtual function <b>set_length</b>(len: <a href="util/long.html">Long</a>)</code></dt>
+	<dd>
+		Sets the length of the file.
+	</dd>
+	<dt><code>virtual function <b>get_position</b>(): <a href="util/long.html">Long</a></code></dt>
+	<dd>
+		Returns the current position in the file.
+	</dd>
+	<dt><code>virtual function <b>set_position</b>(pos: <a href="util/long.html">Long</a>)</code></dt>
+	<dd>
+		Sets the current position in the file.
+	</dd>
+	<dt><code>virtual function <b>sync</b>()</code></dt>
+	<dd>
+		Synchronizes unwritten data with the data on the disk. This is implemented for native
+		files but may do nothing for virtual files (that implements this interface).
+	</dd>
+	<dt><code>
+		virtual function <b>lock</b>(exclusive: Boolean, timeout: Integer): Boolean<br>
+		virtual function <b>unlock</b>()<br>
+	</code></dt>
+	<dd>
+		Acquires a lock on the file, either in a shared mode (allowing multiple readers) or in
+		an exclusive mode (only a single writer). You can provide a timeout for waiting (negative
+		value means no time limit, the default when the timeout is not provided). To change between
+		modes the lock must be unlocked first (atomic upgrading/downgrading is not supported).
+		Returns true when the lock was acquired.<br>
+		<b>Note</b>: The lock is advisory on all platforms, meaning inappropriate accesses are not
+		prevented. On Windows where locks are mandatory (enforced) this is emulated by locking
+		the very last byte way outside of any supported file sizes.
+	</dd>
+</dl>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>function <b>seek_rel</b>(offset: Integer)</code></dt>
+	<dd>
+		Sets the current position relative to current position.
+	</dd>
+	<dt><code>function <b>seek_set</b>(offset: Integer)</code></dt>
+	<dd>
+		Sets the current position relative to beginning.
+	</dd>
+	<dt><code>function <b>seek_end</b>(offset: Integer)</code></dt>
+	<dd>
+		Sets the current position relative to end.
+	</dd>
+	<dt><code>function <b>lock</b>(exclusive: Boolean)</code></dt>
+	<dd>
+		Short version of lock function without a timeout.
+	</dd>
+</dl>
+
+<h3 id="native">Native access</h3>
+
+<p>
+Note: these functions are optional (FixNative must be present) and they work on native files only.
+</p>
+
+<dl>
+	<dt><code>function <b>get_native_descriptor</b>(): Integer</code></dt>
+	<dd>
+		Returns the native file descriptor for this file.
+	</dd>
+	<dt><code>function <b>get_native_handle</b>(): Pointer</code></dt>
+	<dd>
+		Returns the native handle for this file.
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixNative Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixNative Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "native/native";</code>
+</p>
+
+<h2>Memory class</h2>
+
+<p>
+Pointer to memory region.
+</p>
+
+<p>
+Inherits from <a href="pointer.html">Pointer</a>.
+</p>
+
+<h3>Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(lo: Integer, hi: Integer, size: Integer, owned: Boolean): Memory</code></dt>
+	<dd>
+		Creates a new memory region at given address and size. You can specify
+		if it should automatically deallocate it using <code>free</code> function
+		(when it's owned).
+	</dd>
+	<dt><code>static function <b>from_shared_array</b>(shared_array[, offset: Integer, size: Integer]): Memory</code></dt>
+	<dd>
+		Creates a memory view for the region used by the shared array with given
+		byte offset and size (or whole array). The reference to the shared array is
+		kept.
+	</dd>
+	<dt><code>static function <b>from_pointer</b>(ptr: Pointer, offset: Integer, size: Integer): Memory</code></dt>
+	<dd>
+		Creates a new memory region at address from given pointer using offset and size.
+		The memory region is unowned, you must keep reference to the original memory
+		to prevent crashes.
+	</dd>
+</dl>
+
+<h3>Allocation</h3>
+
+<dl>
+	<dt><code>static function <b>alloc</b>(size: Integer): Memory</code></dt>
+	<dd>
+		Allocates a new memory region with given size. The memory is zeroed.
+	</dd>
+	<dt><code>static function <b>alloc_fast</b>(size: Integer): Memory</code></dt>
+	<dd>
+		Allocates a new memory region with given size. The memory is not zeroed.
+	</dd>
+	<dt><code>function <b>realloc</b>(size: Integer): Memory</code></dt>
+	<dd>
+		Rellocates the memory region with a new size. The old pointer must not
+		be used.
+	</dd>
+	<dt><code>function <b>free</b>()</code></dt>
+	<dd>
+		Frees the memory region.
+	</dd>
+</dl>
+
+<h3>Properties</h3>
+
+<dl>
+	<dt><code>function <b>get_size</b>(): Integer</code></dt>
+	<dd>
+		Returns the size of the memory region.
+	</dd>
+	<dt><code>function <b>is_owned</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the memory region is owned (will be automatically deallocated).
+	</dd>
+</dl>
+
+<h3>Utility functions</h3>
+
+<dl>
+	<dt><code>static function <b>for_string_utf8</b>(s: String): Memory</code></dt>
+	<dd>
+		Returns a new memory region with given UTF-8 zero-terminated string.
+	</dd>
+</dl>
+
+</body>
+</html>

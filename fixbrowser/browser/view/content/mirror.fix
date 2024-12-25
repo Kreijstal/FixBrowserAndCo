@@ -1,0 +1,151 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/content/content_data";
+
+var @mirror_line_part: MirrorLinePart;
+
+class MirrorObject
+{
+	var @marker;
+	var @mirror: MirrorState;
+	var @block: BlockView;
+	var @id: Integer;
+	var @x: Integer;
+	var @y: Integer;
+	var @width: Integer;
+	var @ascent: Integer;
+	var @descent: Integer;
+	var @overdraw: Integer;
+	var @draw_layers: Integer;
+	var @data;
+
+	function @marker() {}
+
+	constructor create(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, min_layer: Integer, max_layer: Integer, data, mirror: MirrorState)
+	{
+		this.mirror = mirror;
+		this.block = block;
+		this.id = id;
+		this.x = x;
+		this.y = y;
+		this.width = width;
+		this.ascent = ascent;
+		this.descent = descent;
+		this.overdraw = overdraw;
+		marker = MirrorObject::marker#1;
+		draw_layers = (min_layer << 16) | max_layer;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) > 0 && obj[0] === MirrorObject::marker#1;
+	}
+	
+	function add_to_line(line: LineBuilder)
+	{
+		var prev_obj = line.get_context() as MirrorObject;
+		line.set_context(this);
+
+		if (prev_obj != null && prev_obj.y != y) {
+			line.next_line();
+		}
+
+		var empty_width = x - line.get_current_x();
+		if (empty_width > 0) {
+			line.add_part(empty_width, 0, 0, 0, LinePart::get_empty(), null);
+		}
+		if (draw_layers != 0) {
+			var min_layer = draw_layers >> 16;
+			var max_layer = draw_layers & 0xFFFF;
+			for (var i=min_layer; i<=max_layer; i++) {
+				line.add_draw_layer(i);
+			}
+		}
+		line.add_part(width, ascent, descent, overdraw, MirrorLinePart::get(), this);
+	}
+}
+
+class MirrorLinePart: LinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): MirrorLinePart
+	{
+		var handler = mirror_line_part;
+		if (!handler) {
+			handler = create();
+			mirror_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function paint(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		var obj = data as MirrorObject;
+
+		obj.mirror.redirected = false;
+		var (r, e) = obj.block.draw_part(p, obj.id, 0, x, y);
+		obj.mirror.redirected = true;
+		if (e) throw e;
+
+		p.push();
+		p.translate(x, y-ascent);
+		//p.fill_rect(0, 0, width, ascent+descent, 0xFFFF00FF);
+		draw_rect(p, 0, 0, width, ascent+descent, 0xFFFF00FF);
+		p.pop();
+	}
+
+	override function paint_layer(block: BlockView, id: Integer, layer: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		var obj = data as MirrorObject;
+
+		obj.mirror.redirected = false;
+		var (r, e) = obj.block.draw_part(p, obj.id, layer, x, y);
+		obj.mirror.redirected = true;
+		if (e) throw e;
+	}
+	
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		return false;
+	}
+}
+
+function @draw_rect(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)
+{
+	p.fill_rect(x, y, width, 1, color);
+	p.fill_rect(x, y+1, 1, height-1, color);
+	p.fill_rect(x, y+height-1, width, 1, color);
+	p.fill_rect(x+width-1, y+1, 1, height-2, color);
+}

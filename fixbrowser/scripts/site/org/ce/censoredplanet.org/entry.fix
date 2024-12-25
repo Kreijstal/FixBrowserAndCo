@@ -1,0 +1,8 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	add_style_to_element(document, "body", "width: auto; height: auto");
+	remove_element(document, "body > noscript");
+	remove_element(document, "nav#navbar > noscript");
+}

@@ -1,0 +1,769 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "cellsplit/worker_comm";
+import "cellsplit/server/packets";
+import "cellsplit/server/quadtree";
+import "cellsplit/util/vector";
+import "cellsplit/util/connection";
+import "cellsplit/util/random";
+
+const EAT_MULT = 0.877058019;
+
+const @BLOCK_AREA = 512.0;
+const @PERF_LOG = 0;
+
+var @global_id_counter: Integer;
+
+class World
+{
+	var @size_x: Float;
+	var @size_y: Float;
+	var @blocks: Block[Integer];
+	var @min_x: Integer;
+	var @min_y: Integer;
+	var @max_x: Integer;
+	var @max_y: Integer;
+	var @num_pellets: Integer;
+	var @cells: Cell[];
+	var @quad: QuadTree;
+	
+	constructor create(size_x: Float, size_y: Float)
+	{
+		size_x = size_x * 0.5;
+		size_y = size_y * 0.5;
+
+		min_x = ifloor(-size_x / BLOCK_AREA);
+		min_y = ifloor(-size_y / BLOCK_AREA);
+		max_x = ifloor(size_x / BLOCK_AREA);
+		max_y = ifloor(size_y / BLOCK_AREA);
+
+		this.size_x = size_x;
+		this.size_y = size_y;
+
+		blocks = {};
+		for (var i=min_y; i<=max_y; i++) {
+			for (var j=min_x; j<=max_x; j++) {
+				blocks[(j << 16) | (i & 0xFFFF)] = Block::create();
+			}
+		}
+
+		cells = [];
+		quad = QuadTree::create(iceil(fmax(size_x, size_y)*2.0));
+	}
+
+	function @get_block(x: Integer, y: Integer): Block
+	{
+		return blocks[(x << 16) | (y & 0xFFFF)];
+	}
+
+	function get_pellet_count(): Integer
+	{
+		return num_pellets;
+	}
+
+	function get_cell_count_for_type(type: Integer): Integer
+	{
+		var cnt = 0;
+		foreach (var cell in cells) {
+			if (cell.type == type) cnt++;
+		}
+		return cnt;
+	}
+
+	function get_cell_count_for_owner(owner: View): Integer
+	{
+		var cnt = 0;
+		foreach (var cell in cells) {
+			if (cell.owner === owner) cnt++;
+		}
+		return cnt;
+	}
+
+	function get_environment_cells(): Cell[]
+	{
+		var out = [];
+		foreach (var cell in cells) {
+			if (cell.type != CELL_PLAYER) {
+				out[] = cell;
+			}
+		}
+		return out;
+	}
+
+	function add_pellet(x: Float, y: Float, size: Float, color: Integer)
+	{
+		x = fclamp(x, -size_x, size_x);
+		y = fclamp(y, -size_y, size_y);
+		var id = ++global_id_counter;
+		var block = get_block(ifloor(x / BLOCK_AREA), ifloor(y / BLOCK_AREA));
+		block.pellets[] = {
+			.id: id,
+			.x: x,
+			.y: y,
+			.size: size,
+			.color: color
+		};
+		num_pellets++;
+
+		if (block.views.length > 0) {
+			var packet = AddPelletsPacket::create(id, x, y, size, color);
+			foreach (var view in block.views) {
+				view.events[] = packet;
+			}
+		}
+	}
+
+	function remove_pellet(id: Integer, x: Float, y: Float)
+	{
+		var block = get_block(ifloor(x / BLOCK_AREA), ifloor(y / BLOCK_AREA));
+		var pellets = block.pellets;
+		foreach (var i in pellets) {
+			if (pellets[i].id == id) {
+				array_remove(pellets, i as Integer, Pellet::SIZE);
+				num_pellets--;
+				if (block.views.length > 0) {
+					var packet = RemovePelletsPacket::create(id);
+					foreach (var view in block.views) {
+						view.events[] = packet;
+					}
+				}
+				return;
+			}
+		}
+	}
+
+	function consume_pellets(cx: Float, cy: Float, radius: Float): Float
+	{
+		var radius_sqr = radius * radius;
+		var block_min_x = max(ifloor((cx-radius) / BLOCK_AREA), min_x);
+		var block_min_y = max(ifloor((cy-radius) / BLOCK_AREA), min_y);
+		var block_max_x = min(ifloor((cx+radius) / BLOCK_AREA), max_x);
+		var block_max_y = min(ifloor((cy+radius) / BLOCK_AREA), max_y);
+		var mass = 0.0;
+
+		for (var y=block_min_y; y<=block_max_y; y++) {
+			for (var x=block_min_x; x<=block_max_x; x++) {
+				var block = get_block(x, y);
+				var pellets = block.pellets;
+				var packet: RemovePelletsPacket = null;
+				foreach (var i in pellets) {
+					var dx = cx - pellets[i].x;
+					var dy = cy - pellets[i].y;
+					if ((dx*dx + dy*dy) <= radius_sqr) { //XXX
+						mass += Cell::size_to_mass(pellets[i].size);
+						if (!packet) {
+							packet = RemovePelletsPacket::create();
+						}
+						packet.ids[] = pellets[i].id;
+						num_pellets--;
+						array_remove(pellets, i as Integer, Pellet::SIZE);
+						i--;
+						continue;
+					}
+				}
+				if (packet != null && block.views.length > 0) { //XXX
+					foreach (var view in block.views) {
+						view.events[] = packet;
+					}
+				}
+			}
+		}
+		return mass;
+	}
+
+	function grow_random_pellet(random: Random, inc: Float, max: Float)
+	{
+		var (key, block) = blocks.entry(random.next(blocks.length));
+		if (length(block.pellets) > 0) {
+			var idx = (random.next(length(block.pellets) / Pellet::SIZE) * Pellet::SIZE) as Pellet;
+			var size = fmin(block.pellets[idx].size + inc, max);
+			block.pellets[idx].size = size;
+			if (block.views.length > 0) {
+				var packet = GrowPelletPacket::create(block.pellets[idx].id, size);
+				foreach (var view in block.views) {
+					view.events[] = packet;
+				}
+			}
+		}
+	}
+
+	function get_cells_in_radius(x: Float, y: Float, radius: Float, cells: Cell[])
+	{
+		quad.get(x + size_x, y + size_y, radius, cells);
+
+		for (var i=0; i<cells.length; i++) {
+			var cell = cells[i];
+			var dx = cell.cx - x;
+			var dy = cell.cy - y;
+			var len = sqrt(dx*dx + dy*dy);
+			if (len > radius+cell.size) {
+				cells.remove(i--);
+			}
+		}
+	}
+
+	function update_cells()
+	{
+		foreach (var cell in cells) {
+			cell.update();
+		}
+	}
+
+	function handle_collisions()
+	{
+		if (PERF_LOG != 0) perf_reset();
+		var eaten_cells: Cell[] = [];
+		var quad = this.quad;
+		var other_cells: Cell[] = [];
+		var size_x = this.size_x;
+		var size_y = this.size_y;
+		foreach (var cell1 in cells) {
+			if (cell1.is_eaten) continue;
+			var x1 = cell1.cx;
+			var y1 = cell1.cy;
+			var radius1 = cell1.size;
+			quad.get(x1 + size_x, y1 + size_y, radius1, other_cells);
+			foreach (var cell2 in other_cells) {
+				if (cell1 === cell2) continue;
+				if (cell2.is_eaten) continue;
+				var x2 = cell2.cx;
+				var y2 = cell2.cy;
+				var radius2 = cell2.size;
+
+				var dx = x2 - x1;
+				var dy = y2 - y1;
+				var len = sqrt(dx*dx + dy*dy);
+				if (len > radius1+radius2) continue;
+				if (radius1 > radius2) {
+					if ((len < radius1 - radius2/3.0) && cell1.eats(cell2)) { //XXX
+						cell2.is_eaten = true;
+						eaten_cells[] = cell2;
+						continue;
+					}
+				}
+				else {
+					if ((len < radius2 - radius1/3.0) && cell2.eats(cell1)) { //XXX
+						cell1.is_eaten = true;
+						eaten_cells[] = cell1;
+						continue;
+					}
+				}
+				if (!cell1.collides_with(cell2)) continue;
+
+				if (fabs(len) > 0.0001) {
+					dx = dx / len;
+					dy = dy / len;
+				}
+				else {
+					dx = 1.0;
+					dy = 1.0;
+				}
+
+				var total_weight = radius1 + radius2;
+				var weight1 = radius2 / total_weight;
+				var weight2 = radius1 / total_weight;
+				len = radius1 + radius2 - len;
+				x1 = x1 - dx * len * weight1;
+				y1 = y1 - dy * len * weight1;
+				x2 = x2 + dx * len * weight2;
+				y2 = y2 + dy * len * weight2;
+				cell1.set_position(x1, y1);
+				cell2.set_position(x2, y2);
+			}
+		}
+		if (PERF_LOG != 0) perf_log("collision");
+
+		foreach (var cell in cells) {
+			cell.clip_to_world();
+			cell.update_position();
+		}
+
+		if (PERF_LOG != 0) perf_log("update");
+
+		foreach (var cell in eaten_cells) {
+			cell.destroy();
+		}
+	}
+}
+
+class Cell
+{
+	var @world: World;
+	var @id: Integer;
+	var @cx: Float;
+	var @cy: Float;
+	var @size: Float;
+	var @color: Integer;
+	var @account: String;
+	var @nick: String;
+	var @owner: View;
+	var @type: Integer;
+	var @dirty: Boolean;
+	var @collision_dx: Float;
+	var @collision_dy: Float;
+	var @quad_cx: Float;
+	var @quad_cy: Float;
+	var @quad_size: Float;
+	var @is_eaten: Boolean;
+	var @bouncy: Boolean;
+
+	constructor create(world: World, cx: Float, cy: Float, size: Float, color: Integer, account: String, nick: String, owner: View, type: Integer)
+	{
+		this.world = world;
+		this.id = ++global_id_counter;
+		this.cx = cx;
+		this.cy = cy;
+		this.size = size;
+		this.color = color;
+		this.account = account != null? account.as_const() : null;
+		this.nick = nick;
+		this.owner = owner;
+		this.type = type;
+
+		world.cells[] = this;
+		world.quad.add(this, cx + world.size_x, cy + world.size_y, size);
+		quad_cx = cx;
+		quad_cy = cy;
+		quad_size = size;
+
+		if (owner) {
+			owner.cells[] = this;
+		}
+	}
+
+	function destroy()
+	{
+		var world = this.world;
+		var cells = world.cells;
+		for (var i=0; i<cells.length; i++) {
+			if (cells[i] === this) {
+				cells.remove(i);
+				break;
+			}
+		}
+		world.quad.remove(this, quad_cx + world.size_x, quad_cy + world.size_y, quad_size);
+
+		if (owner) {
+			var owner_cells = owner.cells;
+			for (var i=0; i<owner_cells.length; i++) {
+				if (owner_cells[i] === this) {
+					owner_cells.remove(i);
+					break;
+				}
+			}
+			if (owner.destroy_func) {
+				(owner.destroy_func)(owner.destroy_data, this); //XXX
+			}
+		}
+	}
+
+	function update_position()
+	{
+		if (!dirty) return;
+
+		var new_x = this.cx;
+		var new_y = this.cy;
+		var new_size = this.size;
+
+		var size_x = world.size_x;
+		var size_y = world.size_y;
+		world.quad.add(this, new_x + size_x, new_y + size_y, new_size);
+		world.quad.remove(this, quad_cx + size_x, quad_cy + size_y, quad_size);
+		quad_cx = new_x;
+		quad_cy = new_y;
+		quad_size = new_size;
+
+		dirty = false;
+	}
+
+	function get_world(): World
+	{
+		return world;
+	}
+
+	function get_id(): Integer
+	{
+		return id;
+	}
+
+	function get_x(): Float
+	{
+		return cx;
+	}
+
+	function get_y(): Float
+	{
+		return cy;
+	}
+
+	function get_size(): Float
+	{
+		return size;
+	}
+
+	function get_mass(): Float
+	{
+		return size_to_mass(size);
+	}
+
+	function get_color(): Integer
+	{
+		return color;
+	}
+
+	function get_account(): String
+	{
+		return account;
+	}
+
+	function get_nick(): String
+	{
+		return {nick};
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+
+	function get_owner(): View
+	{
+		return owner;
+	}
+
+	function get_position(): Vector
+	{
+		return Vector(cx, cy);
+	}
+
+	function set_position(pos: Vector)
+	{
+		cx = pos.x;
+		cy = pos.y;
+		dirty = true;
+	}
+
+	function set_position(x: Float, y: Float)
+	{
+		cx = x;
+		cy = y;
+		dirty = true;
+	}
+
+	function set_size(size: Float)
+	{
+		this.size = size;
+		dirty = true;
+	}
+
+	function set_mass(mass: Float)
+	{
+		set_size(mass_to_size(mass));
+	}
+
+	function set_bouncy(bouncy: Boolean)
+	{
+		this.bouncy = bouncy;
+	}
+
+	function is_bouncy(): Boolean
+	{
+		return bouncy;
+	}
+
+	function clip_to_world()
+	{
+		var sx = world.size_x;
+		var sy = world.size_y;
+		var radius = size * EAT_MULT;
+		if (bouncy) {
+			reflect_to_rect(-sx + radius, -sy + radius, sx - radius, sy - radius);
+			reflect_to_rect(-sx + radius, -sy + radius, sx - radius, sy - radius);
+		}
+		clip_to_rect(-sx + radius, -sy + radius, sx - radius, sy - radius);
+	}
+
+	function reflect_to_rect(x1: Float, y1: Float, x2: Float, y2: Float)
+	{
+		if (cx < x1) { cx = x1 + (x1 - cx); reflect_x(); dirty = true; }
+		if (cy < y1) { cy = y1 + (y1 - cy); reflect_y(); dirty = true; }
+		if (cx > x2) { cx = x2 - (cx - x2); reflect_x(); dirty = true; }
+		if (cy > y2) { cy = y2 - (cy - y2); reflect_y(); dirty = true; }
+	}
+
+	function clip_to_rect(x1: Float, y1: Float, x2: Float, y2: Float)
+	{
+		if (cx < x1) { cx = x1; dirty = true; }
+		if (cy < y1) { cy = y1; dirty = true; }
+		if (cx > x2) { cx = x2; dirty = true; }
+		if (cy > y2) { cy = y2; dirty = true; }
+	}
+
+	static function mass_to_size(mass: Float): Float
+	{
+		return sqrt(mass * 100.0);
+	}
+
+	static function size_to_mass(size: Float): Float
+	{
+		return size*size / 100.0;
+	}
+
+	virtual function update()
+	{
+	}
+
+	virtual function collides_with(cell: Cell): Boolean
+	{
+		return false;
+	}
+
+	virtual function eats(cell: Cell): Boolean
+	{
+		return false;
+	}
+
+	virtual function reflect_x()
+	{
+	}
+
+	virtual function reflect_y()
+	{
+	}
+}
+
+class View
+{
+	var @world: World;
+	var @min_x: Integer;
+	var @min_y: Integer;
+	var @max_x: Integer;
+	var @max_y: Integer;
+	var @valid: Boolean;
+	var @min_coord_x: Float;
+	var @min_coord_y: Float;
+	var @max_coord_x: Float;
+	var @max_coord_y: Float;
+	var @events: Packet[];
+	var @prev_cells: Cell[Integer];
+	var @next_cells: Cell[Integer];
+	var @cells: Cell[];
+
+	var @new_cell_in_view_func;
+	var @new_cell_in_view_data;
+	var @destroy_func;
+	var @destroy_data;
+
+	constructor create(world: World)
+	{
+		this.world = world;
+		events = [];
+		prev_cells = {};
+		next_cells = {};
+		cells = [];
+	}
+
+	function get_cells(): Cell[]
+	{
+		return cells;
+	}
+
+	function set_new_cell_in_view_callback(func, data)
+	{
+		new_cell_in_view_func = func;
+		new_cell_in_view_data = data;
+	}
+
+	function set_destroy_callback(func, data)
+	{
+		destroy_func = func;
+		destroy_data = data;
+	}
+
+	function set_rect(min_coord_x: Float, min_coord_y: Float, max_coord_x: Float, max_coord_y: Float)
+	{
+		var events = this.events;
+		var reset = false;
+
+		var old_min_x = this.min_x;
+		var old_min_y = this.min_y;
+		var old_max_x = this.max_x;
+		var old_max_y = this.max_y;
+
+		var new_min_x = max(ifloor(min_coord_x / BLOCK_AREA), world.min_x);
+		var new_min_y = max(ifloor(min_coord_y / BLOCK_AREA), world.min_y);
+		var new_max_x = min(ifloor(max_coord_x / BLOCK_AREA), world.max_x);
+		var new_max_y = min(ifloor(max_coord_y / BLOCK_AREA), world.max_y);
+
+		if (!valid || max(old_min_x, new_min_x) > min(old_max_x, new_max_x) || max(old_min_y, new_min_y) > min(old_max_y, new_max_y)) {
+			events.clear();
+			events[] = ClearViewPacket::create();
+			if (valid) {
+				for (var y=old_min_y; y<=old_max_y; y++) {
+					for (var x=old_min_x; x<=old_max_x; x++) {
+						var block = world.get_block(x, y);
+						var views = block.views;
+						for (var i=0; i<views.length; i++) {
+							if (views[i] === this) {
+								views.remove(i);
+								break;
+							}
+						}
+					}
+				}
+			}
+			old_min_x = new_min_x;
+			old_min_y = new_min_y;
+			old_max_x = new_max_x;
+			old_max_y = new_max_y;
+			reset = true;
+		}
+
+		var common_min_x = min(old_min_x, new_min_x);
+		var common_min_y = min(old_min_y, new_min_y);
+		var common_max_x = max(old_max_x, new_max_x);
+		var common_max_y = max(old_max_y, new_max_y);
+
+		for (var y=common_min_y; y<=common_max_y; y++) {
+			for (var x=common_min_x; x<=common_max_x; x++) {
+				var block = world.get_block(x, y);
+				var in_old = (x >= old_min_x && y >= old_min_y && x <= old_max_x && y <= old_max_y);
+				var in_new = (x >= new_min_x && y >= new_min_y && x <= new_max_x && y <= new_max_y);
+				if (reset) {
+					in_old = false;
+					in_new = true;
+				}
+				if (in_new && !in_old) {
+					events[] = AddPelletsPacket::create(block.pellets);
+					block.views[] = this;
+				}
+				else if (!in_new && in_old) {
+					var pellets = block.pellets;
+					var packet = RemovePelletsPacket::create();
+					var ids = packet.ids;
+					foreach (var i in pellets) {
+						ids[] = pellets[i].id;
+					}
+					events[] = packet;
+					var views = block.views;
+					for (var i=0; i<views.length; i++) {
+						if (views[i] === this) {
+							views.remove(i);
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		valid = true;
+		this.min_x = new_min_x;
+		this.min_y = new_min_y;
+		this.max_x = new_max_x;
+		this.max_y = new_max_y;
+		this.min_coord_x = min_coord_x;
+		this.min_coord_y = min_coord_y;
+		this.max_coord_x = max_coord_x;
+		this.max_coord_y = max_coord_y;
+	}
+
+	function destroy()
+	{
+		set_destroy_callback(null, null);
+
+		var cells = this.cells;
+		for (var i=cells.length-1; i>=0; i--) {
+			cells[i].destroy();
+		}
+
+		if (!valid) return;
+
+		var block_min_x = max(ifloor(min_x / BLOCK_AREA), world.min_x);
+		var block_min_y = max(ifloor(min_y / BLOCK_AREA), world.min_y);
+		var block_max_x = min(ifloor(max_x / BLOCK_AREA), world.max_x);
+		var block_max_y = min(ifloor(max_y / BLOCK_AREA), world.max_y);
+
+		for (var y=block_min_y; y<=block_max_y; y++) {
+			for (var x=block_min_x; x<=block_max_x; x++) {
+				var views = world.get_block(x, y).views;
+				for (var i=0; i<views.length; i++) {
+					if (views[i] === this) {
+						views.remove(i);
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	function send_packets(conn: Connection)
+	{
+		foreach (var packet in events) {
+			packet.send(conn);
+		}
+		
+		var cells: Cell[] = [];
+		var size_x = world.size_x;
+		var size_y = world.size_y;
+		world.quad.get(ifloor(min_coord_x + size_x), ifloor(min_coord_y + size_y), iceil(max_coord_x + size_x), iceil(max_coord_y + size_y), cells);
+
+		var prev_cells = this.prev_cells;
+		var next_cells = this.next_cells;
+
+		var update_packet = UpdateCellsPacket::create();
+		foreach (var cell in cells) {
+			if (!prev_cells.contains((cell as Integer)|0)) {
+				AddCellPacket::create(cell.id, cell.type, cell.cx, cell.cy, cell.size, cell.color, cell.account, cell.nick, cell.owner === this).send(conn);
+				if (new_cell_in_view_func) {
+					new_cell_in_view_func(new_cell_in_view_data, cell);
+				}
+			}
+			update_packet.add(cell.id, cell.cx, cell.cy, cell.size);
+			next_cells[(cell as Integer)|0] = cell;
+		}
+		foreach (var key, cell in prev_cells) {
+			if (!next_cells.contains(key)) {
+				RemoveCellPacket::create(cell.id).send(conn);
+			}
+		}
+		update_packet.send(conn);
+
+		events.clear();
+		prev_cells.clear();
+		this.prev_cells = next_cells;
+		this.next_cells = prev_cells;
+	}
+}
+
+class @Block
+{
+	var @pellets: [Pellet];
+	var @views: View[];
+
+	constructor create()
+	{
+		pellets = [];
+		views = [];
+	}
+}

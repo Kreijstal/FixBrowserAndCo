@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/barrier";</code>
+</p>
+
+<h2>Barrier class</h2>
+
+<p>
+Barrier allows multiple tasks to stop at a common execution point. Once all tasks are waiting
+the execution is resumed for all tasks.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(num_tasks: Integer): Barrier</code></dt>
+	<dd>
+		Creates a new barrier for given number of tasks.
+	</dd>
+	<dt><code>
+		function <b>wait</b>()<br>
+		function <b>wait</b>(marker: Dynamic)<br>
+	</code></dt>
+	<dd>
+		Waits at the barrier until all tasks do the same then continues. It can optionally
+		compare a marker value to detect that the tasks are waiting at the same execution
+		point.
+	</dd>
+</dl>
+
+</body>
+</html>

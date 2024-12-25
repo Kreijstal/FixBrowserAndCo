@@ -1,0 +1,5 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+}

@@ -1,0 +1,6 @@
+import "dispatch/javascript-site" : parent;
+
+function handle_request(request)
+{
+	return parent:handle_request(request);
+}

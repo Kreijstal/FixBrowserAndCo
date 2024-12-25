@@ -1,0 +1,1025 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "browser/richtext/model";
+import "util/string";
+
+const {
+	BOX_BACKGROUND,
+	BOX_CONTENT
+};
+
+const {
+	INLINE_TEXT,
+	INLINE_ANCHOR,
+	INLINE_NESTED_BOX,
+	INLINE_TABLE,
+	INLINE_FORM_TEXT_FIELD,
+	INLINE_IMAGE_BOX
+};
+
+const {
+	DIALOG_UNKNOWN_CONTENT,
+	DIALOG_IMAGE_VIEWER,
+	DIALOG_TEXT_VIEWER
+};
+
+const {
+	BORDER_STYLE_NONE,
+	BORDER_STYLE_SOLID,
+	BORDER_STYLE_RIDGE,
+	BORDER_STYLE_INSET,
+	BORDER_STYLE_HIDDEN,
+	BORDER_STYLE_DOTTED,
+	BORDER_STYLE_DASHED,
+	BORDER_STYLE_DOUBLE,
+	BORDER_STYLE_GROOVE,
+	BORDER_STYLE_OUTSET
+};
+
+const {
+	FONT_STYLE_NORMAL = 0,
+	FONT_STYLE_BOLD   = 0x01,
+	FONT_STYLE_ITALIC = 0x02
+};
+
+class Document
+{
+	var background: BackgroundBox;
+	var main: ContentBox;
+	var layers: Box[];
+	var images: ImageDesc[String];
+	var dialog: Dialog;
+	var title: String;
+	
+	constructor create()
+	{
+		layers = [];
+		images = {};
+	}
+
+	constructor for_dialog(dialog: Dialog)
+	{
+		this.dialog = dialog;
+	}
+
+	function dump()
+	{
+		var s = {""};
+		if (dialog) {
+			dialog.dump(this, s, 0);
+		}
+		else {
+			for (var i=0; i<length(layers); i++) {
+				var layer = layers[i];
+				array_append(s, "layer #"+i+" (");
+				if (layer.type == BOX_BACKGROUND) {
+					array_append(s, "background");
+				}
+				else {
+					array_append(s, "content");
+				}
+				array_append(s, ")");
+				if (layer.parent) {
+					array_append(s, " parent=#"+get_layer_index(layer.parent));
+				}
+				if (layer === background || layer === main) {
+					array_append(s, " [main]");
+				}
+				array_append(s, "\n");
+
+				layer.dump(this, s, 1);
+			}
+		}
+		if (length(s) > 0) {
+			array_set_length(s, length(s)-1);
+		}
+		log(s);
+	}
+
+	function @get_layer_index(layer: Box): Integer
+	{
+		for (var j=0; j<length(layers); j++) {
+			if (layers[j] === layer) {
+				return j;
+			}
+		}
+		return -1;
+	}
+
+	function serialize(): Byte[]
+	{
+		return @serialize(this); //XXX
+	}
+
+	static function unserialize(data: Byte[]): Document
+	{
+		var doc = @unserialize(data) as Document; //XXX
+		if (doc.dialog != null && doc.dialog.type == DIALOG_IMAGE_VIEWER) { //XXX
+			(doc.dialog as ImageViewerDialog).fixup();
+		}
+		return doc;
+	}
+}
+
+class Box
+{
+	var type: Integer;
+	var parent: BackgroundBox;
+
+	constructor @create(type: Integer)
+	{
+		this.type = type;
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		switch (type) {
+			case BOX_BACKGROUND: (this as BackgroundBox).dump(doc, s, level); return;
+			case BOX_CONTENT:    (this as ContentBox).dump(doc, s, level); return;
+		}
+		throw error("unknown type: "+type);
+	}
+}
+
+class BackgroundBox: Box
+{
+	var fixed: Boolean;
+	var left: Size;
+	var top: Size;
+	var right: Size;
+	var bottom: Size;
+	var background: Background;
+	
+	constructor create(background: Background)
+	{
+		super::create(BOX_BACKGROUND);
+		left = Size::auto();
+		top = Size::auto();
+		right = Size::auto();
+		bottom = Size::auto();
+		this.background = background;
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "fixed="+fixed+" left="+left.to_string()+" top="+top.to_string()+" right="+right.to_string()+" bottom="+bottom.to_string()+"\n");
+	}
+}
+
+class ContentBox: Box
+{
+	var paragraphs: Paragraph[];
+
+	constructor create(parent: BackgroundBox)
+	{
+		super::create(BOX_CONTENT);
+		this.parent = parent;
+		paragraphs = [];
+	}
+
+	function add(para: Paragraph)
+	{
+		paragraphs[] = para;
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		for (var i=0; i<length(paragraphs); i++) {
+			if (i > 0) {
+				indent(s, level);
+				array_append(s, "---\n");
+			}
+			paragraphs[i].dump(doc, s, level);
+		}
+	}
+}
+
+class Paragraph: Block
+{
+	constructor create(style: ParagraphStyle)
+	{
+		super::create(style);
+	}
+
+	function get_style(): ParagraphStyle
+	{
+		return (this as Block).get_style();
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		for (var i=0, n=get_flow_count(); i<n; i++) {
+			var text = get_flow_text(i);
+			var style = get_flow_style(i);
+			(style as InlineStyle).dump(doc, s, text, level);
+		}
+	}
+}
+
+class ParagraphStyle
+{
+	var margin_left: Integer;
+	var margin_top: Integer;
+	var margin_right: Integer;
+	var margin_bottom: Integer;
+	var padding_left: Integer;
+	var padding_top: Integer;
+	var padding_right: Integer;
+	var padding_bottom: Integer;
+
+	constructor create()
+	{
+	}
+}
+
+class InlineStyle
+{
+	var type: Integer;
+	var background: Background;
+	var mirror: Mirror;
+	var hover: Hover;
+
+	constructor @create(type: Integer)
+	{
+		this.type = type;
+	}
+
+	function @dump(doc: Document, s: String, text: String, level: Integer)
+	{
+		switch (type) {
+			case INLINE_TEXT:            (this as TextStyle).dump(doc, s, text, level); return;
+			case INLINE_ANCHOR:          (this as Anchor).dump(doc, s, text, level); return;
+			case INLINE_NESTED_BOX:      (this as NestedBox).dump(doc, s, text, "nested box", null, level); return;
+			case INLINE_TABLE:           (this as TableBox).dump(doc, s, text, level); return;
+			case INLINE_FORM_TEXT_FIELD: (this as FormTextField).dump(doc, s, text, level); return;
+			case INLINE_IMAGE_BOX:       (this as ImageBox).dump(doc, s, text, level); return;
+		}
+		throw error("unknown type: "+type);
+	}
+}
+
+class TextStyle: InlineStyle
+{
+	var font_family: String[];
+	var font_size: Float;
+	var font_style: Integer;
+	var color: Integer;
+	var shadow: Shadow;
+	var newlines: Boolean;
+
+	constructor create(background: Background, mirror: Mirror)
+	{
+		super::create(INLINE_TEXT);
+		this.background = background;
+		this.mirror = mirror;
+		font_family = [];
+		font_size = 16;
+		color = 0xFF000000;
+	}
+
+	function @dump(doc: Document, s: String, text: String, level: Integer)
+	{
+		indent(s, level);
+		if (length(text) > 40) {
+			text = array_extract(text, 0, 20)+"'...'"+array_extract(text, length(text)-20, 20);
+		}
+		array_append(s, "text='"+escape(text)+"'");
+		if (background) {
+			array_append(s, " background["+background.to_string()+"]");
+		}
+		if (shadow) {
+			array_append(s, " shadow["+shadow.to_string()+"]");
+		}
+		if (newlines) {
+			array_append(s, " newlines");
+		}
+		if (mirror) {
+			mirror.dump(doc, s);
+		}
+		s[] = '\n';
+		if (hover) {
+			hover.dump(s, level+1);
+		}
+	}
+}
+
+class Anchor: InlineStyle
+{
+	var box: ContentBox;
+	var align_baselines: Boolean;
+
+	constructor create(box: ContentBox, mirror: Mirror)
+	{
+		super::create(INLINE_ANCHOR);
+		this.box = box;
+		this.mirror = mirror;
+	}
+
+	function @dump(doc: Document, s: String, text: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "anchor layer=#"+doc.get_layer_index(box)+" align_baselines="+align_baselines);
+		if (mirror) {
+			mirror.dump(doc, s);
+		}
+		s[] = '\n';
+	}
+}
+
+class NestedBox: InlineStyle
+{
+	var box: ContentBox;
+	var width: Size;
+	var vertical_align: Float;
+	var box_background: Background;
+
+	constructor create(background: Background, box_background: Background, mirror: Mirror)
+	{
+		super::create(INLINE_NESTED_BOX);
+		this.background = background;
+		this.box_background = box_background;
+		this.mirror = mirror;
+		box = ContentBox::create(null);
+		width = Size::fraction(1.0);
+		vertical_align = 0.5;
+	}
+
+	function @dump(doc: Document, s: String, text: String, name: String, attrs: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, name+": width="+width.to_string()+" vertical_align="+vertical_align);
+		if (background) {
+			array_append(s, " background["+background.to_string()+"]");
+		}
+		if (box_background) {
+			array_append(s, " box_background["+box_background.to_string()+"]");
+		}
+		if (attrs) {
+			array_append(s, attrs);
+		}
+		if (mirror) {
+			mirror.dump(doc, s);
+		}
+		s[] = '\n';
+		box.dump(doc, s, level+1);
+	}
+}
+
+class TableBox: InlineStyle // XXX: rename to Table
+{
+	var width: Size;
+	var height: Size;
+	var vertical_align: Float;
+	var box_background: Background;
+	var cells_width: Integer;
+	var cells_height: Integer;
+	var cells: TableCell[];
+
+	// TODO: shouldn't be part of model
+	var cur_x: Integer;
+	var cur_y: Integer;
+
+	constructor create(background: Background, box_background: Background, mirror: Mirror)
+	{
+		super::create(INLINE_TABLE);
+		this.background = background;
+		this.box_background = box_background;
+		this.mirror = mirror;
+		width = Size::auto();
+		height = Size::auto();
+		vertical_align = 0.5;
+		cells_width = 0;
+		cells_height = 0;
+		cells = [];
+	}
+
+	function set_cell(x: Integer, y: Integer, cell: TableCell)
+	{
+		if (x >= cells_width || y >= cells_height) {
+			var new_width = max(cells_width, x+1);
+			var new_height = max(cells_height, y+1);
+			var new_cells = Array::create(new_width * new_height);
+			for (var i=0; i<cells_height; i++) {
+				for (var j=0; j<cells_width; j++) {
+					new_cells[i*new_width+j] = cells[i*cells_width+j];
+				}
+			}
+			cells_width = new_width;
+			cells_height = new_height;
+			cells = new_cells;
+		}
+
+		cells[y*cells_width+x] = cell;
+	}
+
+	function @dump(doc: Document, s: String, text: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "table: "+cells_width+"x"+cells_height+" width="+width.to_string()+" vertical_align="+vertical_align);
+		if (background) {
+			array_append(s, " background["+background.to_string()+"]");
+		}
+		if (box_background) {
+			array_append(s, " box_background["+box_background.to_string()+"]");
+		}
+		if (mirror) {
+			mirror.dump(doc, s);
+		}
+		s[] = '\n';
+		for (var i=0; i<cells_height; i++) {
+			for (var j=0; j<cells_width; j++) {
+				var cell = cells[i*cells_width+j];
+				if (cell) {
+					cell.dump(doc, s, j+"x"+i, level+1);
+				}
+			}
+		}
+	}
+}
+
+class TableCell: NestedBox
+{
+	var height: Size;
+	var horizontal_align: Float;
+	var colspan: Integer;
+	var rowspan: Integer;
+
+	constructor create(background: Background, box_background: Background, mirror: Mirror)
+	{
+		super::create(background, box_background, mirror);
+		width = Size::auto();
+		height = Size::auto();
+		horizontal_align = 0.0;
+		vertical_align = 0.5;
+		colspan = 1;
+		rowspan = 1;
+	}
+
+	function @dump(doc: Document, s: String, coords: String, level: Integer)
+	{
+		var attrs = {""};
+		array_append(attrs, " height="+height.to_string()+" horizontal_align="+horizontal_align);
+		if (colspan != 1) {
+			array_append(attrs, " colspan="+colspan);
+		}
+		if (rowspan != 1) {
+			array_append(attrs, " rowspan="+rowspan);
+		}
+		(this as NestedBox).dump(doc, s, null, "cell("+coords+")", attrs, level);
+	}
+}
+
+class FormTextField: InlineStyle
+{
+	var text: String;
+	var width: Size;
+	var height: Size;
+	var vertical_align: Float;
+
+	constructor create(width: Size, height: Size, vertical_align: Float, background: Background, mirror: Mirror)
+	{
+		super::create(INLINE_FORM_TEXT_FIELD);
+		this.width = width;
+		this.height = height;
+		this.vertical_align = vertical_align;
+		this.background = background;
+		this.mirror = mirror;
+		text = "";
+	}
+
+	function @dump(doc: Document, s: String, text: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "form text field");
+		if (background) {
+			array_append(s, " background["+background.to_string()+"]");
+		}
+		if (mirror) {
+			mirror.dump(doc, s);
+		}
+		s[] = '\n';
+	}
+}
+
+class ImageBox: InlineStyle
+{
+	var image: ImageDesc;
+	var vertical_align: Float;
+	var hover_group: HoverGroup;
+
+	constructor create(doc: Document, url: String, outside: Boolean, hover_group: HoverGroup, vertical_align: Float, background: Background, mirror: Mirror)
+	{
+		super::create(INLINE_IMAGE_BOX);
+		this.vertical_align = vertical_align;
+		this.hover_group = hover_group;
+		this.background = background;
+		this.mirror = mirror;
+
+		image = hash_get(doc.images, url, null);
+		if (!image) {
+			image = ImageDesc::create(url, outside);
+			doc.images[url] = image;
+		}
+	}
+
+	function @dump(doc: Document, s: String, text: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "image box");
+		if (background) {
+			array_append(s, " background["+background.to_string()+"]");
+		}
+		if (mirror) {
+			mirror.dump(doc, s);
+		}
+		s[] = '\n';
+		image.dump(s, level+1);
+		if (hover_group) {
+			hover_group.dump(s, level+1);
+		}
+	}
+}
+
+class Dialog
+{
+	var type: Integer;
+
+	constructor @create(type: Integer)
+	{
+		this.type = type;
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		switch (type) {
+			case DIALOG_UNKNOWN_CONTENT: (this as UnknownContentDialog).dump(doc, s, level); return;
+			case DIALOG_IMAGE_VIEWER:    (this as ImageViewerDialog).dump(doc, s, level); return;
+			case DIALOG_TEXT_VIEWER:     (this as TextViewerDialog).dump(doc, s, level); return;
+		}
+		throw error("unknown dialog type: "+type);
+	}
+}
+
+class UnknownContentDialog: Dialog
+{
+	var content_type: String;
+	
+	constructor create(content_type: String)
+	{
+		super::create(DIALOG_UNKNOWN_CONTENT);
+		this.content_type = content_type;
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "unknown content dialog\n");
+		indent(s, level+1);
+		array_append(s, "content_type="+content_type+"\n");
+	}
+}
+
+class ImageViewerDialog: Dialog
+{
+	var @data: Byte[];
+	
+	constructor create(data: Byte[])
+	{
+		super::create(DIALOG_IMAGE_VIEWER);
+		this.data = data;
+		fixup();
+	}
+
+	function @fixup()
+	{
+		if (!is_shared(data)) {
+			data = to_shared(data);
+		}
+	}
+
+	function get_data(): Byte[]
+	{
+		return data;
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "image viewer dialog\n");
+		indent(s, level+1);
+		array_append(s, "file size="+length(data)+"\n");
+	}
+}
+
+class TextViewerDialog: Dialog
+{
+	var content_type: String;
+	var text: String;
+	
+	constructor create(content_type: String, text: String)
+	{
+		super::create(DIALOG_TEXT_VIEWER);
+		this.content_type = content_type;
+		this.text = text;
+	}
+
+	function @dump(doc: Document, s: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "text viewer dialog\n");
+		indent(s, level+1);
+		array_append(s, "content_type="+content_type+"\n");
+		indent(s, level+1);
+		var text = array_extract(text, 0, min(length(text), 50));
+		for (var i=0; i<length(text); i++) {
+			if (text[i] < 32 || text[i] > 127) {
+				text[i] = '?';
+			}
+		}
+		array_append(s, "text="+text+"...\n");
+	}
+}
+
+class Mirror
+{
+	var box: ContentBox;
+
+	constructor create(box: ContentBox)
+	{
+		this.box = box;
+	}
+
+	function @dump(doc: Document, s: String)
+	{
+		array_append(s, " mirror=#"+doc.get_layer_index(box));
+	}
+}
+
+class Background
+{
+	var color: Integer;
+	var margin_left: Integer;
+	var margin_top: Integer;
+	var margin_right: Integer;
+	var margin_bottom: Integer;
+	var padding_left: Integer;
+	var padding_top: Integer;
+	var padding_right: Integer;
+	var padding_bottom: Integer;
+	var border_left: Integer;
+	var border_top: Integer;
+	var border_right: Integer;
+	var border_bottom: Integer;
+	var style_left: Integer;
+	var style_top: Integer;
+	var style_right: Integer;
+	var style_bottom: Integer;
+	var color_left: Integer;
+	var color_top: Integer;
+	var color_right: Integer;
+	var color_bottom: Integer;
+	var shadow: Shadow;
+	var parent: Background;
+
+	// TODO: shouldn't really be there but simplifies the code (it is updated during relayouting in view)
+	var inline_ascent: Integer;
+	var inline_descent: Integer;
+
+	constructor create()
+	{
+	}
+
+	function to_string(): String
+	{
+		var s = {""};
+		if (color != 0) {
+			if (length(s) > 0) s[] = ',';
+			array_append(s, "color="+color_to_string(color));
+		}
+		if ((margin_left | margin_top | margin_right | margin_bottom) != 0) {
+			if (length(s) > 0) s[] = ',';
+			if (margin_left == margin_top && margin_left == margin_right && margin_left == margin_bottom) {
+				array_append(s, "margin="+margin_left);
+			}
+			else if (margin_left == margin_right && margin_top == margin_bottom) {
+				array_append(s, "margin=["+margin_left+","+margin_top+"]");
+			}
+			else {
+				array_append(s, "margin=["+margin_left+","+margin_top+","+margin_right+","+margin_bottom+"]");
+			}
+		}
+		if ((padding_left | padding_top | padding_right | padding_bottom) != 0) {
+			if (length(s) > 0) s[] = ',';
+			if (padding_left == padding_top && padding_left == padding_right && padding_left == padding_bottom) {
+				array_append(s, "padding="+padding_left);
+			}
+			else if (padding_left == padding_right && padding_top == padding_bottom) {
+				array_append(s, "padding=["+padding_left+","+padding_top+"]");
+			}
+			else {
+				array_append(s, "padding=["+padding_left+","+padding_top+","+padding_right+","+padding_bottom+"]");
+			}
+		}
+		if ((border_left | border_top | border_right | border_bottom) != 0) {
+			if (length(s) > 0) s[] = ',';
+			if (border_left == border_top && border_left == border_right && border_left == border_bottom) {
+				array_append(s, "border="+border_left);
+			}
+			else if (border_left == border_right && border_top == border_bottom) {
+				array_append(s, "border=["+border_left+","+border_top+"]");
+			}
+			else {
+				array_append(s, "border=["+border_left+","+border_top+","+border_right+","+border_bottom+"]");
+			}
+		}
+		if ((style_left | style_top | style_right | style_bottom) != 0) {
+			if (length(s) > 0) s[] = ',';
+			if (style_left == style_top && style_left == style_right && style_left == style_bottom) {
+				array_append(s, "border_style="+style_to_string(style_left));
+			}
+			else if (style_left == style_right && style_top == style_bottom) {
+				array_append(s, "border_style=["+style_to_string(style_left)+","+style_to_string(style_top)+"]");
+			}
+			else {
+				array_append(s, "border_style=["+style_to_string(style_left)+","+style_to_string(style_top)+","+style_to_string(style_right)+","+style_to_string(style_bottom)+"]");
+			}
+		}
+		if ((color_left | color_top | color_right | color_bottom) != 0) {
+			if (length(s) > 0) s[] = ',';
+			if (color_left == color_top && color_left == color_right && color_left == color_bottom) {
+				array_append(s, "border_color="+color_to_string(color_left));
+			}
+			else if (color_left == color_right && color_top == color_bottom) {
+				array_append(s, "border_color=["+color_to_string(color_left)+","+color_to_string(color_top)+"]");
+			}
+			else {
+				array_append(s, "border_color=["+color_to_string(color_left)+","+color_to_string(color_top)+","+color_to_string(color_right)+","+color_to_string(color_bottom)+"]");
+			}
+		}
+		if (shadow) {
+			if (length(s) > 0) s[] = ',';
+			array_append(s, "shadow=["+shadow.to_string()+"]");
+		}
+		if (parent) {
+			if (length(s) > 0) s[] = ',';
+			array_append(s, "parent=["+parent.to_string()+"]");
+		}
+		return s;
+	}
+
+	static function @style_to_string(type: Integer): String
+	{
+		switch (type) {
+			case BORDER_STYLE_NONE:   return "none";
+			case BORDER_STYLE_SOLID:  return "solid";
+			case BORDER_STYLE_RIDGE:  return "ridge";
+			case BORDER_STYLE_INSET:  return "inset";
+			case BORDER_STYLE_HIDDEN: return "hidden";
+			case BORDER_STYLE_DOTTED: return "dotted";
+			case BORDER_STYLE_DASHED: return "dashed";
+			case BORDER_STYLE_DOUBLE: return "double";
+			case BORDER_STYLE_GROOVE: return "groove";
+			case BORDER_STYLE_OUTSET: return "outset";
+		}
+		return "???";
+	}
+}
+
+class Shadow
+{
+	var offset_x: Integer;
+	var offset_y: Integer;
+	var blur: Float;
+	var spread: Integer;
+	var color: Integer;
+	var next: Shadow;
+
+	constructor create(offset_x: Integer, offset_y: Integer, blur: Float, spread: Integer, color: Integer)
+	{
+		this.offset_x = offset_x;
+		this.offset_y = offset_y;
+		this.blur = blur;
+		this.spread = spread;
+		this.color = color;
+	}
+
+	function to_string(): String
+	{
+		var s = {""};
+		if ((offset_x | offset_y) != 0) {
+			if (length(s) > 0) s[] = ',';
+			array_append(s, "offset=["+offset_x+","+offset_y+"]");
+		}
+		if (blur != 0.0) {
+			if (length(s) > 0) s[] = ',';
+			array_append(s, "blur="+blur);
+		}
+		if (spread != 0) {
+			if (length(s) > 0) s[] = ',';
+			array_append(s, "spread="+spread);
+		}
+		if (color != 0) {
+			if (length(s) > 0) s[] = ',';
+			array_append(s, "color="+color_to_string(color));
+		}
+		if (next) {
+			s[] = ';';
+			array_append(s, next.to_string());
+		}
+		return s;
+	}
+}
+
+class Hover
+{
+	var group: HoverGroup;
+	var color: Integer;
+	var background: Background;
+
+	constructor create(group: HoverGroup, color: Integer, background: Background)
+	{
+		this.group = group;
+		this.color = color;
+		this.background = background;
+	}
+
+	function @dump(s: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "hover color="+color_to_string(color));
+		if (background) {
+			array_append(s, " background["+background.to_string()+"]");
+		}
+		s[] = '\n';
+		group.dump(s, level+1);
+	}
+}
+
+class HoverGroup
+{
+	var url: String;
+
+	constructor create(url: String)
+	{
+		this.url = url;
+	}
+
+	function @dump(s: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "group=#"+((this as Integer)|0)+" url="+url);
+		s[] = '\n';
+	}
+}
+
+class ImageDesc
+{
+	var url: String;
+	var outside: Boolean;
+
+	constructor create(url: String, outside: Boolean)
+	{
+		this.url = url;
+		this.outside = outside;
+	}
+
+	function @dump(s: String, level: Integer)
+	{
+		indent(s, level);
+		array_append(s, "url="+url);
+		s[] = '\n';
+		indent(s, level);
+		array_append(s, "outside="+outside);
+		s[] = '\n';
+	}
+}
+
+class Size
+{
+	static function auto(): Size
+	{
+		return 0x80000000 as Size;
+	}
+
+	static function pixels(num: Integer): Size
+	{
+		if (num == 0x80000000) {
+			num++;
+		}
+		return num as Size;
+	}
+
+	static function fraction(fract: Float): Size
+	{
+		return (fract*1.0) as Size;
+	}
+
+	function is_auto(): Boolean
+	{
+		return is_int(this) && (this as Integer) == 0x80000000;
+	}
+
+	function is_pixels(): Boolean
+	{
+		return is_int(this) && (this as Integer) != 0x80000000;
+	}
+
+	function is_fraction(): Boolean
+	{
+		return is_float(this);
+	}
+
+	function get_pixels(): Integer
+	{
+		return this as Integer;
+	}
+
+	function get_fraction(): Float
+	{
+		return this as Float;
+	}
+
+	function to_string(): String
+	{
+		if (is_auto()) {
+			return "auto";
+		}
+		else if (is_pixels()) {
+			return get_pixels()+"px";
+		}
+		else if (is_fraction()) {
+			return (get_fraction() * 100.0)+"%";
+		}
+		return "invalid";
+	}
+}
+
+function @indent(s: String, level: Integer)
+{
+	while (level-- > 0) {
+		s[] = ' ';
+		s[] = ' ';
+	}
+}
+
+function @color_to_string(color: Integer): String
+{
+	return "#"+string_pad_left(string_int_hex(color), 8, '0');
+}
+
+function @escape(input: String): String
+{
+	var hex = "0123456789ABCDEF";
+	var s = {""};
+	for (var i=0; i<input.length; i++) {
+		var c = input[i];
+		switch (c) {
+			case '\\': s[] = '\\'; s[] = '\\'; continue;
+			case '\n': s[] = '\\'; s[] = 'n'; continue;
+			case '\r': s[] = '\\'; s[] = 'r'; continue;
+			case '\t': s[] = '\\'; s[] = 't'; continue;
+			case '\'': s[] = '\\'; s[] = '\''; continue;
+			case '\"': s[] = '\\'; s[] = '\"'; continue;
+
+			default:
+				if (c >= 0 && c < 32) {
+					s[] = '\\';
+					s[] = hex[c >> 4];
+					s[] = hex[c & 15];
+					continue;
+				}
+				s[] = c;
+				continue;
+		}
+	}
+	return s;
+}
+
+function @to_shared(buf: Byte[]): Byte[]
+{
+	var arr = array_create_shared(length(buf), 1);
+	array_copy(arr, 0, buf, 0, length(buf));
+	return arr;
+}

@@ -1,0 +1,116 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/subview";
+
+class BufferView: SubView
+{
+	var @img: Image;
+	var @dirty: Rect;
+	var @alpha: Float;
+
+	constructor create()
+	{
+		dirty = Rect();
+		alpha = 1.0;
+	}
+
+	function set_alpha(alpha: Float)
+	{
+		this.alpha = alpha;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var width = max(1, get_width());
+		var height = max(1, get_height());
+		if (img == null || img.get_width() != width || img.get_height() != height) {
+			img = Image::create(width, height);
+			var p2 = Painter::create(img);
+			draw_children(p2);
+		}
+		else if (dirty.is_valid()) {
+			var p2 = Painter::create(img);
+			p2.clip(dirty);
+			p2.clear_rect(dirty, 0x00000000);
+			draw_children(p2);
+			dirty.clear();
+		}
+
+		if (get_child_count() > 0 && alpha > 0.0) {
+			if (alpha >= 1.0) {
+				p.draw_image(0, 0, img);
+			}
+			else {
+				var tr = Transform::create();
+				var color = mul32(iround(alpha*255.0), 0x01010101);
+				p.fill_rect(0, 0, img.get_width(), img.get_height(), Shader {
+					blend(sample_nearest(img, tr) * color);
+				});
+			}
+		}
+	}
+
+	override function handle_repaint(rect: Rect)
+	{
+		dirty.union(rect);
+	}
+
+	function get_image(): Image
+	{
+		return img;
+	}
+
+	function get_alpha(): Float
+	{
+		return alpha;
+	}
+
+	function update_offscreen(width: Integer, height: Integer): Rect
+	{
+		width = max(1, width);
+		height = max(1, height);
+
+		if (img == null || img.get_width() != width || img.get_height() != height) {
+			img = Image::create(width, height);
+			var p2 = Painter::create(img);
+			draw_children(p2);
+			return Rect(0, 0, width, height);
+		}
+
+		if (!dirty.is_valid()) return null;
+		dirty.intersect(0, 0, width, height);
+		if (!dirty.is_valid()) return null;
+
+		var p2 = Painter::create(img);
+		p2.clip(dirty);
+		p2.clear_rect(dirty, 0x00000000);
+		draw_children(p2);
+		var ret = clone(dirty) as Rect;
+		dirty.clear();
+		return ret;
+	}
+}

@@ -1,0 +1,117 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/file";
+import "util/json";
+import "util/long";
+import "cellsplit/util/config";
+
+class BanList
+{
+	var @path: Path;
+	var @data: JSON;
+	var @ips: Boolean[String];
+	var @mtime: Long;
+
+	constructor create()
+	{
+		path = Path(get_config_file("bans.json"));
+		update_data();
+	}
+
+	function @update_data()
+	{
+		if (!path.exists()) {
+			if (!data || mtime != null) {
+				data = {"account": {}, "ip": []} as JSON;
+				ips = {};
+				mtime = null;
+			}
+			return;
+		}
+		
+		var cur_mtime = path.get_modification_time();
+		if (mtime == null || mtime != cur_mtime) {
+			data = JSON::parse(File::read_whole(path));
+			mtime = cur_mtime;
+
+			ips = {};
+			var account_map = data.get("account") as String[][String];
+			foreach (var key, value in account_map) {
+				foreach (var ip in value) {
+					ips[ip] = true;
+				}
+			}
+
+			var ip_list = data.get("ip") as String[];
+			foreach (var ip in ip_list) {
+				ips[ip] = true;
+			}
+		}
+	}
+
+	function @save()
+	{
+		var (r, e) = File::write_whole(path, data.to_bytes());
+		if (e) {
+			dump(e);
+		}
+		mtime = path.get_modification_time();
+	}
+
+	function add_ban(account: String, ip: String)
+	{
+		var account_map = data.get("account") as String[][String];
+		var list = account_map.get(account, null);
+		if (!list) {
+			list = [];
+			account_map[account] = list;
+		}
+		var found = false;
+		for (var i=0; i<list.length; i++) {
+			if (list[i] == ip) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			list[] = ip;
+			ips[ip] = true;
+		}
+
+		save();
+	}
+
+	function is_account_banned(account: String): Boolean
+	{
+		update_data();
+		var account_map = data.get("account") as String[][String];
+		return account_map.contains(account);
+	}
+
+	function is_ip_banned(ip: String): Boolean
+	{
+		update_data();
+		return ips.contains(ip);
+	}
+}

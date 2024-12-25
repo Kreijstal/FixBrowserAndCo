@@ -1,0 +1,438 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/http/http";
+import "io/http/util";
+import "io/http/request" : http_req;
+import "io/http/path";
+import "io/http/url";
+import "io/http/date";
+import "io/tls/cert";
+import "io/tls/tls";
+import "io/charset/charset";
+import "task/task";
+import "task/channel";
+import "util/string";
+import "util/html";
+import "util/base64";
+import "browser/html/html";
+import "browser/html/element";
+import "browser/css/css";
+import "browser/css/stylesheet";
+import "browser/script/script";
+import "browser/script/request" : script_request;
+import "browser/worker/result";
+import "browser/worker/html";
+import "browser/view/model";
+
+var @request_id;
+var @cancel_channel;
+
+function @real_load_url(url, reload, fetch_channel)
+{
+	while (!global_get("tls.initialized")) {
+		worker_send([MSG_STATUS, request_id, "Loading TLS root certificates..."]);
+		task_sleep(100);
+	}
+	
+	var target_url = url_create(url);
+
+	var scheme = target_url->URL_scheme;
+	if (scheme != "http" && scheme != "https") {
+		worker_send([MSG_ERROR, request_id, {"Invalid URL scheme: ", scheme}]);
+		return;
+	}
+
+	if (target_url->URL_scheme != null || target_url->URL_host != null) {
+		if (length(target_url->URL_path) == 0 || target_url->URL_path[0] != '/') {
+			array_insert(target_url->URL_path, 0, '/');
+			worker_send([MSG_REDIRECT, request_id, url_to_string(target_url)]);
+			return;
+		}
+	}
+
+	if (url_is_relative(target_url)) {
+		worker_send([MSG_ERROR, request_id, "URL must be absolute"]);
+		return;
+	}
+
+	var port_part = "";
+	if (target_url->URL_port) {
+		port_part = {":", target_url->URL_port};
+	}
+	worker_send([MSG_STATUS, request_id, {"Connecting to ", target_url->URL_host, port_part, "..."}]);
+	log({"URL: ", url_to_string(target_url)});
+
+	var script_request = script_request:request_create(target_url);
+	var replaced_content = script_run_domain_handle_request(script_request);
+	if (script_request->REQ_redirect) {
+		worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+		return;
+	}
+	if (replaced_content) {
+		var document = html_parse(replaced_content, null);
+
+		script_run_domain_adjust_document(script_request, document);
+		if (script_request->REQ_redirect) {
+			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+			return;
+		}
+		document = request_get_document_replacement(script_request, document);
+		script_run_global_adjust_document(script_request, document);
+		if (script_request->REQ_redirect) {
+			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+			return;
+		}
+		document = request_get_document_replacement(script_request, document);
+
+		//send_response(response, element_to_html(document));
+		return;
+	}
+
+	var http = http_create(target_url);
+	http_set_header(http, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:63.0) Gecko/20100101 Firefox/63.0");
+	http_set_header(http, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+	http_set_header(http, "Accept-Language", "en-US,en;q=0.5");
+	http_set_header(http, "Accept-Encoding", "identity");
+	//if (req->REQ_post_data) {
+	//	http_set_post_data(http, "application/x-www-form-urlencoded; charset=UTF-8", req->REQ_post_data);
+	//}
+	if (script_request->REQ_send_headers) {
+		var headers = script_request->REQ_send_headers;
+		for (var i=0; i<length(headers); i+=2) {
+			http_set_header(http, headers[i+0], headers[i+1]);
+		}
+	}
+
+	var (http_res, http_err) = http_connect(http, update_status#2, null);
+	if (http_err) {
+		var tls_error = http_get_tls_error(http);
+		if (tls_error) {
+			worker_send([MSG_STATUS, request_id, {"TLS error: ", tls_error}]);
+			handle_tls_error(http_get_tls_certs(http), tls_error, target_url, http_get_tls_cert_hash(http));
+			return;
+		}
+		return 0, http_err;
+	}
+
+	cancel_check();
+	worker_send([MSG_STATUS, request_id, "Processing HTTP response..."]);
+
+	var http_req = http_get_request(http);
+	script_request->script_request:REQ_headers = http_req->http_req:REQ_headers;
+
+	var code = http_req->REQ_code;
+	if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+		var location = request_get_header(http_req, "Location");
+		if (!location) {
+			worker_send([MSG_ERROR, request_id, "No redirect location provided"]);
+			return;
+		}
+		stream_close(http);
+
+		var new_url = url_to_string(url_merge(target_url, url_create(location)));
+		
+		replaced_content = script_run_domain_handle_redirect(script_request, new_url);
+		if (!replaced_content && !script_request->REQ_redirect) {
+			replaced_content = script_run_global_handle_redirect(script_request, new_url);
+		}
+		
+		if (script_request->REQ_redirect) {
+			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+			return;
+		}
+		if (replaced_content) {
+			var document = html_parse(replaced_content, null);
+		
+			script_run_domain_adjust_document(script_request, document);
+			if (script_request->REQ_redirect) {
+				worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+				return;
+			}
+			document = request_get_document_replacement(script_request, document);
+			script_run_global_adjust_document(script_request, document);
+			if (script_request->REQ_redirect) {
+				worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+				return;
+			}
+			document = request_get_document_replacement(script_request, document);
+
+			//send_response(response, element_to_html(document));
+			return;
+		}
+
+		worker_send([MSG_REDIRECT, request_id, new_url]);
+		return;
+	}
+
+	var content_type = request_get_header(http_req, "Content-Type");
+	if (!content_type) {
+		content_type = "text/html";
+	}
+	var content_charset = null;
+	var parts = string_split(content_type, ';');
+	content_type = string_trim(parts[0]);
+	for (var i=1; i<length(parts); i++) {
+		var p = string_split(parts[i], '=');
+		if (length(p) == 2 && string_trim(p[0]) == "charset") {
+			content_charset = charset_get(string_trim(p[1]));
+		}
+	}
+
+	var date = null, expires = null;
+	var date_header = request_get_header(http_req, "Date");
+	if (date_header) {
+		var (r, e) = parse_http_date(date_header);
+		if (!e) {
+			date = r;
+		}
+	}
+	var expires_header = request_get_header(http_req, "Expires");
+	if (expires_header) {
+		var (r, e) = parse_http_date(expires_header);
+		if (!e) {
+			expires = r;
+		}
+	}
+	if (expires) {
+		if (date) {
+			var (r, e) = http_date_compare(expires, date);
+			if (!e) {
+				if (r <= 0) {
+					expires = null;
+				}
+			}
+		}
+	}
+
+	var content_len = request_get_header(http_req, "Content-Length");
+	if (content_len) {
+		content_len = string_parse_long(content_len);
+		if (content_len[1] < 0) {
+			return 0, error("negative content length");
+		}
+	}
+
+	if (is_image_file(content_type)) {
+		var buf = stream_read_all(http);
+		stream_close(http);
+		worker_send([MSG_CONTENT, request_id, document_for_dialog(image_viewer_dialog_create(buf))]);
+		return;
+	}
+
+	if (is_html_file(content_type)) {
+		global_set("unknown_css_properties", {}, 3600);
+		var buf = stream_read_all(http);
+		stream_close(http);
+		worker_send([MSG_STATUS, request_id, "Parsing HTML..."]);
+		var document = html_parse(buf, content_charset);
+
+		script_run_domain_adjust_document(script_request, document);
+		if (script_request->REQ_redirect) {
+			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+			return;
+		}
+		document = request_get_document_replacement(script_request, document);
+		script_run_global_adjust_document(script_request, document);
+		if (script_request->REQ_redirect) {
+			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
+			return;
+		}
+		document = request_get_document_replacement(script_request, document);
+
+		worker_send([MSG_CONTENT, request_id, process_document(document, url_to_string(target_url), reload, update_status#2, null, [rewrite_url#3, script_request, target_url], fetch_channel, cancel_check#0)]);
+		return;
+	}
+
+	/*
+	if (is_css_file(content_type)) {
+		var buf = stream_read_all(http);
+		stream_close(http);
+		var sheet = css_parse(buf, content_charset);
+		var processed = stylesheet_to_string(sheet);
+		//global_set(["cache.css", req->REQ_path], processed, 3600);
+		//send_response(response, "text/css; charset=UTF-8", processed);
+		return;
+	}
+	*/
+
+	if (is_text_file(content_type)) {
+		var buf = stream_read_all(http);
+		stream_close(http);
+		var str = string_from_utf8(buf);
+		for (var i=0; i<length(str); i++) {
+			if (str[i] == 0) {
+				str[i] = 0xFFFD;
+			}
+		}
+		worker_send([MSG_CONTENT, request_id, document_for_dialog(text_viewer_dialog_create(content_type, str))]);
+		return;
+	}
+	
+	stream_close(http);
+	worker_send([MSG_CONTENT, request_id, document_for_dialog(unknown_content_dialog_create(content_type))]);
+}
+
+function @handle_tls_error(tls_certs, tls_error, url, hash)
+{
+	worker_send([MSG_ERROR, request_id, {"TLS error: ", tls_error}]);
+}
+
+function @is_image_file(content_type)
+{
+	if (content_type == "image/gif") return true;
+	if (content_type == "image/png") return true;
+	if (content_type == "image/jpeg") return true;
+	if (content_type == "image/jpg") return true;
+	if (content_type == "image/svg+xml") return true;
+	return false;
+}
+
+function @is_html_file(content_type)
+{
+	if (content_type == "text/html") return true;
+	if (content_type == "application/xhtml+xml") return true;
+	return false;
+}
+
+function @is_css_file(content_type)
+{
+	if (content_type == "text/css") return true;
+	return false;
+}
+
+function @is_text_file(content_type)
+{
+	if (string_starts_with(content_type, "text/")) return true;
+	if (content_type == "application/javascript") return true;
+	if (content_type == "application/x-javascript") return true;
+	if (content_type == "application/xml") return true;
+	if (content_type == "application/json") return true;
+	return false;
+}
+
+function @rewrite_url(data, value, direct_link)
+{
+	var script_request = data[1];
+	var base = data[2];
+
+	if (string_starts_with(value, "javascript:")) {
+		return ["#", false];
+	}
+	
+	var same_domain = false;
+	var bypass_outside = false;
+	if (!same_domain && script_request) {
+		var urls = script_request->REQ_same_domain_urls;
+		if (urls && hash_contains(urls, value)) {
+			same_domain = true;
+			bypass_outside = true;
+		}
+	}
+
+	if (direct_link) {
+		same_domain = true;
+	}
+
+	var merged = url_merge(base, url_create(value));
+	var same_scheme = (base->URL_scheme == merged->URL_scheme);
+	if (!same_scheme && base->URL_scheme == "http" && merged->URL_scheme == "https") {
+		same_scheme = true;
+	}
+
+	if (!same_domain && script_request) {
+		var domains = script_request->REQ_same_domains;
+		if (domains) {
+			for (var i=0; i<length(domains); i+=2) {
+				if (domain_ends_with(merged->URL_host, domains[i+0])) {
+					if (domains[i+1] || same_scheme) {
+						same_domain = true;
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	if (!same_domain) {
+		if ((merged->URL_host != base->URL_host && !is_same_domain(base->URL_host, merged->URL_host)) || merged->URL_port != base->URL_port || !same_scheme) {
+			return [url_to_string(merged), true];
+		}
+	}
+	if (!bypass_outside && requires_outside_handler(merged)) {
+		return [url_to_string(merged), true];
+	}
+	return [url_to_string(merged), false];
+}
+
+function @domain_ends_with(domain, match)
+{
+	if (domain == match) return true;
+	var len = length(match);
+	if (length(domain) < len+1) return false;
+	if (domain[length(domain)-len-1] != '.') return false;
+	return array_extract(domain, length(domain)-len, len) == match;
+}
+
+function @requires_outside_handler(url)
+{
+	return extract_url_links(url) != null;
+}
+
+function @extract_url_links(url)
+{
+	var links;
+	for (var i=0; i<url_get_param_count(url); i++) {
+		var value = url_get_param_value(url, i);
+		if (!value) continue;
+		if (string_starts_with(value, "http://") || string_starts_with(value, "https://")) {
+			if (!links) links = [];
+			links[] = url_create(value);
+		}
+	}
+	return links;
+}
+
+function @update_status(data, text)
+{
+	worker_send([MSG_STATUS, request_id, text]);
+}
+
+function @cancel_check()
+{
+	if (!channel_is_timeout(channel_receive(cancel_channel, 0))) {
+		var e = error("request cancelled");
+		//dump(e);
+		return 0, e;
+	}
+}
+
+function load_url(request_id_param, url, reload, fetch_channel, cancel_channel_param)
+{
+	request_id = request_id_param;
+	cancel_channel = cancel_channel_param;
+
+	var (r, e) = real_load_url(url, reload, fetch_channel);
+	if (e) {
+		worker_send([MSG_EXCEPTION, request_id, e]);
+	}
+}

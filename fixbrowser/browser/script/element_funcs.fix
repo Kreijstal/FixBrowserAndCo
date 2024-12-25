@@ -1,0 +1,306 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/html/html";
+import "browser/html/element";
+import "browser/html/element_query";
+import "browser/html/element_multiquery";
+import "browser/script/handle_types";
+
+function @script_element_create(params, data)
+{
+	var type = params[0];
+	if (type[0] == '#') {
+		return 0, error("only normal elements can be created");
+	}
+	if (length(params) == 2) {
+		return script_create_handle(HANDLE_TYPE_ELEMENT, element_create(type, null, params[1]));
+	}
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_create(type));
+}
+
+function @script_element_create_text(params, data)
+{
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_create("#text", params[0]));
+}
+
+function @script_element_create_fragment(params, data)
+{
+	var doc = html_parse({"<html><body>", params[0], "</body></html>"}, null);
+	var elem = element_get_last_child(element_get_first_child(doc));
+	var frag = element_create("#fragment");
+	for (var e = element_get_first_child(elem), next; e; e = next) {
+		next = element_get_next(e);
+		element_remove_child(elem, e);
+		element_append_child(frag, e);
+	}
+	return script_create_handle(HANDLE_TYPE_ELEMENT, frag);
+}
+
+function @script_element_get_type(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	if (!elem) return null;
+	return element_get_type(elem);
+}
+
+function @script_element_get_parent1(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_parent(elem));
+}
+
+function @script_element_get_parent2(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	for (var i=0; i<params[1]; i++) {
+		elem = element_get_parent(elem);
+		if (!elem) break;
+	}
+	return script_create_handle(HANDLE_TYPE_ELEMENT, elem);
+}
+
+function @script_element_get_prev(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_prev(elem));
+}
+
+function @script_element_get_next(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_next(elem));
+}
+
+function @script_element_get_prev_tag(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_prev_tag(elem));
+}
+
+function @script_element_get_next_tag(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_next_tag(elem));
+}
+
+function @script_element_get_first_child(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_first_child(elem));
+}
+
+function @script_element_get_last_child(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_last_child(elem));
+}
+
+function @script_element_get_first_child_tag(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_first_child_tag(elem));
+}
+
+function @script_element_get_last_child_tag(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_get_last_child_tag(elem));
+}
+
+function @script_element_get_children_count(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return element_get_children_count(elem);
+}
+
+function @script_element_get_children_tag_count(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return element_get_children_tag_count(elem);
+}
+
+function @script_element_insert_before(params, data)
+{
+	var parent = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	var elem = script_get_handle(params[1], HANDLE_TYPE_ELEMENT);
+	var before = script_get_handle(params[2], HANDLE_TYPE_ELEMENT);
+	element_insert_before(parent, elem, before);
+}
+
+function @script_element_insert_after(params, data)
+{
+	var parent = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	var elem = script_get_handle(params[1], HANDLE_TYPE_ELEMENT);
+	var before = script_get_handle(params[2], HANDLE_TYPE_ELEMENT);
+	element_insert_after(parent, elem, before);
+}
+
+function @script_element_append_child(params, data)
+{
+	var parent = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	var elem = script_get_handle(params[1], HANDLE_TYPE_ELEMENT);
+	element_append_child(parent, elem);
+}
+
+function @script_element_remove_child(params, data)
+{
+	var parent = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	var elem = script_get_handle(params[1], HANDLE_TYPE_ELEMENT);
+	element_remove_child(parent, elem);
+}
+
+function @script_element_remove(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	element_remove_child(element_get_parent(elem), elem);
+}
+
+function @script_element_set_attr(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	element_set_attr(elem, params[1], params[2]);
+}
+
+function @script_element_get_attr(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return element_get_attr(elem, params[1]);
+}
+
+function @script_element_get_attrs(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	var attrs = element_get_attrs(elem);
+	return attrs? attrs : {};
+}
+
+function @script_element_set_attrs(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	element_set_attrs(elem, params[1]);
+}
+
+function @script_element_get_data(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return element_get_data(elem);
+}
+
+function @script_element_set_data(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	element_set_data(elem, params[1]);
+}
+
+function @script_element_to_html(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	if (!elem) return null;
+	return element_to_html(elem);
+}
+
+function @script_element_to_string(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	if (!elem) return null;
+	return element_to_html(elem, false);
+}
+
+function @script_element_query(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, element_query(elem, params[1]));
+}
+
+function @script_element_query_all(params, data)
+{
+	var elem = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
+	var result = element_query_all(elem, params[1]);
+	for (var i=0; i<length(result); i++) {
+		result[i] = script_create_handle(HANDLE_TYPE_ELEMENT, result[i]);
+	}
+	return result;
+}
+
+function @script_element_multiquery_create(params, data)
+{
+	return script_create_handle(HANDLE_TYPE_MULTIQUERY, element_multiquery_create());
+}
+
+function @script_element_multiquery_add(params, data)
+{
+	var mq = script_get_handle(params[0], HANDLE_TYPE_MULTIQUERY);
+	element_multiquery_add(mq, params[1], params[2]);
+}
+
+function @script_element_multiquery_match_all(params, data)
+{
+	var mq = script_get_handle(params[0], HANDLE_TYPE_MULTIQUERY);
+	var elem = script_get_handle(params[1], HANDLE_TYPE_ELEMENT);
+	return element_multiquery_match_all(mq, elem);
+}
+
+function @script_document_parse(params, data)
+{
+	var document = html_parse(params[0], null);
+	return script_create_handle(HANDLE_TYPE_ELEMENT, document);
+}
+
+function register_element_funcs(heap)
+{
+	script_register_function(heap, "element_create#1", script_element_create#2, null);
+	script_register_function(heap, "element_create#2", script_element_create#2, null);
+	script_register_function(heap, "element_create_text#1", script_element_create_text#2, null);
+	script_register_function(heap, "element_create_fragment#1", script_element_create_fragment#2, null);
+	script_register_function(heap, "element_get_type#1", script_element_get_type#2, null);
+	script_register_function(heap, "element_get_parent#1", script_element_get_parent1#2, null);
+	script_register_function(heap, "element_get_parent#2", script_element_get_parent2#2, null);
+	script_register_function(heap, "element_get_prev#1", script_element_get_prev#2, null);
+	script_register_function(heap, "element_get_next#1", script_element_get_next#2, null);
+	script_register_function(heap, "element_get_prev_tag#1", script_element_get_prev_tag#2, null);
+	script_register_function(heap, "element_get_next_tag#1", script_element_get_next_tag#2, null);
+	script_register_function(heap, "element_get_first_child#1", script_element_get_first_child#2, null);
+	script_register_function(heap, "element_get_last_child#1", script_element_get_last_child#2, null);
+	script_register_function(heap, "element_get_first_child_tag#1", script_element_get_first_child_tag#2, null);
+	script_register_function(heap, "element_get_last_child_tag#1", script_element_get_last_child_tag#2, null);
+	script_register_function(heap, "element_get_children_count#1", script_element_get_children_count#2, null);
+	script_register_function(heap, "element_get_children_tag_count#1", script_element_get_children_tag_count#2, null);
+	script_register_function(heap, "element_insert_before#3", script_element_insert_before#2, null);
+	script_register_function(heap, "element_insert_after#3", script_element_insert_after#2, null);
+	script_register_function(heap, "element_append_child#2", script_element_append_child#2, null);
+	script_register_function(heap, "element_remove_child#2", script_element_remove_child#2, null);
+	script_register_function(heap, "element_remove#1", script_element_remove#2, null);
+	script_register_function(heap, "element_set_attr#3", script_element_set_attr#2, null);
+	script_register_function(heap, "element_get_attr#2", script_element_get_attr#2, null);
+	script_register_function(heap, "element_get_attrs#1", script_element_get_attrs#2, null);
+	script_register_function(heap, "element_set_attrs#2", script_element_set_attrs#2, null);
+	script_register_function(heap, "element_get_data#1", script_element_get_data#2, null);
+	script_register_function(heap, "element_set_data#2", script_element_set_data#2, null);
+	script_register_function(heap, "element_to_html#1", script_element_to_html#2, null);
+	script_register_function(heap, "element_to_string#1", script_element_to_string#2, null);
+	script_register_function(heap, "element_query#2", script_element_query#2, null);
+	script_register_function(heap, "element_query_all#2", script_element_query_all#2, null);
+	script_register_function(heap, "element_multiquery_create#0", script_element_multiquery_create#2, null);
+	script_register_function(heap, "element_multiquery_add#3", script_element_multiquery_add#2, null);
+	script_register_function(heap, "element_multiquery_match_all#2", script_element_multiquery_match_all#2, null);
+	script_register_function(heap, "document_parse#1", script_document_parse#2, null);
+}

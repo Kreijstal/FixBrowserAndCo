@@ -1,0 +1,7 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "virustotalcloud.appspot.com")) return true;
+	return false;
+}

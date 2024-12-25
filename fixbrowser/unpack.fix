@@ -1,0 +1,448 @@
+/*
+ * FixScript Unpack v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+/*----------------------------------------------------------------------------
+
+This token processor allows to unpack arrays into variables. This is possible
+for both function parameters (useful for callbacks) and variable declarations
+(to easily return multiple values).
+
+Example:
+
+  use "unpack";
+  use "classes"; // supported, but optional
+
+  class Class
+  {
+      function some_callback([param1: String, param2], some_normal_param)
+      {
+          // 'this' variable will be used to extract the parameters and
+          // assigning the first entry in array to 'this' to regain access
+          // to object properties
+      }
+
+      function test(param1: String, param2)
+      {
+          run_callback(Class::some_callback#2, [this, param1, param2]);
+      }
+  }
+
+  function normal_func(data[some, named, params], [unnamed])
+  {
+      // you can specify variable name for the original array to allow
+      // access to it, or just use unnamed form when you don't need it
+
+      // when used in instance methods, you can use named form to disable
+      // the automatic handling of 'this'
+
+      // use this syntax to unpack variables from returned array:
+
+      var [some: String, variable: Integer] = multi_ret(); // or expression
+  }
+
+  function multi_ret()
+  {
+      return ["string", 123];
+  }
+
+----------------------------------------------------------------------------*/
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+var @global_counter;
+
+function process_tokens(fname, tokens, src)
+{
+	var in_class = false;
+	var is_static = -1;
+	var level = 0;
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		switch (tokens[i+TOK_type]) {
+			case '(', '{', '[':
+				level++;
+				continue;
+			case ')', '}', ']':
+				level--;
+				if (level <= is_static) {
+					is_static = -1;
+				}
+				if (level == 0) {
+					in_class = false;
+				}
+				continue;
+
+			case TOK_IDENT: {
+				var len = tokens[i+TOK_len];
+				if (len == 5) {
+					var off = tokens[i+TOK_off];
+					if (src[off] == 'c' && src[off+1] == 'l' && src[off+2] == 'a' && src[off+3] == 's' && src[off+4] == 's') {
+						if (level == 0) {
+							in_class = true;
+						}
+						continue;
+					}
+					continue;
+				}
+				else if (len == 6) {
+					var off = tokens[i+TOK_off];
+					if (src[off] == 's' && src[off+1] == 't' && src[off+2] == 'a' && src[off+3] == 't' && src[off+4] == 'i' && src[off+5] == 'c') {
+						is_static = level;
+					}
+					continue;
+				}
+				continue;
+			}
+
+			case KW_FUNCTION: {
+				i = parse_function(tokens, src, i, in_class, is_static != -1) - TOK_SIZE;
+				continue;
+			}
+
+			case KW_VAR: {
+				i += TOK_SIZE;
+				if (i < length(tokens) && tokens[i+TOK_type] == '[') {
+					i = parse_var_unpack(tokens, src, i) - TOK_SIZE;
+					continue;
+				}
+				else {
+					i -= TOK_SIZE;
+				}
+				continue;
+			}
+		}
+	}
+
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @parse_function(tokens, src, i, in_class, is_static)
+{
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] != '@') {
+		i -= TOK_SIZE;
+	}
+
+	i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+	i = expect_symbol(tokens, src, i, '(');
+
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] == ')') {
+		return i+TOK_SIZE;
+	}
+	i -= TOK_SIZE;
+
+	var new_tokens = [];
+
+	var num = 0;
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == TOK_IDENT) {
+			var name = get_token_value(tokens, src, i);
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == '[') {
+				var start = i; 
+				i = parse_declaration(tokens, src, i, new_tokens, name, false);
+				array_remove(tokens, start, i-start);
+				i = start - TOK_SIZE;
+			}
+			else {
+				i -= TOK_SIZE;
+			}
+		}
+		else if (tokens[i+TOK_type] == '[') {
+			var start = i; 
+			var gen_name = {"__unpack_tmp_var_", global_counter++};
+			var use_this = in_class && !is_static && num == 0;
+			if (use_this) {
+				tokens_parse(new_tokens, src, {"var ", gen_name, " = this as Dynamic; this = ", gen_name, "[0];"}, tokens[i+TOK_line]);
+			}
+			i = parse_declaration(tokens, src, i, new_tokens, gen_name, use_this);
+			if (use_this) {
+				var cnt = i-start;
+				if (i < length(tokens) && tokens[i+TOK_type] == ',') {
+					cnt += TOK_SIZE;
+				}
+				array_remove(tokens, start, cnt);
+			}
+			else {
+				array_remove(tokens, start, i-start-TOK_SIZE);
+				tokens[start+TOK_type] = TOK_IDENT;
+				tokens[start+TOK_off] = length(src);
+				tokens[start+TOK_len] = length(gen_name);
+				array_append(src, gen_name);
+			}
+			i = start;
+		}
+		else {
+			return 0, error({script_line(tokens[i+TOK_line]), ": expected parameter declaration"});
+		}
+
+		i = expect_expression(tokens, src, i);
+		i = expect_next(tokens, src, i);
+		var sym = tokens[i+TOK_type];
+		if (sym == ',') {
+			num++;
+			continue;
+		}
+		if (sym == ')') break;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected , or )"});
+	}
+		
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] == ':') {
+		i = skip_type(tokens, src, i) + TOK_SIZE;
+	}
+	var sym = tokens[i+TOK_type];
+	if (sym == ';') {
+		if (length(new_tokens) > 0) {
+			return 0, error({script_line(tokens[i+TOK_line]), ": unpacking of variables requires function body"});
+		}
+		return i+TOK_SIZE;
+	}
+	else if (sym == '{') {
+		if (length(new_tokens) > 0) {
+			array_replace_range(tokens, i+TOK_SIZE, i+TOK_SIZE, new_tokens);
+		}
+		return i;
+	}
+
+	return 0, error({script_line(tokens[i+TOK_line]), ": expected } or ;"});
+}
+
+function @parse_declaration(tokens, src, i, new_tokens, param_name, use_this)
+{
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] == ']') {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected at least one variable to unpack"});
+	}
+	i -= TOK_SIZE;
+
+	var num = use_this? 1 : 0;
+	for (;;) {
+		i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+
+		var name = get_token_value(tokens, src, i);
+
+		var line = tokens[i+TOK_line];
+		tokens_parse(new_tokens, src, {"var ", name, "=", param_name, "[", num++, "]"}, line);
+
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == ':') {
+			var start = i+TOK_SIZE;
+			i = skip_type(tokens, src, i);
+			tokens_parse(new_tokens, src, "as", line);
+			array_append(new_tokens, tokens, start, i-start+TOK_SIZE);
+			i = expect_next(tokens, src, i);
+		}
+		tokens_parse(new_tokens, src, ";", line);
+		var sym = tokens[i+TOK_type];
+		if (sym == ',') continue;
+		if (sym == ']') break;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected , or ]"});
+	}
+	return i + TOK_SIZE;
+}
+
+function @parse_var_unpack(tokens, src, i)
+{
+	var start = i;
+	var new_tokens = [];
+	var gen_name = {"__unpack_tmp_var_", global_counter++};
+	var idx = 0;
+
+	for (;;) {
+		i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+		var name = get_token_value(tokens, src, i);
+		var line = tokens[i+TOK_line];
+		tokens_parse(new_tokens, src, {",", name, "=", gen_name, "[", idx++, "]"}, line);
+
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == ':') {
+			var type_start = i+TOK_SIZE;
+			i = skip_type(tokens, src, i);
+			tokens_parse(new_tokens, src, "as", line);
+			array_append(new_tokens, tokens, type_start, i-type_start+TOK_SIZE);
+			i = expect_next(tokens, src, i);
+		}
+
+		var sym = tokens[i+TOK_type];
+		if (sym == ']') break;
+		if (sym == ',') continue;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected , or ]"});
+	}
+
+	array_remove(tokens, start, i-start);
+	tokens[start+TOK_type] = TOK_IDENT;
+	tokens[start+TOK_off] = length(src);
+	tokens[start+TOK_len] = length(gen_name);
+	array_append(src, gen_name);
+	i = start;
+
+	i = expect_symbol(tokens, src, i, '=');
+	i = expect_expression(tokens, src, i);
+
+	array_insert_array(tokens, i+TOK_SIZE, new_tokens);
+	return i;
+}
+
+function @skip_type(tokens, src, i)
+{
+	var level = 0;
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		var sym = tokens[i+TOK_type];
+		if (level == 0) {
+			if (sym == ']' || sym == ',' || sym == '{' || sym == ';' || sym == ')' || sym == '=') {
+				i -= TOK_SIZE;
+				break;
+			}
+		}
+		if (sym == '[') {
+			level++;
+		}
+		else if (sym == ']') {
+			level--;
+		}
+	}
+	return i;
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": unexpected end of file"});
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}

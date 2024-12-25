@@ -1,0 +1,50 @@
+Version 0.6 (2024/05/05):
+- Added ability to get path to FixBuild binary and get list of available targets in build scripts
+- Added ability to specify multiple main scripts for cases where static detection is insufficient
+- Added embedded SQLite library
+- Added support for WebAssembly target
+- Improved storing of executable variants using binary differences
+- Adjusted for syntax improvements in classes
+- Changed noprocessors to processors and nocompress to compress in build properties
+- Moved set_log_function to FixIO library
+- Fixed returning of error for unknown backend commands
+- Fixed finding of executable file in GUI applications on MacOS
+- Fixed processing of just referenced scripts instead of all scripts
+- Fixed compression of libraries when token processing is disabled
+- Fixed setting of executable permission for binaries to UNIX-like systems only
+
+Version 0.5 (2022/12/27):
+- Added ability to import other scripts from build script
+- Added automatic creation of main script if not present
+- Added ability to call default log function from a custom log function
+- Added version to header when showing help
+- Added computation of PE checksum for Windows executables
+- Improved icon support on Windows to not use custom icon when not specified
+- Adjusted for tokenization change of numbers (separate leading plus/minus token)
+
+Version 0.4 (2022/03/14):
+- Added integration of FixTask with FixIO
+- Fixed usage of compatible symbols on Linux 64bit
+
+Version 0.3 (2021/10/03):
+- Added support for icons
+- Added matches and find functions in build scripts
+- Added automatic excluding of nested projects
+- Adjusted for new symbol representation in tokens
+- Fixed initialization of tasks not being done in every case
+- Fixed traversing of invalid symlinks
+
+Version 0.2 (2021/05/12):
+- Added ability to set custom logging function
+- Added internal parameters for getting scripts
+- Added support for build scripts
+- Renamed 'macosx64' target to 'macos'
+- Fixed crash when calling non-existing functions in token processors
+- Fixed compression of scripts
+- Fixed ability to include *.fix files in resources
+- Fixed random resource reading failures due to missing mutex
+- Fixed problems with finding and opening of executable file
+- Fixed compilation of FixGUI on Haiku 32bit
+
+Version 0.1 (2020/10/13):
+- Initial release

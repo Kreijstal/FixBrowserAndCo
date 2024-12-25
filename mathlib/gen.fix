@@ -1,0 +1,146 @@
+/*
+ * This file was written in 2023 by Martin Dvorak <jezek2@advel.cz>
+ * You can download latest version at http://public-domain.advel.cz/
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this file to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software. If not, see:
+ * http://creativecommons.org/publicdomain/zero/1.0/ 
+ */
+
+use "classes";
+
+import "util/bigint";
+import "util/string";
+
+const @FRAC_DIGITS = 2048;
+
+class FloatType
+{
+	var @size: Integer;
+	var @exponent_size: Integer;
+	var @mantissa_size: Integer;
+
+	constructor create(exponent_size: Integer, mantissa_size: Integer)
+	{
+		this.size = 1 + exponent_size + mantissa_size;
+		this.exponent_size = exponent_size;
+		this.mantissa_size = mantissa_size;
+	}
+
+	function to_string(pos: Integer, value: BigInteger): String
+	{
+		var bias = (1 << (exponent_size-1)) - 1;
+		var e = bias + pos - FRAC_DIGITS;
+		while (!value.is_bit_set(pos) && e > 0) {
+			e--;
+			pos--;
+		}
+		if (pos < mantissa_size+1) {
+			var diff = (mantissa_size+1)-pos;
+			pos += diff;
+			value = value << diff; //XXX
+		}
+
+		if (value.is_bit_set(pos - mantissa_size - 1)) {
+			value = value + (BigInteger(1) << (pos - mantissa_size)); //XXX
+			if (value.is_bit_set(pos+1)) {
+				throw error("shouldn't happen for used input");
+			}
+		}
+
+		var m = (value >> (pos - mantissa_size)) % (BigInteger(1) << mantissa_size);
+		var f = (BigInteger(e) << mantissa_size) + m;
+		var num_digits = (size+3)/4;
+		return f.to_hex_string(false).pad_left(num_digits, '0');
+	}
+}
+
+function gen_table(type: FloatType, neg_exp: Integer, pos_exp: Integer, num_columns: Integer, prefix: String)
+{
+	var table: String[] = Array::create(neg_exp + pos_exp + 1, 4);
+	var table_offset = neg_exp;
+
+	var fixed_one = BigInteger(1) << FRAC_DIGITS;
+	var ten = BigInteger(10);
+	var value = BigInteger(10);
+
+	table[table_offset] = type.to_string(FRAC_DIGITS, fixed_one);
+
+	for (var i=1; i<=max(neg_exp, pos_exp); i++) {
+		//log("value="+value.to_string());
+
+		if (i <= neg_exp) {
+			var inv = (fixed_one + (value >> 1)) / value;
+			var pos = FRAC_DIGITS;
+			table[table_offset - i] = type.to_string(pos, inv);
+		}
+
+		if (i <= pos_exp) {
+			var shifted = value << FRAC_DIGITS;
+			var pos = shifted.get_bit_size() - 1;
+			table[table_offset + i] = type.to_string(pos, shifted);
+		}
+
+		value = value * ten; //XXX
+	}
+
+	if (prefix) {
+		prefix = prefix+"_";
+	}
+
+	var log_10_2_a = BigInteger::from_string( "301029995663981195213738894724493026768189881462108541310427461127");
+	var log_10_2_b = BigInteger::from_string("1000000000000000000000000000000000000000000000000000000000000000000");
+	var bits = (log_10_2_a << FRAC_DIGITS) / log_10_2_b;
+	var pos = FRAC_DIGITS-2;
+	var log10_2 = type.to_string(pos, bits);
+	if (type.size == 128) {
+		var lo = "0x"+log10_2.extract(16, 16)+"ULL";
+		var hi = "0x"+log10_2.extract(0, 16)+"ULL";
+		print("static const uint64_t "+prefix+"log10_2_lo = "+lo+";");
+		print("static const uint64_t "+prefix+"log10_2_hi = "+hi+";");
+	}
+	else if (type.size == 64) {
+		print("static const uint64_t "+prefix+"log10_2 = 0x"+log10_2+"ULL;");
+	}
+	else if (type.size == 32) {
+		print("static const uint32_t "+prefix+"log10_2 = 0x"+log10_2+";");
+	}
+
+	var s = {"static const uint", type.size > 32? 64 : 32, "_t "+prefix+"powers_of_ten[", type.size == 128? table.length*2 : table.length, "] = {"};
+	for (var i=0; i<table.length; i++) {
+		if ((i % num_columns) == 0) {
+			s += "\n   ";
+		}
+		if (type.size == 128) {
+			var lo = "0x"+table[i].extract(16, 16)+"ULL";
+			var hi = "0x"+table[i].extract(0, 16)+"ULL";
+			s += lo+","+hi;
+		}
+		else if (type.size == 64) {
+			s += "0x"+table[i]+"ULL";
+		}
+		else if (type.size == 32) {
+			s += "0x"+table[i];
+		}
+		else {
+			throw error("unsupported float size");
+		}
+		if (i < table.length-1) {
+			s[] = ',';
+		}
+	}
+	s += "\n};\n";
+	print(s);
+}
+
+function main()
+{
+	gen_table(FloatType::create(8, 23), 37, 37, 5, "float_inexact");
+	gen_table(FloatType::create(11, 52), 45+8, 45, 6, "float");
+	gen_table(FloatType::create(15, 112), 324+16, 324, 3, "double");
+}

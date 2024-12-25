@@ -1,0 +1,435 @@
+/*
+ * FixScript Native v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+const {
+	SYSTEM_WINDOWS,
+	SYSTEM_LINUX,
+	SYSTEM_MACOS,
+	SYSTEM_HAIKU,
+	SYSTEM_SYMBIAN,
+	SYSTEM_WEB,
+	SYSTEM_WASI
+};
+
+const {
+	ARCH_X86,
+	ARCH_X86_64,
+	ARCH_ARM32,
+	ARCH_WASM
+};
+
+var @pointer_size: Integer;
+var @nlong_size: Integer;
+var @pointer_align: Integer;
+var @long_align: Integer;
+var @nlong_align: Integer;
+var @double_align: Integer;
+
+var @bound_libs: Library[String];
+
+class System
+{
+	static function get_type(): Integer;
+	static function get_arch(): Integer;
+
+	static function get_pointer_size(): Integer;
+	static function get_nlong_size(): Integer;
+
+	static function get_pointer_align(): Integer;
+	static function get_long_align(): Integer;
+	static function get_nlong_align(): Integer;
+	static function get_double_align(): Integer;
+}
+
+class Pointer
+{
+	static function create(lo: Integer, hi: Integer): Pointer;
+	static function from_shared_array(shared_array): Pointer;
+	function get_value(): Integer;
+	function with_offset(offset: Integer): Pointer;
+
+	function get_view(off: Integer, len: Integer, elem_size: Integer): Integer[];
+	
+	function set_byte(offset: Integer, value: Integer);
+	function set_short(offset: Integer, value: Integer);
+	function set_int(offset: Integer, value: Integer);
+	function set_long(offset: Integer, value_lo: Integer, value_hi: Integer);
+	function set_nlong(offset: Integer, value_lo: Integer, value_hi: Integer);
+	function set_float(offset: Integer, value: Float);
+	function set_double(offset: Integer, value_lo: Integer, value_hi: Integer);
+	function set_pointer(offset: Integer, value: Pointer);
+
+	function get_byte(offset: Integer): Integer;
+	function get_short(offset: Integer): Integer;
+	function get_int(offset: Integer): Integer;
+	function get_long(offset: Integer): Integer;
+	function get_nlong(offset: Integer): Integer;
+	function get_float(offset: Integer): Float;
+	function get_double(offset: Integer): Integer;
+	function get_pointer(offset: Integer): Pointer;
+	
+	function set_bytes(offset: Integer, arr: Byte[]);
+	function set_bytes(offset: Integer, arr: Byte[], off: Integer, len: Integer);
+	function get_bytes(offset: Integer, arr: Byte[]);
+	function get_bytes(offset: Integer, arr: Byte[], off: Integer, len: Integer);
+
+	function find_byte(offset: Integer, value: Byte): Integer;
+	function find_byte(offset: Integer, end_offset: Integer, value: Byte): Integer;
+	function find_short(offset: Integer, value: Short): Integer;
+	function find_short(offset: Integer, end_offset: Integer, value: Short): Integer;
+	function find_int(offset: Integer, value: Integer): Integer;
+	function find_int(offset: Integer, end_offset: Integer, value: Integer): Integer;
+
+	function get_string_length(offset: Integer): Integer
+	{
+		return find_byte(offset, 0) - offset;
+	}
+
+	function get_string(offset: Integer): String
+	{
+		var len = find_byte(offset, 0);
+		var s = {""};
+		s.set_length(len);
+		get_bytes(offset, s);
+		return s;
+	}
+
+	function get_string_utf8(offset: Integer): String
+	{
+		return string_from_utf8(get_string(offset));
+	}
+
+	/*
+	function get_string_utf16(offset: Integer): String
+	{
+		var len = find_short(offset, 0)/2;
+		var s = {""};
+		s.set_length(len);
+		get_shorts(offset, s);
+		return s;
+	}
+	*/
+
+	function set_string(offset: Integer, value: String)
+	{
+		set_bytes(offset, value);
+		set_byte(offset+value.length, 0);
+	}
+
+	function set_string_utf8(offset: Integer, value: String)
+	{
+		var arr = string_to_utf8(value);
+		set_bytes(offset, arr);
+		set_byte(offset+arr.length, 0);
+	}
+
+	/*
+	function set_string_utf16(offset: Integer, value: String)
+	{
+		// TODO
+		//value = string_to_utf8(value);
+		set_shorts(offset, value);
+		set_short(offset+value.length*2, 0);
+	}
+	*/
+}
+
+class Memory: Pointer
+{
+	static function create(lo: Integer, hi: Integer, size: Integer, owned: Boolean): Memory;
+	static function from_shared_array(shared_array): Memory;
+	static function from_shared_array(shared_array, offset: Integer, size: Integer): Memory;
+	
+	static function from_pointer(ptr: Pointer, offset: Integer, size: Integer): Memory
+	{
+		var (lo, hi) = ptr.get_value();
+		(lo, hi) = add64(lo, hi, offset, offset >> 31);
+		return create(lo, hi, size, false);
+	}
+	
+	static function alloc(size: Integer): Memory;
+	static function alloc_fast(size: Integer): Memory;
+	function realloc(size: Integer): Memory;
+	function free();
+
+	function get_size(): Integer;
+	function is_owned(): Boolean;
+
+	static function for_string_utf8(s: String): Memory
+	{
+		var value = string_to_utf8(s);
+		var mem = alloc_fast(value.length+1);
+		mem.set_bytes(0, value);
+		mem.set_byte(value.length, 0);
+		return mem;
+	}
+
+	static function for_string_utf16(s: String): Memory
+	{
+		// TODO
+	}
+}
+
+class StructLayout
+{
+	var @offset: Integer;
+	var @max_align: Integer;
+	var @union: Boolean;
+
+	constructor create()
+	{
+		if (pointer_size == 0) {
+			pointer_size = System::get_pointer_size();
+			nlong_size = System::get_nlong_size();
+			pointer_align = System::get_pointer_align();
+			long_align = System::get_long_align();
+			nlong_align = System::get_nlong_align();
+			double_align = System::get_double_align();
+		}
+		max_align = 1;
+	}
+
+	function get_size(): Integer
+	{
+		return align(offset, max_align);
+	}
+
+	function get_align(): Integer
+	{
+		return max_align;
+	}
+
+	function @alloc(size: Integer, align: Integer, len: Integer): Integer
+	{
+		var off = 0;
+		if (union) {
+			offset = max(offset, size*len);
+		}
+		else {
+			off = StructLayout::align(offset, align);
+			offset = off + size*len;
+		}
+		max_align = max(max_align, align);
+		return off;
+	}
+
+	function add_byte(): Integer
+	{
+		return alloc(1, 1, 1);
+	}
+
+	function add_short(): Integer
+	{
+		return alloc(2, 2, 1);
+	}
+
+	function add_int(): Integer
+	{
+		return alloc(4, 4, 1);
+	}
+
+	function add_long(): Integer
+	{
+		return alloc(8, long_align, 1);
+	}
+
+	function add_float(): Integer
+	{
+		return alloc(4, 4, 1);
+	}
+
+	function add_double(): Integer
+	{
+		return alloc(8, double_align, 1);
+	}
+
+	function add_pointer(): Integer
+	{
+		return alloc(pointer_size, pointer_align, 1);
+	}
+
+	function add_nlong(): Integer
+	{
+		return alloc(nlong_size, nlong_align, 1);
+	}
+
+	function add_struct(struct: StructLayout): Integer
+	{
+		return alloc(struct.get_size(), struct.get_align(), 1);
+	}
+
+	function add_struct(size: Integer, align: Integer): Integer
+	{
+		return alloc(size, align, 1);
+	}
+
+	function add_byte_array(len: Integer): Integer
+	{
+		return alloc(1, 1, len);
+	}
+
+	function add_short_array(len: Integer): Integer
+	{
+		return alloc(2, 2, len);
+	}
+
+	function add_int_array(len: Integer): Integer
+	{
+		return alloc(4, 4, len);
+	}
+
+	function add_long_array(len: Integer): Integer
+	{
+		return alloc(8, long_align, len);
+	}
+
+	function add_float_array(len: Integer): Integer
+	{
+		return alloc(4, 4, len);
+	}
+
+	function add_double_array(len: Integer): Integer
+	{
+		return alloc(8, double_align, len);
+	}
+
+	function add_pointer_array(len: Integer): Integer
+	{
+		return alloc(pointer_size, pointer_align, len);
+	}
+
+	function add_nlong_array(len: Integer): Integer
+	{
+		return alloc(nlong_size, nlong_align, len);
+	}
+
+	function add_struct_array(struct: StructLayout, len: Integer): Integer
+	{
+		return alloc(struct.get_size(), struct.get_align(), len);
+	}
+
+	function add_struct_array(size: Integer, align: Integer, len: Integer): Integer
+	{
+		return alloc(size, align, len);
+	}
+
+	static function @align(value: Integer, alignment: Integer): Integer
+	{
+		return (value+alignment-1) & (~(alignment-1));
+	}
+}
+
+class UnionLayout: StructLayout
+{
+	static function create(): UnionLayout
+	{
+		var layout = StructLayout::create();
+		layout.union = true;
+		return layout as UnionLayout;
+	}
+}
+
+class Library
+{
+	static function open(name: String): Library
+	{
+		return native_open_library(name);
+	}
+
+	function close()
+	{
+		native_close_library(this);
+	}
+
+	function get_symbol(name: String): Pointer
+	{
+		return native_get_symbol(this, name);
+	}
+
+	static function get_symbol(name: String): Pointer
+	{
+		return native_get_symbol(null, name);
+	}
+
+	static function bind(base_name: String)
+	{
+		if (bound_libs != null && bound_libs.contains(base_name)) {
+			return;
+		}
+		var lib_name: String;
+		if (System::get_type() == SYSTEM_WINDOWS) {
+			lib_name = base_name + ".dll";
+		}
+		else {
+			lib_name = "lib" + base_name + ".so";
+		}
+		var lib = open(lib_name);
+		if (!lib) {
+			throw error("library "+lib_name+" not found");
+		}
+		bind(base_name, lib);
+	}
+
+	static function bind(base_name: String, lib: Library)
+	{
+		if (!bound_libs) {
+			bound_libs = {};
+		}
+		bound_libs[base_name] = lib;
+	}
+
+	static function get_bound_symbol(base_name: String, sym_name: String): Pointer
+	{
+		return bound_libs[base_name].get_symbol(sym_name);
+	}
+}
+
+class Destructor
+{
+	static function create(func, data): Destructor;
+	function disarm();
+}
+
+class Callback
+{
+	static function create(sig: String, func, data): Pointer;
+}
+
+function native_call(func: Pointer, sig: String): Dynamic;
+function native_call(func: Pointer, sig: String, p1): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15): Dynamic;
+function native_call(func: Pointer, sig: String, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16): Dynamic;
+function native_call_args(func: Pointer, sig: String, args: Dynamic[]): Dynamic;

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/view";</code>
+</p>
+
+<h2>Window class</h2>
+
+<p>
+Top-level window.
+</p>
+
+<p>
+Inherits from <a href="view.html">View</a>.
+</p>
+
+<ul>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#properties">Properties</a></li>
+	<li><a href="#events">Event handlers</a></li>
+</ul>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(title: String, width: Integer, height: Integer, flags: Integer): Window</code></dt>
+	<dd>
+		Creates a new top-level window with given content size and flags:<br>
+		<br>
+		<b>WIN_RESIZABLE</b> - allow resizing of the window by the user<br>
+		<b>WIN_CENTER</b> - center the window<br>
+		<b>WIN_MAXIMIZE</b> - show the window maximized<br>
+		<b>WIN_MINIMIZE</b> - show the window minimized<br>
+		<b>WIN_MENUBAR</b> - create a menubar<br>
+		<b>WIN_STATUSBAR</b> - create a statusbar<br>
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>set_title</b>(title: String)</code></dt>
+	<dd>
+		Sets the title of the window.
+	</dd>
+	<dt><code>function <b>get_title</b>(): String</code></dt>
+	<dd>
+		Returns the title of the window.
+	</dd>
+	<dt><code>function <b>set_minimum_size</b>(width: Integer, height: Integer)</code></dt>
+	<dd>
+		Sets the minimum content size of the window.
+	</dd>
+	<dt><code>function <b>is_maximized</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the window is maximized.
+	</dd>
+	<dt><code>function <b>set_menu</b>(menu: <a href="menu.html">Menu</a>)</code></dt>
+	<dd>
+		Sets the main menu of the window.
+	</dd>
+	<dt><code>function <b>get_menu</b>(): <a href="menu.html">Menu</a></code></dt>
+	<dd>
+		Returns the main menu of the window.
+	</dd>
+	<dt><code>function <b>set_status_text</b>(text: String)</code></dt>
+	<dd>
+		Sets the status text.
+	</dd>
+</dl>
+
+<h3 id="events">Event handlers</h3>
+
+<dl>
+	<dt><code>virtual function <b>handle_destroy</b>()</code></dt>
+	<dd>
+		Override to handle destruction of the window.
+	</dd>
+	<dt><code>virtual function <b>handle_close</b>()</code></dt>
+	<dd>
+		Override to handle closing of the window. The default implementation destroys the window.
+	</dd>
+	<dt><code>virtual function <b>handle_resize</b>()</code></dt>
+	<dd>
+		Override to handle resizing.
+	</dd>
+	<dt><code>virtual function <b>handle_activate</b>()</code></dt>
+	<dd>
+		Override to handle activation of the window.
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,188 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/file";
+import "io/stream";
+import "util/long";
+import "cellsplit/server/packets";
+import "cellsplit/util/config";
+
+const @MARK = 0xF1;
+
+function get_replay_data(start: Long, end: Long): ReplayPart[]
+{
+	if (start >= end) {
+		return [];
+	}
+
+	var partition_start = start.dup().div_int(3600*1000).to_int();
+	var partition_end = end.dup().div_int(3600*1000).to_int();
+
+	var parts: ReplayPart[] = [];
+
+	for (var partition=partition_start; partition <= partition_end; partition++) {
+		var rel_time_start = (start.dup().rem_int(3600*1000).to_int() + 1) / 2;
+		var rel_time_end = (end.dup().rem_int(3600*1000).to_int() + 1) / 2;
+		if (partition > partition_start) {
+			rel_time_start = 0;
+		}
+		if (partition < partition_end) {
+			rel_time_end = 0x7FFFFFFF;
+		}
+		
+		var path = Path(get_config_file("replay_"+partition+".dat"));
+		if (!path.exists()) {
+			return [];
+		}
+		var file = File::open(path, FILE_READ);
+		var file_len = file.get_length().to_int();
+		var cache: Byte[][Integer] = {};
+
+		var rel_time_out = [0];
+		var off = binary_search(file, file_len, cache, rel_time_start, rel_time_out);
+
+		var start_off = -1;
+		var end_off = file_len;
+
+		for (;;) {
+			off = find_segment(file, file_len, cache, off, rel_time_out);
+			if (off < 0) {
+				if (start_off < 0) {
+					start_off = end_off;
+				}
+				break;
+			}
+			if (rel_time_out[0] >= rel_time_end) {
+				if (start_off < 0) {
+					start_off = off;
+				}
+				end_off = off;
+				break;
+			}
+			if (start_off < 0) {
+				start_off = off;
+			}
+			off++;
+		}
+
+		var data = Array::create_shared(end_off - start_off, 1);
+		file.seek_set(start_off);
+		file.read(data);
+		file.close();
+		parts[] = ReplayPart::create(partition, data);
+	}
+	return parts;
+}
+
+function @binary_search(file: File, file_len: Integer, cache: Byte[][Integer], search_rel_time: Integer, rel_time_out: Integer[]): Integer
+{
+	var left = 0;
+	var right = file_len;
+	while (left < right) {
+		var middle = left + ((right - left) >> 1);
+		var off = find_segment(file, file_len, cache, middle, rel_time_out);
+		if (off < 0) {
+			rel_time_out[0] = 0x7FFFFFFF;
+		}
+		if (rel_time_out[0] < search_rel_time) {
+			left = middle + 1;
+		}
+		else {
+			right = middle;
+		}
+	}
+	return left;
+}
+
+function @find_segment(file: File, file_len: Integer, cache: Byte[][Integer], off: Integer, rel_time_out: Integer[]): Integer
+{
+	var idx = off >> 12;
+	off &= 4095;
+
+	var state = 0;
+	var rel_time = 0;
+
+	for (;;) {
+		var data = get_block(file, file_len, cache, idx);
+		if (!data) break;
+
+		for (var i=off; i<data.length; i++) {
+			var b = data[i];
+			switch (state) {
+				case 0: // search for mark
+					if (b == MARK) {
+						state = 1;
+						continue;
+					}
+					continue;
+
+				case 1: // check mark type
+					if (b == 0x01) {
+						state = 2;
+						continue;
+					}
+					state = 0;
+					continue;
+
+				case 2: // first rel_time byte
+					rel_time = b;
+					state++;
+					continue;
+
+				case 3: // second rel_time byte
+					rel_time |= b << 7;
+					state++;
+					continue;
+
+				case 4: // third rel_time byte
+					rel_time |= b << 14;
+					rel_time_out[0] = rel_time;
+					return (idx << 12) + i - 4;
+			}
+		}
+
+		idx++;
+		off = 0;
+	}
+
+	return -1;
+}
+
+function @get_block(file: File, file_len: Integer, cache: Byte[][Integer], idx: Integer): Byte[]
+{
+	var data = cache.get(idx, null);
+	if (data) {
+		return data;
+	}
+
+	if (idx*4096 >= file_len) {
+		return null;
+	}
+
+	var len = min(file_len - idx*4096, 4096);
+	data = Array::create_shared(len, 1);
+	file.seek_set(idx*4096);
+	file.read(data);
+	cache[idx] = data;
+	return data;
+}

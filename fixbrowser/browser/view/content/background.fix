@@ -1,0 +1,293 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "browser/view/model";
+
+class BackgroundView
+{
+	var backgrounds: Background[];
+	var inline_clip_left: Integer;
+	var inline_clip_right: Integer;
+	var inline_margin_left: Integer;
+	var inline_margin_right: Integer;
+
+	constructor create(background: Background)
+	{
+		backgrounds = [];
+		for (var bg = background; bg; bg = bg.parent) {
+			array_insert(backgrounds, 0, bg);
+		}
+		inline_margin_left = background.margin_left;
+		inline_margin_right = background.margin_right;
+	}
+
+	function update_inline_connection(next: BackgroundView)
+	{
+		if (!next) return;
+
+		var num_common = 0;
+		var arr1 = this.backgrounds;
+		var arr2 = next.backgrounds;
+		for (var i=0, n=min(length(arr1), length(arr2)); i<n; i++) {
+			if (arr1[i] !== arr2[i]) break;
+			num_common++;
+		}
+
+		this.inline_clip_right = num_common;
+		next.inline_clip_left = num_common;
+
+		if (length(arr1) == num_common && length(arr2) == num_common) {
+			this.inline_margin_right = 0;
+			next.inline_margin_left = 0;
+		}
+		else if (length(arr1) > num_common && length(arr2) == num_common) {
+			next.inline_margin_left = 0;
+		}
+		else if (length(arr1) == num_common && length(arr2) > num_common) {
+			this.inline_margin_right = 0;
+		}
+	}
+
+	function get_overdraw(): Integer
+	{
+		var overdraw = 0;
+		foreach (var model in backgrounds) {
+			overdraw = max(overdraw, model.padding_left + model.border_left);
+			overdraw = max(overdraw, model.padding_top + model.border_top);
+			overdraw = max(overdraw, model.padding_right + model.border_right);
+			overdraw = max(overdraw, model.padding_bottom + model.border_bottom);
+			var shadow = model.shadow;
+			while (shadow) {
+				overdraw = max(overdraw, max(abs(shadow.offset_x), abs(shadow.offset_y)) + max(0, shadow.spread) + max(0, int(ceil(shadow.blur))));
+				shadow = shadow.next;
+			}
+		}
+		return overdraw + 2;
+	}
+
+	function draw(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, layer: Integer)
+	{
+		var orig_x = x;
+		var orig_y = y;
+		var orig_width = width;
+		var orig_height = height;
+
+		var start = 0;
+		var end = length(backgrounds);
+		if (layer >= 0) {
+			start = layer;
+			end = layer+1;
+		}
+
+		for (var i=start; i<end; i++) {
+			var model = backgrounds[i];
+			var left = model.padding_left + model.border_left;
+			var top = model.padding_top + model.border_top;
+			var right = model.padding_right + model.border_right;
+			var bottom = model.padding_bottom + model.border_bottom;
+			x = orig_x - model.padding_left;
+			y = orig_y - model.padding_top;
+			width = orig_width + model.padding_left + model.padding_right;
+			height = orig_height + model.padding_right + model.padding_bottom;
+
+			p.push();
+			if (model.color != 0) {
+				p.fill_rect(x, y, width, height, model.color);
+			}
+
+			x -= model.border_left;
+			y -= model.border_top;
+			width += model.border_left + model.border_right;
+			height += model.border_right + model.border_bottom;
+
+			if (i < inline_clip_left) {
+				var adj = model.border_left + 10;
+				x -= adj;
+				width += adj;
+				p.clip(orig_x, y-10, width+adj, height+20);
+			}
+			if (i < inline_clip_right) {
+				var adj = model.border_right + 10;
+				width += adj;
+				var x2 = orig_x+orig_width;
+				p.clip(x, y-10, x2-x, height+20);
+			}
+			
+			var shadow = model.shadow;
+			while (shadow) {
+				draw_shadow(p, x, y, width, height, shadow.offset_x, shadow.offset_y, shadow.blur, shadow.spread, shadow.color);
+				shadow = shadow.next;
+			}
+
+			var style_left = model.style_left;
+			var style_top = model.style_top;
+			var style_right = model.style_right;
+			var style_bottom = model.style_bottom;
+			var border_left = model.border_left;
+			var border_top = model.border_top;
+			var border_right = model.border_right;
+			var border_bottom = model.border_bottom;
+			var visible_left = (style_left != BORDER_STYLE_NONE && style_left != BORDER_STYLE_HIDDEN && border_left > 0);
+			var visible_top = (style_top != BORDER_STYLE_NONE && style_top != BORDER_STYLE_HIDDEN && border_top > 0);
+			var visible_right = (style_right != BORDER_STYLE_NONE && style_right != BORDER_STYLE_HIDDEN && border_right > 0);
+			var visible_bottom = (style_bottom != BORDER_STYLE_NONE && style_bottom != BORDER_STYLE_HIDDEN && border_bottom > 0);
+
+			if (!visible_left) border_left = 0;
+			if (!visible_top) border_top = 0;
+			if (!visible_right) border_right = 0;
+			if (!visible_bottom) border_bottom = 0;
+
+			var shape = Shape::create();
+
+			if (visible_left) {
+				if (!visible_top && !visible_bottom) {
+					p.fill_rect(x, y, border_left, height, model.color_left);
+				}
+				else {
+					shape.clear();
+					shape.move_to(x, y);
+					shape.line_to(x+border_left, y+border_top);
+					shape.line_to(x+border_left, y+height-border_bottom);
+					shape.line_to(x, y+height);
+					shape.close_path();
+					p.fill_shape(shape, model.color_left);
+				}
+			}
+
+			if (visible_top) {
+				if (!visible_left && !visible_right) {
+					p.fill_rect(x, y, width, border_top, model.color_top);
+				}
+				else {
+					shape.clear();
+					shape.move_to(x, y);
+					shape.line_to(x+width, y);
+					shape.line_to(x+width-border_right, y+border_top);
+					shape.line_to(x+border_left, y+border_top);
+					shape.close_path();
+					p.fill_shape(shape, model.color_top);
+				}
+			}
+
+			if (visible_right) {
+				if (!visible_top && !visible_bottom) {
+					p.fill_rect(x+width-border_right, y, border_right, height, model.color_right);
+				}
+				else {
+					shape.clear();
+					shape.move_to(x+width, y);
+					shape.line_to(x+width, y+height);
+					shape.line_to(x+width-border_right, y+height-border_bottom);
+					shape.line_to(x+width-border_right, y+border_top);
+					shape.close_path();
+					p.fill_shape(shape, model.color_right);
+				}
+			}
+
+			if (visible_bottom) {
+				if (!visible_left && !visible_right) {
+					p.fill_rect(x, y+height-border_bottom, width, border_bottom, model.color_bottom);
+				}
+				else {
+					shape.clear();
+					shape.move_to(x, y+height);
+					shape.line_to(x+width, y+height);
+					shape.line_to(x+width-border_right, y+height-border_bottom);
+					shape.line_to(x+border_left, y+height-border_bottom);
+					shape.close_path();
+					p.fill_shape(shape, model.color_bottom);
+				}
+			}
+
+			p.pop();
+		}
+	}
+
+	function @draw_shadow(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, off_x: Integer, off_y: Integer, blur: Float, spread: Integer, color: Integer)
+	{
+		var rx = x+off_x-spread;
+		var ry = y+off_y-spread;
+		var rw = width+spread*2;
+		var rh = height+spread*2;
+		if (rw <= 0 || rh <= 0) return;
+
+		var img: Image;
+		var img_x: Integer;
+		var img_y: Integer;
+
+		if (blur > 0.0) {
+			var extra = int(ceil(blur*2.0));
+			img = Image::create(rw+extra*2, rh+extra*2);
+			var p2 = Painter::create(img);
+			p2.fill_rect(extra, extra, rw, rh, color);
+			img.blur(blur*2.0);
+			img_x = rx - extra;
+			img_y = ry - extra;
+		}
+
+		// top:
+		p.push();
+		p.clip(-10000, -10000, 20000, y+10000);
+		if (img) {
+			p.draw_image(img_x, img_y, img);
+		}
+		else {
+			p.fill_rect(rx, ry, rw, rh, color);
+		}
+		p.pop();
+		
+		// bottom:
+		p.push();
+		p.clip(-10000, y+height, 20000, 10000);
+		if (img) {
+			p.draw_image(img_x, img_y, img);
+		}
+		else {
+			p.fill_rect(rx, ry, rw, rh, color);
+		}
+		p.pop();
+
+		// left:
+		p.push();
+		p.clip(-10000, y, x+10000, height);
+		if (img) {
+			p.draw_image(img_x, img_y, img);
+		}
+		else {
+			p.fill_rect(rx, ry, rw, rh, color);
+		}
+		p.pop();
+
+		// right:
+		p.push();
+		p.clip(x+width, y, 10000, height);
+		if (img) {
+			p.draw_image(img_x, img_y, img);
+		}
+		else {
+			p.fill_rect(rx, ry, rw, rh, color);
+		}
+		p.pop();
+	}
+}

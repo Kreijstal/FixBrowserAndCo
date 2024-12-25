@@ -1,0 +1,95 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/http/request";
+import "io/http/url";
+import "util/string";
+import "util/template";
+import "proxy/handler_proxy";
+import "proxy/handler_outside";
+
+function send_response(stream, req)
+{
+	if (string_starts_with(req->REQ_path, "/outside/")) {
+		handle_outside_request(stream, req);
+		return;
+	}
+
+	if (string_starts_with(req->REQ_path, "/http") || string_starts_with(req->REQ_path, "/img/")) {
+		handle_proxy_request(stream, req);
+		return;
+	}
+
+	if (req->REQ_path == "/accept-certificate") {
+		handle_accept_certificate_request(stream, req);
+		return;
+	}
+
+	var params = url_params_to_hash(url_create(req->REQ_path));
+	var url = hash_get(params, "fixproxy_url", null);
+	if (url) {
+		if (hash_contains(params, "search_duckduckgo")) {
+			var search = url;
+			url = url_create("https://duckduckgo.com/html/");
+			url_set_param(url, "q", search);
+			url = url_to_string(url);
+		}
+		else if (hash_contains(params, "search_wikipedia")) {
+			var search = url;
+			url = url_create("https://en.wikipedia.org/w/index.php");
+			url_set_param(url, "search", search);
+			url_set_param(url, "title", "Special:Search");
+			url_set_param(url, "fulltext", "Search");
+			url = url_to_string(url);
+		}
+		else if (hash_contains(params, "search_archive")) {
+			var search = url;
+			url = url_create({"https://web.archive.org/web/*/", search});
+			url = url_to_string(url);
+		}
+
+		if (!string_starts_with(url, "http://") && !string_starts_with(url, "https://")) {
+			url = {"http://", url};
+		}
+		var new_url = {"/", url_to_string(url_create(url))};
+		stream_write(stream, {"HTTP/1.1 303 See Other\r\nConnection: close\r\nContent-Type: text/html; charset=UTF-8\r\nLocation: ", new_url, "\r\n\r\n"});
+		return;
+	}
+
+	var tpl = template_create("main.tpl");
+	stream_write(stream, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n");
+	stream_write(stream, string_to_utf8(template_process(tpl)));
+	stream_close(stream);
+}
+
+function @rewrite_url(base, value)
+{
+	return url_to_string(translate_url(url_merge(base, url_create(value))));
+}
+
+function @translate_url(url)
+{
+	var scheme = url->URL_scheme;
+	var host = url->URL_host;
+	var path = url->URL_path;
+	return url_create({"/", url_to_string(url)});
+}

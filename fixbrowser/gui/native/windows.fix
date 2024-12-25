@@ -1,0 +1,274 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "optional";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/font";
+
+optional "native/native";
+
+const {
+	COLOR_3DDKSHADOW = 21,
+	COLOR_3DFACE = 15,
+	COLOR_3DHIGHLIGHT = 20,
+	COLOR_3DHILIGHT = 20,
+	COLOR_3DLIGHT = 22,
+	COLOR_3DSHADOW = 16,
+	COLOR_ACTIVEBORDER = 10,
+	COLOR_ACTIVECAPTION = 2,
+	COLOR_APPWORKSPACE = 12,
+	COLOR_BACKGROUND = 1,
+	COLOR_BTNFACE = 15,
+	COLOR_BTNHIGHLIGHT = 20,
+	COLOR_BTNHILIGHT = 20,
+	COLOR_BTNSHADOW = 16,
+	COLOR_BTNTEXT = 18,
+	COLOR_CAPTIONTEXT = 9,
+	COLOR_DESKTOP = 1,
+	COLOR_GRADIENTACTIVECAPTION = 27,
+	COLOR_GRADIENTINACTIVECAPTION = 28,
+	COLOR_GRAYTEXT = 17,
+	COLOR_HIGHLIGHT = 13,
+	COLOR_HIGHLIGHTTEXT = 14,
+	COLOR_HOTLIGHT = 26,
+	COLOR_INACTIVEBORDER = 11,
+	COLOR_INACTIVECAPTION = 3,
+	COLOR_INACTIVECAPTIONTEXT = 19,
+	COLOR_INFOBK = 24,
+	COLOR_INFOTEXT = 23,
+	COLOR_MENU = 4,
+	COLOR_MENUHILIGHT = 29,
+	COLOR_MENUBAR = 30,
+	COLOR_MENUTEXT = 7,
+	COLOR_SCROLLBAR = 0,
+	COLOR_WINDOW = 5,
+	COLOR_WINDOWFRAME = 6,
+	COLOR_WINDOWTEXT = 8
+};
+
+const {
+	FONT_CAPTION,
+	FONT_SMALL_CAPTION,
+	FONT_MENU,
+	FONT_STATUS,
+	FONT_MESSAGE
+};
+
+class Windows
+{
+	static function is_present(): Boolean
+	{
+		var (r, e) = @windows_is_present();
+		if (e) return false;
+		return r;
+	}
+
+	static function set_default_menu_item(menu: Menu, pos: Integer)
+	{
+		var (r, e) = @windows_set_default_menu_item(menu, pos);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function get_system_color(index: Integer): Integer
+	{
+		var (r, e) = @windows_get_system_color(index);
+		if (!is_available(e)) {
+			switch (index) {
+				case COLOR_3DDKSHADOW:              return 0xFF404040;
+				case COLOR_3DFACE:                  return 0xFFD4D0C8; // also: COLOR_BTNFACE
+				case COLOR_3DHIGHLIGHT:             return 0xFFFFFFFF; // also: COLOR_3DHILIGHT, COLOR_BTNHIGHLIGHT, COLOR_BTNHILIGHT
+				case COLOR_3DLIGHT:                 return 0xFFD4D0C8;
+				case COLOR_3DSHADOW:                return 0xFF808080; // also: COLOR_BTNSHADOW
+				case COLOR_ACTIVEBORDER:            return 0xFFD4D0C8;
+				case COLOR_ACTIVECAPTION:           return 0xFF0A246A;
+				case COLOR_APPWORKSPACE:            return 0xFF808080;
+				case COLOR_BACKGROUND:              return 0xFF3A6EA5; // also: COLOR_DESKTOP
+				case COLOR_BTNTEXT:                 return 0xFF000000;
+				case COLOR_CAPTIONTEXT:             return 0xFFFFFFFF;
+				case COLOR_GRADIENTACTIVECAPTION:   return 0xFFA6CAF0;
+				case COLOR_GRADIENTINACTIVECAPTION: return 0xFFC0C0C0;
+				case COLOR_GRAYTEXT:                return 0xFF808080;
+				case COLOR_HIGHLIGHT:               return 0xFF0A246A;
+				case COLOR_HIGHLIGHTTEXT:           return 0xFFFFFFFF;
+				case COLOR_HOTLIGHT:                return 0xFF000080;
+				case COLOR_INACTIVEBORDER:          return 0xFFD4D0C8;
+				case COLOR_INACTIVECAPTION:         return 0xFF808080;
+				case COLOR_INACTIVECAPTIONTEXT:     return 0xFFD4D0C8;
+				case COLOR_INFOBK:                  return 0xFFFFFFE1;
+				case COLOR_INFOTEXT:                return 0xFF000000;
+				case COLOR_MENU:                    return 0xFFD4D0C8;
+				case COLOR_MENUHILIGHT:             return 0xFF0A246A;
+				case COLOR_MENUBAR:                 return 0xFFD4D0C8;
+				case COLOR_MENUTEXT:                return 0xFF000000;
+				case COLOR_SCROLLBAR:               return 0xFFD4D0C8;
+				case COLOR_WINDOW:                  return 0xFFFFFFFF;
+				case COLOR_WINDOWFRAME:             return 0xFF000000;
+				case COLOR_WINDOWTEXT:              return 0xFF000000;
+			}
+			return 0;
+		}
+		return r;
+	}
+
+	static function get_system_font(index: Integer): SystemFont
+	{
+		var (r, e) = @windows_get_system_font(index);
+		if (!is_available(e)) {
+			return null;
+		}
+		return r;
+	}
+
+	static function get_theme_bool(cls: String, part: Integer, state: Integer, prop: Integer): Boolean
+	{
+		var (r, e) = @windows_get_theme_bool(cls, part, state, prop);
+		if (!is_available(e)) {
+			return false;
+		}
+		return r;
+	}
+
+	static function get_theme_color(cls: String, part: Integer, state: Integer, prop: Integer): Integer
+	{
+		var (r, e) = @windows_get_theme_color(cls, part, state, prop);
+		if (!is_available(e)) {
+			return 0;
+		}
+		return r;
+	}
+
+	static function get_theme_enum(cls: String, part: Integer, state: Integer, prop: Integer): Integer
+	{
+		var (r, e) = @windows_get_theme_enum(cls, part, state, prop);
+		if (!is_available(e)) {
+			return 0;
+		}
+		return r;
+	}
+
+	static function get_theme_margins(cls: String, part: Integer, state: Integer, prop: Integer, margins: Integer[]): Boolean
+	{
+		var (r, e) = @windows_get_theme_margins(cls, part, state, prop, margins);
+		if (!is_available(e)) {
+			return false;
+		}
+		return r;
+	}
+
+	static function get_theme_size(cls: String, part: Integer, state: Integer, prop: Integer, size: Integer[]): Boolean
+	{
+		var (r, e) = @windows_get_theme_size(cls, part, state, prop, size);
+		if (!is_available(e)) {
+			return false;
+		}
+		return r;
+	}
+
+	static function get_theme_position(cls: String, part: Integer, state: Integer, prop: Integer, position: Integer[]): Boolean
+	{
+		var (r, e) = @windows_get_theme_position(cls, part, state, prop, position);
+		if (!is_available(e)) {
+			return false;
+		}
+		return r;
+	}
+
+	static function get_theme_image(width: Integer, height: Integer, cls: String, part: Integer, state: Integer): Image
+	{
+		return get_theme_image(width, height, 0, 0, width, height, cls, part, state);
+	}
+
+	static function get_theme_image(img_width: Integer, img_height: Integer, x: Integer, y: Integer, width: Integer, height: Integer, cls: String, part: Integer, state: Integer): Image
+	{
+		var (r, e) = @windows_get_theme_image(img_width, img_height, x, y, width, height, cls, part, state);
+		if (!is_available(e)) {
+			return null;
+		}
+		return r;
+	}
+
+	static function draw_theme_background(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, cls: String, part: Integer, state: Integer): Boolean
+	{
+		var x1 = x;
+		var y1 = y;
+		var x2 = x+width;
+		var y2 = y+height;
+
+		var clip = p.get_clip_rect();
+		x1 = max(x1, clip.x1);
+		y1 = max(y1, clip.y1);
+		x2 = min(x2, clip.x2);
+		y2 = min(y2, clip.y2);
+
+		var img = get_theme_image(max(1, x2-x1), max(1, y2-y1), x-x1, y-y1, width, height, cls, part, state);
+		if (!img) return false;
+		if (x2 - x1 < 1) return true;
+		if (y2 - y1 < 1) return true;
+		p.draw_image(x1, y1, img);
+		return true;
+	}
+
+	static function register_theme_change_notify(func)
+	{
+		var (r, e) = @windows_register_theme_change_notify(func);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	optional "native/native"
+	{
+		static function get_window_handle(view: View): Pointer
+		{
+			var (lo, hi) = @windows_get_window_handle(view);
+			if (is_int(hi)) {
+				return Pointer::create(lo, hi);
+			}
+			if (is_array(hi)) {
+				throw hi;
+			}
+			return null;
+		}
+
+		static function disable_painting(canvas: Canvas)
+		{
+			var (r, e) = @windows_disable_painting(canvas);
+			if (!is_available(e)) {
+				return;
+			}
+		}
+	}
+}
+
+function @is_available(e): Boolean
+{
+	if (e) {
+		if (is_string(e)) return false;
+		throw e;
+	}
+	return true;
+}

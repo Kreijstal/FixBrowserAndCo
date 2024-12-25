@@ -1,0 +1,837 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/file";
+import "io/checksum";
+import "io/shared";
+import "util/long";
+
+const ATOMIC_FILE_HEADER_SIZE = 32;
+
+const {
+	@ROLLBACK_CLEAN      = 0,
+	@ROLLBACK_USE_FIRST  = 1,
+	@ROLLBACK_USE_SECOND = 2
+};
+
+const {
+	@HEADER_rollback,
+	@HEADER_page_size,
+	@HEADER_file_size_lo,
+	@HEADER_file_size_hi,
+	@HEADER_rollback1_lo,
+	@HEADER_rollback1_hi,
+	@HEADER_rollback2_lo,
+	@HEADER_rollback2_hi,
+	@HEADER_SIZE
+};
+
+const {
+	@TRANS_NONE,
+	@TRANS_READ,
+	@TRANS_WRITE
+};
+
+class AtomicFile
+{
+	var @file: File;
+	var @header_offset: Integer;
+	var @page_size: Integer;
+	var @trans_type: Integer;
+	var @trans_cnt: Integer;
+	var @rollback: RollbackBuffer;
+	var @rollback_state: Integer;
+	var @rollback_offset: Long;
+	var @rollback_hole_size: Long;
+	var @file_size: Long;
+	var @cache_handlers: Dynamic[];
+
+	static function open(file: File, header_offset: Integer): AtomicFile
+	{
+		return open(file, header_offset, 4096);
+	}
+	
+	constructor open(file: File, header_offset: Integer, page_size: Integer)
+	{
+		this.file = file;
+		this.header_offset = header_offset;
+
+		if (page_size < 1 || (page_size & (page_size-1)) != 0) {
+			throw error("invalid page size");
+		}
+
+		file.lock(true);
+		var (r, e) = init(page_size);
+		file.unlock();
+		if (e) throw e;
+	}
+
+	function @init(new_page_size: Integer)
+	{
+		var header = Array::create_shared(HEADER_SIZE, 4);
+		var view = header.get_view(1);
+
+		if (file.get_length().is_zero()) {
+			file.seek_set(header_offset);
+			file.write(view);
+			file.sync();
+		}
+
+		file.seek_set(header_offset);
+		file.read(view);
+
+		var state = header[HEADER_rollback];
+		page_size = header[HEADER_page_size];
+
+		if (state < ROLLBACK_CLEAN || state > ROLLBACK_USE_SECOND) {
+			throw error("corrupted file");
+		}
+		if (state != ROLLBACK_CLEAN) {
+			if (page_size < 1 || (page_size & (page_size-1)) != 0) {
+				throw error("corrupted file");
+			}
+
+			var ignore_resize = false;
+
+			if (state == ROLLBACK_USE_FIRST) {
+				ignore_resize = apply_rollback(Long::create(header[HEADER_rollback1_lo], header[HEADER_rollback1_hi]));
+				file.sync();
+			}
+			else if (state == ROLLBACK_USE_SECOND) {
+				ignore_resize = apply_rollback(Long::create(header[HEADER_rollback2_lo], header[HEADER_rollback2_hi]));
+				file.sync();
+			}
+
+			if (!ignore_resize) {
+				var new_file_size = Long::create(header[HEADER_file_size_lo], header[HEADER_file_size_hi]);
+				if (new_file_size.cmp_int(header_offset + ATOMIC_FILE_HEADER_SIZE) < 0) {
+					throw error("corrupted file");
+				}
+				file.set_length(new_file_size);
+				file.sync();
+			}
+
+			header[HEADER_rollback] = ROLLBACK_CLEAN;
+			file.seek_set(header_offset + HEADER_rollback*4);
+			file.write(view, HEADER_rollback*4, 4);
+			file.sync();
+			
+			if (state == ROLLBACK_USE_FIRST || state == ROLLBACK_USE_SECOND) {
+				header[HEADER_file_size_lo] = 0;
+				header[HEADER_file_size_hi] = 0;
+				header[HEADER_rollback1_lo] = 0;
+				header[HEADER_rollback1_hi] = 0;
+				header[HEADER_rollback2_lo] = 0;
+				header[HEADER_rollback2_hi] = 0;
+				file.seek_set(header_offset + HEADER_file_size_lo*4);
+				file.write(view, HEADER_file_size_lo*4, 6*4);
+				file.sync();
+			}
+		}
+
+		if (new_page_size != page_size) {
+			header[HEADER_page_size] = new_page_size;
+			file.seek_set(header_offset + HEADER_page_size*4);
+			file.write(view, HEADER_page_size*4, 4);
+			file.sync();
+			page_size = new_page_size;
+		}
+	}
+
+	function @read_with_check(offset: Long, buf: Byte[], off: Integer, len: Integer): Boolean
+	{
+		file.set_position(offset);
+		while (len > 0) {
+			var read = file.read_part(buf, off, len);
+			if (read < 0) return false;
+			off += read;
+			len -= read;
+		}
+		return true;
+	}
+
+	function @guard_write(offset: Long, buf: Byte[], off: Integer, len: Integer)
+	{
+		if (len <= 0) return;
+		if (offset.cmp_int(header_offset + ATOMIC_FILE_HEADER_SIZE) >= 0 || offset.dup().add_int(len).cmp_int(header_offset) <= 0) {
+			file.set_position(offset);
+			file.write(buf, off, len);
+		}
+		else {
+			var dest = offset.to_int();
+			var amount = header_offset - dest;
+			if (amount > 0) {
+				file.seek_set(dest);
+				file.write(buf, off, amount);
+			}
+			amount += ATOMIC_FILE_HEADER_SIZE;
+			off += amount;
+			len -= amount;
+			if (len > 0) {
+				file.seek_set(header_offset + ATOMIC_FILE_HEADER_SIZE);
+				file.write(buf, off, len);
+			}
+		}
+	}
+
+	function @apply_rollback(rollback_offset: Long): Boolean
+	{
+		if (rollback_offset.cmp(file.get_length()) >= 0) {
+			return true;
+		}
+
+		var data = Array::create_shared(12+page_size, 1);
+		var header = data.get_view(0, 12, 4);
+		var restored_pages: Boolean[Integer] = {};
+		var page_offset = Long::create();
+		var page_idx = Long::create();
+
+		for (;;) {
+			if (!read_with_check(rollback_offset, data, 0, data.length)) {
+				return false;
+			}
+			rollback_offset.add_int(data.length);
+
+			page_offset.set_raw(header[0], header[1]);
+			if ((page_offset.hi & 0x80000000) == 0) {
+				return false;
+			}
+			page_offset.hi &= 0x7FFFFFFF;
+
+			var checksum = header[2];
+			header[2] = 0;
+			if (crc32(data) != checksum) {
+				throw error("corrupted file");
+			}
+
+			page_idx.set(page_offset).rem_int(page_size);
+			if (!page_idx.is_zero()) {
+				throw error("corrupted file");
+			}
+
+			page_idx.set(page_offset).div_int(page_size);
+			if (page_idx.hi != 0) {
+				throw error("corrupted file");
+			}
+
+			if (!restored_pages.contains(page_idx.lo)) {
+				guard_write(page_offset, data, 12, page_size);
+				restored_pages[page_idx.lo] = true;
+			}
+		}
+	}
+
+	function register_cache_handler(flush_func, discard_func, data)
+	{
+		if (!cache_handlers) {
+			cache_handlers = [];
+		}
+		cache_handlers[] = flush_func;
+		cache_handlers[] = discard_func;
+		cache_handlers[] = data;
+	}
+
+	function @flush_caches()
+	{
+		var handlers = cache_handlers;
+		if (!handlers) return;
+
+		for (var i=handlers.length-3; i>=0; i-=3) {
+			var func = cache_handlers[i+0];
+			if (func) {
+				func(cache_handlers[i+2]);
+			}
+		}
+	}
+
+	function @discard_caches()
+	{
+		var handlers = cache_handlers;
+		if (!handlers) return;
+
+		for (var i=handlers.length-3; i>=0; i-=3) {
+			var func = cache_handlers[i+1];
+			if (func) {
+				func(cache_handlers[i+2]);
+			}
+		}
+	}
+
+	function begin()
+	{
+		begin(true, -1);
+	}
+
+	function begin(write: Boolean)
+	{
+		begin(write, -1);
+	}
+
+	function begin(write: Boolean, timeout: Integer): Boolean
+	{
+		switch (trans_type) {
+			case TRANS_NONE: {
+				if (rollback != null || rollback_offset != null || rollback_state != ROLLBACK_CLEAN || file_size != null) {
+					throw error("shouldn't happen");
+				}
+				if (!file.lock(write, timeout)) return false;
+
+				var data = Array::create_shared(2, 4);
+				file.seek_set(header_offset + HEADER_rollback*4);
+				file.read(data.get_view(1));
+				if (data[0] != ROLLBACK_CLEAN || data[1] != page_size) {
+					if (!write) {
+						file.unlock();
+						if (!file.lock(true, timeout)) return false;
+					}
+					var (r, e) = init(page_size);
+					if (e) {
+						file.unlock();
+						throw e;
+					}
+					if (!write) {
+						file.unlock();
+						if (!file.lock(false, timeout)) return false;
+					}
+				}
+
+				trans_type = write? TRANS_WRITE : TRANS_READ;
+				trans_cnt = 1;
+				if (write) {
+					rollback = RollbackBuffer::create(Long::create(0), null);
+				}
+				file_size = file.get_length();
+				return true;
+			}
+
+			case TRANS_READ:
+				if (write) throw error("can't begin write transaction in read transaction");
+				trans_cnt++;
+				return true;
+
+			case TRANS_WRITE:
+				flush_caches();
+				rollback = RollbackBuffer::create(rollback_offset? file.get_length().sub(rollback_offset) : Long::create(0), rollback);
+				trans_cnt++;
+				return true;
+		}
+		throw error("shouldn't happen");
+	}
+
+	function commit()
+	{
+		if (trans_cnt <= 0) {
+			throw error("not in transaction");
+		}
+		if (trans_cnt > 1) {
+			if (trans_type == TRANS_WRITE) {
+				rollback.prev.merge(rollback);
+				rollback = rollback.prev;
+			}
+			trans_cnt--;
+			return;
+		}
+		
+		if (trans_type == TRANS_READ) {
+			discard_caches();
+			trans_type = TRANS_NONE;
+			trans_cnt = 0;
+			file_size = null;
+			file.unlock();
+			return;
+		}
+
+		flush_caches();
+		discard_caches();
+
+		if (rollback_state != ROLLBACK_CLEAN) {
+			file.set_length(file_size);
+			file.sync();
+
+			var data = Array::create_shared(6, 4);
+			var view = data.get_view(1);
+			data[0] = ROLLBACK_CLEAN;
+			file.seek_set(header_offset + HEADER_rollback*4);
+			file.write(view, 0, 4);
+			file.sync();
+			rollback_state = ROLLBACK_CLEAN;
+
+			data[0] = 0;
+			data[1] = 0;
+			data[2] = 0;
+			data[3] = 0;
+			data[4] = 0;
+			data[5] = 0;
+			file.seek_set(header_offset + HEADER_file_size_lo*4);
+			file.write(view, 0, 24);
+			file.sync();
+		}
+
+		trans_type = TRANS_NONE;
+		trans_cnt = 0;
+		file_size = null;
+		rollback = null;
+		rollback_offset = null;
+		file.unlock();
+	}
+
+	function rollback()
+	{
+		if (trans_cnt <= 0) {
+			throw error("not in transaction");
+		}
+		if (trans_type == TRANS_WRITE) {
+			discard_caches();
+			rollback.apply();
+			if (rollback_offset) {
+				var off = rollback_offset.dup().add(rollback.rollback_start);
+				apply_rollback(off);
+				file.set_length(off);
+			}
+			rollback = rollback.prev;
+			if (trans_cnt == 1) {
+				if (file.get_length() != file_size) {
+					file.set_length(file_size);
+				}
+				file.sync();
+
+				if (rollback_state != ROLLBACK_CLEAN) {
+					var data = Array::create_shared(6, 4);
+					var view = data.get_view(1);
+					data[0] = ROLLBACK_CLEAN;
+					file.seek_set(header_offset + HEADER_rollback*4);
+					file.write(view, 0, 4);
+					file.sync();
+					rollback_state = ROLLBACK_CLEAN;
+
+					data[0] = 0;
+					data[1] = 0;
+					data[2] = 0;
+					data[3] = 0;
+					data[4] = 0;
+					data[5] = 0;
+					file.seek_set(header_offset + HEADER_file_size_lo*4);
+					file.write(view, 0, 24);
+					file.sync();
+				}
+			}
+		}
+		if (--trans_cnt == 0) {
+			if (trans_type == TRANS_READ) {
+				discard_caches();
+			}
+			trans_type = TRANS_NONE;
+			file_size = null;
+			rollback_offset = null;
+			file.unlock();
+		}
+	}
+
+	function in_transaction(): Boolean
+	{
+		return trans_type != TRANS_NONE;
+	}
+
+	function in_write_transaction(): Boolean
+	{
+		return trans_type == TRANS_WRITE;
+	}
+
+	function set_on_rollback(container, key, value)
+	{
+		if (trans_type != TRANS_WRITE) {
+			throw error("must be in write transaction");
+		}
+		if (!is_array(container) && !is_hash(container)) {
+			throw error("container must be either an array or a hash");
+		}
+		rollback.add(container, key, value);
+	}
+
+	function call_on_rollback(func, data, param)
+	{
+		if (trans_type != TRANS_WRITE) {
+			throw error("must be in write transaction");
+		}
+		if (!is_funcref(func)) {
+			throw error("invalid function reference");
+		}
+		rollback.add(func, data, param);
+	}
+
+	function read(offset: Long, buf: Byte[])
+	{
+		read(offset, buf, 0, buf.length);
+	}
+
+	function read(offset: Long, buf: Byte[], off: Integer, len: Integer)
+	{
+		if (trans_type == TRANS_NONE) {
+			throw error("not in transaction");
+		}
+
+		var end = offset.dup().add_int(len);
+		if (end.cmp(file_size) > 0) {
+			throw error("reading outside the length of file");
+		}
+
+		file.set_position(offset);
+		file.read(buf, off, len);
+	}
+
+	function @create_rollback()
+	{
+		var new_hole_size = Long::create(page_size*2);
+		var new_offset = file_size.dup().add(new_hole_size).add_int(page_size-1);
+		new_offset.and(~(page_size-1), -1);
+
+		var data = Array::create_shared(2, 4);
+		var view = data.get_view(1);
+
+		if (rollback_state == ROLLBACK_CLEAN) {
+			data[0] = file_size.lo;
+			data[1] = file_size.hi;
+			file.seek_set(header_offset + HEADER_file_size_lo*4);
+			file.write(view, 0, 8);
+		}
+
+		data[0] = new_offset.lo;
+		data[1] = new_offset.hi;
+		file.seek_set(header_offset + HEADER_rollback1_lo*4);
+		file.write(view, 0, 8);
+		file.sync();
+
+		data[0] = ROLLBACK_USE_FIRST;
+		file.seek_set(header_offset + HEADER_rollback*4);
+		file.write(view, 0, 4);
+		file.sync();
+		rollback_state = ROLLBACK_USE_FIRST;
+
+		rollback_offset = new_offset;
+		rollback_hole_size = new_hole_size;
+
+		file.set_length(rollback_offset);
+	}
+
+	function write(offset: Long, buf: Byte[])
+	{
+		write(offset, buf, 0, buf.length);
+	}
+
+	function write(offset: Long, buf: Byte[], off: Integer, len: Integer)
+	{
+		if (trans_type != TRANS_WRITE) {
+			throw error("not in write transaction");
+		}
+		if (len < 0) {
+			throw error("negative length");
+		}
+
+		var end = offset.dup().add_int(len);
+		if (end.cmp(file_size) > 0) {
+			set_length(end);
+		}
+		if (len == 0) return;
+
+		if (rollback_offset == null) {
+			create_rollback();
+		}
+
+		var tmp = Long::create();
+		tmp.set(offset).div_int(page_size);
+		if (tmp.hi != 0) {
+			throw error("offset is too big");
+		}
+		var page_start = tmp.lo;
+
+		tmp.set(offset).add_int(len).add_int(page_size-1).div_int(page_size).sub_int(1);
+		if (tmp.hi != 0) {
+			throw error("offset is too big");
+		}
+		var page_end = tmp.lo ^ 0x80000000;
+
+		var first_offset = file.get_length();
+		var first = true;
+		
+		var data: Byte[], header: Integer[], page_off: Long;
+
+		for (var i=page_start; i ^ 0x80000000 <= page_end; i = add32(i, 1)) {
+			if (rollback.is_page_dirty(i)) continue;
+
+			if (!data) {
+				data = Array::create_shared(12+page_size, 1);
+				header = data.get_view(0, 12, 4);
+				page_off = Long::create();
+			}
+
+			page_off.set_int(i).mul_int(page_size);
+			header[0] = page_off.lo;
+			header[1] = page_off.hi | 0x80000000;
+			file.set_position(page_off);
+			file.read(data, 12, page_size);
+			header[2] = crc32(data);
+			if (first) {
+				header[1] &= ~0x80000000;
+			}
+
+			file.seek_end(0);
+			file.write(data, 0, data.length);
+
+			first = false;
+		}
+
+		if (data) {
+			file.sync();
+			file.set_position(first_offset);
+			file.read(data, 0, 8);
+			header[1] |= 0x80000000;
+			file.set_position(first_offset);
+			file.write(data, 0, 8);
+			file.sync();
+
+			for (var i=page_start; i ^ 0x80000000 <= page_end; i = add32(i, 1)) {
+				rollback.mark_page_dirty(i);
+			}
+		}
+
+		guard_write(offset, buf, off, len);
+	}
+
+	function get_length(): Long
+	{
+		if (trans_type == TRANS_NONE) {
+			throw error("not in transaction");
+		}
+
+		return file_size.dup();
+	}
+
+	function @move_rollback()
+	{
+		if (rollback_state != ROLLBACK_USE_FIRST && rollback_state != ROLLBACK_USE_SECOND) {
+			throw error("shouldn't happen");
+		}
+		
+		var new_offset = Long::create();
+		var new_hole_size = rollback_hole_size.dup();
+		var file_len = file.get_length();
+		do {
+			new_hole_size.mul_int(2);
+			new_offset.set(file_size).add(new_hole_size).add_int(page_size-1);
+			new_offset.and(~(page_size-1), -1);
+		}
+		while (new_offset.cmp(file_len) < 0);
+
+		var start = rollback_offset.dup();
+		var end = file_len;
+		var dest = new_offset.dup();
+		var buf = Array::create_shared(65536, 1);
+		var diff = Long::create();
+
+		if (start.cmp(end) == 0) {
+			file.set_length(new_offset);
+		}
+		for (;;) {
+			diff.set(end).sub(start);
+			var amount = diff.cmp_int(buf.length) < 0? diff.to_int() : buf.length;
+			if (amount == 0) break;
+
+			file.set_position(start);
+			file.read(buf, 0, amount);
+
+			file.set_position(dest);
+			file.write(buf, 0, amount);
+
+			start.add_int(amount);
+			dest.add_int(amount);
+		}
+
+		var data = Array::create_shared(2, 4);
+		var view = data.get_view(1);
+		data[0] = new_offset.lo;
+		data[1] = new_offset.hi;
+
+		if (rollback_state == ROLLBACK_USE_FIRST) {
+			file.seek_set(header_offset + HEADER_rollback2_lo*4);
+			file.write(view, 0, 8);
+			file.sync();
+
+			data[0] = ROLLBACK_USE_SECOND;
+			file.seek_set(header_offset + HEADER_rollback*4);
+			file.write(view, 0, 4);
+			file.sync();
+			rollback_state = ROLLBACK_USE_SECOND;
+		}
+		else {
+			file.seek_set(header_offset + HEADER_rollback1_lo*4);
+			file.write(view, 0, 8);
+			file.sync();
+
+			data[0] = ROLLBACK_USE_FIRST;
+			file.seek_set(header_offset + HEADER_rollback*4);
+			file.write(view, 0, 4);
+			file.sync();
+			rollback_state = ROLLBACK_USE_FIRST;
+		}
+
+		start.set(rollback_offset);
+		buf.fill(0);
+
+		for (;;) {
+			diff.set(end).sub(start);
+			var amount = diff.cmp_int(buf.length) < 0? diff.to_int() : buf.length;
+			if (amount == 0) break;
+
+			file.set_position(start);
+			file.write(buf, 0, amount);
+			start.add_int(amount);
+		}
+
+		rollback_offset.set(new_offset);
+		rollback_hole_size.set(new_hole_size);
+	}
+
+	function set_length(new_size: Long)
+	{
+		if (trans_type != TRANS_WRITE) {
+			throw error("not in write transaction");
+		}
+
+		if (new_size != file_size) {
+			if (new_size.cmp_int(header_offset + ATOMIC_FILE_HEADER_SIZE) < 0) {
+				throw error("can't set file length smaller than size of header");
+			}
+			
+			if (rollback_offset == null) {
+				create_rollback();
+			}
+
+			rollback.add(file_size, LONG_lo, file_size.lo);
+			rollback.add(file_size, LONG_hi, file_size.hi);
+			file_size.set(new_size);
+
+			if (rollback_offset != null && file_size.cmp(rollback_offset) > 0) {
+				move_rollback();
+			}
+		}
+	}
+
+	function close()
+	{
+		if (trans_type == TRANS_WRITE) {
+			var err = null;
+			while (trans_type == TRANS_WRITE) {
+				var (r, e) = rollback();
+				if (e) {
+					err = e;
+					break;
+				}
+			}
+			file.close();
+			file = null;
+			trans_type = TRANS_NONE;
+			trans_cnt = 0;
+			if (err) throw err;
+		}
+		else {
+			file.close();
+			file = null;
+			trans_type = TRANS_NONE;
+			trans_cnt = 0;
+		}
+	}
+}
+
+class @RollbackBuffer
+{
+	var @rollback_start: Long;
+	var @prev: RollbackBuffer;
+	var @dirty_pages: Boolean[Integer];
+
+	constructor create(rollback_start: Long, prev: RollbackBuffer)
+	{
+		this.rollback_start = rollback_start.dup();
+		this.prev = prev;
+		this.dirty_pages = {};
+	}
+
+	function add(container, key, value)
+	{
+		this[] = container;
+		this[] = key;
+		this[] = value;
+	}
+
+	function is_empty(): Boolean
+	{
+		return (this as Dynamic[]).length == RollbackBuffer::SIZE;
+	}
+
+	function apply()
+	{
+		var arr = this as Dynamic[];
+		for (var i=arr.length-3; i>=RollbackBuffer::SIZE; i-=3) {
+			var container = arr[i+0];
+			var key = arr[i+1];
+			var value = arr[i+2];
+			if (is_hash(container)) {
+				if (value) {
+					container{key} = value;
+				}
+				else {
+					hash_remove(container, key);
+				}
+			}
+			else if (is_funcref(container)) {
+				container(key, value);
+			}
+			else {
+				if (key == -1) {
+					array_set_length(container, value);
+				}
+				else {
+					container[key] = value;
+				}
+			}
+		}
+	}
+
+	function merge(other: RollbackBuffer)
+	{
+		(this as Dynamic[]).append(other as Dynamic[], RollbackBuffer::SIZE, (other as Dynamic[]).length - RollbackBuffer::SIZE);
+		foreach (var idx, value in other.dirty_pages) {
+			dirty_pages[idx] = true;
+		}
+	}
+
+	function mark_page_dirty(idx: Integer)
+	{
+		dirty_pages[idx] = true;
+	}
+
+	function is_page_dirty(idx: Integer): Boolean
+	{
+		return dirty_pages.contains(idx);
+	}
+}

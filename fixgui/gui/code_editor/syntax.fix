@@ -1,0 +1,184 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/code_editor/font";
+
+struct Attribute
+{
+	var length: Integer;
+	var width: Float;
+	var style: Dynamic;
+}
+
+class Syntax
+{
+	var @font: AbstractFont;
+
+	constructor create()
+	{
+	}
+
+	virtual function set_font(font: AbstractFont)
+	{
+		this.font = font;
+	}
+
+	function get_font(): AbstractFont
+	{
+		return font;
+	}
+
+	virtual function process(attrs: [Attribute], s: String, off: Integer, len: Integer, state: Dynamic): Dynamic
+	{
+		attrs[] = {
+			.length: len,
+			.width: font.get_string_advance(s, off, len),
+			.style: 0
+		};
+		return state;
+	}
+
+	virtual function get_position(s: String, off: Integer, len: Integer, width: Float, style: Dynamic, x: Float): Float
+	{
+		return font.get_string_position(s, off, len, x);
+	}
+
+	virtual function get_visual_position(s: String, off: Integer, len: Integer, width: Float, style: Dynamic, x: Integer): Float
+	{
+		return font.get_string_advance(s, off, x);
+	}
+
+	virtual function draw_text(p: Painter, x: Float, y: Integer, s: String, off: Integer, len: Integer, width: Float, height: Integer, ascent: Integer, selection: Boolean, style: Dynamic)
+	{
+		font.draw_string(p, x, y+ascent, s, off, len, selection? 0xFFFFFFFF : 0xFF000000);
+	}
+
+	virtual function get_completion_data(data: SyntaxData, x: Integer, y: Integer, choices: CompletionData)
+	{
+	}
+}
+
+class SyntaxData
+{
+	constructor create()
+	{
+	}
+
+	virtual function get_row_count(): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_state(row: Integer): Dynamic
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_text(row: Integer): String
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_all_text(): String
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_all_text_position(x: Integer, y: Integer): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_attrs(row: Integer): [Attribute]
+	{
+		throw error("not implemented");
+	}
+}
+
+class CompletionData
+{
+	constructor create()
+	{
+	}
+
+	virtual function get_count(): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_value(idx: Integer): String
+	{
+		throw error("not implemented");
+	}
+
+	virtual function remove_value(idx: Integer)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function set_range(x1: Integer, x2: Integer)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_start_range(): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_end_range(): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function add_text(s: String, style, width: Float)
+	{
+		throw error("not implemented");
+	}
+
+	function finish_line(value: String)
+	{
+		if (value) {
+			finish_line(value, value.length, value.length);
+		}
+		else {
+			finish_line(value, 0, 0);
+		}
+	}
+
+	function finish_line(value: String, cursor: Integer)
+	{
+		if (value) {
+			finish_line(value, cursor, cursor);
+		}
+		else {
+			finish_line(value, 0, 0);
+		}
+	}
+
+	virtual function finish_line(value: String, sel_start: Integer, sel_end: Integer)
+	{
+		throw error("not implemented");
+	}
+}

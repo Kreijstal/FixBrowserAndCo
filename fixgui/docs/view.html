@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/view";</code>
+</p>
+
+<h2>View class</h2>
+
+<p>
+Super class of native views.
+</p>
+
+<p>
+Subclasses: <a href="window.html">Window</a>, <a href="label.html">Label</a>, <a href="text_field.html">TextField</a>,
+<a href="button.html">Button</a>, <a href="canvas.html">Canvas</a>
+</p>
+
+<ul>
+	<li><a href="#object">Object</a></li>
+	<li><a href="#position">Position &amp; size</a></li>
+	<li><a href="#visibility">Visibility</a></li>
+	<li><a href="#tree">View tree</a></li>
+	<li><a href="#focus">Focus</a></li>
+	<li><a href="#layout">Layout</a></li>
+	<li><a href="#cursor">Mouse cursor</a></li>
+	<li><a href="#events">Event handlers</a></li>
+</ul>
+
+<h3 id="object">Object</h3>
+
+<dl>
+	<dt><code>static function <b>is_instance</b>(obj): Boolean</code></dt>
+	<dd>
+		Returns true when the passed object is a view.
+	</dd>
+	<dt><code>function <b>destroy</b>()</code></dt>
+	<dd>
+		Destroys the view.
+	</dd>
+</dl>
+
+<h3 id="position">Position &amp; size</h3>
+
+<dl>
+	<dt><code>function <b>get_rect</b>(): <a href="image/rect.html">Rect</a></code></dt>
+	<dd>
+		Returns the outer rectangle of the view.
+	</dd>
+	<dt><code>function <b>get_content_rect</b>(): <a href="image/rect.html">Rect</a></code></dt>
+	<dd>
+		Returns the inner content rectangle of the view.
+	</dd>
+	<dt><code>function <b>get_inner_rect</b>(): <a href="image/rect.html">Rect</a></code></dt>
+	<dd>
+		TODO
+	</dd>
+	<dt><code>
+		function <b>set_rect</b>(x: Integer, y: Integer, width: Integer, height: Integer)<br>
+		function <b>set_rect</b>(rect: <a href="image/rect.html">Rect</a>)
+	</code></dt>
+	<dd>
+		Sets the outer rectangle of the view.
+	</dd>
+</dl>
+
+<h3 id="visibility">Visibility</h3>
+
+<dl>
+	<dt><code>function <b>set_visible</b>(visible: Boolean)</code></dt>
+	<dd>
+		Sets the view visible.
+	</dd>
+</dl>
+
+<h3 id="tree">View tree</h3>
+
+<dl>
+	<dt><code>
+		function <b>add</b>(view: View or <a href="subview.html">SubView</a>)<br>
+		function <b>add</b>(view: View or <a href="subview.html">SubView</a>, rect: <a href="image/rect.html">Rect</a>)
+	</code></dt>
+	<dd>
+		Adds another view into this.
+	</dd>
+	<dt><code>function <b>get_parent</b>(): View</code></dt>
+	<dd>
+		Returns the parent view or <code>null</code> when this is the topmost view.
+	</dd>
+	<dt><code>function <b>get_next</b>(): View</code></dt>
+	<dd>
+		Returns the next view (sibling) or <code>null</code> when this is the last view.
+	</dd>
+	<dt><code>function <b>get_prev</b>(): View</code></dt>
+	<dd>
+		Returns the previous view (sibling) or <code>null</code> when this is the first view.
+	</dd>
+	<dt><code>function <b>get_first_child</b>(): View</code></dt>
+	<dd>
+		Returns the first child view or <code>null</code> when this view has no children.
+	</dd>
+	<dt><code>function <b>get_last_child</b>(): View</code></dt>
+	<dd>
+		Returns the last child view or <code>null</code> when this view has no children.
+	</dd>
+	<dt><code>function <b>get_child_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the number of child views.
+	</dd>
+	<dt><code>function <b>get_child</b>(idx: Integer): View</code></dt>
+	<dd>
+		Returns the child view at given index.
+	</dd>
+</dl>
+
+<h3 id="focus">Focus</h3>
+
+<dl>
+	<dt><code>function <b>focus</b>()</code></dt>
+	<dd>
+		Focuses this view (making it receive keyboard events).
+	</dd>
+	<dt><code>function <b>has_focus</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether this view has keyboard focus.
+	</dd>
+</dl>
+
+<h3 id="layout">Layout</h3>
+
+<dl>
+	<dt><code>function <b>get_sizing</b>(): <a href="view_sizing.html">ViewSizing</a></code></dt>
+	<dd>
+		Returns the sizing properties for layout.
+	</dd>
+	<dt><code>function <b>get_scale</b>(): Float</code></dt>
+	<dd>
+		Returns the current scale for this view.
+	</dd>
+	<dt><code>static function <b>get_current_scale</b>(): Float</code></dt>
+	<dd>
+		Returns the current scale that would be used for a newly created window.
+	</dd>
+</dl>
+
+<h3 id="cursor">Mouse cursor</h3>
+
+<dl>
+	<dt id="set_cursor"><code>function <b>set_cursor</b>(type: Integer)</code></dt>
+	<dd>
+		Sets the cursor type:<br>
+		<br>
+		<b>CURSOR_DEFAULT</b> - default view cursor<br>
+		<b>CURSOR_ARROW</b> - arrow cursor<br>
+		<b>CURSOR_EMPTY</b> - empty cursor<br>
+		<b>CURSOR_TEXT</b> - text cursor<br>
+		<b>CURSOR_CROSS</b> - cross cursor<br>
+		<b>CURSOR_HAND</b> - hand cursor<br>
+		<b>CURSOR_MOVE</b> - move cursor<br>
+		<b>CURSOR_RESIZE_N</b> - resize north cursor<br>
+		<b>CURSOR_RESIZE_NE</b> - resize north-east cursor<br>
+		<b>CURSOR_RESIZE_E</b> - resize east cursor<br>
+		<b>CURSOR_RESIZE_SE</b> - resize south-east cursor<br>
+		<b>CURSOR_RESIZE_S</b> - resize south cursor<br>
+		<b>CURSOR_RESIZE_SW</b> - resize south-west cursor<br>
+		<b>CURSOR_RESIZE_W</b> - resize west cursor<br>
+		<b>CURSOR_RESIZE_NW</b> - resize north-west cursor<br>
+		<b>CURSOR_WAIT</b> - wait cursor<br>
+	</dd>
+	<dt><code>function <b>get_cursor</b>(): Integer</code></dt>
+	<dd>
+		Returns the cursor type.
+	</dd>
+</dl>
+
+<h3 id="events">Event handlers</h3>
+
+<dl>
+	<dt><code>virtual function <b>handle_mouse_event</b>(event: <a href="mouse_event.html">MouseEvent</a>): Boolean</code></dt>
+	<dd>
+		Override to process mouse events. Return true if you handled the event and want to stop
+		further processing.
+	</dd>
+	<dt><code>virtual function <b>handle_touch_event</b>(event: <a href="touch_event.html">TouchEvent</a>): Boolean</code></dt>
+	<dd>
+		Override to process touch events. Return true if you handled the event and want to stop
+		further processing.
+	</dd>
+	<dt><code>virtual function <b>handle_key_event</b>(event: <a href="key_event.html">KeyEvent</a>): Boolean</code></dt>
+	<dd>
+		Override to process keyboard events. Return true if you handled the event and want to stop
+		further processing.
+	</dd>
+	<dt><code>virtual function <b>handle_focus_event</b>(event: <a href="focus_event.html">FocusEvent</a>)</code></dt>
+	<dd>
+		Override to process focus events.
+	</dd>
+</dl>
+
+</body>
+</html>

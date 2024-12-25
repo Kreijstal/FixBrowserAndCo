@@ -1,0 +1,21 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "condecdn.net")) return true;
+	if (domain_ends_with(dest, "condenast.co.uk")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	var elems = element_query_all(document, "div.bb-figure__wrapper");
+	for (var i=0; i<length(elems); i++) {
+		element_set_attr(elems[i], "style", "");
+	}
+
+	elems = element_query_all(document, "div.bb-figure__wrapper img.c-image--lazyload");
+	for (var i=0; i<length(elems); i++) {
+		element_set_attr(elems[i], "style", "display: none");
+	}
+}

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>ChangeLog</h2>
+
+<h3>Version 0.8 (2024/05/05):</h3>
+
+<ul>
+<li>Added support for timers on MacOS</li>
+<li>Added TextArea</li>
+<li>Added ability do disable text fields, text areas and buttons</li>
+<li>Added utility function to remove SubView from it's parent</li>
+<li>Added ability to set text color of text area on MacOS</li>
+<li>Added support for search field on MacOS</li>
+<li>Added initial support for Table on MacOS</li>
+<li>Added support for quick previewing of files on MacOS</li>
+<li>Added support for attributes in SubView</li>
+<li>Improved colors of PureScrollBar in custom theme</li>
+<li>Adjusted for syntax improvements in classes</li>
+<li>Changed to call completion handler after population of default values in FixScriptSyntax</li>
+<li>Fixed notify icon not being highlighted when pressed on MacOS 10.9 or older</li>
+<li>Fixed incorrect releasing of objects on MacOS</li>
+<li>Fixed incorrect image creation for notify icon on MacOS</li>
+<li>Fixed scrolling to visible rect to be ignored when SubScrollView has invalid size</li>
+<li>Fixed last newline handling when setting and getting text in CodeEditor</li>
+<li>Fixed scaling of SubDivider</li>
+</ul>
+
+<h3>Version 0.7 (2022/12/27):</h3>
+
+<ul>
+<li>Added support for custom completion in FixScriptSyntax</li>
+<li>Added support for touch events</li>
+<li>Added ability to provide custom area view in SubScrollView</li>
+<li>Added ability to track scroll change directly in SubScrollView</li>
+<li>Added remove_all method in SubView</li>
+<li>Added set_default_scale method in SubView</li>
+<li>Added support for running in web browsers using WebAssembly</li>
+<li>Added support for showing of lines in CodeEditor</li>
+<li>Added ability to set logical top view in SubView</li>
+<li>Added optimized drawing of subviews</li>
+<li>Added ability to obtain double click delay/distance and cursor blink interval</li>
+<li>Added SubLabel</li>
+<li>Improved support for GTK</li>
+<li>Renamed is_view method to is_instance in View</li>
+<li>Fixed clipping against parent subviews when determining repaint area</li>
+<li>Fixed get_view_area method in SubScrollView</li>
+<li>Fixed support for scaling when determining default size of SubScrollBar</li>
+<li>Fixed handling of key typed event in SubTextField</li>
+<li>Fixed scaling of completion popup in CodeEditor</li>
+<li>Fixed scaling of cursor in CodeEditor</li>
+<li>Fixed placement of code completion popup in CodeEditor</li>
+</ul>
+
+<h3>Version 0.6 (2022/03/14):</h3>
+
+<ul>
+<li>Added read only state in SubTextField</li>
+<li>Added get_scroll_view method in CodeEditor</li>
+<li>Fixed disabled state in SubTextField</li>
+<li>Fixed focus redirection in CodeEditor</li>
+</ul>
+
+<h3>Version 0.5 (2021/10/03):</h3>
+
+<ul>
+<li>Added code editor</li>
+<li>Added ability to disable buttons</li>
+<li>Added ability to set label in PureButton</li>
+<li>Adjusted for new symbol representation in tokens</li>
+<li>Fixed memory leak when exchanging messages with workers</li>
+<li>Fixed handling of key combinations with ALT modifier on Windows</li>
+<li>Fixed other mouse buttons wrongly working when clicking on SubButton</li>
+</ul>
+
+<h3>Version 0.4 (2021/05/12):</h3>
+
+<ul>
+<li>Added scroll_to_visible method in SubScrollView</li>
+<li>Added support for border in SubScrollView and PureScrollView</li>
+<li>Added set_rect variant without Rect in View</li>
+<li>Added SubDivider and PureDivider</li>
+<li>Added EventListeners</li>
+<li>Added initial code for SubTable and PureTable</li>
+<li>Added initial code for SubList and PureList</li>
+<li>Added relative mouse mode in Canvas</li>
+<li>Added get_scroll_position and set_scroll_position methods in SubScrollView</li>
+<li>Added ability to obtain native window handle on Windows</li>
+<li>Added initial support for GTK 2/3</li>
+<li>Added console output on Windows</li>
+<li>Changed worker interface to be optional</li>
+<li>Fixed missing EVENT_KEY_DOWN for KEY_ENTER/ESCAPE on Windows</li>
+<li>Fixed wrong EVENT_KEY_TYPED when Ctrl/Alt modifiers are active on Windows</li>
+</ul>
+
+<h3>Version 0.3 (2020/10/13):</h3>
+
+<ul>
+<li>Added unfocus method in SubView</li>
+<li>Added is_drag_event method to MouseEvent</li>
+<li>Added change action to SubTextField</li>
+<li>Added support for mouse wheel events</li>
+<li>Added support for scaling of SubViews</li>
+<li>Added ability to catch key events in parent SubViews</li>
+<li>Added do_action method in SubScrollBar</li>
+<li>Added caching of SystemFont instances</li>
+<li>Added string range variants of SystemFont methods</li>
+<li>Added ability to get list of system fonts</li>
+<li>Changed to use C instead of C++ for Haiku support</li>
+<li>Fixed as_view method in SubView to return existing Canvas</li>
+<li>Fixed scroll position during SubTextField resize</li>
+<li>Fixed crash when removing other timers within timer handler</li>
+</ul>
+
+<h3>Version 0.2 (2020/04/20):</h3>
+
+<ul>
+<li>Added optional integration with FixIO async event loop</li>
+<li>Added full implementation of NotifyIcon</li>
+<li>Added passing of parameters to app_main</li>
+<li>Added metrics to system fonts</li>
+<li>Added ability to show popup menus in both views and subviews</li>
+<li>Added initial code for pure views (emulated native views)</li>
+<li>Added ability to add subviews directly</li>
+<li>Added ability to set default menu item on Windows</li>
+<li>Added Label and TextField</li>
+<li>Added initial support for Haiku OS</li>
+<li>Added prefix for internal global functions</li>
+<li>Added ability to query native view hierarchy</li>
+<li>Added fixgui_run_in_main_thread function</li>
+<li>Added is_active function to Timer</li>
+<li>Added SubScrollBar and SubScrollView</li>
+<li>Added SubViewRoot</li>
+<li>Changed draw_text in SubTextField to pass scrolling position only</li>
+<li>Renamed C functions to start with fixgui prefix</li>
+<li>Fixed color space issue when drawing into canvas on Mac OS X</li>
+<li>Fixed system font positioning and metrics on Mac OS X</li>
+<li>Improved menu related code</li>
+<li>Improved Timer class to be more consistent</li>
+</ul>
+
+<h3>Version 0.1 (2019/12/26):</h3>
+
+<ul>
+<li>Initial release</li>
+</ul>
+
+</body>
+</html>

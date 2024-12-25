@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<ul>
+	<li>Version: 0.8</li>
+	<li><a href="https://www.fixscript.org/">Homepage</a> (<a href="http://fixscript.advel.cz/">mirror</a>)</li>
+	<li><a href="changelog.html">ChangeLog</a></li>
+</ul>
+
+<p>
+This library allows you to create GUI programs.
+</p>
+
+<p>
+<b>Features:</b>
+<ul>
+	<li>currently supported systems: Windows 2000 or newer, Mac OS X 10.6 or newer, Linux (GTK 2/3), Haiku, Web platform</li>
+	<li>both native and custom views (widgets)</li>
+	<li>provides common subset of all platforms and also ability to use platform specific views and features</li>
+	<li>template classes for common custom views (you just need to implement the drawing)</li>
+	<li>optional emulated native views for special purposes (flicker-free rendering, advanced blending, etc.)</li>
+	<li>GUI scaling support (different DPI, Retina)</li>
+	<li>simple declarative layouting of views designed both for humans and GUI designer programs</li>
+	<li>complex views: code editor</li>
+ 	<li>suitable for games (active rendering, custom GUIs)</li>
+ 	<li>support for both system font rendering and platform independent TrueType rendering</li>
+ 	<li>support for timers and worker threads</li>
+	<li>optional integration with FixIO async event loop (to directly use asynchronous I/O in GUI thread)</li>
+	<li>licensed under ZLIB license (no attribution required in binary builds)</li>
+</ul>
+</p>
+
+<p>
+<b>This is a preview release intended only for the most dedicated programmers. The major foundations are resolved,
+but a lot of work is still needed.</b>
+</p>
+
+<h2>Overview</h2>
+
+<p>
+FixGUI supports both native views (widgets) and platform independent views that emulate
+the look and feel of the system. You can also have completely custom implementations.
+The native views are simply called <a href="view.html">Views</a>. The platform independent
+views are called <a href="subview.html">SubViews</a> because they reside inside a native
+view (canvas).
+</p>
+
+<p>
+There are various premade subviews for buttons, scrollviews and other widgets. These provide
+the foundation for custom implementation which require basically just to provide the painting
+code. There are also variants of "pure" subviews, these emulate the native look and feel
+and can be also customized.
+</p>
+
+<p>
+To summarize, the native views are called directly, eg. <a href="button.html">Button</a>,
+the general foundation for custom buttons is <a href="sub_button.html">SubButton</a> and
+a fully functional emulation of the native button is <a href="pure_button.html">PureButton</a>.
+</p>
+
+<p>
+Currently it is recommended to use subviews only as these are more developed, provide
+a consistent experience between platforms and are easier to work with. The exceptions are
+top-level windows and menus.
+</p>
+
+<h3>Application lifecycle</h3>
+
+<p>
+The application starts at the <code>init</code> function with no parameters (instead of the
+<code>main</code> function of console applications). This function is responsible for
+initializing the GUI or exiting.
+</p>
+
+<p>
+The application continues to run while there are visible windows or when a
+<a href="notify_icon.html">notify icon</a> is created. Once this is not true, the application
+will quit. Any other tasks will be abruptly terminated.
+</p>
+
+<h2>Native views</h2>
+
+<ul>
+<li><a href="view.html">View</a> - super class of native views
+	<ul>
+		<li><a href="window.html">Window</a> - top-level window</li>
+		<li><a href="label.html">Label</a> - text label</li>
+		<li><a href="text_field.html">TextField</a> - text field</li>
+		<li><a href="text_area.html">TextArea</a> - text area (multi-line text)</li>
+		<li><a href="button.html">Button</a> - button</li>
+		<li><a href="canvas.html">Canvas</a> - canvas (custom view)</li>
+	</ul>
+</li>
+<li><a href="menu.html">Menu</a> - menu</li>
+<li><a href="timer.html">Timer</a> - run code repeatedly or with a delay</li>
+<li><a href="notify_icon.html">NotifyIcon</a> - notify icon in system taskbar</li>
+<li><a href="clipboard.html">Clipboard</a> - access to system clipboard</li>
+</ul>
+
+<h2>Custom views</h2>
+
+<ul>
+<li><a href="subview.html">SubView</a> - super class of custom views
+	<ul>
+		<li>SubLabel</li>
+		<li>SubButton</li>
+		<li>SubTextField</li>
+		<li>SubScrollBar</li>
+		<li>SubScrollView</li>
+		<li>SubDivider</li>
+	</ul>
+</li>
+<li>SubViewRoot
+	<ul>
+		<li>SubViewCanvasRoot</li>
+	</ul>
+</li>
+<li>SubViewWrapper</li>
+</ul>
+
+<h3>Emulated views</h3>
+
+<ul>
+	<li>PurePanel</li>
+	<li>PureButton</li>
+	<li>PureTextField</li>
+	<li>PureScrollBar</li>
+	<li>PureScrollView</li>
+	<li>PureDivider</li>
+</ul>
+
+<h3>Complex views</h3>
+
+<ul>
+	<li>CodeEditor</li>
+</ul>
+
+<p>
+<a href="global.html">Global functions</a><br>
+<a href="capi.html">C API</a>
+</p>
+
+</body>
+</html>

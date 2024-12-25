@@ -1,0 +1,548 @@
+use "classes";
+
+const PI = 3.14159265;
+
+struct Pellet
+{
+	var id: Integer;
+	var x: Float;
+	var y: Float;
+	var size: Float;
+	var color: Integer;
+
+	function to_string(array: [Pellet]): String
+	{
+		return "[id="+array[this].id+",x="+array[this].x+",y="+array[this].y+",size="+array[this].size+",color="+array[this].color+"]";
+	}
+}
+
+const {
+	CELL_PLAYER,
+	CELL_VIRUS,
+	CELL_EJECTED_MASS
+};
+
+var @cached_all_cells: Cell[Integer];
+var @cached_cells: Cell[];
+var @cached_own_cells: Cell[];
+var @cached_enemy_cells: Cell[];
+var @cached_virus_cells: Cell[];
+var @cached_named_cells: Cell[][String];
+
+struct @EnvCell
+{
+	var id: Integer;
+	var type: Integer;
+	var x: Float;
+	var y: Float;
+	var size: Float;
+	var color: Integer;
+	var name: String;
+	var own: Boolean;
+}
+
+class Cell: Object
+{
+	var id: Integer;
+	var type: Integer;
+	var x: Float;
+	var y: Float;
+	var size: Float;
+	var mass: Float;
+	var color: Integer;
+	var name: String;
+	var own: Boolean;
+
+	constructor create()
+	{
+	}
+
+	function get_position(): Vector
+	{
+		return [x, y] as Vector;
+	}
+}
+
+class Vector
+{
+	var x: Float;
+	var y: Float;
+
+	static function create(): Vector
+	{
+		return [0.0, 0.0] as Vector;
+	}
+
+	static function create(x: Float, y: Float): Vector
+	{
+		return [x, y] as Vector;
+	}
+
+	function clone(): Vector
+	{
+		return [x, y] as Vector;
+	}
+
+	function set(vec: Vector): Vector
+	{
+		x = vec.x;
+		y = vec.y;
+		return this;
+	}
+
+	function set(x: Float, y: Float): Vector
+	{
+		this.x = x;
+		this.y = y;
+		return this;
+	}
+
+	function add(vec: Vector): Vector
+	{
+		x += vec.x;
+		y += vec.y;
+		return this;
+	}
+
+	function add(dx: Float, dy: Float): Vector
+	{
+		x += dx;
+		y += dy;
+		return this;
+	}
+
+	function sub(vec: Vector): Vector
+	{
+		x -= vec.x;
+		y -= vec.y;
+		return this;
+	}
+
+	function sub(dx: Float, dy: Float): Vector
+	{
+		x -= dx;
+		y -= dy;
+		return this;
+	}
+
+	function mul(value: Float): Vector
+	{
+		x *= value;
+		y *= value;
+		return this;
+	}
+
+	function div(value: Float): Vector
+	{
+		x /= value;
+		y /= value;
+		return this;
+	}
+
+	function normalize(): Vector
+	{
+		var x = this.x;
+		var y = this.y;
+		var len = sqrt(x*x + y*y);
+		this.x = x / len;
+		this.y = y / len;
+		return this;
+	}
+
+	function get_normalized(): Vector
+	{
+		var x = this.x;
+		var y = this.y;
+		var len = sqrt(x*x + y*y);
+		return [x / len, y / len] as Vector;
+	}
+
+	function length(): Float
+	{
+		var x = this.x;
+		var y = this.y;
+		return sqrt(x*x + y*y);
+	}
+
+	function length_sqr(): Float
+	{
+		var x = this.x;
+		var y = this.y;
+		return x*x + y*y;
+	}
+
+	function to_string(): String
+	{
+		return "("+x+", "+y+")";
+	}
+
+	operator + (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x + vec2.x,
+			vec1.y + vec2.y
+		] as Vector;
+	}
+
+	operator += (vec: Vector)
+	{
+		this.x += vec.x;
+		this.y += vec.y;
+		return this;
+	}
+
+	operator - (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x - vec2.x,
+			vec1.y - vec2.y
+		] as Vector;
+	}
+
+	operator -= (vec: Vector)
+	{
+		this.x -= vec.x;
+		this.y -= vec.y;
+		return this;
+	}
+
+	operator * (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x * vec2.x,
+			vec1.y * vec2.y
+		] as Vector;
+	}
+
+	operator *= (vec: Vector)
+	{
+		this.x *= vec.x;
+		this.y *= vec.y;
+		return this;
+	}
+
+	operator * (vec: Vector, scalar: Float)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator * (vec: Vector, scalar: Integer)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator * (scalar: Float, vec: Vector)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator * (scalar: Integer, vec: Vector)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator *= (scalar: Float)
+	{
+		this.x *= scalar;
+		this.y *= scalar;
+		return this;
+	}
+
+	operator *= (scalar: Integer)
+	{
+		this.x *= scalar;
+		this.y *= scalar;
+		return this;
+	}
+
+	operator / (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x / vec2.x,
+			vec1.y / vec2.y
+		] as Vector;
+	}
+
+	operator /= (vec: Vector)
+	{
+		this.x /= vec.x;
+		this.y /= vec.y;
+		return this;
+	}
+
+	operator / (vec: Vector, scalar: Float)
+	{
+		return [
+			vec.x / scalar,
+			vec.y / scalar
+		] as Vector;
+	}
+
+	operator / (vec: Vector, scalar: Integer)
+	{
+		return [
+			vec.x / scalar,
+			vec.y / scalar
+		] as Vector;
+	}
+
+	operator /= (scalar: Float)
+	{
+		this.x /= scalar;
+		this.y /= scalar;
+		return this;
+	}
+
+	operator /= (scalar: Integer)
+	{
+		this.x /= scalar;
+		this.y /= scalar;
+		return this;
+	}
+}
+
+function Vector(): Vector
+{
+	return [0.0, 0.0] as Vector;
+}
+
+function Vector(x: Float, y: Float): Vector
+{
+	return [x, y] as Vector;
+}
+
+function mark(pos: Vector)
+{
+	@mark(pos.x, pos.y);
+}
+
+function mark(x, y)
+{
+	if (is_array(x)) {
+		var pos = x as Vector;
+		var desc = y as String;
+		@mark(pos.x, pos.y, desc);
+	}
+	else {
+		if (is_int(x)) x = float(x);
+		if (is_int(y)) y = float(y);
+		@mark(x, y);
+	}
+}
+
+function mark(x: Float, y: Float, desc: String);
+
+function @get_all_cells(): Cell[Integer]
+{
+	var cells = cached_all_cells;
+	if (!cells) {
+		var data = @get_cells() as [EnvCell];
+		cells = {};
+		foreach (var i in data) {
+			var cell = Cell::create();
+			cell.id = data[i].id;
+			cell.type = data[i].type;
+			cell.x = data[i].x;
+			cell.y = data[i].y;
+			cell.size = data[i].size;
+			cell.mass = size_to_mass(cell.size);
+			cell.color = data[i].color;
+			cell.name = data[i].name;
+			cell.own = data[i].own;
+			cells[cell.id] = cell;
+		}
+		cached_all_cells = cells;
+	}
+	return cells;
+}
+
+function get_pellets(): [Pellet];
+
+function get_cells(): Cell[]
+{
+	var cells = cached_cells;
+	if (!cells) {
+		cells = [];
+		foreach (var id, cell in get_all_cells()) {
+			cells[] = cell;
+		}
+		cached_cells = cells;
+	}
+	return cells;
+}
+
+function get_own_cells(): Cell[]
+{
+	var own_cells = cached_own_cells;
+	if (!own_cells) {
+		own_cells = [];
+		foreach (var id, cell in get_all_cells()) {
+			if (cell.own) {
+				own_cells[] = cell;
+			}
+		}
+		cached_own_cells = own_cells;
+	}
+	return own_cells;
+}
+
+function get_enemy_cells(): Cell[]
+{
+	var enemy_cells = cached_enemy_cells;
+	if (!enemy_cells) {
+		enemy_cells = [];
+		foreach (var id, cell in get_all_cells()) {
+			if (!cell.own) {
+				enemy_cells[] = cell;
+			}
+		}
+		cached_enemy_cells = enemy_cells;
+	}
+	return enemy_cells;
+}
+
+function get_virus_cells(): Cell[]
+{
+	var virus_cells = cached_virus_cells;
+	if (!virus_cells) {
+		virus_cells = [];
+		foreach (var id, cell in get_all_cells()) {
+			if (cell.type == CELL_VIRUS) {
+				virus_cells[] = cell;
+			}
+		}
+		cached_virus_cells = virus_cells;
+	}
+	return virus_cells;
+}
+
+function get_cells_by_name(name: String): Cell[]
+{
+	var named_cells = cached_named_cells;
+	if (!named_cells) {
+		named_cells = {};
+		cached_named_cells = named_cells;
+	}
+	var cells = hash_get(named_cells, name, null) as Cell[];
+	if (!cells) {
+		cells = [];
+		foreach (var id, cell in get_all_cells()) {
+			if (cell.name == name) {
+				cells[] = cell;
+			}
+		}
+		named_cells[name] = cells;
+	}
+	return cells;
+}
+
+function get_cell_by_id(id: Integer): Cell
+{
+	return hash_get(get_all_cells(), id, null);
+}
+
+function mass_to_size(mass: Float): Float
+{
+	if (is_int(mass)) {
+		mass = float(mass as Integer);
+	}
+	return sqrt(mass * 100.0);
+}
+
+function size_to_mass(size: Float): Float
+{
+	if (is_int(size)) {
+		size = float(size as Integer);
+	}
+	return size*size / 100.0;
+}
+
+function get_average_position(): Vector
+{
+	return get_average_position(get_own_cells());
+}
+
+function get_average_position(cells: Cell[]): Vector
+{
+	var x = 0.0;
+	var y = 0.0;
+	if (cells) {
+		foreach (var cell in cells) {
+			x += cell.x;
+			y += cell.y;
+		}
+		var len = cells.length;
+		if (len > 0) {
+			x /= len;
+			y /= len;
+		}
+	}
+	return Vector(x, y);
+}
+
+function get_position_of_most_pellets(): Vector
+{
+	return get_position_of_most_pellets(get_average_position());
+}
+
+function get_position_of_most_pellets(pos: Vector): Vector
+{
+	var pellets = get_pellets();
+	var angles: Float[] = array_create(64, 4);
+	var x = pos.x;
+	var y = pos.y;
+	foreach (var i in pellets) {
+		var dx = pellets[i].x - x;
+		var dy = pellets[i].y - y;
+		var angle = atan2(dy, dx);
+		var idx = clamp(iround((angle+PI) * 64.0 / (PI*2.0)), 0, 63);
+		var size = pellets[i].size;
+		angles[idx] = angles[idx] + (size*size/100.0);
+	}
+	foreach (var virus in get_virus_cells()) {
+		var dx = virus.x - x;
+		var dy = virus.y - y;
+		var angle = atan2(dy, dx);
+		var idx = clamp(iround((angle+PI) * 64.0 / (PI*2.0)), 0, 63);
+		angles[idx] = 0.0;
+	}
+	var best_angle = 0;
+	var best_mass = 0.0;
+	for (var i=0; i<64; i++) {
+		if (angles[i] > best_mass) {
+			best_mass = angles[i];
+			best_angle = i;
+		}
+	}
+	var angle = (best_angle / 64.0 * (PI*2.0)) - PI;
+	var dx = cos(angle) * 1000.0;
+	var dy = sin(angle) * 1000.0;
+	return Vector(x+dx, y+dy);
+}
+
+function set_target(pos: Vector)
+{
+	@set_target(pos.x, pos.y);
+}
+
+function @before_update()
+{
+	cached_all_cells = null;
+	cached_cells = null;
+	cached_own_cells = null;
+	cached_enemy_cells = null;
+	cached_virus_cells = null;
+	cached_named_cells = null;
+}

@@ -1,0 +1,261 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/font";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/font";
+import "gui/native/windows";
+import "gui/pure/common";
+
+const @BP_PUSHBUTTON = 1;
+
+const {
+	@PBS_NORMAL = 1,
+	@PBS_HOT = 2,
+	@PBS_PRESSED = 3,
+	@PBS_DISABLED = 4,
+	@PBS_DEFAULTED = 5,
+	@PBS_DEFAULTED_ANIMATING = 6
+};
+
+class PureButton: SubButton
+{
+	var @label: String;
+	var @font: SystemFont;
+	
+	constructor create(label: String)
+	{
+		this.label = {label};
+		font = get_default_font();
+	}
+
+	function set_font(font: SystemFont)
+	{
+		this.font = font;
+		repaint();
+	}
+
+	function get_font(): SystemFont
+	{
+		font = adjust_default_font(this, font);
+		return font;
+	}
+
+	function set_label(label: String)
+	{
+		this.label = {label};
+		repaint();
+	}
+
+	function get_label(): String
+	{
+		return {label};
+	}
+
+	override function paint_background(p: Painter)
+	{
+		var width = get_width();
+		var height = get_height();
+
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				var face_color = Windows::get_system_color(COLOR_BTNFACE);
+				var highlight_color = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+				var light_color = Windows::get_system_color(COLOR_3DLIGHT);
+				var shadow_color = Windows::get_system_color(COLOR_BTNSHADOW);
+				var dark_shadow_color = Windows::get_system_color(COLOR_3DDKSHADOW);
+				var border_color = Windows::get_system_color(COLOR_WINDOWFRAME);
+
+				if ((get_state() & BUTTON_PRESSED) != 0) {
+					p.clear_rect(0, 0, width, height, face_color);
+					draw_rect(p, 0, 0, width, height, border_color);
+					draw_rect(p, 1, 1, width-2, height-2, shadow_color);
+				}
+				else {
+					p.clear_rect(0, 0, width, height, face_color);
+					var x=0, y=0;
+					if (has_focus()) {
+						draw_rect(p, x, y, width, height, border_color);
+						x++;
+						y++;
+						width -= 2;
+						height -= 2;
+					}
+					draw_highlight_rect(p, x, y, width, height, highlight_color, dark_shadow_color, face_color);
+					draw_highlight_rect(p, x+1, y+1, width-2, height-2, light_color, shadow_color, face_color);
+				}
+				break;
+			}
+
+			case THEME_WINDOWS: {
+				var btn_state = get_state();
+				var state = PBS_NORMAL;
+				if ((btn_state & BUTTON_DISABLED) != 0) {
+					state = PBS_DISABLED;
+				}
+				else if ((btn_state & BUTTON_PRESSED) != 0) {
+					state = PBS_PRESSED;
+				}
+				else if ((btn_state & BUTTON_HOVER) != 0) {
+					state = PBS_HOT;
+				}
+				else if (has_focus()) {
+					state = PBS_DEFAULTED;
+				}
+				Windows::draw_theme_background(p, 0, 0, width, height, "BUTTON", BP_PUSHBUTTON, state);
+				break;
+			}
+
+			case THEME_COCOA_FLAT: {
+				var scale = get_scale();
+				var shape1 = Shape::round_rect(0.5, 0.5, get_width()-2, get_height()-2, 4*scale, 4*scale);
+				var shape2 = Shape::round_rect(0.5, 0.5, get_width()-2, get_height()-2, 4*scale, 4*scale).get_outline(1.0);
+				p.push();
+				p.translate(0, 1);
+				p.fill_shape(shape2, 0xFFE4E4E4);
+				p.pop();
+				if ((get_state() & BUTTON_PRESSED) != 0) {
+					var gradient1 = Image::create(1, 2);
+					var gradient2 = Image::create(1, 2);
+					var pixels = gradient1.get_pixels();
+					pixels[0] = 0xFF3D8DFF;
+					pixels[1] = 0xFF0257E7;
+					pixels = gradient2.get_pixels();
+					pixels[0] = 0xFF196EFF;
+					pixels[1] = 0xFF2409E0;
+					var tr = Transform::create();
+					tr.scale(1, get_height());
+					tr.translate(0, -0.5);
+					p.fill_shape(shape1, Shader {
+						blend(sample_bilinear(gradient1, tr, CLAMP_Y));
+					});
+					p.fill_shape(shape2, Shader {
+						blend(sample_bilinear(gradient2, tr, CLAMP_Y));
+					});
+				}
+				else {
+					p.fill_shape(shape1, 0xFFFFFFFF);
+
+					var img = Image::create(get_width(), get_height());
+					var p2 = Painter::create(img);
+					var inner = 4;
+					var top = 0xFFC8C8C8;
+					var bottom = 0xFFACACAC;
+					var left = 0xFFC8C8C8;
+					var right = 0xFFC2C2C2;
+					p2.clear_rect(0, 0, img.get_width(), img.get_height(), top);
+					p2.clear_rect(0, 0, img.get_width(), inner, top);
+					p2.clear_rect(0, img.get_height()-inner, img.get_width(), inner, bottom);
+					p2.clear_rect(0, inner, inner, img.get_height()-8, left);
+					p2.clear_rect(img.get_width()-inner, inner, inner, img.get_height()-8, right);
+					img.blur(4);
+
+					var tr = Transform::create();
+					p.fill_shape(shape2, Shader {
+						blend(sample_nearest(img, tr));
+					});
+				}
+				break;
+			}
+
+			case THEME_CUSTOM: {
+				custom_draw_button(p, 0, 0, get_width(), get_height(), get_state(), get_scale());
+				break;
+			}
+
+			default: {
+				var color = 0xFFFF00FF;
+				if ((get_state() & BUTTON_PRESSED) != 0) {
+					color = 0xFFCC00CC;
+				}
+				else if ((get_state() & BUTTON_HOVER) != 0) {
+					color = 0xFFFFAAFF;
+				}
+				p.clear_rect(0, 0, width, height, color);
+				break;
+			}
+		}
+	}
+
+	override function paint_foreground(p: Painter)
+	{
+		var width = get_width();
+		var height = get_height();
+		var font = get_font();
+		var w = font.get_string_advance(label);
+		var x = (width-w+1)/2;
+		var y = iround((height+font.get_size()*0.65)/2.0);
+
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC: {
+				if ((get_state() & BUTTON_PRESSED) != 0) {
+					x += 1;
+					y += 1;
+				}
+				if ((get_state() & BUTTON_DISABLED) != 0) {
+					var color = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+					font.draw_string(p, x+1, y+1, label, color);
+					color = Windows::get_system_color(COLOR_GRAYTEXT);
+					font.draw_string(p, x, y, label, color);
+				}
+				else {
+					var color = Windows::get_system_color(COLOR_BTNTEXT);
+					font.draw_string(p, x, y, label, color);
+				}
+				if (has_focus()) {
+					var color = Windows::get_system_color(COLOR_WINDOWFRAME);
+					//draw_rubber_band(p, 4, 4, width-8, height-8, color);
+				}
+				break;
+			}
+			
+			case THEME_WINDOWS: {
+				var color = Windows::get_system_color(COLOR_BTNTEXT);
+				if ((get_state() & BUTTON_DISABLED) != 0) {
+					color = Windows::get_system_color(COLOR_GRAYTEXT);
+				}
+				font.draw_string(p, x, y, label, color);
+				break;
+			}
+
+			case THEME_COCOA_FLAT: {
+				var color = 0xFF000000;
+				if ((get_state() & BUTTON_PRESSED) != 0) {
+					color = 0xFFDDEAFA;
+				}
+				font.draw_string(p, x, y, label, color);
+				break;
+			}
+
+			default: {
+				var color = 0xFF000000;
+				font.draw_string(p, x, y, label, color);
+				break;
+			}
+		}
+	}
+}

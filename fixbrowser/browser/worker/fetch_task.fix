@@ -1,0 +1,215 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "task/task";
+import "task/channel";
+import "task/global";
+import "io/stream";
+import "io/http/http";
+import "io/http/url";
+import "io/http/request" : http_req;
+import "io/charset/charset";
+import "util/string";
+import "browser/css/css";
+/*
+import "browser/css/value";
+import "browser/css/property";
+import "browser/css/selector";
+import "browser/css/stylesheet";
+*/
+import "browser/script/script";
+import "browser/script/request" : script_request;
+import "browser/worker/fetch_comm";
+import "browser/worker/cache_comm";
+
+var @cache_channel: Channel;
+
+function @handle_message(msg)
+{
+	var url = msg[0] as String;
+	var reload = msg[1] as Boolean;
+	var response = msg[2] as Channel;
+	log("got="+msg);
+
+	var target_url = url_create(url);
+	var script_request = script_request:request_create(target_url);
+	var replaced_content = script_run_domain_handle_request(script_request);
+	if (script_request->REQ_redirect) {
+		response.send([FETCH_REDIRECT, url, script_request->REQ_redirect]);
+		return;
+	}
+	if (replaced_content) {
+		response.send([FETCH_FAILURE, url]);
+		return;
+	}
+
+	var cache_key = url_to_string(target_url);
+	if (script_request->REQ_send_headers) {
+		cache_key = [cache_key, script_request->REQ_send_headers];
+	}
+	if (!reload) {
+		var cache_reply = cache_channel.call([CACHE_GET, cache_key]);
+		if (cache_reply) {
+			var content_type = cache_reply[0] as String;
+			var data = cache_reply[1] as Byte[];
+			if (is_css_file(content_type)) {
+				response.send([FETCH_CONTENT_CSS, url, unserialize(data)]);
+				return;
+			}
+			if (is_image_file(content_type)) {
+				response.send([FETCH_CONTENT_IMAGE, url, data]);
+				return;
+			}
+		}
+	}
+
+	var http = http_create(target_url);
+	http_set_header(http, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:63.0) Gecko/20100101 Firefox/63.0");
+	http_set_header(http, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+	http_set_header(http, "Accept-Language", "en-US,en;q=0.5");
+	http_set_header(http, "Accept-Encoding", "identity");
+	if (script_request->REQ_send_headers) {
+		var headers = script_request->REQ_send_headers;
+		for (var i=0; i<length(headers); i+=2) {
+			http_set_header(http, headers[i+0], headers[i+1]);
+		}
+	}
+
+	var (http_res, http_err) = http_connect(http, null, null);
+	if (http_err) {
+		var tls_error = http_get_tls_error(http);
+		if (tls_error) {
+			log("TLS error: "+tls_error);
+			response.send([FETCH_FAILURE, url]);
+			return;
+		}
+		throw http_err;
+	}
+
+	// TODO: fix support for -> with import aliases in classes
+	var http_req = http_get_request(http);
+	script_request[script_request:REQ_headers] = http_req[http_req:REQ_headers];
+
+	var code = http_req->REQ_code;
+	if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+		var location = request_get_header(http_req, "Location");
+		if (!location) {
+			response.send([FETCH_FAILURE, url]);
+			return;
+		}
+		stream_close(http);
+		response.send([FETCH_REDIRECT, url, location]);
+		return;
+	}
+
+	var content_type = request_get_header(http_req, "Content-Type");
+	if (!content_type) {
+		content_type = "text/html";
+	}
+
+	var content_len = request_get_header(http_req, "Content-Length");
+	if (content_len) {
+		content_len = string_parse_long(content_len);
+		if (content_len[1] < 0) {
+			throw error("negative content length");
+		}
+	}
+
+	if (is_css_file(content_type)) {
+		var buf = stream_read_all(http);
+		stream_close(http);
+		var sheet = css_parse(buf, get_charset(content_type));
+		//var processed = stylesheet_to_string(sheet);
+		//global_set(["cache.css", req->REQ_path], processed, 3600);
+		//log("loaded sheet!");
+		//log(stylesheet_to_string(sheet));
+		cache_channel.call([CACHE_PUT, cache_key, content_type, to_shared(serialize(sheet))]);
+		response.send([FETCH_CONTENT_CSS, url, sheet]);
+		return;
+	}
+
+	if (is_image_file(content_type)) {
+		var buf = stream_read_all(http);
+		stream_close(http);
+		var arr = array_create_shared(length(buf), 1);
+		array_copy(arr, 0, buf, 0, length(buf));
+		cache_channel.call([CACHE_PUT, cache_key, content_type, arr]);
+		response.send([FETCH_CONTENT_IMAGE, url, arr]);
+		return;
+	}
+
+	response.send([FETCH_FAILURE, url]);
+}
+
+function @get_charset(content_type: String): Dynamic
+{
+	var parts = string_split(content_type, ';');
+	content_type = string_trim(parts[0]);
+	for (var i=1; i<length(parts); i++) {
+		var p = string_split(parts[i], '=');
+		if (length(p) == 2 && string_trim(p[0]) == "charset") {
+			return charset_get(string_trim(p[1]));
+		}
+	}
+	return null;
+}
+
+function @is_css_file(content_type)
+{
+	if (content_type == "text/css") return true;
+	return false;
+}
+
+function @is_image_file(content_type)
+{
+	if (content_type == "image/gif") return true;
+	if (content_type == "image/png") return true;
+	if (content_type == "image/jpeg") return true;
+	if (content_type == "image/jpg") return true;
+	return false;
+}
+
+function @to_shared(buf: Byte[]): Byte[]
+{
+	var arr = array_create_shared(length(buf), 1);
+	array_copy(arr, 0, buf, 0, length(buf));
+	return arr;
+}
+
+function @send_failure(msg, e)
+{
+	dump(e);
+	(msg[length(msg)-1] as Channel).send([FETCH_FAILURE, msg[0]], 1000);
+}
+
+function main(channel: Channel, cache_channel_param: Channel)
+{
+	cache_channel = cache_channel_param;
+
+	while (!Global::get("tls.initialized")) {
+		Task::sleep(100);
+	}
+
+	//log("waiting on messages...");
+	channel.handle(handle_message#1, send_failure#2);
+}

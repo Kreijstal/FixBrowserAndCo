@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>Global functions</h2>
+
+<h3>Checksum</h3>
+
+<p>
+<code>import "io/checksum";</code>
+</p>
+
+<dl>
+	<dt><code>
+		function <b>crc32</b>(arr: Byte[]): Integer<br>
+		function <b>crc32</b>(arr: Byte[], off: Integer, len: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Computes a CRC-32 checksum for given array (or portion of it).
+	</dd>
+	<dt><code>
+		function <b>crc32</b>(prev_crc: Integer, arr: Byte[]): Integer<br>
+		function <b>crc32</b>(prev_crc: Integer, arr: Byte[], off: Integer, len: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		A variant that can compute CRC-32 checksum incrementally. The initial value must
+		be 0xFFFFFFFF (or just -1). To finalize the checksum the result must be XORed
+		with 0xFFFFFFFF.
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,17 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "s-microsoft.com")) return true;
+	if (domain_ends_with(dest, "s-msft.com")) return true;
+	if (domain_ends_with(dest, "azure.net")) return true;
+	if (domain_ends_with(dest, "azureedge.net")) return true;
+	if (domain_ends_with(dest, "windows.net")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	remove_element(document, "div#msccBanner");
+	add_style_to_element(document, "header#azure-header", "position: static");
+}

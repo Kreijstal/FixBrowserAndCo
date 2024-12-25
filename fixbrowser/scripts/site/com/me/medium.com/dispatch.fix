@@ -1,0 +1,55 @@
+import "util/common";
+import "util/string";
+import "util/json";
+
+function handle_redirect(request, new_url)
+{
+	if (string_starts_with(new_url, "https://medium.com/m/global-identity?redirectUrl=")) {
+		var http = http_open(new_url);
+		http_connect(http);
+		var location = http_get_header(http, "Location");
+		stream_close(http);
+
+		if (location) {
+			var gi = link_get_param(location, "gi");
+			if (gi) {
+				var doc_url = link_with_params(request_get_url(request), {"gi": gi});
+				return http_get(doc_url);
+			}
+		}
+	}
+}
+
+function adjust_document(request, document)
+{
+	request_add_same_domain(request, "medium.com");
+	remove_class_in_all_elements(document, ".u-fixed", "u-fixed");
+
+	/*
+	TODO
+	var path = request_get_path(request);
+	var idx = string_rev_search_char(path, '-');
+	if (idx != -1) {
+		var id = string_substring(path, idx+1);
+		var responses_div = element_query(document, "div.js-responsesWrapper");
+		if (responses_div) {
+			//log({"id=", id, " responses=", element_to_string(responses_div)});
+			load_responses(request, responses_div, id);
+		}
+	}
+	*/
+}
+
+function @load_responses(request, responses_div, id)
+{
+	// filter=other
+	// https://medium.com/_/api/posts/ID/responsesStream?filter=other
+	var json = string_from_utf8(http_get({"https://medium.com/_/api/posts/", id, "/responses?filter=best"}));
+	var idx = string_search_char(json, '{');
+	if (idx != -1) {
+		array_remove(json, 0, idx);
+	}
+	json = json_parse(json);
+
+	show_json(responses_div, json);
+}

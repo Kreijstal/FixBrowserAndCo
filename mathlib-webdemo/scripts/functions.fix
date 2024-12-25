@@ -1,0 +1,1294 @@
+/*
+ * This file was written in 2023 by Martin Dvorak <jezek2@advel.cz>
+ * You can download latest version at http://public-domain.advel.cz/
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this file to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software. If not, see:
+ * http://creativecommons.org/publicdomain/zero/1.0/ 
+ */
+
+use "macros";
+use "classes";
+
+import "util/bigint";
+import "util/long";
+import "util/double";
+import "util/string";
+
+const @FRAC_DIGITS = 128;
+
+var @log10_2: Fixed;
+var @log2_10: Fixed;
+var @loge_2: Fixed;
+var @log2_e: Fixed;
+var @pi: Fixed;
+var @pi_div2: Fixed;
+var @inv_3: Fixed;
+var @factorials: BigInteger[];
+var @fixed_round_value: BigInteger;
+var @fixed_div_value: BigInteger;
+
+class Fixed
+{
+	static function @pos_inf() {}
+	static function @neg_inf() {}
+	static function @pos_nan() {}
+	static function @neg_nan() {}
+
+	macro check_nan1(var1, result1)
+	{
+		if (var1 == Fixed::pos_nan#0 || var1 == Fixed::neg_nan#0) {
+			return result1;
+		}
+	}
+
+	macro check_nan2(var1, var2, result1, result2)
+	{
+		if (var1 == Fixed::pos_nan#0 || var1 == Fixed::neg_nan#0) {
+			return result1;
+		}
+		if (var2 == Fixed::pos_nan#0 || var2 == Fixed::neg_nan#0) {
+			return result2;
+		}
+	}
+
+	macro swap(&a, &b)
+	{
+		var $tmp = a;
+		a = b;
+		b = $tmp;
+	}
+
+	function is_zero(): Boolean
+	{
+		check_nan1(this, false);
+		return (this as BigInteger).is_zero();
+	}
+
+	operator < (value1: Fixed, value2: Fixed)
+	{
+		check_nan2(value1, value2, false, false);
+		return (value1 as BigInteger) < (value2 as BigInteger);
+	}
+
+	operator <= (value1: Fixed, value2: Fixed)
+	{
+		check_nan2(value1, value2, false, false);
+		return (value1 as BigInteger) <= (value2 as BigInteger);
+	}
+
+	operator > (value1: Fixed, value2: Fixed)
+	{
+		check_nan2(value1, value2, false, false);
+		return (value1 as BigInteger) > (value2 as BigInteger);
+	}
+
+	operator >= (value1: Fixed, value2: Fixed)
+	{
+		check_nan2(value1, value2, false, false);
+		return (value1 as BigInteger) >= (value2 as BigInteger);
+	}
+
+	operator + (value1: Fixed, value2: Fixed)
+	{
+		check_nan2(value1, value2, value1, value2);
+		if (value2 == Fixed::pos_inf#0 || value2 == Fixed::neg_inf#0) {
+			swap(&value1, &value2);
+		}
+		if (value1 == Fixed::pos_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::pos_inf#0 as Fixed;
+			}
+			if (value2 == Fixed::neg_inf#0) {
+				return Fixed::neg_nan#0 as Fixed;
+			}
+			return value1;
+		}
+		if (value1 == Fixed::neg_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::neg_nan#0 as Fixed;
+			}
+			if (value2 == Fixed::neg_inf#0) {
+				return Fixed::neg_inf#0 as Fixed;
+			}
+			return value1;
+		}
+		return ((value1 as BigInteger) + (value2 as BigInteger)) as Fixed;
+	}
+
+	operator - (value1: Fixed, value2: Fixed)
+	{
+		check_nan2(value1, value2, value1, value2);
+		if (value1 == Fixed::pos_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::pos_nan#0 as Fixed;
+			}
+			if (value2 == Fixed::neg_inf#0) {
+				return Fixed::pos_inf#0 as Fixed;
+			}
+			return value1;
+		}
+		if (value1 == Fixed::neg_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::neg_inf#0 as Fixed;
+			}
+			if (value2 == Fixed::neg_inf#0) {
+				return Fixed::pos_nan#0 as Fixed;
+			}
+			return value1;
+		}
+		if (value2 == Fixed::pos_inf#0) {
+			if (value1 == Fixed::pos_inf#0) {
+				return Fixed::pos_nan#0 as Fixed;
+			}
+			if (value1 == Fixed::neg_inf#0) {
+				return Fixed::neg_inf#0 as Fixed;
+			}
+			return Fixed::neg_inf#0 as Fixed;
+		}
+		if (value2 == Fixed::neg_inf#0) {
+			if (value1 == Fixed::pos_inf#0) {
+				return Fixed::pos_nan#0 as Fixed;
+			}
+			if (value1 == Fixed::neg_inf#0) {
+				return Fixed::pos_nan#0 as Fixed;
+			}
+			return Fixed::pos_inf#0 as Fixed;
+		}
+		return ((value1 as BigInteger) - (value2 as BigInteger)) as Fixed;
+	}
+
+	operator * (value1: Fixed, value2: Fixed)
+	{
+		if (!fixed_round_value) {
+			fixed_round_value = BigInteger(1) << (FRAC_DIGITS-1);
+		}
+		if (!fixed_div_value) {
+			fixed_div_value = BigInteger(1) << FRAC_DIGITS;
+		}
+		check_nan2(value1, value2, value1, value2);
+		if (value2 == Fixed::pos_inf#0 || value2 == Fixed::neg_inf#0) {
+			swap(&value1, &value2);
+		}
+		if (value1 == Fixed::pos_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::pos_inf#0 as Fixed;
+			}
+			if (value2 == Fixed::neg_inf#0) {
+				return Fixed::neg_inf#0 as Fixed;
+			}
+			return value1;
+		}
+		if (value1 == Fixed::neg_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::neg_inf#0 as Fixed;
+			}
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::neg_inf#0 as Fixed;
+			}
+			return value1;
+		}
+		return (((value1 as BigInteger) * (value2 as BigInteger) + fixed_round_value) / fixed_div_value) as Fixed;
+	}
+
+	operator / (value1: Fixed, value2: Fixed)
+	{
+		check_nan2(value1, value2, value1, value2);
+		if (value1 == Fixed::pos_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::pos_nan#0 as Fixed;
+			}
+			if (value2 == Fixed::neg_inf#0) {
+				return Fixed::neg_nan#0 as Fixed;
+			}
+			return (value1 as BigInteger) >= 0? Fixed::pos_inf#0 : Fixed::neg_inf#0;
+		}
+		if (value1 == Fixed::neg_inf#0) {
+			if (value2 == Fixed::pos_inf#0) {
+				return Fixed::pos_nan#0 as Fixed;
+			}
+			if (value2 == Fixed::neg_inf#0) {
+				return Fixed::neg_nan#0 as Fixed;
+			}
+			return (value1 as BigInteger) >= 0? Fixed::neg_inf#0 : Fixed::pos_inf#0;
+		}
+		if (value2 == Fixed::pos_inf#0 || value2 == Fixed::neg_inf#0) {
+			return BigInteger(0) as Fixed;
+		}
+		if (value2.is_zero()) {
+			return (((value1 as BigInteger) >= 0)? Fixed::pos_nan#0 : Fixed::neg_nan#0) as Fixed;
+		}
+		return (((value1 as BigInteger) << FRAC_DIGITS) / (value2 as BigInteger)) as Fixed;
+	}
+
+	function abs(): Fixed
+	{
+		check_nan1(this, this);
+		return (this as BigInteger).abs() as Fixed;
+	}
+
+	function trunc(): Fixed
+	{
+		if (!fixed_div_value) {
+			fixed_div_value = BigInteger(1) << FRAC_DIGITS;
+		}
+		check_nan1(this, this);
+		return (((this as BigInteger) / fixed_div_value) << FRAC_DIGITS) as Fixed;
+	}
+
+	static function from_string(s: String): Fixed
+	{
+		s = {s};
+		var frac_size = 0;
+		for (var i=0; i<s.length; i++) {
+			if (s[i] == '.') {
+				s.remove(i);
+				frac_size = s.length - i;
+				break;
+			}
+		}	
+		var div = {"1"};
+		for (var i=0; i<frac_size; i++) {
+			div[] = '0';
+		}
+		return ((BigInteger::from_string(s) << FRAC_DIGITS) / BigInteger::from_string(div)) as Fixed;
+	}
+
+	static function from_double(value: Double): Fixed
+	{
+		var s = value.hi >>> 31;
+		var e = (value.hi >> 20) & 0x7FF;
+		if (e == 0) {
+			return BigInteger() as Fixed;
+		}
+		if (e == 0x7FF) {
+			if (((value.hi & ((1 << 20)-1)) | value.lo) != 0) {
+				return (s == 0? Fixed::pos_nan#0 : Fixed::neg_nan#0) as Fixed;
+			}
+			else {
+				return (s == 0? Fixed::pos_inf#0 : Fixed::neg_inf#0) as Fixed;
+			}
+		}
+
+		var lo = value.lo;
+		var hi = (value.hi & ((1 << 20)-1)) | (1 << 20);
+		var m = BigInteger::from_bytes_LE([
+			lo & 0xFF, (lo >>> 8) & 0xFF, (lo >>> 16) & 0xFF, lo >>> 24,
+			hi & 0xFF, (hi >>> 8) & 0xFF, (hi >>> 16) & 0xFF, hi >>> 24
+		]);
+		var pos = m.get_bit_size()-1;
+		e = e-1023+FRAC_DIGITS-pos;
+		if (e > 0) {
+			m = m << e; //XXX
+		}
+		else if (e < 0) {
+			m = m >> -e; //XXX
+		}
+		if (s != 0) {
+			m = m * -1; //XXX
+		}
+		return m as Fixed;
+	}
+
+	static function from_int(value: Integer): Fixed
+	{
+		return (BigInteger(value) << FRAC_DIGITS) as Fixed;
+	}
+
+	static function from_long(value: Long): Fixed
+	{
+		return from_string(value.to_string());
+	}
+
+	function to_double(): Double
+	{
+		var value = this as BigInteger;
+		if (value == Fixed::pos_inf#0) {
+			var hi = (0x7FF << 20);
+			return Double(0, hi);
+		}
+		if (value == Fixed::neg_inf#0) {
+			var hi = (0x7FF << 20) | 0x80000000;
+			return Double(0, hi);
+		}
+		if (value == Fixed::pos_nan#0) {
+			var hi = (0x7FF << 20) | (1 << 19);
+			return Double(0, hi);
+		}
+		if (value == Fixed::neg_nan#0) {
+			var hi = (0x7FF << 20) | (1 << 19) | 0x80000000;
+			return Double(0, hi);
+		}
+
+		var sign = false;
+		var abs_value = value.abs();
+		if (abs_value != value) {
+			value = abs_value;
+			sign = true;
+		}
+		if (value.is_zero()) {
+			return Double();
+		}
+
+		var pos = value.get_bit_size() - 1;
+		var e = pos - FRAC_DIGITS;
+		if (e < -1022) {
+			return Double();
+		}
+		if (e > 1023) {
+			var hi = 0x7FF << 20;
+			if (sign) {
+				hi |= 0x80000000;
+			}
+			return Double(0, hi);
+		}
+		if (pos < 53) {
+			value = value.shl(53);
+			pos += 53;
+		}
+		if (value.is_bit_set(pos - 53)) {
+			value = value + (BigInteger(1) << (pos - 52)); //XXX
+			if (value.is_bit_set(pos+1)) {
+				pos++;
+			}
+		}
+
+		var m = (value >> (pos - 52)) % (BigInteger(1) << 52);
+		var f = (BigInteger(e+1023) << 52) + m;
+		if (sign) {
+			f = f + (BigInteger(1) << 63); //XXX
+		}
+		var bytes = f.to_bytes_LE();
+		while (bytes.length < 8) {
+			bytes[] = 0;
+		}
+		return Double(
+			bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24),
+			bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24)
+		);
+	}
+
+	function to_string(): String
+	{
+		return to_string(-1);
+	}
+
+	function to_string(num_fract_digits: Integer): String
+	{
+		var value = this as BigInteger;
+		if (value == Fixed::pos_inf#0) {
+			return "+inf";
+		}
+		if (value == Fixed::neg_inf#0) {
+			return "-inf";
+		}
+		if (value == Fixed::pos_nan#0) {
+			return "+nan";
+		}
+		if (value == Fixed::neg_nan#0) {
+			return "-nan";
+		}
+		var sign = false;
+		var abs_value = value.abs();
+		if (abs_value != value) {
+			value = abs_value;
+			sign = true;
+		}
+		var s = (value >> FRAC_DIGITS).to_string();
+		if (sign) {
+			s.insert_char(0, '-');
+		}
+		var mod = BigInteger(1) << FRAC_DIGITS;
+		var ten = BigInteger(10);
+		value = value % mod; //XXX
+		if (!value.is_zero() && num_fract_digits != 0) {
+			s[] = '.';
+			do {
+				if (num_fract_digits >= 0 && num_fract_digits-- == 0) break;
+				value = value * ten; //XXX
+				s[] = '0' + (value >> FRAC_DIGITS).to_int();
+				value = value % mod; //XXX
+			}
+			while (!value.is_zero());
+		}
+		return s;
+	}
+}
+
+function get_error(ref: Double, value: Double): Integer
+{
+	var sign1 = ref.hi >>> 31;
+	var sign2 = value.hi >>> 31;
+	if (sign1 != sign2) {
+		return 0x7FFFFFFF;
+	}
+
+	var e1 = (ref.hi >> 20) & 0x7FF;
+	var e2 = (value.hi >> 20) & 0x7FF;
+	if (e1 == 0x7FF) {
+		if (e2 != 0x7FF) {
+			return 0x7FFFFFFF;
+		}
+		var is_nan1 = ((ref.hi & ((1 << 20)-1)) | ref.lo) != 0;
+		var is_nan2 = ((value.hi & ((1 << 20)-1)) | value.lo) != 0;
+		if (is_nan1 != is_nan2) {
+			return 0x7FFFFFFF;
+		}
+		return 0;
+	}
+	if (e2 == 0x7FF) {
+		return 0x7FFFFFFF;
+	}
+
+	var (lo, hi) = sub64(value.lo, value.hi, ref.lo, ref.hi);
+	if (hi != lo >> 31) {
+		return 0x7FFFFFFF;
+	}
+	return abs(lo);
+}
+
+function test_func_main(from: Integer, to: Integer, inc: Integer, num_digits: Integer, ref_func, std_func, own_func)
+{
+	var std_error = Long::create();
+	var own_error = Long::create();
+	var std_max_error = 0;
+	var own_max_error = 0;
+	var cnt = 0;
+
+	for (var i=from; i<=to; i+=inc) {
+		var s = {abs(i)}.pad_left(num_digits+1, '0');
+		s.insert_char(s.length-num_digits, '.');
+		if (i < 0) {
+			s.insert_char(0, '-');
+		}
+		var value = Fixed::from_string(s);
+		var dbl_value = value.to_double();
+		value = Fixed::from_double(dbl_value);
+		var ref = (ref_func(value) as Fixed).to_double();
+		var std = std_func(dbl_value) as Double;
+		var own = own_func(dbl_value) as Double;
+		var e1 = get_error(ref, std);
+		var e2 = get_error(ref, own);
+		log("val="+dbl_value+" ref="+ref+" std="+std+" own="+own+" e1="+e1+" e2="+e2);
+		std_error.add_int(e1);
+		own_error.add_int(e2);
+		std_max_error = max(std_max_error, e1);
+		own_max_error = max(own_max_error, e2);
+		cnt++;
+	}
+
+	log("");
+	log("std: avg="+(Fixed::from_long(std_error) / Fixed::from_int(cnt)).to_string(2)+" max="+std_max_error);
+	log("own: avg="+(Fixed::from_long(own_error) / Fixed::from_int(cnt)).to_string(2)+" max="+own_max_error);
+}
+
+macro test_func(from, to, inc, num_digits, ref_code, std_code, own_code)
+{
+	macro function $ref_func(value: Fixed): Fixed { return ref_code; }
+	macro function $std_func(value: Double): Double { return std_code; }
+	macro function $own_func(value: Double): Double { return own_code; }
+
+	test_func_main(from, to, inc, num_digits, $ref_func#1, $std_func#1, $own_func#1);
+}
+
+macro test_func1(ref_code, std_code, own_code)
+{
+	test_func(-20, 100, 1, 1, ref_code, std_code, own_code);
+	log("");
+	test_func(-1000, 1000, 2000, 1, ref_code, std_code, own_code);
+}
+
+function log2_fixed(input: Fixed): Fixed
+{
+	// https://en.wikipedia.org/wiki/Binary_logarithm#Iterative_approximation
+
+	var value = input as BigInteger;
+	if (value.is_zero()) {
+		return Fixed::neg_inf#0 as Fixed;
+	}
+	if (value < 0) {
+		return Fixed::neg_nan#0 as Fixed;
+	}
+	var pos = value.get_bit_size() - 1;
+	var int_log = pos - FRAC_DIGITS;
+
+	var e = -int_log;
+
+	var one = BigInteger(1);
+	var fract_one = BigInteger(1) << (int_log+FRAC_DIGITS);
+	var round = pos > 0? one << (pos-1) : BigInteger(0);
+	var sum = BigInteger(int_log) << FRAC_DIGITS;
+
+	for (var i=0; ; i++) {
+		if (value == fract_one) break;
+		var cnt = 0;
+		for (;;) {
+			value = (value * value + round) >> pos;
+			cnt++;
+			if (value.get_bit_size() - 1 > pos) break;
+		}
+		e -= cnt;
+		var shift = pos + e;
+		//log("cnt="+cnt+" e="+e+" shift="+shift);
+		if (shift < 0) break;
+		sum = sum + (one << shift); //XXX
+		value = value >> 1; //XXX
+	}
+
+	return sum as Fixed;
+}
+
+function log2_iterative(value: Double): Double
+{
+	if ((value.hi >> 31) != 0) {
+		return Double(0, (0x7FF << 20) | (1 << 19)); // nan
+	}
+	if ((value.lo | value.hi) == 0) {
+		return Double(0, (0x7FF << 20) | (1 << 31)); // -inf
+	}
+
+	var e = ((value.hi >> 20) & 0x7FF) - 1023;
+	var m = Double(value.lo, (value.hi & ((1<<20)-1)) | (1023 << 20));
+	var result = Double(e);
+
+	e = 0;
+	for (var i=0; i<64; i++) {
+		if (m == 1.0) break;
+		var cnt = 0;
+		for (;;) {
+			m *= m;
+			cnt++;
+			if (m >= 2.0) {
+				break;
+			}
+		}
+		e -= cnt;
+		if (e <= -1023) break;
+		var tmp = result.dup();
+		tmp += Double(0, (e+1023) << 20);
+		if (tmp == result) {
+			break;
+		}
+		result.set(tmp);
+		m *= 0.5;
+	}
+	
+	return result;
+}
+
+function log2_taylor(value: Double): Double
+{
+	var log2_e = Double::from_string("1.4426950408889634");
+	return log_taylor(value) * log2_e;
+}
+
+function log_fixed(input: Fixed): Fixed
+{
+	var value = log2_fixed(input);
+	if (!is_array(value)) {
+		return value as Fixed;
+	}
+	return value * loge_2;
+}
+
+function log10_fixed(input: Fixed): Fixed
+{
+	var value = log2_fixed(input);
+	if (!is_array(value)) {
+		return value as Fixed;
+	}
+	return value * log10_2;
+}
+
+function log_taylor(value: Double): Double
+{
+	value = value - 1.0;
+	var sum = value.dup();
+	var mul = value.dup();
+
+	for (var i=0; i<5; i++) {
+		mul *= value;
+		sum -= mul / (i*2+2);
+		mul *= value;
+		sum += mul / (i*2+3);
+	}
+	return sum;
+}
+
+function log_iterative(value: Double): Double
+{
+	var loge_2 = Double::from_string("0.69314718055994531");
+	return log2_iterative(value) * loge_2;
+}
+
+function factorial(value: Integer): BigInteger
+{
+	if (!factorials) {
+		var one = BigInteger(1);
+		factorials = [one, one];
+	}
+
+	while (value >= factorials.length) {
+		factorials[] = factorials[factorials.length-1] * BigInteger(factorials.length);
+	}
+	return factorials[value];
+}
+
+function exp_taylor_small(value: Double): Double
+{
+	// https://en.wikipedia.org/wiki/Exponential_function#Computation
+
+	var x = value;
+	var tmp = x.dup();
+	var result = Double(1.0) + x;
+	var fact = Double(2.0);
+	for (var i=2; i<12; ) {
+		tmp *= x;
+		result += tmp / fact;
+		fact *= ++i;
+	}
+	return result;
+}
+
+function exp_taylor_small2(value: Double): Double
+{
+	if (value > 0.5) {
+		value = exp_taylor_small(value * 0.5);
+		value *= value;
+		return value;
+	}
+	else {
+		return exp_taylor_small(value);
+	}
+}
+
+function exp_taylor(value: Double): Double
+{
+	var negative = false;
+	if (value < 0.0) {
+		value = value.dup().neg();
+		negative = true;
+	}
+	//var result = exp_taylor_small(value);
+	var result = exp_taylor_small2(value);
+	if (negative) {
+		result = 1.0 / result;
+	}
+	return result;
+}
+
+function exp_by_squaring(x: Double, n: Integer): Double
+{
+	// https://en.wikipedia.org/wiki/Exponentiation_by_squaring#With_constant_auxiliary_memory
+
+	if (n == 0) {
+		return Double(1.0);
+	}
+	var y = Double(1.0);
+	while (n > 1) {
+		if ((n & 1) == 0) {
+			x *= x;
+			n >>= 1;
+		}
+		else {
+			y *= x;
+			x *= x;
+			n >>= 1;
+		}
+	}
+	x *= y;
+	return x;
+}
+
+function exp_taylor2(value: Double): Double
+{
+	var negative = false;
+	if (value < 0.0) {
+		value = value.dup().neg();
+		negative = true;
+	}
+	var val = value.dup().floor();
+	if (val > 709.0) {
+		return Double(0, 0x7FF << 20); // inf
+	}
+	var fract = value - val;
+	var n = value.to_int();
+	//log("val="+val+" fract="+fract);
+	var result = exp_by_squaring(Double::from_string("2.7182818284590452"), n);
+	var taylor = exp_taylor_small(fract * 0.25);
+	taylor *= taylor;
+	taylor *= taylor;
+	result *= taylor;
+	if (negative) {
+		result = 1.0 / result;
+	}
+	return result;
+}
+
+function newton(x: Fixed, y: Fixed, min_value: Fixed, func, deriv_func): Fixed
+{
+	var prev_adj1: Fixed;
+	var prev_adj2: Fixed;
+
+	for (var i=0; i<100; i++) {
+		//log("x="+x.to_string(32));
+		var ret1 = func(x, y) as Fixed;
+		var ret2 = deriv_func(x, y) as Fixed;
+		if (ret2.is_zero()) {
+			ret2 = Fixed::from_int(1);
+		}
+		var adj = ret1 / ret2;
+		//log("adj="+adj.to_string(32));
+		if (adj.is_zero() || adj == prev_adj1 || adj == prev_adj2) {
+			//log("ending at iteration "+i);
+			break;
+		}
+		x = x - adj; //XXX
+		if (min_value != null && x < min_value) {
+			x = min_value;
+		}
+		prev_adj2 = prev_adj1;
+		prev_adj1 = adj;
+	}
+	return x;
+}
+
+function sqrt_func(x: BigInteger, y: BigInteger): BigInteger
+{
+	return ((x * x) >> FRAC_DIGITS) - y;
+}
+
+function sqrt_deriv(x: BigInteger, y: BigInteger): BigInteger
+{
+	return x + x;
+}
+
+function exp_func(x: BigInteger, y: BigInteger): BigInteger
+{
+	var one = BigInteger(1);
+	if (x < one) {
+		x = one;
+	}
+	return (log_fixed(x as Fixed) as BigInteger) - y;
+}
+
+function exp_deriv(x: BigInteger, y: BigInteger): BigInteger
+{
+	return (BigInteger(1) << (FRAC_DIGITS*2)) / x;
+}
+
+function exp_fixed(value: Fixed): Fixed
+{
+	if (value == Fixed::pos_nan#0 || value == Fixed::neg_nan#0) {
+		return value;
+	}
+	if (value == Fixed::pos_inf#0) {
+		return value;
+	}
+	if (value == Fixed::neg_inf#0) {
+		return Fixed::from_int(0);
+	}
+	var negative = false;
+	if (value < Fixed::from_int(0)) {
+		value = value.abs();
+		negative = true;
+	}
+	var ilog = ((((value as BigInteger).abs() >> FRAC_DIGITS) * (log2_e as BigInteger)) >> FRAC_DIGITS).to_int();
+	var guess = (BigInteger(1) << (ilog+FRAC_DIGITS)) as Fixed;
+	var result = newton(guess, value, BigInteger(1) as Fixed, exp_func#2, exp_deriv#2);
+	if (negative && !result.is_zero()) {
+		result = Fixed::from_int(1) / result;
+	}
+	return result;
+}
+
+function pow_fixed(x: Fixed, y: Fixed): Fixed
+{
+	if (x.is_zero()) {
+		return x;
+	}
+	if (x < Fixed::from_int(0)) {
+		return Fixed::neg_nan#0 as Fixed;
+	}
+	if (y.is_zero()) {
+		return Fixed::from_int(1);
+	}
+	if (y < Fixed::from_int(0) && x.is_zero()) {
+		return Fixed::pos_inf#0 as Fixed;
+	}
+	return exp_fixed(log_fixed(x) * y);
+}
+
+function sin_fixed_taylor(value: Fixed): Fixed
+{
+	var result = value;
+	var x2 = value * value;
+	var tmp = x2 * value;
+	var neg = true;
+	for (var i=1; i<32; i++) {
+		//log("i="+factorial(i*2+1));
+		var term = ((tmp as BigInteger) / factorial(i*2+1)) as Fixed;
+		if (neg) {
+			result = result - term; //XXX
+			neg = false;
+		}
+		else {
+			result = result + term; //XXX
+			neg = true;
+		}
+		tmp = tmp * x2; //XXX
+	}
+	return result;
+}
+
+function sin_fixed(value: Fixed): Fixed
+{
+	var negative = false;
+	if (value < Fixed::from_int(0)) {
+		value = value.abs();
+		negative = true;
+	}
+	var tmp = (value as BigInteger) / (pi_div2 as BigInteger);
+	var quadrant = (tmp % 4).to_int();
+	value = value - ((tmp * (pi_div2 as BigInteger)) as Fixed); //XXX
+	if (quadrant == 1 || quadrant == 3) {
+		value = pi_div2 - value;
+	}
+	value = sin_fixed_taylor(value);
+	if (quadrant == 2 || quadrant == 3) {
+		value = Fixed::from_int(0) - value; //XXX
+	}
+	if (negative) {
+		value = Fixed::from_int(0) - value; //XXX
+	}
+	return value;
+}
+
+function cos_fixed(value: Fixed): Fixed
+{
+	return sin_fixed(value + pi_div2);
+}
+
+function sin_taylor_small(value: Double): Double
+{
+	var fact = Double(6);
+	var x = value;
+	var x2 = x * x;
+	var tmp = x2 * x;
+	var term = Double();
+	var result = x.dup();
+	var neg = true;
+
+	for (var i=1; i<10; i++) {
+		//log("fact="+fact+" x="+(i*2+1));
+		term = tmp / fact;
+		if (neg) {
+			result -= term;
+			neg = false;
+		}
+		else {
+			result += term;
+			neg = true;
+		}
+		tmp *= x2;
+		fact *= (i*2+2) * (i*2+3);
+	}
+
+	return result;
+}
+
+function sin_taylor(value: Double): Double
+{
+	var negative = false;
+	if (value < 0.0) {
+		value = value.dup().neg();
+		negative = true;
+	}
+	var pi_div2 = Double::from_string("1.5707963267948966");
+	var tmp = (value / pi_div2).floor();
+	value = value - tmp * pi_div2;
+	tmp *= 0.25;
+	var quadrant = ((tmp - tmp.dup().floor()) * 4.0).to_int();
+	if (quadrant == 1 || quadrant == 3) {
+		value = pi_div2 - value;
+	}
+	var result = sin_taylor_small(value);
+	if (quadrant == 2 || quadrant == 3) {
+		result.neg();
+	}
+	if (negative) {
+		result.neg();
+	}
+	return result;
+}
+
+function cos_taylor(value: Double): Double
+{
+	var pi_div2 = Double::from_string("1.5707963267948966");
+	return sin_taylor(value + pi_div2);
+}
+
+function tan_fixed(value: Fixed): Fixed
+{
+	return sin_fixed(value) / cos_fixed(value);
+}
+
+function tan_taylor(value: Double): Double
+{
+	return sin_taylor(value) / cos_taylor(value);
+}
+
+function sqrt_fixed(value: Fixed): Fixed
+{
+	if (value.is_zero()) {
+		return value;
+	}
+	if (value < Fixed::from_int(0)) {
+		return Fixed::neg_nan#0 as Fixed;
+	}
+	return exp_fixed(log_fixed(value) * Fixed::from_string("0.5"));
+}
+
+function cbrt_fixed(value: Fixed): Fixed
+{
+	if (value.is_zero()) {
+		return value;
+	}
+	if (value < Fixed::from_int(0)) {
+		var zero = Fixed::from_int(0);
+		return zero - exp_fixed(log_fixed(zero - value) * inv_3);
+	}
+	return exp_fixed(log_fixed(value) * inv_3);
+}
+
+function asin_fixed_leibniz(value: Fixed): Fixed
+{
+	var tmp = BigInteger(1);
+	var two = BigInteger(2);
+	var x = value;
+	var x2 = x * x;
+	var result = Fixed::from_int(0);
+	for (var i=0; i<32; i++) {
+		var num = factorial(2*i);
+		var denom = tmp * factorial(i);
+		denom = denom * denom * BigInteger(2*i+1); //XXX
+		var mul = ((num << FRAC_DIGITS) / denom) as Fixed;
+		var term = x * mul;
+		result = result + term; //XXX
+		//log("num="+num+" denom="+denom+" mul="+mul.to_string(25));
+		tmp = tmp * two; //XXX
+		x = x * x2; //XXX
+	}
+	return result;
+}
+
+function asin_fixed(value: Fixed): Fixed
+{
+	if (value > Fixed::from_int(1)) {
+		return Fixed::pos_nan#0 as Fixed;
+	}
+	if (value < Fixed::from_int(-1)) {
+		return Fixed::pos_nan#0 as Fixed;
+	}
+	var zero = Fixed::from_int(0);
+	var neg = false;
+	if (value < zero) {
+		value = zero - value;
+		neg = true;
+	}
+	var invert = false;
+	if (value > Fixed::from_string("0.5")) {
+		value = sqrt_fixed((Fixed::from_int(1) - value) / Fixed::from_int(2));
+		invert = true;
+	}
+	value = asin_fixed_leibniz(value);
+	if (invert) {
+		value = pi_div2 - value * Fixed::from_int(2);
+	}
+	if (neg) {
+		value = zero - value;
+	}
+	return value;
+}
+
+function acos_fixed(value: Fixed): Fixed
+{
+	value = asin_fixed(value);
+	if (!is_array(value)) {
+		return value;
+	}
+	return pi_div2 - value;
+}
+
+function asin_leibniz_small(value: Double): Double
+{
+	var table: Double[] = [
+		Double::from_string("1"),
+		Double::from_string("0.16666666666666667"),
+		Double::from_string("0.075"),
+		Double::from_string("0.044642857142857144"),
+		Double::from_string("0.030381944444444444"),
+		Double::from_string("0.022372159090909091"),
+		Double::from_string("0.017352764423076923"),
+		Double::from_string("0.01396484375"),
+		Double::from_string("0.011551800896139706"),
+		Double::from_string("0.0097616095291940789"),
+		Double::from_string("0.0083903358096168155"),
+		Double::from_string("0.0073125258735988451"),
+		Double::from_string("0.0064472103118896484"),
+		Double::from_string("0.0057400376708419235"),
+		Double::from_string("0.0051533096823199042"),
+		Double::from_string("0.0046601434869150962"),
+		Double::from_string("0.0042409070936793631"),
+		Double::from_string("0.0038809645588376692"),
+		Double::from_string("0.0035692053938259345"),
+		Double::from_string("0.0032970595034734847"),
+		Double::from_string("0.0030578216492580307"),
+		Double::from_string("0.0028461784011089422"),
+		Double::from_string("0.0026578706382072899"),
+		Double::from_string("0.0024894486782468835"),
+		Double::from_string("0.0023380918921119752"),
+		Double::from_string("0.0022014739737101382"),
+		Double::from_string("0.0020776610325181674"),
+		Double::from_string("0.0019650336162772836"),
+		Double::from_string("0.0018622264064031275"),
+		Double::from_string("0.0017680811205154182"),
+		Double::from_string("0.0016816093935831068"),
+		Double::from_string("0.0016019632753514440")
+	];
+
+	var result = value.dup();
+	var x = value.dup();
+	var x2 = x * x;
+
+	x *= x2;
+	for (var i=1; i<20; i++) {
+		result += x * table[i];
+		x *= x2;
+	}
+	return result;
+}
+
+function sqrt_double(value: Double): Double
+{
+	if (value.is_zero()) {
+		return value;
+	}
+	return exp_taylor2(log_iterative(value) * 0.5);
+}
+
+function asin_leibniz(value: Double): Double
+{
+	if (value > 1.0 || value < -1.0) {
+		return Double(0, (0x7FF << 20) | (1 << 19)); // nan
+	}
+	var neg = false;
+	if (value < 0.0) {
+		value = value.dup().neg();
+		neg = true;
+	}
+	var invert = false;
+	if (value > 0.5) {
+		value = sqrt_double((1.0 - value) * 0.5);
+		invert = true;
+	}
+	value = asin_leibniz_small(value);
+	if (invert) {
+		value = Double::from_string("1.5707963267948966") - value * 2.0;
+	}
+	if (neg) {
+		value.neg();
+	}
+	return value;
+}
+
+function acos_leibniz(value: Double): Double
+{
+	return Double::from_string("1.5707963267948966") - asin_leibniz(value);
+}
+
+function atan_fixed_leibniz(value: Fixed): Fixed
+{
+	var result = value;
+	var x2 = value * value;
+	var tmp = x2 * value;
+	var neg = true;
+	for (var i=1; i<32; i++) {
+		//log("i="+i*2+1);
+		var term = ((tmp as BigInteger) / BigInteger(i*2+1)) as Fixed;
+		if (neg) {
+			result = result - term; //XXX
+			neg = false;
+		}
+		else {
+			result = result + term; //XXX
+			neg = true;
+		}
+		tmp = tmp * x2; //XXX
+	}
+	return result;
+}
+
+function atan_fixed(value: Fixed): Fixed
+{
+	// https://en.wikipedia.org/wiki/Inverse_trigonometric_functions#Arctangent_addition_formula
+
+	var zero = Fixed::from_int(0);
+	var neg = false;
+	if (value < zero) {
+		value = zero - value;
+		neg = true;
+	}
+	var invert = false;
+	if (value > Fixed::from_string("1.0")) {
+		value = Fixed::from_int(1) / value;
+		invert = true;
+	}
+	var adjust = false;
+	if (value > Fixed::from_string("0.5")) {
+		var add = tan_fixed(Fixed::from_string("-0.5"));
+		value = (value + add) / (Fixed::from_int(1) - value * add);
+		adjust = true;
+	}
+	value = atan_fixed_leibniz(value);
+	if (adjust) {
+		value = value + Fixed::from_string("0.5"); //XXX
+	}
+	if (invert) {
+		value = pi_div2 - value;
+	}
+	if (neg) {
+		value = zero - value;
+	}
+	return value;
+}
+
+function atan_leibniz_small(value: Double): Double
+{
+	var x = value;
+	var x2 = x * x;
+	var tmp = x2 * x;
+	var result = x.dup();
+	var neg = true;
+
+	for (var i=1; i<12; i++) {
+		var term = tmp / (i*2+1);
+		if (neg) {
+			result -= term;
+			neg = false;
+		}
+		else {
+			result += term;
+			neg = true;
+		}
+		tmp *= x2;
+	}
+
+	return result;
+}
+
+function atan_leibniz(value: Double): Double
+{
+	var negative = false;
+	if (value < 0.0) {
+		value = value.dup().neg();
+		negative = true;
+	}
+	var invert = false;
+	if (value > 1.0) {
+		value = 1.0 / value;
+		invert = true;
+	}
+	var adjust1 = false;
+	if (value > 0.5) {
+		var add = tan_taylor(Double(-0.5));
+		value = (value + add) / (1.0 - value * add);
+		adjust1 = true;
+	}
+	var adjust2 = false;
+	if (value > 0.25) {
+		var add = tan_taylor(Double(-0.25));
+		value = (value + add) / (1.0 - value * add);
+		adjust2 = true;
+	}
+	var result = atan_leibniz_small(value);
+	if (adjust2) {
+		result += 0.25;
+	}
+	if (adjust1) {
+		result += 0.5;
+	}
+	if (invert) {
+		result = Double::from_string("1.5707963267948966") - result;
+	}
+	if (negative) {
+		result.neg();
+	}
+	return result;
+}
+
+function init()
+{
+	log10_2 = Fixed::from_string("0.301029995663981195213738894724493026768189881462108541310427461127108189274424509486927252118186172040684477191430995379094767881133523505999692333704695575064502964254193402661819734311602943501183902898178582617154439531861929046353884699520239310849612462540400263312594621478845847318282672683982326196542793507631317548350927138964946917785768918050790007599548087815459714585031964877626122492290829118190951498997171619860477676500067820517912557328628668342000402920509837084572224895494297562149707244659709");
+	log2_10 = Fixed::from_string("3.321928094887362347870319429489390175864831393024580612054756395815934776608625215850139743359370155099657371710250251826824096984263526888275302772998655393851951352657505568643017609190024891666941433374011903124187375109715866467540179189655806735830779688432725883274992522448902383559976417394137928009772756686355477901486745057845884780271042254560972234657956955415370191576411717792471651350023921127147339361440723397211574851007094987891658880831322194806793298232325931195067139950783700336734248070663528");
+	loge_2  = Fixed::from_string("0.693147180559945309417232121458176568075500134360255254120680009493393621969694715605863326996418687542001481020570685733685520235758130557032670751635075961930727570828371435190307038623891673471123350115364497955239120475172681574932065155524734139525882950453007095326366642654104239157814952043740430385500801944170641671518644712839968171784546957026271631064546150257207402481637773389638550695260668341137273873722928956493547025762652098859693201965058554764703306793654432547632744951250406069438147104689947");
+	log2_e  = Fixed::from_string("1.442695040888963407359924681001892137426645954152985934135449406931109219181185079885526622893506344496997518309652544255593101687168359642720662158223479336274537369884718493630701387663532015533894318916664837643128615424047478422289497904795091530351338588054968865893096996368036110511075630844145427215828344941891933908577715790044171280246848341374522695182369011239094034459968539906113421722886278029158010630061976762445652605995073753240625655815475938178305239725510724813077156267545807578171330193573006");
+	pi      = Fixed::from_string("3.141592653589793238462643383279502884197169399375105820974944592307816406286208998628034825342117067982148086513282306647093844609550582231725359408128481117450284102701938521105559644622948954930381964428810975665933446128475648233786783165271201909145648566923460348610454326648213393607260249141273724587006606315588174881520920962829254091715364367892590360011330530548820466521384146951941511609433057270365759591953092186117381932611793105118548074462379962749567351885752724891227938183011949129833673362440657");
+	pi_div2 = Fixed::from_string("1.570796326794896619231321691639751442098584699687552910487472296153908203143104499314017412671058533991074043256641153323546922304775291115862679704064240558725142051350969260552779822311474477465190982214405487832966723064237824116893391582635600954572824283461730174305227163324106696803630124570636862293503303157794087440760460481414627045857682183946295180005665265274410233260692073475970755804716528635182879795976546093058690966305896552559274037231189981374783675942876362445613969091505974564916836681220328");
+	inv_3   = Fixed::from_int(1) / Fixed::from_int(3);
+}
+
+function main()
+{
+	init();
+
+	/*
+	log(log2_fixed(Fixed::from_string("1.5")).to_string());
+	log(log2_fixed(Fixed::from_string("4.5")).to_string());
+	log(log2_fixed(Fixed::from_string("2.916207612341")).to_string());
+	*/
+
+	//test_func1(log2_fixed(value), value.dup().log2(), log2_taylor(value));
+	//test_func1(log2_fixed(value), value.dup().log2(), log2_iterative(value));
+	//test_func1(log_fixed(value), value.dup().ln(), log_taylor(value));
+	//test_func1(log_fixed(value), value.dup().ln(), log_iterative(value));
+
+	//test_func1(exp_fixed(value), value.dup().exp(), exp_taylor2(value));
+	//test_func1(sin_fixed(value), value.dup().sin(), sin_taylor(value));
+	//test_func1(cos_fixed(value), value.dup().cos(), cos_taylor(value));
+	//test_func1(tan_fixed(value), value.dup().tan(), tan_taylor(value));
+	//test_func1(asin_fixed(value), value.dup().asin(), asin_leibniz(value));
+	//test_func1(acos_fixed(value), value.dup().acos(), acos_leibniz(value));
+	test_func1(atan_fixed(value), value.dup().atan(), atan_leibniz(value));
+	
+	//log("result="+(newton(Fixed::from_string("1.4") as BigInteger, Fixed::from_string("2") as BigInteger, sqrt_func#2, sqrt_deriv#2) as Fixed));
+	//log("result="+(newton(Fixed::from_string("7.4") as BigInteger, Fixed::from_string("2") as BigInteger, exp_func#2, exp_deriv#2) as Fixed));
+	//log("result="+(newton(Fixed::from_string("1") as BigInteger, Fixed::from_string("20") as BigInteger, exp_func#2, exp_deriv#2) as Fixed).to_double());
+	//log("result="+exp_fixed2(Fixed::from_string("-100.0")).to_double());
+	//log("result="+exp_by_squaring(Double::from_string("2.7182818284590451"), 0));
+	//log("result="+Double::from_string("710.0").exp());
+	//log("result="+exp_taylor2(Double::from_string("709.8")));
+	//log("result="+exp_taylor2(Double::from_string("-710.0")));
+	//log("result="+exp_taylor2(Double::from_string("123.456")));
+	/*
+	log("result="+sin_fixed(Fixed::from_string("1.0")));
+	log("result=0.84147098480789650665250232163029899962256306079837106567275170999191040439123966894863974354305269585434903790792067429325911892099189888119341032772921240948079195582676660699990776401197840878273256634748480287029865615701796245539489357292467012708648628...");
+	         // 0.8414709848078965066525023216302989996225630607983710656727517099919104043912
+	log("result="+sin_fixed(pi / Fixed::from_string("4")));
+	log("result=0.70710678118654752440084436210484903928483593768847403658833986899536623923105351942519376716382078636750692311545614851246241802792536860632206074854996791570661133296375279637789997525057639103028573505477998580298513726729843100736425870932044459930477616...");
+	         // 0.70710678118654752440084436210484903928483593768847403658833986899536623923105
+	log("result="+sin_fixed(pi));
+	         // -0.0000000000000000000000000000000000000000000000000000000000
+	log("result="+sin_fixed(Fixed::from_string("6.0")));
+	*/
+
+	//log("result="+tan_fixed(Fixed::from_string("0.5")));
+	//log("result="+asin_fixed(Fixed::from_string("0.5")).to_string(20));
+	//log("result="+sqrt_fixed(Fixed::from_string("2.0")).to_string(20));
+	//log("result="+atan_fixed(Fixed::from_string("0.5")).to_string(20));
+}

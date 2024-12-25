@@ -1,0 +1,380 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/http/path";
+import "io/http/percent";
+import "util/string";
+
+const {
+	URL_scheme,
+	URL_user,
+	URL_password,
+	URL_host,
+	URL_port,
+	URL_path,
+	@URL_params,
+	URL_fragment,
+	@URL_SIZE
+};
+
+function url_create(s)
+{
+	var url = object_create(URL_SIZE);
+	var len = length(s);
+	
+	var idx = string_rev_search_char(s, '#', 0, len);
+	if (idx != -1) {
+		url->URL_fragment = percent_decode_fragment(array_extract(s, idx+1, len-(idx+1)));
+		len = idx;
+	}
+
+	idx = string_rev_search_char(s, '?', 0, len);
+	if (idx != -1) {
+		url->URL_params = decode_params(array_extract(s, idx+1, len-(idx+1)));
+		len = idx;
+	}
+
+	var off = 0;
+	
+	idx = string_search_char(s, ':', 0, len);
+	if (idx != -1 && idx >= 1) {
+		var valid = true;
+		for (var i=0; i<idx; i++) {
+			var c = s[i];
+			if (c == '/' || c == '?' || c == '#') {
+				valid = false;
+				break;
+			}
+		}
+		if (valid) {
+			var scheme = string_to_lower_case(array_extract(s, 0, idx));
+			var valid_chars = true;
+			for (var i=0; i<length(scheme); i++) {
+				var c = scheme[i];
+				if (c < 'a' || c > 'z') {
+					valid_chars = false;
+					break;
+				}
+			}
+			if (!valid_chars) scheme = {"invalid"};
+			url->URL_scheme = scheme;
+			off = idx+1;
+		}
+	}
+	
+	if (off+1 < len && s[off] == '/' && s[off+1] == '/') {
+		off += 2;
+		var start = off;
+		while (off < len) {
+			var c = s[off++];
+			if (c == '/' || c == '?' || c == '#') {
+				off--;
+				break;
+			}
+		}
+		var end = off;
+		
+		if (end > start) {
+			var host_start = start;
+			var host_end = end;
+			
+			idx = string_search_char(s, '@', start, end);
+			if (idx != -1) {
+				var delim = string_search_char(s, ':', start, idx);
+				if (delim != -1) {
+					url->URL_user = percent_decode_auth(array_extract(s, start, delim-start));
+					url->URL_password = percent_decode_auth(array_extract(s, delim+1, idx-(delim+1)));
+				}
+				else {
+					url->URL_user = percent_decode_auth(array_extract(s, start, idx-start));
+				}
+				host_start = idx+1;
+			}
+			
+			idx = string_rev_search_char(s, ':', host_start, host_end);
+			if (idx != -1) {
+				var (port, e) = string_parse_int(array_extract(s, idx+1, host_end-(idx+1)));
+				if (!e) {
+					url->URL_port = port;
+					host_end = idx;
+				}
+			}
+			var host = string_to_lower_case(array_extract(s, host_start, host_end-host_start));
+			var valid_chars = true;
+			for (var i=0; i<length(host); i++) {
+				switch (host[i]) {
+					case 'a'..'z', '0'..'9', '-', '.': continue;
+				}
+				valid_chars = false;
+				break;
+			}
+			if (!valid_chars) host = {"invalid"};
+			if (length(host) > 0) {
+				url->URL_host = host;
+			}
+		}
+	}
+	
+	url->URL_path = percent_decode_path(array_extract(s, off, len-off));
+	return url;
+}
+
+function url_get_param(url, param_name)
+{
+	var params = url->URL_params;
+	if (!params) return null;
+
+	for (var i=0; i<length(params); i+=2) {
+		var name = params[i+0];
+		if (name == param_name) {
+			return params[i+1];
+		}
+	}
+	return null;
+}
+
+function url_set_param(url, param_name, param_value)
+{
+	var params = url->URL_params;
+	if (!params) {
+		if (param_value) {
+			url->URL_params = [{param_name}, {param_value}];
+		}
+		return;
+	}
+
+	for (var i=0; i<length(params); i+=2) {
+		var name = params[i+0];
+		if (name == param_name) {
+			if (param_value) {
+				params[i+1] = {param_value};
+				param_value = null;
+			}
+			else {
+				array_remove(params, i, 2);
+				i -= 2;
+				continue;
+			}
+		}
+	}
+
+	if (param_value) {
+		params[] = {param_name};
+		params[] = {param_value};
+	}
+}
+
+function url_get_param_count(url)
+{
+	var params = url->URL_params;
+	if (!params) return 0;
+	return length(params) / 2;
+}
+
+function url_get_param_name(url, idx)
+{
+	return url->URL_params[idx*2+0];
+}
+
+function url_get_param_value(url, idx)
+{
+	return url->URL_params[idx*2+1];
+}
+
+function url_params_to_hash(url)
+{
+	var result = {};
+	var params = url->URL_params;
+	if (!params) return result;
+
+	for (var i=0; i<length(params); i+=2) {
+		var name = params[i+0];
+		var value = params[i+1];
+		if (!hash_contains(result, name)) {
+			result{name} = value;
+		}
+	}
+	return result;
+}
+
+function @decode_params(s)
+{
+	var params = [];
+	var parts = string_split(s, '&');
+	for (var i=0; i<length(parts); i++) {
+		var part = parts[i];
+		var idx = string_search_char(part, '=');
+		if (idx != -1) {
+			params[] = percent_decode_query(string_substring(part, 0, idx));
+			params[] = percent_decode_query(string_substring(part, idx+1));
+		}
+		else {
+			params[] = percent_decode_query(part);
+			params[] = null;
+		}
+	}
+	return params;
+}
+
+function url_merge(url, relative)
+{
+	if (!url_is_relative(relative)) {
+		return relative;
+	}
+	
+	var merged = object_create(URL_SIZE);
+	
+	if (relative->URL_scheme == null) {
+		merged->URL_scheme = clone(url->URL_scheme);
+	}
+	else {
+		merged->URL_scheme = clone(relative->URL_scheme);
+	}
+
+	if (relative->URL_host == null) {
+		merged->URL_user = clone(url->URL_user);
+		merged->URL_password = clone(url->URL_password);
+		merged->URL_host = clone(url->URL_host);
+		merged->URL_port = clone(url->URL_port);
+	}
+	else {
+		merged->URL_user = clone(relative->URL_user);
+		merged->URL_password = clone(relative->URL_password);
+		merged->URL_host = clone(relative->URL_host);
+		merged->URL_port = clone(relative->URL_port);
+	}
+
+	merged->URL_path = path_to_string(path_merge(path_parse(url->URL_path), path_parse(relative->URL_path), false));
+	merged->URL_params = clone_deep(relative->URL_params);
+	merged->URL_fragment = clone(relative->URL_fragment);
+	
+	return merged;
+}
+
+function url_is_relative(url)
+{
+	return (url->URL_scheme == null || url->URL_host == null || (length(url->URL_path) > 0 && !path_is_absolute(path_parse(url->URL_path))));
+}
+
+function url_to_string(url)
+{
+	var s = {""};
+	if (url->URL_scheme != null) {
+		string_append(s, url->URL_scheme);
+		s[] = ':';
+	}
+	if (url->URL_host != null) {
+		s[] = '/';
+		s[] = '/';
+		if (url->URL_user != null) {
+			string_append(s, percent_encode_auth(url->URL_user));
+			if (url->URL_password != null) {
+				s[] = ':';
+				string_append(s, percent_encode_auth(url->URL_password));
+			}
+			s[] = '@';
+		}
+		string_append(s, url->URL_host);
+		if (url->URL_port != 0) {
+			s[] = ':';
+			string_append(s, {url->URL_port});
+		}
+	}
+	if (url->URL_path != null) {
+		string_append(s, percent_encode_path(url->URL_path));
+	}
+	var query = url_query_to_string(url);
+	if (query != null) {
+		s[] = '?';
+		string_append(s, query);
+	}
+	if (url->URL_fragment != null) {
+		s[] = '#';
+		string_append(s, percent_encode_fragment(url->URL_fragment));
+	}
+	return s;
+}
+
+function url_query_to_string(url)
+{
+	var params = url->URL_params;
+	if (!params) return null;
+
+	var s = {""};
+	for (var i=0; i<length(params); i+=2) {
+		var name = params[i+0];
+		var value = params[i+1];
+		if (i > 0) {
+			s[] = '&';
+		}
+		string_append(s, percent_encode_query(name));
+		if (value) {
+			s[] = '=';
+			string_append(s, percent_encode_query(value));
+		}
+	}
+	return s;
+}
+
+function url_path_to_string(url)
+{
+	return percent_encode_path(url->URL_path);
+}
+
+function url_path_query_to_string(url)
+{
+	var s = percent_encode_path(url->URL_path);
+	var query = url_query_to_string(url);
+	if (query != null) {
+		s[] = '?';
+		string_append(s, query);
+	}
+	return s;
+}
+
+function @assert_url(value, result)
+{
+	value = url_to_string(value);
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_url()
+{
+	var absolute = url_create("baseScheme://baseHost/base/Path");
+	assert_url(url_create("http://user:pass@www.example.com:80/abc?query#frag"), "http://user:pass@www.example.com:80/abc?query#frag");
+	assert_url(url_create("data:text/plain;charset=UTF-8;page=21,the%20data:1234,5678"), "data:text/plain;charset=UTF-8;page=21,the%20data:1234,5678");
+	assert_url(url_merge(absolute, url_create("//user:pass@www.example.com/abc?query#frag")), "basescheme://user:pass@www.example.com/abc?query#frag");
+	assert_url(url_merge(absolute, url_create("//user:pass@www.example.com/abc?query#frag")), "basescheme://user:pass@www.example.com/abc?query#frag");
+	assert_url(url_merge(absolute, url_create("///abc?query#frag")), "basescheme://basehost/abc?query#frag");
+	assert_url(url_merge(absolute, url_create("//otherhost/abc?query#frag")), "basescheme://otherhost/abc?query#frag");
+	assert_url(url_merge(absolute, url_create("/abc?query#frag")), "basescheme://basehost/abc?query#frag");
+	assert_url(url_merge(absolute, url_create("?query#frag")), "basescheme://basehost/base/Path?query#frag");
+	assert_url(url_merge(absolute, url_create("./?query#frag")), "basescheme://basehost/base/?query#frag");
+	assert_url(url_merge(absolute, url_create("..?query#frag")), "basescheme://basehost/?query#frag");
+	assert_url(url_merge(absolute, url_create("../aaa?query#frag")), "basescheme://basehost/aaa?query#frag");
+	assert_url(url_merge(absolute, url_create("../../aaa?query#frag")), "basescheme://basehost/aaa?query#frag");
+	assert_url(url_merge(absolute, url_create("../../../aaa?query#frag")), "basescheme://basehost/aaa?query#frag");
+	assert_url(url_merge(absolute, url_create("#frag")), "basescheme://basehost/base/Path#frag");
+	assert_url(url_merge(absolute, url_create("baseScheme://baseHost")), "basescheme://basehost");
+	assert_url(url_merge(absolute, url_create("baseScheme://baseHost ")), "basescheme://invalid"); // TODO: handle differently?
+}

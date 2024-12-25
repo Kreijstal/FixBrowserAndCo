@@ -1,0 +1,155 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/time";
+import "io/stream";
+import "io/file";
+import "task/task";
+import "util/long";
+import "cellsplit/server/record_comm";
+
+const @MARK = 0xF1;
+
+var @file_partition: Integer;
+var @file: File;
+
+function @custom_log(value)
+{
+	log("[record] "+value);
+}
+
+function @handle_message(snapshot: Snapshot)
+{
+	var time = Clock::get_time();
+	var partition = time.dup().div_int(3600*1000).to_int();
+	var rel_time = (time.rem_int(3600*1000).to_int() + 1) / 2;
+
+	if (file == null || file_partition != partition) {
+		if (file) {
+			file.close();
+			file = null;
+		}
+		file = File::open("replay_"+partition+".dat", FILE_OPEN_ALWAYS);
+		file.seek_end(0);
+		file_partition = partition;
+	}
+
+	var data = [];
+	data[] = rel_time & 0x7F;
+	data[] = (rel_time >>> 7) & 0x7F;
+	data[] = (rel_time >>> 14) & 0x7F;
+
+	var len = snapshot.unique_ids.length;
+	data[] = len & 0xFF;
+	data[] = (len >>> 8) & 0xFF;
+
+	var unique_ids = snapshot.unique_ids;
+	var accounts = snapshot.accounts;
+	var names = snapshot.names;
+	var positions = snapshot.positions;
+
+	for (var i=0; i<len; i++) {
+		var unique_id = unique_ids[i];
+		data[] = unique_id & 0xFF;
+		data[] = (unique_id >>> 8) & 0xFF;
+		data[] = (unique_id >>> 16) & 0xFF;
+		data[] = unique_id >>> 24;
+
+		var account = accounts[i];
+		if (account) {
+			data[] = account.length;
+			data.append(account);
+		}
+		else {
+			data[] = 0;
+		}
+
+		var name = names[i];
+		var str = name.to_utf8();
+		while (str.length > 255 || (str[str.length-1] & 0xC0) == 0x80) {
+			str.set_length(str.length-1);
+		}
+		data[] = str.length;
+		data.append(str);
+	}
+
+	len = min(length(positions) / SnapshotPosition::SIZE, 0xFFFF);
+	data[] = len & 0xFF;
+	data[] = (len >>> 8) & 0xFF;
+	len *= SnapshotPosition::SIZE;
+
+	for (var i=0 as SnapshotPosition; i<len; i++) {
+		var id = positions[i].account_id;
+		var x = positions[i].x;
+		var y = positions[i].y;
+		var size = positions[i].size;
+
+		data[] = id & 0xFF;
+		data[] = (id >>> 8) & 0xFF;
+		data[] = (id >>> 16) & 0xFF;
+		data[] = id >>> 24;
+		
+		data[] = x & 0xFF;
+		data[] = (x >>> 8) & 0xFF;
+		data[] = (x >>> 16) & 0xFF;
+		data[] = x >>> 24;
+
+		data[] = y & 0xFF;
+		data[] = (y >>> 8) & 0xFF;
+		data[] = (y >>> 16) & 0xFF;
+		data[] = y >>> 24;
+
+		data[] = size & 0xFF;
+		data[] = (size >>> 8) & 0xFF;
+		data[] = (size >>> 16) & 0xFF;
+		data[] = size >>> 24;
+	}
+
+	var out = [];
+	out[] = MARK;
+	out[] = 0x01;
+
+	foreach (var b in data) {
+		if (b === MARK) {
+			out[] = MARK;
+			out[] = 0x00;
+			continue;
+		}
+		out[] = b;
+	}
+
+	file.write(out);
+}
+
+function main()
+{
+	set_log_function(custom_log#1);
+
+	for (;;) {
+		var msg = Task::receive();
+		var (r, e) = handle_message(msg);
+		if (e) {
+			dump(e);
+		}
+	}
+}

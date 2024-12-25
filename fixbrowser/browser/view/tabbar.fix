@@ -1,0 +1,575 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/font";
+import "gui/subview";
+import "gui/subview/button";
+import "browser/view/scroller";
+import "browser/view/tooltip";
+
+const {
+	TABBAR_HORIZONTAL,
+	TABBAR_VERTICAL
+};
+
+const {
+	@STATE_NORMAL   = 0x00,
+	@STATE_SELECTED = 0x01,
+	@STATE_HOVER    = 0x02
+};
+
+const {
+	@BUTTON_LEFT,
+	@BUTTON_RIGHT
+};
+
+const {
+	@TAB_title,
+	@TAB_data,
+	@TAB_SIZE
+};
+
+class TabBar: SubView
+{
+	var @type: Integer;
+	var @margin_left: Integer;
+	var @margin_top: Integer;
+	var @margin_right: Integer;
+	var @margin_bottom: Integer;
+	var @tab_width: Integer;
+	var @scroll: Integer;
+	var @left_button: ScrollButton;
+	var @right_button: ScrollButton;
+	var @tabs;
+	var @selected: Integer;
+	var @hover: Integer;
+	var @font: SystemFont;
+	var @timer: Timer;
+	var @scrolling_button: Integer;
+	var @scroller: Scroller;
+	var @change_func;
+	var @change_data;
+
+	constructor create(type: Integer)
+	{
+		this.type = type;
+		margin_left = 1;
+		margin_right = 1;
+		margin_top = 3;
+		tab_width = 100;
+		left_button = ScrollButton::create(this, BUTTON_LEFT);
+		right_button = ScrollButton::create(this, BUTTON_RIGHT);
+		tabs = [];
+		font = SystemFont::create("Tahoma", 11, FONT_NORMAL);
+		selected = -1;
+		hover = -1;
+		timer = Timer::create(50, TabBar::handle_timer#1, weakref_create(this));
+		scrolling_button = -1;
+		scroller = Scroller::create(TabBar::update_scroll_animation#2, this);
+	}
+
+	function set_change_action(func, data)
+	{
+		change_func = func;
+		change_data = data;
+	}
+
+	function add_tab(title: String, data)
+	{
+		tabs[] = title;
+		tabs[] = data;
+		repaint();
+		if (selected == -1) {
+			select_tab(length(tabs) / TAB_SIZE - 1);
+		}
+	}
+
+	function find_tab(data): Integer
+	{
+		var tabs = this.tabs;
+		for (var i=0; i<length(tabs); i+=TAB_SIZE) {
+			if (tabs[i+TAB_data] === data) {
+				return i / TAB_SIZE;
+			}
+		}
+		return -1;
+	}
+
+	function get_tab_count(): Integer
+	{
+		return length(tabs) / TAB_SIZE;
+	}
+
+	function set_tab_title(idx: Integer, title: String)
+	{
+		tabs[idx*TAB_SIZE+TAB_title] = title;
+		repaint();
+	}
+
+	function get_tab_title(idx: Integer): String
+	{
+		return tabs[idx*TAB_SIZE+TAB_title];
+	}
+
+	function get_tab_data(idx: Integer): Dynamic
+	{
+		return tabs[idx*TAB_SIZE+TAB_data];
+	}
+
+	function get_selected_tab(): Integer
+	{
+		return selected;
+	}
+
+	function get_selected_data(): Dynamic
+	{
+		if (selected == -1) return null;
+		return tabs[selected*TAB_SIZE+TAB_data];
+	}
+
+	function select_tab(idx: Integer)
+	{
+		if (idx == selected) {
+			return;
+		}
+		var prev_idx = selected;
+		selected = idx;
+		repaint();
+		if (change_func) {
+			change_func(change_data, idx, prev_idx);
+		}
+	}
+
+	override function handle_resize()
+	{
+		var btn_width = 20;
+		left_button.set_rect(margin_left, margin_top, btn_width, get_height()-margin_top-margin_bottom);
+		right_button.set_rect(get_width()-margin_right-btn_width, margin_top, btn_width, get_height()-margin_top-margin_bottom);
+		update_scroll();
+		repaint();
+	}
+
+	function @update_scroll()
+	{
+		var num_tabs = length(tabs) / TAB_SIZE;
+		var total_width = get_width() - margin_left - margin_right;
+		if (num_tabs * tab_width <= total_width) {
+			if (left_button.get_parent()) remove(left_button);
+			if (right_button.get_parent()) remove(right_button);
+			scroll = 0;
+			return;
+		}
+		
+		var max = max(0, num_tabs * tab_width - total_width);
+		scroll = clamp(scroll, 0, max);
+
+		if (scroll > 0) {
+			if (!left_button.get_parent()) {
+				add(left_button);
+			}
+		}
+		else {
+			if (left_button.get_parent()) {
+				remove(left_button);
+			}
+		}
+
+		if (scroll < max) {
+			if (!right_button.get_parent()) {
+				add(right_button);
+			}
+		}
+		else {
+			if (right_button.get_parent()) {
+				remove(right_button);
+			}
+		}
+	}
+	
+	override function handle_paint(p: Painter)
+	{
+		p.fill_rect(0, 0, get_width(), get_height(), 0xFF888888);
+		p.fill_rect(0, get_height()-1, get_width(), 1, 0xFF444444);
+		p.push();
+		p.clip(margin_left, margin_top, get_width()-margin_left-margin_right, get_height()-margin_top-margin_bottom);
+		p.translate(-scroll, 0);
+		var num_tabs = length(tabs) / TAB_SIZE;
+		var start = max(0, scroll - margin_left) / tab_width;
+		var end = min((scroll + get_width() - margin_left - margin_right + tab_width - 1) / tab_width, num_tabs);
+		for (var i=start; i<end; i++) {
+			var state = STATE_NORMAL;
+			if (i == selected) {
+				state |= STATE_SELECTED;
+			}
+			if (i == hover) {
+				state |= STATE_HOVER;
+			}
+			draw_tab(p, margin_left+i*tab_width, margin_top, tab_width, get_height()-margin_top-margin_bottom, state, i);
+		}
+		p.pop();
+
+		draw_children(p);
+	}
+
+	function @draw_tab(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, state: Integer, idx: Integer)
+	{
+		p.push();
+		if ((state & STATE_SELECTED) == 0) {
+			height--;
+		}
+		
+		var radius = 4.0;
+		var shape0 = create_tab_shape(x, y, width, height, radius, true);
+		var shape1 = create_tab_shape(x+0.5, y+0.5, width-1, height-1, radius*0.9, false);
+		var shape2 = create_tab_shape(x+1.5, y+1.5, width-3, height-2, radius*0.8, false);
+		var gradient = Image::create(1, 2);
+		var tr = Transform::create();
+
+		if ((state & STATE_SELECTED) != 0) {
+			p.fill_shape(shape0, 0xFFE8E8E8);
+		}
+		else {
+			if ((state & STATE_HOVER) != 0) {
+				gradient.get_pixels()[0] = 0xFFE8E8E8;
+				gradient.get_pixels()[1] = 0xFFDDDDDD;
+			}
+			else {
+				gradient.get_pixels()[0] = 0xFFDDDDDD;
+				gradient.get_pixels()[1] = 0xFFCCCCCC;
+			}
+			tr.translate(x, y);
+			tr.scale(10.0);
+			p.fill_shape(shape0, Shader {
+				blend(sample_bilinear(gradient, tr, CLAMP_Y));
+			});
+		}
+
+		p.set_blend_gamma(0.1);
+		p.fill_shape(shape1.get_outline(), 0xFF444444);
+		p.set_blend_gamma(1.0);
+
+		gradient.get_pixels()[0] = 0xFFEEEEEE;
+		gradient.get_pixels()[1] = 0xFFBBBBBB;
+		var dx = 2.0;
+		var dy = float(height) / float(width) * 2.0;
+		tr.m00 = dx;
+		tr.m01 = dy;
+		tr.m10 = -dy;
+		tr.m11 = dx;
+		tr.m02 = x+width*0.5;
+		tr.m12 = y+height*0.5;
+		//tr.translate(0, -0.5);
+		p.fill_shape(shape2.get_outline(), Shader {
+			blend(sample_bilinear(gradient, tr, CLAMP_Y));
+		});
+
+		if ((state & STATE_SELECTED) == 0) {
+			gradient.get_pixels()[0] = 0x00000000;
+			gradient.get_pixels()[1] = 0x66444444;
+			tr.reset();
+			tr.translate(x, y+height-10);
+			tr.scale(10.0);
+			tr.translate(0, -0.5);
+			p.fill_shape(shape0, Shader {
+				blend(sample_bilinear(gradient, tr, CLAMP_Y));
+			});
+		}
+
+		p.clip(x+3, y+3, width-6, height-5);
+		var title = tabs[idx*TAB_SIZE+TAB_title] as String;
+		if (title) {
+			var max_width = width-10;
+			if (font.get_string_advance(title) > max_width) {
+				var dots_width = font.get_string_advance("...");
+				var len = ifloor(font.get_string_position(title, max_width - dots_width));
+				title = array_extract(title, 0, len) + "...";
+			}
+			var text_y = (height-(font.get_ascent()+font.get_descent()))/2+1;
+			font.draw_string(p, x+6, y+text_y+font.get_ascent(), title, 0xFF000000);
+		}
+		p.pop();
+	}
+
+	function @create_tab_shape(x: Float, y: Float, width: Float, height: Float, radius: Float, closed: Boolean): Shape
+	{
+		var shape = Shape::create();
+		shape.move_to(x, y+height);
+		shape.line_to(x, y+radius);
+		shape.arc_to(x+radius, y+radius, x+radius, y);
+		shape.line_to(x+width-radius, y);
+		shape.arc_to(x+width-radius, y+radius, x+width, y+radius);
+		shape.line_to(x+width, y+height);
+		if (closed) {
+			shape.close_path();
+		}
+		return shape;
+	}
+
+	function @get_tab_at(x: Integer, y: Integer): Integer
+	{
+		x += scroll - margin_left;
+		y -= margin_top;
+		var num_tabs = length(tabs) / TAB_SIZE;
+		var cur_tab = x / tab_width;
+		if (cur_tab >= 0 && cur_tab < num_tabs && y >= 0) {
+			return cur_tab;
+		}
+		return -1;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_MOVE) {
+			var cur_tab = get_tab_at(event.get_x(), event.get_y());
+			if (cur_tab >= 0) {
+				if (cur_tab != hover) {
+					hover = cur_tab;
+					repaint();
+					Tooltip::hide(this);
+				}
+			}
+			else if (hover != -1) {
+				hover = -1;
+				repaint();
+				Tooltip::hide(this);
+			}
+			Tooltip::show_delayed(event.get_x(), event.get_y(), TabBar::show_tooltip#3, this);
+		}
+		else if (event.get_type() == EVENT_MOUSE_LEAVE) {
+			if (hover != -1) {
+				hover = -1;
+				repaint();
+				Tooltip::hide(this);
+			}
+		}
+		else if (event.get_type() == EVENT_MOUSE_WHEEL) {
+			handle_mouse_wheel(event);
+		}
+		else if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			var cur_tab = get_tab_at(event.get_x(), event.get_y());
+			if (cur_tab >= 0 && selected != cur_tab) {
+				select_tab(cur_tab);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	override function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_WHEEL) {
+			handle_mouse_wheel(event);
+		}
+		return false;
+	}
+
+	function @handle_mouse_wheel(event: MouseEvent)
+	{
+		do_scroll(event.get_wheel_y());
+	}
+
+	function @handle_scroll_button(type: Integer, pressed: Boolean)
+	{
+		if (!pressed) {
+			scrolling_button = -1;
+			timer.stop();
+			return;
+		}
+
+		do_scroll(type == BUTTON_LEFT? -1.0 : 1.0);
+		scrolling_button = type;
+		timer.start();
+	}
+
+	function @handle_timer(): Boolean
+	{
+		this = weakref_get(this);
+		if (!this) return false;
+
+		do_scroll(scrolling_button == BUTTON_LEFT? -1.0 : 1.0);
+		return true;
+	}
+
+	function @do_scroll(amount: Float)
+	{
+		scroller.apply_delta(iround(amount * 40.0));
+	}
+
+	function @update_scroll_animation(value: Integer)
+	{
+		scroll += value;
+		update_scroll();
+		repaint();
+	}
+
+	function @show_tooltip(x: Integer, y: Integer)
+	{
+		var cur_tab = get_tab_at(x, y);
+		if (cur_tab >= 0) {
+			Tooltip::show(this, x, y, tabs[cur_tab*TAB_SIZE+TAB_title], this);
+		}
+	}
+}
+
+class @ScrollButton: SubButton
+{
+	var @bar: TabBar;
+	var @type: Integer;
+
+	constructor create(bar: TabBar, type: Integer)
+	{
+		this.bar = bar;
+		this.type = type;
+		set_focusable(false);
+	}
+
+	override function accept_mouse_event(event: MouseEvent): Boolean
+	{
+		if (type == BUTTON_LEFT && event.get_x() >= get_width() - 6) {
+			return false;
+		}
+		if (type == BUTTON_RIGHT && event.get_x() < 6) {
+			return false;
+		}
+		return true;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			bar.handle_scroll_button(type, true);
+		}
+		else if (event.get_type() == EVENT_MOUSE_UP && event.get_button() == MOUSE_BUTTON_LEFT) {
+			bar.handle_scroll_button(type, false);
+		}
+		return super.handle_mouse_event(event);
+	}
+
+	override function paint_background(p: Painter)
+	{
+		var gradient_width = 6;
+		var gradient = Image::create(2, 1);
+		var tr = Transform::create();
+		if (type == BUTTON_LEFT) {
+			gradient.get_pixels()[0] = 0xFF888888;
+			gradient.get_pixels()[1] = 0x00000000;
+			tr.translate(get_width() - gradient_width, 0);
+		}
+		else {
+			gradient.get_pixels()[0] = 0x00000000;
+			gradient.get_pixels()[1] = 0xFF888888;
+		}
+		tr.scale(gradient_width, 1);
+		tr.translate(-0.5, 0);
+		p.fill_rect(0, 0, get_width(), get_height()-1, Shader {
+			blend(sample_bilinear(gradient, tr, CLAMP_X));
+		});
+
+		if (type == BUTTON_LEFT) {
+			gradient.get_pixels()[0] = 0xFF444444;
+			gradient.get_pixels()[1] = 0x00000000;
+		}
+		else {
+			gradient.get_pixels()[0] = 0x00000000;
+			gradient.get_pixels()[1] = 0xFF444444;
+		}
+		p.fill_rect(0, get_height()-1, get_width(), 1, Shader {
+			blend(sample_bilinear(gradient, tr, CLAMP_X));
+		});
+	}
+
+	override function paint_foreground(p: Painter)
+	{
+		var x = 0;
+		var y = 0;
+		var w = get_width();
+		var h = get_height();
+
+		if (type == BUTTON_LEFT) {
+			w -= 6;
+		}
+		else {
+			x += 6;
+			w -= 6;
+		}
+
+		if ((get_state() & BUTTON_HOVER) != 0) {
+			if ((get_state() & BUTTON_PRESSED) != 0) {
+				draw_highlight_rect(p, x, y, w, h-1, 1.5, argb(0x80666666), argb(0x80EEEEEE));
+			}
+			else {
+				draw_highlight_rect(p, x, y, w, h-1, 1.5, argb(0x80EEEEEE), argb(0x80666666));
+			}
+		}
+
+		var new_w = w/3;
+		x += (w - new_w) / 2;
+		w = new_w;
+		var size = w;
+		y += size*2;
+
+		var shape = Shape::create();
+		if (type == BUTTON_LEFT) {
+			x--;
+			shape.move_to(x+size, y);
+			shape.line_to(x, y+size);
+			shape.line_to(x+size, y+size*2);
+		}
+		else {
+			shape.move_to(x, y);
+			shape.line_to(x+size, y+size);
+			shape.line_to(x, y+size*2);
+		}
+		shape.close_path();
+
+		p.fill_shape(shape, 0xFF000000);
+	}
+}
+
+function @draw_highlight_rect(p: Painter, x: Float, y: Float, w: Float, h: Float, size: Float, color1: Integer, color2: Integer)
+{
+	var shape = Shape::create();
+	shape.move_to(x+w, y);
+	shape.line_to(x+w, y+h);
+	shape.line_to(x, y+h);
+	shape.line_to(x+size, y+h-size);
+	shape.line_to(x+w-size, y+h-size);
+	shape.line_to(x+w-size, y+size);
+	shape.close_path();
+	p.fill_shape(shape, color2);
+
+	shape.clear();
+	shape.move_to(x, y);
+	shape.line_to(x+w, y);
+	shape.line_to(x+w-size, y+size);
+	shape.line_to(x+size, y+size);
+	shape.line_to(x+size, y+h-size);
+	shape.line_to(x, y+h);
+	shape.close_path();
+	p.fill_shape(shape, color1);
+}

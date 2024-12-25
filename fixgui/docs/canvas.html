@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/view";</code>
+</p>
+
+<h2>Canvas class</h2>
+
+<p>
+The Canvas class is used for creation of custom views.
+</p>
+
+<p>
+You can use it directly but it is better to use the hierarchy of <a href="subview.html">SubViews</a>.
+The easiest way is to use the <a href="subview.html#as_view">as_view</a> method of any
+SubView which creates a Canvas with all the events handled automatically. You can also
+add any SubView directly to container Views as it internally calls this method for SubViews.
+</p>
+
+<p>
+The canvas supports ability to scroll the content. However in many cases it is better
+to use <a href="pure_scroll_view.html">PureScrollView</a> to have a full control of
+the scrolling capability as the native support varies a lot between platforms.
+</p>
+
+<p>
+Inherits from <a href="view.html">View</a>.
+</p>
+
+<ul>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#properties">Properties</a></li>
+	<li><a href="#events">Event handlers</a></li>
+</ul>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): Canvas<br>
+		static function <b>create</b>(flags: Integer): Canvas<br>
+	</code></dt>
+	<dd>
+		Creates a new canvas. You can also optionally pass the flags:<br><br>
+		<b>CANVAS_SCROLLABLE</b> - enables scrollbar<br>
+		<b>CANVAS_BORDER</b> - shows a border<br>
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>set_scroll_state</b>(type: Integer, pos: Integer, max: Integer, page_size: Integer, always_show: Boolean)</code></dt>
+	<dd>
+		Sets the scroll state. The type is either <code>SCROLL_HORIZ</code> or <code>SCROLL_VERT</code>,
+		the scroll position is in pixels, the maximum position is excluding the size and the page size.
+		You can choose if to always show scrollbars or hide them when not needed (may not work on all
+		platforms or both directions are affected).
+	</dd>
+	<dt><code>function <b>set_scroll_position</b>(type: Integer, pos: Integer)</code></dt>
+	<dd>
+		Sets the scroll position in pixels. The type is either <code>SCROLL_HORIZ</code> or <code>SCROLL_VERT</code>.
+	</dd>
+	<dt><code>function <b>get_scroll_position</b>(type: Integer)</code></dt>
+	<dd>
+		Returns the scroll position in pixels. The type is either <code>SCROLL_HORIZ</code> or <code>SCROLL_VERT</code>.
+	</dd>
+	<dt id="set_active_rendering"><code>function <b>set_active_rendering</b>(enable: Boolean)</code></dt>
+	<dd>
+		Sets the active rendering. When enabled the canvas is continuously repainted at a maximum rate
+		in an efficient way. It might be limited by the refresh rate of the monitor depending on the
+		platform and the settings of the OS.
+	</dd>
+	<dt><code>function <b>get_active_rendering</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the active rendering is enabled.
+	</dd>
+	<dt><code>function <b>set_relative_mode</b>(enable: Boolean)</code></dt>
+	<dd>
+		Sets the relative mode for mouse events. In this mode the mouse cursor is hidden and
+		the mouse is captured by the canvas. Relative movements are reported instead of
+		regular mouse positions (using the <code>EVENT_MOUSE_RELATIVE</code> event type).
+	</dd>
+	<dt><code>function <b>get_relative_mode</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the relative mode is enabled.
+	</dd>
+	<dt><code>function <b>set_overdraw_size</b>(amount: Integer)</code></dt>
+	<dd>
+		Sets the overdraw size in pixels. This is used when repainting the canvas. Every
+		redrawing is internally enlarged by this amount in every direction and then the extra
+		area is discarded when putting it into a screen. This allows to provide the required
+		pixels for non-local effects such as blurs.
+	</dd>
+	<dt><code>function <b>get_overdraw_size</b>(): Integer</code></dt>
+	<dd>
+		Returns the overdraw size in pixels.
+	</dd>
+	<dt><code>function <b>set_focusable</b>(enable: Boolean)</code></dt>
+	<dd>
+		Sets the canvas focusable.
+	</dd>
+	<dt><code>function <b>is_focusable</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the canvas is focusable.
+	</dd>
+	<dt><code>
+		function <b>repaint</b>()<br>
+		function <b>repaint</b>(x: Integer, y: Integer, width: Integer, height: Integer)<br>
+		function <b>repaint</b>(r: Rect)<br>
+	</code></dt>
+	<dd>
+		Schedules a repaint of either the whole canvas or it's part. The repainting will be
+		done after other events are processed. The area from multiple calls is combined to do
+		a single repainting at once. This is not needed to be called when the
+		<a href="#set_active_rendering">active rendering</a> is enabled.<br><br>
+		<b>Web platform:</b> You can <a href="native_web.html#flush_drawing">force an immediate repaint</a> to get a better performance.
+	</dd>
+</dl>
+
+<h3 id="events">Event handlers</h3>
+
+<dl>
+	<dt><code>virtual function <b>handle_destroy</b>()</code></dt>
+	<dd>
+		Override to handle destruction of the canvas.
+	</dd>
+	<dt><code>virtual function <b>handle_resize</b>()</code></dt>
+	<dd>
+		Override to handle resizing of the canvas.
+	</dd>
+	<dt><code>virtual function <b>handle_paint</b>(p: <a href="image/painter.html">Painter</a>)</code></dt>
+	<dd>
+		Override to handle painting of the canvas.
+	</dd>
+</dl>
+
+</body>
+</html>

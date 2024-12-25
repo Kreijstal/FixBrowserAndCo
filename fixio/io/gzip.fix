@@ -1,0 +1,224 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+
+const {
+	@COMP_DONE  = 0,
+	@COMP_FLUSH = 1,
+	@COMP_MORE  = 2
+};
+
+function zcompress(arr: Byte[]): Byte[];
+function zcompress(arr: Byte[], off: Integer, len: Integer): Byte[];
+function zuncompress(arr: Byte[]): Byte[];
+function zuncompress(arr: Byte[], off: Integer, len: Integer): Byte[];
+
+function gzip_compress(arr: Byte[]): Byte[];
+function gzip_compress(arr: Byte[], off: Integer, len: Integer): Byte[];
+function gzip_uncompress(arr: Byte[]): Byte[];
+function gzip_uncompress(arr: Byte[], off: Integer, len: Integer): Byte[];
+
+class ZStream: Stream
+{
+	var @parent: Stream;
+	var @in_state;
+	var @in_buf: Byte[];
+	var @in_pos: Integer;
+	var @in_done: Boolean;
+	var @out_state;
+	var @temp_buf: Byte[];
+	var @temp_pos: Integer;
+	var @out_buf: Byte[];
+	var @flushable: Boolean;
+	var @inverted: Boolean;
+	var @gzip: Boolean;
+
+	constructor create(parent: Stream)
+	{
+		this.parent = parent;
+	}
+	
+	constructor create(parent: Stream, flushable: Boolean)
+	{
+		this.parent = parent;
+		this.flushable = flushable;
+	}
+
+	constructor create_inverted(parent: Stream)
+	{
+		this.parent = parent;
+		this.inverted = true;
+	}
+	
+	override function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (!in_state) {
+			if (gzip) {
+				in_state = inverted? gzip_compress_create(flushable) : gzip_uncompress_create();
+			}
+			else {
+				in_state = inverted? zcompress_create(flushable) : zuncompress_create();
+			}
+			in_buf = Array::create_shared(4096, 1);
+		}
+
+		if (in_done) {
+			return -1;
+		}
+		
+		var remaining = in_buf.length - in_pos;
+		var final = false;
+		if (remaining > 0) {
+			var read = parent.read_part(in_buf, in_pos, remaining);
+			if (read < 0) {
+				final = true;
+			}
+			else {
+				in_pos += read;
+				remaining -= read;
+			}
+		}
+
+		var ret = zcompress_process(in_state, in_buf, 0, in_pos, buf, off, len, final);
+		if (ret == COMP_DONE) {
+			in_done = true;
+			return -1;
+		}
+		
+		var read = zcompress_get_read(in_state);
+		Array::copy(in_buf, 0, in_buf, read, in_pos - read);
+		in_pos -= read;
+		
+		return zcompress_get_written(in_state);
+	}
+
+	override function write_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (!out_state) {
+			if (gzip) {
+				out_state = inverted? gzip_uncompress_create() : gzip_compress_create(flushable);
+			}
+			else {
+				out_state = inverted? zuncompress_create() : zcompress_create(flushable);
+			}
+			temp_buf = Array::create_shared(4096, 1);
+			out_buf = Array::create_shared(4096, 1);
+		}
+
+		var amount = min(temp_buf.length - temp_pos, len);
+		Array::copy(temp_buf, temp_pos, buf, off, amount);
+		temp_pos += amount;
+		if (temp_pos == temp_buf.length) {
+			for (;;) {
+				var ret = zcompress_process(out_state, temp_buf, 0, temp_pos, out_buf, 0, out_buf.length, false);
+
+				var read = zcompress_get_read(out_state);
+				Array::copy(temp_buf, 0, temp_buf, read, temp_pos - read);
+				temp_pos -= read;
+
+				var written: Integer = zcompress_get_written(out_state);
+				if (written > 0) {
+					parent.write(out_buf, 0, written);
+				}
+
+				if (ret == COMP_FLUSH) continue;
+				break;
+			}
+		}
+		return amount;
+	}
+
+	override function flush()
+	{
+		if (!flushable) {
+			throw error("flushing not enabled for this stream");
+		}
+
+		var flush = 2;
+		for (;;) {
+			var ret = zcompress_process(out_state, temp_buf, 0, temp_pos, out_buf, 0, out_buf.length, flush);
+			flush = 0;
+
+			var read = zcompress_get_read(out_state);
+			Array::copy(temp_buf, 0, temp_buf, read, temp_pos - read);
+			temp_pos -= read;
+
+			var written: Integer = zcompress_get_written(out_state);
+			if (written > 0) {
+				parent.write(out_buf, 0, written);
+			}
+
+			if (ret == COMP_FLUSH) continue;
+			break;
+		}
+		parent.flush();
+	}
+
+	override function close()
+	{
+		if (!out_state) {
+			parent.close();
+			return;
+		}
+		
+		for (;;) {
+			var ret = zcompress_process(out_state, temp_buf, 0, temp_pos, out_buf, 0, out_buf.length, true);
+
+			var read = zcompress_get_read(out_state);
+			Array::copy(temp_buf, 0, temp_buf, read, temp_pos - read);
+			temp_pos -= read;
+
+			var written: Integer = zcompress_get_written(out_state);
+			if (written > 0) {
+				parent.write(out_buf, 0, written);
+			}
+
+			if (ret == COMP_DONE) break;
+			continue;
+		}
+		parent.close();
+	}
+}
+
+class GZipStream: ZStream
+{
+	static function create(parent: Stream): GZipStream
+	{
+		return GZipStream::create(parent, false);
+	}
+
+	static function create(parent: Stream, flushable: Boolean): GZipStream
+	{
+		var stream = ZStream::create(parent, flushable) as GZipStream;
+		stream.gzip = true;
+		return stream;
+	}
+
+	static function create_inverted(parent: Stream): GZipStream
+	{
+		var stream = ZStream::create_inverted(parent) as GZipStream;
+		stream.gzip = true;
+		return stream;
+	}
+}

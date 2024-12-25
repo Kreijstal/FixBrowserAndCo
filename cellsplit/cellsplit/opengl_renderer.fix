@@ -1,0 +1,837 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "native/extern";
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "image/font";
+import "gui/view";
+import "native/native";
+import "task/task";
+import "cellsplit/shape_renderer";
+import "cellsplit/worker_comm";
+import "cellsplit/gui/buffer_view";
+import "cellsplit/gui/common";
+import "cellsplit/server/packets";
+import "cellsplit/util/opengl";
+
+struct RenderCell
+{
+	var type: Integer;
+	var x: Float;
+	var y: Float;
+	var size: Float;
+	var color: Integer;
+	var color_outline: Integer;
+	var text_shape1: Shape;
+	var text_shape2: Shape;
+	var text_width: Float;
+	var mass: Integer;
+	//var mass_shape1: Shape;
+	//var mass_shape2: Shape;
+	var skin: Image;
+}
+
+struct Mark
+{
+	var id: Integer;
+	var x: Float;
+	var y: Float;
+	var shape: Shape;
+	var shape_outline: Shape;
+}
+
+const @MAP_SIZE = 14142.13562373;
+
+const @MAX_PELLETS = 8192;
+const @MAX_TEXTURE_SIZE = 1024;
+
+class OpenGLRenderer
+{
+	var @program: Integer;
+	var @grid_program: Integer;
+	var @pellets_program: Integer;
+	var @shape_program: Integer;
+	var @shape_texture_program: Integer;
+	var @subview: BufferView;
+	var @buffer_tex: Integer;
+	var @buffer_width: Integer;
+	var @buffer_height: Integer;
+	var @buffer_pot_width: Integer;
+	var @buffer_pot_height: Integer;
+	var @pellet_texture: Integer;
+	var @quad_buffer: Integer;
+	var @static_pellets_buffer: Integer;
+	var @dynamic_pellets_buffer: Integer;
+	var @dynamic_pellets_vertices;
+
+	var @cell_shape: ShapeTexture;
+	var @virus_shape: ShapeTexture;
+	var @digits: ShapeTexture[];
+	
+	var @cur_shapes: ShapeTexture[Dynamic];
+	var @prev_shapes: ShapeTexture[Dynamic];
+	var @image_textures: ImageTexture[Dynamic];
+	
+	var @shape_task: Task;
+	var @shape_receivers: ShapeTexture[];
+
+	constructor create(canvas: Canvas, subview: BufferView, virus_shape_data: Shape)
+	{
+		this.subview = subview;
+		this.cur_shapes = {};
+		this.prev_shapes = {};
+		this.image_textures = {};
+		this.shape_task = Task::create("cellsplit/shape_renderer", "main#0", []);
+		this.shape_receivers = [];
+
+		init_gl(canvas);
+
+		program = compile_program(
+			{
+				"attribute vec2 coord;",
+				"uniform vec2 scale;",
+				"varying vec2 texCoord;",
+
+				"void main() {",
+					"texCoord = coord * scale;",
+					"gl_Position = vec4(coord.x*2.0-1.0, -(coord.y*2.0-1.0), 0.0, 1.0);",
+				"}"
+			},
+			{
+				"uniform sampler2D tex;",
+				"varying vec2 texCoord;",
+				"uniform vec4 color;",
+
+				"void main() {",
+					"gl_FragColor = texture2D(tex, texCoord) * color;",
+				"}"
+			},
+			{
+				"coord": 0
+			}
+		);
+
+		grid_program = compile_program(
+			{
+				"attribute vec2 coord;",
+				"uniform vec2 scale;",
+				"uniform vec2 offset;",
+				"varying vec2 texCoord;",
+
+				"void main() {",
+					"texCoord = coord*scale+offset;",
+					"gl_Position = vec4(coord.x*2.0-1.0, -(coord.y*2.0-1.0), 0.0, 1.0);",
+				"}"
+			},
+			{
+				"uniform sampler2D tex;",
+				"uniform vec2 pot_scale;",
+				"varying vec2 texCoord;",
+
+				"void main() {",
+					"vec2 coord = fract(texCoord) * pot_scale;",
+					"gl_FragColor = texture2D(tex, coord);",
+				"}"
+			},
+			{
+				"coord": 0
+			}
+		);
+
+		pellets_program = compile_program(
+			{
+				"attribute vec2 coord;",
+				"attribute vec3 pos;",
+				"attribute vec4 color;",
+				"uniform vec2 scale;",
+				"uniform vec2 offset;",
+				"varying vec2 texCoord;",
+				"varying vec4 color_var;",
+				
+				"void main() {",
+					"texCoord = (coord+1.0)*0.5;",
+					"color_var = color.bgra;",
+					"vec2 coord2 = pos.xy*scale+offset+coord.xy*scale*pos.z*1.125;",
+					"gl_Position = vec4(coord2.x*2.0-1.0, -(coord2.y*2.0-1.0), 0.0, 1.0);",
+				"}"
+			},
+			{
+				"uniform sampler2D tex;",
+				"varying vec2 texCoord;",
+				"varying vec4 color_var;",
+				
+				"void main() {",
+					"gl_FragColor = texture2D(tex, texCoord, -0.75) * color_var;",
+				"}"
+			},
+			{
+				"coord": 0,
+				"pos": 1,
+				"color": 2
+			}
+		);
+
+		shape_program = compile_program(
+			{
+				"attribute vec2 coord;",
+				"uniform vec2 scale;",
+				"uniform vec2 offset;",
+				"varying vec2 texCoord;",
+
+				"void main() {",
+					"texCoord = coord;",
+					"vec2 coord2 = coord*scale+offset;",
+					"gl_Position = vec4(coord2.x*2.0-1.0, -(coord2.y*2.0-1.0), 0.0, 1.0);",
+				"}"
+			},
+			{
+				"uniform sampler2D tex;",
+				"uniform vec4 color;",
+				"varying vec2 texCoord;",
+
+				"void main() {",
+					"gl_FragColor = texture2D(tex, texCoord, -0.75) * color;",
+				"}"
+			},
+			{
+				"coord": 0
+			}
+		);
+
+		shape_texture_program = compile_program(
+			{
+				"attribute vec2 coord;",
+				"uniform vec2 scale;",
+				"uniform vec2 offset;",
+				"varying vec2 texCoord;",
+
+				"void main() {",
+					"texCoord = coord;",
+					"vec2 coord2 = coord*scale+offset;",
+					"gl_Position = vec4(coord2.x*2.0-1.0, -(coord2.y*2.0-1.0), 0.0, 1.0);",
+				"}"
+			},
+			{
+				"uniform sampler2D tex;",
+				"uniform sampler2D tex2;",
+				"uniform vec2 texScale;",
+				"varying vec2 texCoord;",
+
+				"void main() {",
+					"gl_FragColor = texture2D(tex, texCoord, -0.75) * texture2D(tex2, texCoord * texScale);",
+				"}"
+			},
+			{
+				"coord": 0
+			}
+		);
+
+		var vertices: Float[] = Array::create_shared(6*2, 4);
+		var idx = 0;
+
+		macro vertex(x, y) {
+			vertices[idx++] = x;
+			vertices[idx++] = y;
+		}
+
+		vertex(0.0, 0.0);
+		vertex(1.0, 0.0);
+		vertex(0.0, 1.0);
+
+		vertex(1.0, 0.0);
+		vertex(1.0, 1.0);
+		vertex(0.0, 1.0);
+
+		quad_buffer = create_buffer();
+		glBindBuffer(GL_ARRAY_BUFFER, quad_buffer);
+		glBufferData(GL_ARRAY_BUFFER, Pointer::create(vertices.length*4, 0), Memory::from_shared_array(vertices), GL_STATIC_DRAW);
+
+		vertices = Array::create_shared(MAX_PELLETS*4*2, 4);
+		idx = 0;
+		for (var i=0; i<MAX_PELLETS; i++) {
+			vertex(-1.0, -1.0);
+			vertex(+1.0, -1.0);
+			vertex(+1.0, +1.0);
+			vertex(-1.0, +1.0);
+		}
+
+		static_pellets_buffer = create_buffer();
+		glBindBuffer(GL_ARRAY_BUFFER, static_pellets_buffer);
+		glBufferData(GL_ARRAY_BUFFER, Pointer::create(vertices.length*4, 0), Memory::from_shared_array(vertices), GL_STATIC_DRAW);
+
+		vertices = Array::create_shared(MAX_PELLETS*4*4, 4);
+		dynamic_pellets_buffer = create_buffer();
+		glBindBuffer(GL_ARRAY_BUFFER, dynamic_pellets_buffer);
+		glBufferData(GL_ARRAY_BUFFER, Pointer::create(vertices.length*4, 0), Memory::from_shared_array(vertices), GL_STREAM_DRAW);
+		dynamic_pellets_vertices = vertices;
+
+		create_pellet_texture();
+
+		glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+		glEnable(GL_TEXTURE_2D);
+
+		cell_shape = ShapeTexture::create(this, Shape::circle(0.0, 0.0, 1000.0), 0.0, 0.0);
+
+		var shape = clone(virus_shape_data) as Shape;
+		var tr = Transform::create();
+		tr.scale(1000.0);
+		shape.transform(tr);
+		virus_shape = ShapeTexture::create(this, shape, 0.0, 0.0);
+
+		var font = get_bold_font();
+		digits = Array::create(10, 4);
+		for (var i=0; i<10; i++) {
+			var text = {i};
+			var text_size = 65.0;
+			var text_width = font.get_string_advance(text) * text_size;
+			digits[i] = ShapeTexture::create(this, font.get_string_shape(text, -text_width*0.5, text_size*0.3, text_size, text_size), 7.0, 0.0);
+		}
+
+		finish_init_gl(canvas);
+	}
+
+	function @begin_quad_array()
+	{
+		glBindBuffer(GL_ARRAY_BUFFER, quad_buffer);
+		glVertexAttribPointer(0, 2, GL_FLOAT, 0, 2*4, Pointer::create(0, 0));
+		glEnableVertexAttribArray(0);
+	}
+
+	function @end_quad_array()
+	{
+		glDisableVertexAttribArray(0);
+	}
+
+	function @begin_pellets_array()
+	{
+		glBindBuffer(GL_ARRAY_BUFFER, static_pellets_buffer);
+		glVertexAttribPointer(0, 2, GL_FLOAT, 0, 2*4, Pointer::create(0, 0));
+		glBindBuffer(GL_ARRAY_BUFFER, dynamic_pellets_buffer);
+		glVertexAttribPointer(1, 3, GL_FLOAT, 0, 4*4, Pointer::create(0, 0));
+		glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, 1, 4*4, Pointer::create(3*4, 0));
+		glEnableVertexAttribArray(0);
+		glEnableVertexAttribArray(1);
+		glEnableVertexAttribArray(2);
+	}
+
+	function @end_pellets_array()
+	{
+		glDisableVertexAttribArray(0);
+		glDisableVertexAttribArray(1);
+		glDisableVertexAttribArray(2);
+	}
+
+	function render(mx: Integer, my: Integer, width: Integer, height: Integer, pos_size: Float, scale: Float, off_x: Float, off_y: Float, pellets: [Pellet], pellets_len: Integer, cells: [RenderCell], marks: [Mark])
+	{
+		glViewport(0, 0, width, height);
+		glClearColor(0.0, 0.0, 0.0, 1.0);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+		render_grid(width, height, pos_size, scale, off_x, off_y);
+		render_pellets(width, height, pellets, pellets_len, scale, off_x, off_y);
+		render_cells(width, height, cells, scale, off_x, off_y);
+		render_marks(width, height, marks, scale, off_x, off_y);
+		render_subview(width, height);
+		update_shapes();
+
+		/*
+		glEnable(GL_SCISSOR_TEST);
+		glScissor(mx, height-my-32, 32, 32);
+		glClearColor(1.0, 0.0, 0.0, 1.0);
+		glClear(GL_COLOR_BUFFER_BIT);
+		glDisable(GL_SCISSOR_TEST);
+		*/
+
+		swap_buffers();
+	}
+
+	function @render_subview(width: Integer, height: Integer)
+	{
+		if (buffer_tex == 0 || buffer_width != width || buffer_height != height) {
+			if (buffer_tex != 0) {
+				delete_texture(buffer_tex);
+			}
+			buffer_tex = create_texture();
+			glBindTexture(GL_TEXTURE_2D, buffer_tex);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			var w = next_power_of_two(width);
+			var h = next_power_of_two(height);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, null);
+			buffer_width = width;
+			buffer_height = height;
+			buffer_pot_width = w;
+			buffer_pot_height = h;
+		}
+
+		glBindTexture(GL_TEXTURE_2D, buffer_tex);
+
+		var dirty = subview.update_offscreen(width, height);
+		if (dirty) {
+			var img = subview.get_image();
+			var pixels = img.get_pixels();
+			var stride = img.get_stride();
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, stride);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, dirty.x1, dirty.y1, dirty.get_width(), dirty.get_height(), GL_BGRA, GL_UNSIGNED_BYTE, Memory::from_shared_array(pixels).with_offset((dirty.y1*stride+dirty.x1)*4));
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+		}
+
+		glUseProgram(program);
+
+		var alpha = subview.get_alpha();
+		glUniform2f(glGetUniformLocation(program, "scale"), float(buffer_width) / float(buffer_pot_width), float(buffer_height) / float(buffer_pot_height));
+		glUniform4f(glGetUniformLocation(program, "color"), alpha, alpha, alpha, alpha);
+
+		begin_quad_array();
+		glEnable(GL_BLEND);
+		glDrawArrays(GL_TRIANGLES, 0, 2*3);
+		glDisable(GL_BLEND);
+		end_quad_array();
+	}
+
+	function @render_grid(width: Integer, height: Integer, pos_size: Float, scale: Float, off_x: Float, off_y: Float)
+	{
+		var grid_size = MAP_SIZE * 0.5 / 150;
+		var times = iround(128 / (grid_size*scale));
+		var img_size = iround(times*grid_size*scale);
+		var img_pot_size = next_power_of_two(img_size);
+		var img = Image::create(img_pot_size, img_pot_size);
+		var p2 = Painter::create(img);
+
+		var scaled_grid_size = grid_size*scale;
+		off_x = off_x - (width * 0.5);
+		off_y = off_y - (height * 0.5);
+		var adj_x = fract(off_x / scaled_grid_size) * scaled_grid_size;
+		var adj_y = fract(off_y / scaled_grid_size) * scaled_grid_size;
+
+		var shape = Shape::create();
+		for (var i=0; i<=times; i++) {
+			var x = adj_x + float(img_size) / times * i;
+			var y = adj_y + float(img_size) / times * i;
+			add_rect(shape, x, 0, x, img_size, 0.5);
+			add_rect(shape, 0, y, img_size, y, 0.5);
+		}
+
+		var alpha = 1.0 - (pos_size - 100.0)/5000.0;
+		alpha = fclamp(alpha, 0.0, 1.0) * 0.5 + 0.25;
+		p2.clear_rect(0, 0, img_pot_size, img_pot_size, 0xFFFFFFFF);
+		p2.fill_shape(shape, argb((iround(alpha*255.0) << 24) | 0xCCCCCC));
+		//img.blur(1.0);
+
+		var pixels = img.get_pixels();
+		var texture = create_texture();
+		glBindTexture(GL_TEXTURE_2D, texture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img_pot_size, img_pot_size, 0, GL_BGRA, GL_UNSIGNED_BYTE, Memory::from_shared_array(pixels));
+
+		begin_quad_array();
+		glUseProgram(grid_program);
+		glUniform2f(glGetUniformLocation(grid_program, "scale"), float(width)/float(img_size), float(height)/float(img_size));
+		glUniform2f(glGetUniformLocation(grid_program, "pot_scale"), float(img_size) / float(img_pot_size), float(img_size) / float(img_pot_size));
+		glUniform2f(glGetUniformLocation(grid_program, "offset"), -0.5*float(width)/float(img_size), -0.5*float(height)/float(img_size));
+		glDrawArrays(GL_TRIANGLES, 0, 2*3);
+		end_quad_array();
+
+		glBindTexture(GL_TEXTURE_2D, 0);
+		delete_texture(texture);
+	}
+
+	function @add_rect(shape: Shape, x1: Float, y1: Float, x2: Float, y2: Float, half_width: Float)
+	{
+		shape.move_to(x1-half_width, y1-half_width);
+		shape.line_to(x2+half_width, y1-half_width);
+		shape.line_to(x2+half_width, y2+half_width);
+		shape.line_to(x1-half_width, y2+half_width);
+		shape.close_path();
+	}
+
+	static function @fract(x: Float): Float
+	{
+		return x - floor(x);
+	}
+
+	function @create_pellet_texture()
+	{
+		pellet_texture = create_texture();
+		glBindTexture(GL_TEXTURE_2D, pellet_texture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+		var size = 256;
+		var space = log2(size)*2.0;
+
+		var level = 0;
+		while (size >= 1) {
+			var img = Image::create(size, size);
+			var p = Painter::create(img);
+			p.fill_shape(Shape::circle(size*0.5, size*0.5, size*0.5-space), 0xFFFFFFFF);
+			var pixels = img.get_pixels();
+			glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, size, size, 0, GL_BGRA, GL_UNSIGNED_BYTE, Memory::from_shared_array(pixels));
+			size /= 2;
+			space *= 0.5;
+			level++;
+		}
+	}
+
+	function @render_pellets(width: Integer, height: Integer, pellets: [Pellet], pellets_len: Integer, scale: Float, off_x: Float, off_y: Float)
+	{
+		var vertices = dynamic_pellets_vertices;
+		var idx = 0;
+		pellets_len = min(pellets_len, MAX_PELLETS*Pellet::SIZE);
+		for (var i=0 as Pellet; i<pellets_len; i++) {
+			var pellet_x = pellets[i].x;
+			var pellet_y = pellets[i].y;
+			var pellet_size = pellets[i].size;
+			var pellet_color = pellets[i].color;
+			for (var j=0; j<4; j++) {
+				vertices[idx++] = pellet_x;
+				vertices[idx++] = pellet_y;
+				vertices[idx++] = pellet_size;
+				vertices[idx++] = pellet_color;
+			}
+		}
+
+		glBindBuffer(GL_ARRAY_BUFFER, dynamic_pellets_buffer);
+		glBufferSubData(GL_ARRAY_BUFFER, null, Pointer::create(idx*4, 0), Memory::from_shared_array(vertices));
+
+		glBindTexture(GL_TEXTURE_2D, pellet_texture);
+
+		begin_pellets_array();
+		glUseProgram(pellets_program);
+		var scale_x = 1.0/width;
+		var scale_y = 1.0/height;
+		glUniform2f(glGetUniformLocation(pellets_program, "scale"), scale*scale_x, scale*scale_y);
+		glUniform2f(glGetUniformLocation(pellets_program, "offset"), off_x*scale_x, off_y*scale_y);
+		glEnable(GL_BLEND);
+		glDrawArrays(GL_QUADS, 0, (pellets_len/Pellet::SIZE)*4);
+		glDisable(GL_BLEND);
+		end_pellets_array();
+	}
+
+	function @render_cells(width: Integer, height: Integer, cells: [RenderCell], scale: Float, off_x: Float, off_y: Float)
+	{
+		for (;;) {
+			var msg = shape_task.receive_wait(0);
+			if (!msg) break;
+
+			var shape_texture = shape_receivers[0] as ShapeTexture;
+			shape_receivers.remove(0);
+			shape_texture.init(msg);
+		}
+	
+		foreach (var i in cells) {
+			var type = cells[i].type;
+			var x = cells[i].x;
+			var y = cells[i].y;
+			var size = cells[i].size;
+			
+			var shape: ShapeTexture;
+			if (type == CELL_VIRUS) {
+				shape = virus_shape;
+			}
+			else {
+				shape = cell_shape;
+			}
+			shape.draw_outline(width, height, scale, off_x, off_y, x, y, size/1000.0, cells[i].color, 10.0/1000.0, cells[i].color_outline, get_image_texture(cells[i].skin));
+
+			var text_shape = cells[i].text_shape1;
+			if (text_shape) {
+				var text_scale = fmax(0.25*0.4, size/275.0) * 2.0;
+				var texture = get_shape_texture(text_shape, 7.0, 0.0);
+				texture.draw(width, height, scale, off_x, off_y, x, y, text_scale, 0xFFFFFFFF, null);
+				/*
+				var mass_shape = cells[i].mass_shape1;
+				if (mass_shape) {
+					text_scale = fmax(0.25*0.50*0.90, size/500.0) * 2.0;
+					texture = get_shape_texture(mass_shape, 7.0, 0.0);
+					texture.draw(width, height, scale, off_x, off_y, x, y + fmax(18.0, size/2.3), text_scale, 0xFFFFFFFF, null);
+				}
+				*/
+				var mass = cells[i].mass;
+				if (mass >= 0) {
+					text_scale = fmax(0.25*0.50*0.90, size/500.0) * 2.0;
+					var value = mass, num_digits = 1;
+					while (value >= 10) {
+						value /= 10;
+						num_digits++;
+					}
+					value = mass;
+					var cw = 37.0 * text_scale;
+					var xx = x + float(num_digits-1) * cw * 0.5;
+					var yy = y + fmax(18.0, size/2.3);
+					while (value >= 10) {
+						digits[value % 10].draw(width, height, scale, off_x, off_y, xx, yy, text_scale, 0xFFFFFFFF, null);
+						value /= 10;
+						num_digits++;
+						xx -= cw;
+					}
+					digits[value].draw(width, height, scale, off_x, off_y, xx, yy, text_scale, 0xFFFFFFFF, null);
+				}
+			}
+		}
+	}
+
+	function @render_marks(width: Integer, height: Integer, marks: [Mark], scale: Float, off_x: Float, off_y: Float)
+	{
+		foreach (var i in marks) {
+			get_shape_texture(marks[i].shape, -4.0, 0.0).draw(width, height, scale, off_x, off_y, marks[i].x, marks[i].y, 0.5/scale, 0xFFFFFFFF, null);
+		}
+	}
+
+	function @update_shapes()
+	{
+		foreach (var key, value in prev_shapes) {
+			if (!cur_shapes.contains(key)) {
+				value.destroy();
+			}
+		}
+
+		prev_shapes.clear();
+		var tmp = prev_shapes;
+		prev_shapes = cur_shapes;
+		cur_shapes = tmp;
+	}
+
+	function clear_textures()
+	{
+		foreach (var key, texture in image_textures) {
+			texture.destroy();
+		}
+		image_textures.clear();
+	}
+
+	function @get_shape_texture(shape: Shape, outline: Float, outline_opacity: Float): ShapeTexture
+	{
+		var key = (shape as Integer)|0;
+		var texture = prev_shapes.get(key, null);
+		if (texture) {
+			cur_shapes[key] = texture;
+			return texture;
+		}
+		texture = ShapeTexture::create(this, shape, outline, outline_opacity);
+		cur_shapes[key] = texture;
+		prev_shapes[key] = texture;
+		return texture;
+	}
+
+	function @get_image_texture(img: Image): ImageTexture
+	{
+		if (!img) {
+			return null;
+		}
+		var key = (img as Integer)|0;
+		var texture = image_textures.get(key, null);
+		if (texture) {
+			return texture;
+		}
+		texture = ImageTexture::create(img);
+		image_textures[key] = texture;
+		return texture;
+	}
+}
+
+class @ShapeTexture
+{
+	var @renderer: OpenGLRenderer;
+	var @shape: Shape;
+	var @id: Integer;
+	var @tex_width: Integer;
+	var @tex_height: Integer;
+	var @img_width: Integer;
+	var @img_height: Integer;
+	var @center_x: Float;
+	var @center_y: Float;
+	var @destroyed: Boolean;
+	var @scale: Float;
+	
+	constructor create(renderer: OpenGLRenderer, shape: Shape, outline: Float, outline_opacity: Float)
+	{
+		this.renderer = renderer;
+		this.shape = shape;
+
+		var bounds = shape.get_bounds();
+		var width = bounds[2] - bounds[0] + outline * 2.0 + 8.0;
+		var height = bounds[3] - bounds[1] + outline * 2.0 + 8.0;
+		var tex_width = next_power_of_two(iceil(width));
+		var tex_height = next_power_of_two(iceil(height));
+		var center_x = round(tex_width*0.5 - (bounds[0] + bounds[2]) * 0.5);
+		var center_y = round(tex_height*0.5 - (bounds[1] + bounds[3]) * 0.5);
+
+		this.tex_width = tex_width;
+		this.tex_height = tex_height;
+		this.center_x = center_x;
+		this.center_y = center_y;
+
+		var scale = 1.0;
+		while (tex_width > MAX_TEXTURE_SIZE || tex_height > MAX_TEXTURE_SIZE) {
+			tex_width = max(1, tex_width / 2);
+			tex_height = max(1, tex_height / 2);
+			scale *= 0.5;
+		}
+		this.img_width = tex_width;
+		this.img_height = tex_height;
+		this.scale = scale;
+
+		var outline_color = 0xFF000000 | mul32(clamp(iround(outline_opacity * 255.0), 0, 255), 0x010101);
+
+		renderer.shape_task.send([tex_width, tex_height, shape, outline, outline_color, scale, center_x, center_y]);
+		renderer.shape_receivers[] = this;
+	}
+	
+	function @init(images: Image[])
+	{
+		if (destroyed) return;
+
+		id = create_texture();
+		glBindTexture(GL_TEXTURE_2D, id);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+		var level = 0;
+		var tex_width = this.img_width;
+		var tex_height = this.img_height;
+		for (;;) {
+			var img = images[level];
+			var pixels = img.get_pixels();
+			glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, tex_width, tex_height, 0, GL_BGRA, GL_UNSIGNED_BYTE, Memory::from_shared_array(pixels));
+			if (tex_width == 1 && tex_height == 1) break;
+			tex_width = max(1, tex_width / 2);
+			tex_height = max(1, tex_height / 2);
+			scale *= 0.5;
+			level++;
+		}
+	}
+
+	function destroy()
+	{
+		if (id != 0) {
+			delete_texture(id);
+			id = 0;
+		}
+		destroyed = true;
+	}
+
+	function draw(width: Integer, height: Integer, scale: Float, off_x: Float, off_y: Float, x: Float, y: Float, scale2: Float, color: Integer, texture: ImageTexture)
+	{
+		if (id == 0) return;
+		var orig_scale = scale;
+		scale *= scale2;
+		renderer.begin_quad_array();
+		glBindTexture(GL_TEXTURE_2D, id);
+		var program = renderer.shape_program;
+		if (texture) {
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D, texture.id);
+			glEnable(GL_TEXTURE_2D);
+			program = renderer.shape_texture_program;
+		}
+		glUseProgram(program);
+		var scale_x = float(tex_width)/float(width);
+		var scale_y = float(tex_height)/float(height);
+		glUniform2f(glGetUniformLocation(program, "scale"), scale_x*scale, scale_y*scale);
+		glUniform2f(glGetUniformLocation(program, "offset"), (-center_x*scale+off_x+x*orig_scale)/float(width), (-center_y*scale+off_y+y*orig_scale)/float(height));
+		if (texture) {
+			glUniform1i(glGetUniformLocation(program, "tex2"), 1);
+			glUniform2f(glGetUniformLocation(program, "texScale"), float(texture.img.get_width()) / float(texture.tex_width), float(texture.img.get_height()) / float(texture.tex_height));
+		}
+		else {
+			glUniform4f(glGetUniformLocation(program, "color"), ((color >>> 16) & 0xFF)/255.0, ((color >>> 8) & 0xFF)/255.0, ((color >>> 0) & 0xFF)/255.0, ((color >>> 24) & 0xFF)/255.0);
+		}
+		glEnable(GL_BLEND);
+		glDrawArrays(GL_TRIANGLES, 0, 2*3);
+		glDisable(GL_BLEND);
+		if (texture) {
+			glDisable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			glActiveTexture(GL_TEXTURE0);
+		}
+		renderer.end_quad_array();
+	}
+
+	function draw_outline(width: Integer, height: Integer, scale: Float, off_x: Float, off_y: Float, x: Float, y: Float, scale2: Float, color: Integer, outline: Float, color_outline: Integer, texture: ImageTexture)
+	{
+		var half_outline = outline * 0.5;
+		draw(width, height, scale, off_x, off_y, x, y, scale2 + half_outline, color_outline, null);
+		draw(width, height, scale, off_x, off_y, x, y, scale2 - half_outline, color, texture);
+	}
+}
+
+class @ImageTexture
+{
+	var @img: Image;
+	var @id: Integer;
+	var @tex_width: Integer;
+	var @tex_height: Integer;
+	
+	constructor create(img: Image)
+	{
+		this.img = img;
+		this.tex_width = next_power_of_two(img.get_width());
+		this.tex_height = next_power_of_two(img.get_height());
+
+		id = create_texture();
+		glBindTexture(GL_TEXTURE_2D, id);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+		var pixels = img.get_pixels();
+		if (tex_width != img.get_width() || tex_height != img.get_height()) {
+			var mem = Memory::alloc(tex_width*tex_height*4);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tex_width, tex_height, 0, GL_BGRA, GL_UNSIGNED_BYTE, mem);
+			mem.free();
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, img.get_width(), img.get_height(), GL_BGRA, GL_UNSIGNED_BYTE, Memory::from_shared_array(pixels));
+		}
+		else {
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tex_width, tex_height, 0, GL_BGRA, GL_UNSIGNED_BYTE, Memory::from_shared_array(pixels));
+		}
+	}
+
+	function destroy()
+	{
+		if (id != 0) {
+			delete_texture(id);
+			id = 0;
+		}
+	}
+}
+
+function @next_power_of_two(value: Integer): Integer
+{
+	value--;
+	value |= value >>> 1;
+	value |= value >>> 2;
+	value |= value >>> 4;
+	value |= value >>> 8;
+	value |= value >>> 16;
+	value++;
+	return value;
+}

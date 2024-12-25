@@ -1,0 +1,119 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/subview";
+import "gui/event";
+import "gui/native/virtual";
+
+class PopupWindow
+{
+	var @parent: SubView;
+	var @cancel: CancelArea;
+	var @cancel_func;
+	var @cancel_data;
+
+	constructor show(parent: SubView, x: Integer, y: Integer, view: SubView)
+	{
+		this.parent = parent;
+
+		var point = [x, y];
+		var top = parent.point_to_top(point);
+
+		cancel = CancelArea::create(this, view);
+		cancel.set_rect(-1000000, -1000000, top.get_width()+2000000, top.get_height()+2000000);
+		top.add(cancel);
+
+		var rect = view.get_rect();
+		rect.translate(1000000+point[0], 1000000+point[1]);
+		view.set_rect(rect);
+		cancel.add(view);
+	}
+
+	static function get_visible_area(parent: SubView): Rect
+	{
+		return Virtual::get_visible_screen_area(parent);
+	}
+
+	function set_cancel_action(func, data)
+	{
+		cancel_func = func;
+		cancel_data = data;
+	}
+
+	function cancel()
+	{
+		var top = cancel.get_parent();
+		if (!top) return;
+
+		var focused = cancel.get_current_focus();
+		if (focused) {
+			for (var view = focused; view; view = view.get_parent()) {
+				if (view === cancel) {
+					focused.unfocus();
+					break;
+				}
+			}
+		}
+
+		top.remove(cancel);
+		if (cancel_func) {
+			cancel_func(cancel_data);
+		}
+	}
+}
+
+class @CancelArea: SubView
+{
+	var @popup: PopupWindow;
+	var @view: SubView;
+
+	constructor create(popup: PopupWindow, view: SubView)
+	{
+		this.popup = popup;
+		this.view = view;
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_ESCAPE) {
+			popup.cancel();
+		}
+		return true;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_DOWN) {
+			popup.cancel();
+			return true;
+		}
+		return true;
+	}
+
+	override function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		return true;
+	}
+}

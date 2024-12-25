@@ -1,0 +1,139 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/http/url";
+import "browser/script/handle_types";
+
+const {
+	REQ_url,
+	REQ_redirect,
+	REQ_send_headers,
+	REQ_same_domains,
+	REQ_same_domain_urls,
+	REQ_document_replacement,
+	REQ_headers,
+	@REQ_SIZE
+};
+
+function request_create(url)
+{
+	var request = object_create(REQ_SIZE);
+	request->REQ_url = url;
+	return request;
+}
+
+function request_to_handle(request)
+{
+	return script_create_handle(HANDLE_TYPE_REQUEST, request);
+}
+
+function request_get_url(request)
+{
+	return url_to_string(request->REQ_url);
+}
+
+function request_get_scheme(request)
+{
+	return request->REQ_url->URL_scheme;
+}
+
+function request_get_domain(request)
+{
+	return request->REQ_url->URL_host;
+}
+
+function request_get_path(request)
+{
+	return url_path_to_string(request->REQ_url);
+}
+
+function request_get_query(request)
+{
+	return url_query_to_string(request->REQ_url);
+}
+
+function request_get_params(request)
+{
+	return url_params_to_hash(request->REQ_url);
+}
+
+function request_get_headers(request)
+{
+	return request->REQ_headers;
+}
+
+function request_set_redirect(request, url)
+{
+	request->REQ_redirect = url;
+}
+
+function request_set_header(request, name, value)
+{
+	if (!request->REQ_send_headers) {
+		request->REQ_send_headers = [];
+	}
+	request->REQ_send_headers[] = name;
+	request->REQ_send_headers[] = value;
+}
+
+function request_replace_document(request, document)
+{
+	request->REQ_document_replacement = document;
+}
+
+function request_get_document_replacement(request, document)
+{
+	if (request->REQ_document_replacement) {
+		document = request->REQ_document_replacement;
+		request->REQ_document_replacement = null;
+	}
+	return document;
+}
+
+function request_add_same_domain(request, domain, unsecure_allowed)
+{
+	if (!request->REQ_same_domains) {
+		request->REQ_same_domains = [];
+	}
+
+	var same_domains = request->REQ_same_domains;
+
+	if (unsecure_allowed) {
+		for (var i=0; i<length(same_domains); i+=2) {
+			if (same_domains[i+0] == domain) {
+				same_domains[i+1] = true;
+				return;
+			}
+		}
+	}
+
+	same_domains[] = domain;
+	same_domains[] = unsecure_allowed;
+}
+
+function request_set_same_domain_url(request, url)
+{
+	if (!request->REQ_same_domain_urls) {
+		request->REQ_same_domain_urls = {};
+	}
+
+	request->REQ_same_domain_urls{url} = true;
+}

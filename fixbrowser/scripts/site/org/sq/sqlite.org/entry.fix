@@ -1,0 +1,37 @@
+import "util/common";
+import "util/string";
+
+function adjust_document(request, document)
+{
+	if (request_get_path(request) == "/download.html") {
+		var scripts = element_query_all(document, "script");
+		for (var i=0; i<length(scripts); i++) {
+			var text = element_extract_text(scripts[i]);
+			var (r, e) = adjust_download_links(document, text);
+			if (e) dump(e);
+		}
+	}
+}
+
+function @adjust_download_links(document, text)
+{
+	var idx = 0;
+	for (;;) {
+		idx = string_search_string(text, "('", idx);
+		if (idx == -1) break;
+		idx += 2;
+		var delim = string_search_string(text, "','", idx);
+		if (delim == -1) break;
+		var id = string_substring(text, idx, delim);
+		idx = delim+3;
+		var end = string_search_string(text, "')", idx);
+		if (end == -1) break;
+		var href = string_substring(text, idx, end);
+		idx = end+2;
+
+		var elem = element_query(document, {"a#", id});
+		if (elem) {
+			element_set_attr(elem, "href", href);
+		}
+	}
+}

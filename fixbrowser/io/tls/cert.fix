@@ -1,0 +1,976 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/string";
+import "util/date";
+import "io/crypto/sha1";
+import "io/crypto/sha256";
+import "io/crypto/sha512";
+import "io/crypto/rsa";
+import "math/bigint";
+
+// certificate:
+const {
+	CERT_version,
+	CERT_serial_number,
+	CERT_signature,
+	CERT_issuer,
+	CERT_validity_start,
+	CERT_validity_end,
+	CERT_subject,
+	CERT_subject_algorithm,
+	CERT_subject_pubkey,
+	CERT_issuer_unique_id,
+	CERT_subject_unique_id,
+	CERT_key_usage,
+	CERT_cert_authority,
+	CERT_ca_path_max_len,
+	CERT_subject_alt_name,
+	CERT_extensions,
+	CERT_signature_algorithm,
+	CERT_signature_value,
+	CERT_data,
+	CERT_signed_data_start,
+	CERT_signed_data_end,
+	@CERT_SIZE
+};
+
+const {
+	NAME_common_name,
+	NAME_surname,
+	NAME_country,
+	NAME_locality,
+	NAME_state,
+	NAME_organization,
+	NAME_unit,
+	NAME_title,
+	NAME_name,
+	NAME_given_name,
+	NAME_initials,
+	NAME_gen_qual,
+	NAME_dn_qual,
+	NAME_other,
+	@NAME_SIZE
+};
+
+const {
+	PUBKEY_modulus,
+	PUBKEY_exponent
+};
+
+// signature algorithm:
+const {
+	SIGALG_UNKNOWN,
+	SIGALG_RSA_ENCRYPTION,
+	SIGALG_SHA1_WITH_RSA_ENCRYPTION,
+	SIGALG_SHA224_WITH_RSA_ENCRYPTION,
+	SIGALG_SHA256_WITH_RSA_ENCRYPTION,
+	SIGALG_SHA384_WITH_RSA_ENCRYPTION,
+	SIGALG_SHA512_WITH_RSA_ENCRYPTION,
+	SIGALG_ECDSA_P256,
+	SIGALG_ECDSA_P384
+};
+
+const {
+	KEY_USAGE_DIGITAL_SIGNATURE = 0x001,
+	KEY_USAGE_NON_REPUDIATION   = 0x002,
+	KEY_USAGE_KEY_ENCIPHERMENT  = 0x004,
+	KEY_USAGE_DATA_ENCIPHERMENT = 0x008,
+	KEY_USAGE_KEY_AGREEMENT     = 0x010,
+	KEY_USAGE_KEY_CERT_SIGN     = 0x020,
+	KEY_USAGE_CRL_SIGN          = 0x040,
+	KEY_USAGE_ENCIPHER_ONLY     = 0x080,
+	KEY_USAGE_DECIPHER_ONLY     = 0x100
+};
+
+const {
+	@TAG_BOOLEAN          = 0x01,
+	@TAG_INTEGER          = 0x02,
+	@TAG_BIT_STRING       = 0x03,
+	@TAG_OCTET_STRING     = 0x04,
+	@TAG_NULL             = 0x05,
+	@TAG_OID              = 0x06,
+	@TAG_UTF8_STRING      = 0x0C,
+	@TAG_PRINTABLE_STRING = 0x13,
+	@TAG_TELETEX_STRING   = 0x14,
+	@TAG_IA5_STRING       = 0x16,
+	@TAG_UTC_TIME         = 0x17,
+	@TAG_GENERALIZED_TIME = 0x18,
+	@TAG_UNIVERSAL_STRING = 0x1C,
+	@TAG_BMP_STRING       = 0x1E,
+	@TAG_SEQUENCE         = 0x30,
+	@TAG_SET              = 0x31,
+	@TAG_TAG0_IMPLICIT    = 0x80,
+	@TAG_TAG1_IMPLICIT    = 0x81,
+	@TAG_TAG2_IMPLICIT    = 0x82,
+	@TAG_TAG3_IMPLICIT    = 0x83,
+	@TAG_TAG4_IMPLICIT    = 0x84,
+	@TAG_TAG5_IMPLICIT    = 0x85,
+	@TAG_TAG6_IMPLICIT    = 0x86,
+	@TAG_TAG7_IMPLICIT    = 0x87,
+	@TAG_TAG8_IMPLICIT    = 0x88,
+	@TAG_TAG0             = 0xA0,
+	@TAG_TAG1             = 0xA1,
+	@TAG_TAG2             = 0xA2,
+	@TAG_TAG3             = 0xA3
+};
+
+const {
+	@DATA_buf,
+	@DATA_off
+};
+
+function sigalg_is_ecdsa(sa)
+{
+	switch (sa) {
+		case SIGALG_ECDSA_P256:
+		case SIGALG_ECDSA_P384:
+			return true;
+	}
+	return false;
+}
+
+function @read_byte(data)
+{
+	return data->DATA_buf[data->DATA_off++];
+}
+
+function @read_int(data, len)
+{
+	var buf = data->DATA_buf;
+	var off = data->DATA_off;
+	switch (len) {
+		case 1: len = buf[off++]; break;
+		case 2: len = (buf[off++] << 8) | buf[off++]; break;
+		case 3: len = (buf[off++] << 16) | (buf[off++] << 8) | buf[off++]; break;
+		case 4: len = (buf[off++] << 24) | (buf[off++] << 16) | (buf[off++] << 8) | buf[off++]; break;
+		default: return 0, error({"unsupported byte size of int (", len & 0x7F, ")"});
+	}
+	data->DATA_off = off;
+	return len;
+}
+
+function @read_length(data)
+{
+	var len = data->DATA_buf[data->DATA_off++];
+	if (len <= 0x7F) return len;
+	return read_int(data, len & 0x7F);
+}
+
+function @expect_tag(data, tag)
+{
+	var b = read_byte(data);
+	if (b != tag) {
+		return 0, error({"expected tag ", tag, " but got ", b});
+	}
+	return read_length(data) + data->DATA_off;
+}
+
+function @check_end(data, end)
+{
+	if (data->DATA_off != end) {
+		return 0, error({"trailing data (", end - data->DATA_off, " bytes)"});
+	}
+}
+
+function @skip(data, end)
+{
+	if (data->DATA_off > end) {
+		return 0, error("inner data bigger than outer");
+	}
+	data->DATA_off = end;
+}
+
+function @expect_integer(data)
+{
+	var end = expect_tag(data, TAG_INTEGER);
+	return read_int(data, end - data->DATA_off);
+}
+
+function @expect_long_integer(data)
+{
+	var end = expect_tag(data, TAG_INTEGER);
+	var buf = data->DATA_buf;
+	var off = data->DATA_off;
+	while (buf[off] == 0) {
+		off++;
+	}
+	var ret = array_extract(buf, off, end - off);
+	data->DATA_off = end;
+	return ret;
+}
+
+function @expect_oid(data)
+{
+	var end = expect_tag(data, TAG_OID);
+	var buf = data->DATA_buf;
+	var off = data->DATA_off;
+	var num, b;
+
+	var oid = [];
+	while (off < end) {
+		do {
+			b = buf[off++];
+			// note: using multiply and add instead of shift to detect overflow
+			num = num * 128 + (b & 0x7F);
+		}
+		while (b & 0x80);
+		
+		if (length(oid) == 0) {
+			var first = 0;
+			while (first < 2 && num >= 40) {
+				first++;
+				num -= 40;
+			}
+			oid[] = first;
+			oid[] = num;
+		}
+		else {
+			oid[] = num;
+		}
+		num = 0;
+	}
+	if (off != end) {
+		return 0, error("invalid oid");
+	}
+	data->DATA_off = off;
+	return oid;
+}
+
+function @expect_string(data)
+{
+	var tag = read_byte(data);
+	var len = read_length(data);
+
+	switch (tag) {
+		case TAG_TELETEX_STRING, TAG_PRINTABLE_STRING, TAG_IA5_STRING: {
+			var s = {""};
+			array_set_length(s, len);
+			array_copy(s, 0, data->DATA_buf, data->DATA_off, len);
+			data->DATA_off += len;
+			if (tag == TAG_PRINTABLE_STRING) {
+				for (var i=0; i<length(s); i++) {
+					switch (s[i]) {
+						case 'A'..'Z', 'a'..'z', '0'..'9':
+						case ' ', '\'', '(', ')', '+', ',', '-', '.', '/', ':', '=', '?':
+							continue;
+					}
+					return 0, error({"invalid character in printable string (", s[i], ")"});
+				}
+			}
+			if (tag == TAG_IA5_STRING) {
+				for (var i=0; i<length(s); i++) {
+					if (s[i] >= 128) {
+						return 0, error({"invalid character in IA5 string (", s[i], ")"});
+					}
+				}
+			}
+			return s;
+		}
+
+		case TAG_UNIVERSAL_STRING: {
+			if (len & 3) {
+				return 0, error("invalid universal string");
+			}
+			var s = {""}, c;
+			var buf = data->DATA_buf;
+			var off = data->DATA_off;
+			var end = off + len;
+			while (off < end) {
+				c = (buf[off++] << 24) | (buf[off++] << 16) | (buf[off++] << 8) | buf[off++];
+				if (c < 0 || c > 0x10FFFF) {
+					return 0, error("invalid universal string");
+				}
+				s[] = c;
+			}
+			data->DATA_off = off;
+			return s;
+		}
+
+		case TAG_UTF8_STRING: {
+			var s = {""}, c;
+			var buf = data->DATA_buf;
+			var off = data->DATA_off;
+			var end = off + len;
+			while (off < end) {
+				c = buf[off++];
+				if ((c & 0x80) == 0) {
+					// nothing
+				}
+				else if ((c & 0xE0) == 0xC0) {
+					if (off >= end) return 0, error("invalid UTF-8 string");
+					c = ((c & 0x1F) << 6) | (buf[off++] & 0x3F);
+					if (c < 0x80) return 0, error("invalid UTF-8 string");
+				}
+				else if ((c & 0xF0) == 0xE0) {
+					if (off+1 >= end) return 0, error("invalid UTF-8 string");
+					c = ((c & 0x0F) << 12) | ((buf[off++] & 0x3F) << 6) | (buf[off++] & 0x3F);
+					if (c < 0x800 || (c >= 0xD800 && c <= 0xDFFF)) return 0, error("invalid UTF-8 string");
+				}
+				else if ((c & 0xF8) == 0xF0) {
+					if (off+2 >= end) return 0, error("invalid UTF-8 string");
+					c = ((c & 0x07) << 18) | ((buf[off++] & 0x3F) << 12) | ((buf[off++] & 0x3F) << 6) | (buf[off++] & 0x3F);
+					if (c < 0x10000 || c > 0x10FFFF) return 0, error("invalid UTF-8 string");
+				}
+				else {
+					return 0, error("invalid UTF-8 string");
+				}
+				s[] = c;
+			}
+			data->DATA_off = off;
+			return s;
+		}
+
+		case TAG_BMP_STRING: {
+			if (len & 1) {
+				return 0, error("invalid BMP string");
+			}
+			var s = {""}, c;
+			var buf = data->DATA_buf;
+			var off = data->DATA_off;
+			var end = off + len;
+			while (off < end) {
+				c = (buf[off++] << 8) | buf[off++];
+				if (c >= 0xD800 && c <= 0xDBFF) {
+					if (off+1 >= end) return 0, error("invalid BMP string");
+					var c2 = (buf[off++] << 8) | buf[off++];
+					if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
+						c = ((c - 0xD800) << 10) | (c2 - 0xDC00);
+					}
+				}
+				if (c >= 0xD800 && c <= 0xDFFF) {
+					return 0, error("invalid BMP string");
+				}
+				s[] = c;
+			}
+			data->DATA_off = off;
+			return s;
+		}
+	}
+
+	return 0, error({"expected string tag, but got ", tag});
+}
+
+function @expect_time(data)
+{
+	var tag = read_byte(data);
+	var len = read_length(data);
+	var buf = data->DATA_buf;
+	var off = data->DATA_off;
+
+	if (tag == TAG_UTC_TIME) {
+		if (len != 13 || buf[off+12] != 'Z') {
+			return 0, error("invalid UTC time");
+		}
+	}
+	else if (tag == TAG_GENERALIZED_TIME) {
+		if (len != 15 || buf[off+14] != 'Z') {
+			return 0, error("invalid generalized time");
+		}
+	}
+	else {
+		return 0, error({"expected time tag, but got ", tag});
+	}
+
+	var s = {""};
+	array_set_length(s, len-1);
+	array_copy(s, 0, buf, off, len-1);
+	for (var i=0; i<len-1; i++) {
+		switch (s[i]) {
+			case '0'..'9': continue;
+		}
+		return 0, error("invalid time");
+	}
+	if (tag == TAG_UTC_TIME) {
+		var year = (s[0] - '0') * 10 + (s[1] - '0');
+		if (year < 50) {
+			s = {"20", s};
+		}
+		else {
+			s = {"19", s};
+		}
+	}
+	data->DATA_off = off + len;
+
+	return date_create(
+		string_parse_int(array_extract(s, 0, 4)),
+		string_parse_int(array_extract(s, 4, 2)),
+		string_parse_int(array_extract(s, 6, 2)),
+		string_parse_int(array_extract(s, 8, 2)),
+		string_parse_int(array_extract(s, 10, 2)),
+		string_parse_int(array_extract(s, 12, 2))
+	);
+}
+
+function @parse_algorithm_identifier(data)
+{
+	var end = expect_tag(data, TAG_SEQUENCE);
+	var oid = expect_oid(data);
+	var alg;
+	if (length(oid) == 7 && array_extract(oid, 0, 6) == [1,2,840,113549,1,1]) {
+		switch (oid[6]) {
+			case 1: alg = SIGALG_RSA_ENCRYPTION; break;
+			case 5: alg = SIGALG_SHA1_WITH_RSA_ENCRYPTION; break;
+			case 14: alg = SIGALG_SHA224_WITH_RSA_ENCRYPTION; break;
+			case 11: alg = SIGALG_SHA256_WITH_RSA_ENCRYPTION; break;
+			case 12: alg = SIGALG_SHA384_WITH_RSA_ENCRYPTION; break;
+			case 13: alg = SIGALG_SHA512_WITH_RSA_ENCRYPTION; break;
+		}
+		if (alg) {
+			expect_tag(data, TAG_NULL);
+			check_end(data, end);
+			return alg;
+		}
+	}
+	else if (length(oid) == 6 && oid == [1,2,840,10045,2,1]) {
+		oid = expect_oid(data);
+		if (oid == [1,2,840,10045,3,1,7]) {
+			alg = SIGALG_ECDSA_P256;
+		}
+		else if (oid == [1,3,132,0,34]) {
+			alg = SIGALG_ECDSA_P384;
+		}
+		else {
+			alg = SIGALG_UNKNOWN;
+		}
+
+		check_end(data, end);
+		return alg;
+	}
+	skip(data, end);
+	return SIGALG_UNKNOWN;
+}
+
+function @parse_name_entry(data, name)
+{
+	var end = expect_tag(data, TAG_SET);
+	var seq_end = expect_tag(data, TAG_SEQUENCE);
+	var oid = expect_oid(data);
+	var value = expect_string(data);
+	check_end(data, seq_end);
+	check_end(data, end);
+
+	if (length(oid) == 4 && oid[0] == 2 && oid[1] == 5 && oid[2] == 4) {
+		switch (oid[3]) {
+			case 3: name->NAME_common_name = value; return;
+			case 4: name->NAME_surname = value; return;
+			case 6: name->NAME_country = value; return;
+			case 7: name->NAME_locality = value; return;
+			case 8: name->NAME_state = value; return;
+			case 10: name->NAME_organization = value; return;
+			case 11: name->NAME_unit = value; return;
+			case 12: name->NAME_title = value; return;
+			case 41: name->NAME_name = value; return;
+			case 42: name->NAME_given_name = value; return;
+			case 43: name->NAME_initials = value; return;
+			case 44: name->NAME_gen_qual = value; return;
+			case 46: name->NAME_dn_qual = value; return;
+		}
+	}
+
+	if (!name->NAME_other) {
+		name->NAME_other = [];
+	}
+	name->NAME_other[] = oid;
+	name->NAME_other[] = value;
+}
+
+function @parse_name(data)
+{
+	var name = object_create(NAME_SIZE);
+
+	var end = expect_tag(data, TAG_SEQUENCE);
+	while (data->DATA_off < end) {
+		parse_name_entry(data, name);
+	}
+	check_end(data, end);
+	return name;
+}
+
+function @parse_validity(data, cert)
+{
+	var end = expect_tag(data, TAG_SEQUENCE);
+	cert->CERT_validity_start = expect_time(data);
+	cert->CERT_validity_end = expect_time(data);
+	check_end(data, end);
+}
+
+function @parse_subject_public_key(data, cert)
+{
+	var end = expect_tag(data, TAG_SEQUENCE);
+	cert->CERT_subject_algorithm = parse_algorithm_identifier(data);
+	
+	var bit_end = expect_tag(data, TAG_BIT_STRING);
+	var unused_bits = read_byte(data);
+	if (unused_bits != 0) return 0, error("non-zero unused bits not implemented");
+
+	if (sigalg_is_ecdsa(cert->CERT_subject_algorithm)) {
+		var off = data->DATA_off;
+		cert->CERT_subject_pubkey = [array_extract(data->DATA_buf, off, bit_end - off), 0];
+		data->DATA_off = bit_end;
+	}
+	else {
+		var seq_end = expect_tag(data, TAG_SEQUENCE);
+		cert->CERT_subject_pubkey = [expect_long_integer(data), expect_integer(data)];
+		check_end(data, seq_end);
+	}
+
+	check_end(data, bit_end);
+	check_end(data, end);
+}
+
+function @parse_unique_ids(data, cert)
+{
+	//var end = expect_tag(data, TAG_TAG1);
+}
+
+function @parse_key_usage(data, cert)
+{
+	var end = expect_tag(data, TAG_OCTET_STRING);
+	var bit_end = expect_tag(data, TAG_BIT_STRING);
+
+	var value = 0;
+	
+	var buf = data->DATA_buf;
+	var off = data->DATA_off;
+	var unused_bits = buf[off++];
+	while (off < bit_end) {
+		var b = buf[off++];
+		value = value*256 + b;
+	}
+	value >>= unused_bits;
+	data->DATA_off = off;
+
+	cert->CERT_key_usage = value;
+
+	check_end(data, bit_end);
+	check_end(data, end);
+}
+
+function @parse_basic_constraints(data, cert)
+{
+	var end = expect_tag(data, TAG_OCTET_STRING);
+	var seq_end = expect_tag(data, TAG_SEQUENCE);
+	if (data->DATA_off < seq_end) {
+		var bool_end = expect_tag(data, TAG_BOOLEAN);
+		cert->CERT_cert_authority = (read_byte(data) != 0);
+		check_end(data, bool_end);
+	}
+	cert->CERT_ca_path_max_len = -1;
+	if (data->DATA_off < seq_end) {
+		cert->CERT_ca_path_max_len = expect_integer(data);
+	}
+	check_end(data, seq_end);
+	check_end(data, end);
+}
+
+function @parse_subject_alt_name(data, cert)
+{
+	var end = expect_tag(data, TAG_OCTET_STRING);
+	var seq_end = expect_tag(data, TAG_SEQUENCE);
+	var alt_name = [];
+	while (data->DATA_off < seq_end) {
+		var tag = read_byte(data);
+		var tag_end = read_length(data) + data->DATA_off;
+		if (tag == TAG_TAG2_IMPLICIT) {
+			var off = data->DATA_off;
+			var len = tag_end - off;
+			var s = {""};
+			array_set_length(s, len);
+			array_copy(s, 0, data->DATA_buf, off, len);
+			alt_name[] = s;
+		}
+		data->DATA_off = tag_end;
+	}
+	cert->CERT_subject_alt_name = alt_name;
+	check_end(data, seq_end);
+	check_end(data, end);
+}
+
+function @parse_extension_entry(data, cert)
+{
+	var end = expect_tag(data, TAG_SEQUENCE);
+	var oid = expect_oid(data);
+
+	var critical = false;
+	if (read_byte(data) == TAG_BOOLEAN) {
+		if (read_byte(data) != 1) return 0, error("invalid boolean encoding");
+		critical = (read_byte(data) != 0);
+	}
+	else {
+		data->DATA_off--;
+	}
+
+	if (oid == [2,5,29,15]) {
+		parse_key_usage(data, cert);
+		check_end(data, end);
+		return;
+	}
+
+	if (oid == [2,5,29,19]) {
+		parse_basic_constraints(data, cert);
+		check_end(data, end);
+		return;
+	}
+	
+	if (oid == [2,5,29,17]) {
+		parse_subject_alt_name(data, cert);
+		check_end(data, end);
+		return;
+	}
+	
+	if (!cert->CERT_extensions) {
+		cert->CERT_extensions = [];
+	}
+
+	cert->CERT_extensions[] = oid;
+	cert->CERT_extensions[] = critical;
+	cert->CERT_extensions[] = array_extract(data->DATA_buf, data->DATA_off, end - data->DATA_off);
+	
+	skip(data, end);
+}
+
+function @parse_extensions(data, cert)
+{
+	var tag = read_byte(data);
+	if (tag != TAG_TAG3) {
+		data->DATA_off--;
+		return;
+	}
+	var end = read_length(data) + data->DATA_off;
+	var seq_end = expect_tag(data, TAG_SEQUENCE);
+	while (data->DATA_off < seq_end) {
+		parse_extension_entry(data, cert);
+	}
+	check_end(data, seq_end);
+	check_end(data, end);
+}
+
+function @parse_cert_inner(data, cert)
+{
+	var end = expect_tag(data, TAG_SEQUENCE);
+
+	var tag = read_byte(data);
+	if (tag == TAG_TAG0) {
+		var tag_end = read_length(data) + data->DATA_off;
+		if (tag_end > data->DATA_off) {
+			cert->CERT_version = expect_integer(data)+1;
+			check_end(data, tag_end);
+		}
+		else {
+			data->DATA_off = tag_end;
+			cert->CERT_version = 1;
+		}
+	}
+	else {
+		data->DATA_off--;
+		cert->CERT_version = 1;
+	}
+
+	cert->CERT_serial_number = expect_long_integer(data);
+	cert->CERT_signature = parse_algorithm_identifier(data);
+	cert->CERT_issuer = parse_name(data);
+	parse_validity(data, cert);
+	cert->CERT_subject = parse_name(data);
+	parse_subject_public_key(data, cert);
+	parse_unique_ids(data, cert);
+	parse_extensions(data, cert);
+}
+
+function @parse_cert_signature(data, cert)
+{
+	cert->CERT_signature_algorithm = parse_algorithm_identifier(data);
+
+	var bit_end = expect_tag(data, TAG_BIT_STRING);
+	var unused_bits = read_byte(data);
+	if (unused_bits != 0) return 0, error("non-zero unused bits not implemented");
+
+	var off = data->DATA_off;
+	cert->CERT_signature_value = array_extract(data->DATA_buf, off, bit_end - off);
+	data->DATA_off = bit_end;
+}
+
+function cert_parse(buf)
+{
+	var data = [buf, 0];
+	var cert = object_create(CERT_SIZE);
+
+	var end = expect_tag(data, TAG_SEQUENCE);
+	
+	cert->CERT_signed_data_start = data->DATA_off;
+	parse_cert_inner(data, cert);
+	cert->CERT_signed_data_end = data->DATA_off;
+
+	cert->CERT_data = clone(data->DATA_buf);
+
+	parse_cert_signature(data, cert);
+
+	check_end(data, end);
+	return cert;
+}
+
+function cert_validate(cert, issuer)
+{
+	if (cert->CERT_version < 1 || cert->CERT_version > 3) {
+		return {"unsupported version (", cert->CERT_version, ")"};
+	}
+	if (cert->CERT_signature != cert->CERT_signature_algorithm) {
+		return "certificate signature don't match envelope";
+	}
+
+	var sign_data = cert->CERT_data;
+	var sign_off = cert->CERT_signed_data_start;
+	var sign_len = cert->CERT_signed_data_end - sign_off;
+	var hash, subj_alg, rsa_hash_id;
+	switch (cert->CERT_signature) {
+		case SIGALG_SHA1_WITH_RSA_ENCRYPTION:   hash = sha1  (sign_data, sign_off, sign_len); subj_alg = SIGALG_RSA_ENCRYPTION; rsa_hash_id = RSA_HASH_SHA1; break;
+		case SIGALG_SHA224_WITH_RSA_ENCRYPTION: hash = sha224(sign_data, sign_off, sign_len); subj_alg = SIGALG_RSA_ENCRYPTION; rsa_hash_id = RSA_HASH_SHA224; break;
+		case SIGALG_SHA256_WITH_RSA_ENCRYPTION: hash = sha256(sign_data, sign_off, sign_len); subj_alg = SIGALG_RSA_ENCRYPTION; rsa_hash_id = RSA_HASH_SHA256; break;
+		case SIGALG_SHA384_WITH_RSA_ENCRYPTION: hash = sha384(sign_data, sign_off, sign_len); subj_alg = SIGALG_RSA_ENCRYPTION; rsa_hash_id = RSA_HASH_SHA384; break;
+		case SIGALG_SHA512_WITH_RSA_ENCRYPTION: hash = sha512(sign_data, sign_off, sign_len); subj_alg = SIGALG_RSA_ENCRYPTION; rsa_hash_id = RSA_HASH_SHA512; break;
+//		default: return "unknown signature algorithm";
+	}
+	
+	/*
+	TODO: re-enable once validating signatures based on elliptic curves is added
+	if (issuer->CERT_subject_algorithm != subj_alg) {
+		return "issuer public key is using different encryption algorithm than signature";
+	}
+
+	if (subj_alg == SIGALG_RSA_ENCRYPTION) {
+		var pubkey = issuer->CERT_subject_pubkey;
+		if (length(cert->CERT_signature_value) != length(pubkey->PUBKEY_modulus)) {
+			return "invalid signature";
+		}
+
+		if (!rsa_signature_verify(pubkey->PUBKEY_modulus, pubkey->PUBKEY_exponent, cert->CERT_signature_value, rsa_hash_id, hash)) {
+			return "invalid signature";
+		}
+	}
+	else {
+		return 0, error("internal error: unhandled encryption algorithm");
+	}
+	*/
+
+	var ext = cert->CERT_extensions;
+	if (ext) {
+		var critical_oids = [];
+		for (var i=0; i<length(ext); i+=3) {
+			if (ext[i+1]) {
+				critical_oids[] = string_join(ext[i+0], ".");
+			}
+		}
+		if (length(critical_oids) > 0) {
+			return {"unrecognized critical extensions found (", string_join(critical_oids, ", "), ")"};
+		}
+	}
+	
+	return 0;
+}
+
+function @to_hex(value, columns)
+{
+	if (!value) {
+		return "(not present)";
+	}
+	if (length(value) == 0) {
+		return "(empty)";
+	}
+
+	var hex = {""};
+	var len = length(value);
+	var delim = columns? ' ' : ':';
+	//array_set_length(hex, len*3-1);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		if (i > 0) {
+			if (columns && i & 15 == 0) {
+				hex[] = '\n';
+			}
+			else {
+				hex[] = delim;
+			}
+		}
+		hex[] = hi >= 10? hi - 10 + 'A' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'A' : lo + '0';
+	}
+	return hex;
+}
+
+function @get_sigalg(value)
+{
+	switch (value) {
+		case SIGALG_UNKNOWN:                    return "unknown";
+		case SIGALG_RSA_ENCRYPTION:             return "RSA encryption";
+		case SIGALG_SHA1_WITH_RSA_ENCRYPTION:   return "SHA-1 with RSA encryption";
+		case SIGALG_SHA224_WITH_RSA_ENCRYPTION: return "SHA-224 with RSA encryption";
+		case SIGALG_SHA256_WITH_RSA_ENCRYPTION: return "SHA-256 with RSA encryption";
+		case SIGALG_SHA384_WITH_RSA_ENCRYPTION: return "SHA-384 with RSA encryption";
+		case SIGALG_SHA512_WITH_RSA_ENCRYPTION: return "SHA-512 with RSA encryption";
+		case SIGALG_ECDSA_P256:                 return "ECDSA P256";
+		case SIGALG_ECDSA_P384:                 return "ECDSA P384";
+	}
+	return 0, error({"invalid signature algorithm value (", value, ")"});
+}
+
+function @dump_name(name)
+{
+	var ret = {};
+	if (name->NAME_common_name)  ret{"Common Name (CN)"} = name->NAME_common_name;
+	if (name->NAME_surname)      ret{"Surname"} = name->NAME_surname;
+	if (name->NAME_country)      ret{"Country (C)"} = name->NAME_country;
+	if (name->NAME_locality)     ret{"Locality (L)"} = name->NAME_locality;
+	if (name->NAME_state)        ret{"State (ST)"} = name->NAME_state;
+	if (name->NAME_organization) ret{"Organization (O)"} = name->NAME_organization;
+	if (name->NAME_unit)         ret{"Organization Unit (U)"} = name->NAME_unit;
+	if (name->NAME_title)        ret{"Title"} = name->NAME_title;
+	if (name->NAME_name)         ret{"Name"} = name->NAME_name;
+	if (name->NAME_given_name)   ret{"Given Name"} = name->NAME_given_name;
+	if (name->NAME_initials)     ret{"Initials"} = name->NAME_initials;
+	if (name->NAME_gen_qual)     ret{"Gen Qual"} = name->NAME_gen_qual;
+	if (name->NAME_dn_qual)      ret{"DN Qual"} = name->NAME_dn_qual;
+
+	var other = name->NAME_other;
+	if (other) {
+		for (var i=0; i<length(other); i+=2) {
+			var oid = string_join(other[i+0], ".");
+			var value = other[i+1];
+
+			var orig_oid = oid;
+			var num = 1;
+			while (hash_contains(ret, oid)) {
+				oid = {orig_oid, " (duplicate #", num++, ")"};
+			}
+
+			ret{oid} = value;
+		}
+	}
+	return ret;
+}
+
+function @dump_date(value)
+{
+	return {date_to_string(value), " GMT"};
+}
+
+function @dump_pubkey(alg, pubkey)
+{
+	if (sigalg_is_ecdsa(alg)) {
+		var type = "unknown";
+		switch (alg) {
+			case SIGALG_ECDSA_P256: type = "secp256r1"; break;
+			case SIGALG_ECDSA_P384: type = "secp384r1"; break;
+		}
+		return {"Type: ", type, "\n\nPublic Data (", length(pubkey->PUBKEY_modulus)*8, " bits):\n", to_hex(pubkey->PUBKEY_modulus, 1)};
+	}
+	return {"Modulus (", length(pubkey->PUBKEY_modulus)*8, " bits):\n", to_hex(pubkey->PUBKEY_modulus, 1), "\n\nExponent: ", pubkey->PUBKEY_exponent};
+}
+
+function @dump_key_usage(usage)
+{
+	var set = [];
+	if (usage & KEY_USAGE_DIGITAL_SIGNATURE) set[] = "digital signature"; 
+	if (usage & KEY_USAGE_NON_REPUDIATION)   set[] = "non repudiation"; 
+	if (usage & KEY_USAGE_KEY_ENCIPHERMENT)  set[] = "key encipherement"; 
+	if (usage & KEY_USAGE_DATA_ENCIPHERMENT) set[] = "data encipherment"; 
+	if (usage & KEY_USAGE_KEY_AGREEMENT)     set[] = "key agreement"; 
+	if (usage & KEY_USAGE_KEY_CERT_SIGN)     set[] = "key certificate sign"; 
+	if (usage & KEY_USAGE_CRL_SIGN)          set[] = "CRL sign"; 
+	if (usage & KEY_USAGE_ENCIPHER_ONLY)     set[] = "encipher only"; 
+	if (usage & KEY_USAGE_DECIPHER_ONLY)     set[] = "decipher only"; 
+	if (length(set) == 0) {
+		return "(empty)";
+	}
+	return string_join(set, ", ");
+}
+
+function @dump_extensions(exts)
+{
+	var ret = {};
+	if (!exts) {
+		return ret;
+	}
+
+	for (var i=0; i<length(exts); i+=3) {
+		var oid = string_join(exts[i+0], ".");
+		var critical = exts[i+1];
+		var data = exts[i+2];
+
+		var orig_oid = oid;
+		var num = 1;
+		while (hash_contains(ret, oid)) {
+			oid = {orig_oid, " (duplicate #", num++, ")"};
+		}
+
+		ret{oid} = {
+			"Critical": critical? "Yes" : "No",
+			"Data": {length(data), " bytes:\n", to_hex(data, 1)}
+		};
+	}
+	return ret;
+}
+
+function cert_dump(cert)
+{
+	return {
+		"Version": {cert->CERT_version},
+		"Serial Number": to_hex(cert->CERT_serial_number, 0),
+		"Signature Algorithm": get_sigalg(cert->CERT_signature),
+		"Subject": dump_name(cert->CERT_subject),
+		"Alternative Subject Names": cert->CERT_subject_alt_name? string_join(cert->CERT_subject_alt_name, "\n") : "(none)",
+		"Subject Public Key": {
+			"Algorithm": get_sigalg(cert->CERT_subject_algorithm),
+			"Public Key": dump_pubkey(cert->CERT_subject_algorithm, cert->CERT_subject_pubkey)
+		},
+		"Validity": {
+			"From": dump_date(cert->CERT_validity_start),
+			"To": dump_date(cert->CERT_validity_end)
+		},
+		"Issuer": dump_name(cert->CERT_issuer),
+		"Issuer Unique Id": to_hex(cert->CERT_issuer_unique_id, 0),
+		"Subject Unique Id": to_hex(cert->CERT_subject_unique_id, 0),
+		"Key Usage": dump_key_usage(cert->CERT_key_usage),
+		"Certificate Authority": cert->CERT_cert_authority? "yes" : "no",
+		"Maximum number of following CAs": cert->CERT_cert_authority? (cert->CERT_ca_path_max_len >= 0? {cert->CERT_ca_path_max_len} : "unlimited") : "(n/a)",
+		"Unrecognized Extensions": dump_extensions(cert->CERT_extensions),
+		"Envelope Signature Algorithm": get_sigalg(cert->CERT_signature_algorithm),
+		"Envelope Signature Value": to_hex(cert->CERT_signature_value, 1),
+		"SHA-1 Fingerprint": to_hex(sha1(cert->CERT_data), 0),
+		"SHA-256 Fingerprint": to_hex(sha256(cert->CERT_data), 0)
+	};
+}
+
+function cert_hex_dump(cert)
+{
+	var value = cert->CERT_data;
+	var hex = {""};
+	var len = length(value);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}

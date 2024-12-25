@@ -1,0 +1,1190 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/event";
+
+const {
+	@FLAG_FOCUSABLE        = 0x01,
+	@FLAG_LOGICAL_TOP_VIEW = 0x02
+};
+
+class SubView
+{
+	var @utility_func;
+	var @rect: Rect;
+	var @parent: SubView;
+	var @children: SubView[];
+	var @root: SubViewRoot;
+	var @default_scale: Float;
+	var @flags: Integer;
+	var @cursor;
+	var @attrs: Dynamic[Dynamic];
+
+	constructor create()
+	{
+		utility_func = SubView::utility_func#3;
+		rect = Rect();
+		default_scale = 1.0;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= SubView::SIZE && (obj as SubView).utility_func === SubView::utility_func#3;
+	}
+
+	function set_attribute(key: Dynamic, value: Dynamic)
+	{
+		if (value) {
+			if (!attrs) {
+				attrs = {};
+			}
+			attrs[key] = value;
+		}
+		else if (attrs != null && attrs.contains(key)) { //XXX
+			attrs.remove(key);
+			if (attrs.length == 0) {
+				attrs = null;
+			}
+		}
+	}
+
+	function get_attribute(key: Dynamic): Dynamic
+	{
+		if (!attrs) {
+			return null;
+		}
+		return attrs.get(key, null);
+	}
+
+	function as_view(): Canvas
+	{
+		if (parent) {
+			throw error("must be root view");
+		}
+		if (root) {
+			if (SubViewCanvasRoot::is_instance(root)) {
+				return (root as SubViewCanvasRoot).canvas;
+			}
+			throw error("root is already assigned");
+		}
+		return SubViewWrapper::create(this);
+	}
+	
+	function assign_view(canvas: Canvas)
+	{
+		set_root(SubViewCanvasRoot::create(canvas));
+	}
+
+	function set_root(root: SubViewRoot)
+	{
+		if (parent) {
+			throw error("must be root view");
+		}
+		if (this.root) {
+			if (root == null) {
+				this.root = null;
+				return;
+			}
+			throw error("canvas is already assigned");
+		}
+		this.root = root;
+	}
+
+	function get_root(): SubViewRoot
+	{
+		var view = this;
+		for (;;) {
+			var parent = view.parent;
+			if (!parent) break;
+			view = parent;
+		}
+		return view.root;
+	}
+	
+	function get_scale(): Float
+	{
+		var root = get_root();
+		if (!root) return default_scale;
+		return root.get_scale();
+	}
+
+	function set_default_scale(scale: Float)
+	{
+		this.default_scale = scale;
+	}
+
+	function set_rect(rect: Rect)
+	{
+		repaint();
+		this.rect.set(rect);
+		handle_resize();
+		repaint();
+	}
+
+	function set_rect(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		repaint();
+		this.rect.set(x, y, width, height);
+		handle_resize();
+		repaint();
+	}
+
+	function get_x(): Integer
+	{
+		return rect.x1;
+	}
+
+	function get_y(): Integer
+	{
+		return rect.y1;
+	}
+
+	function get_width(): Integer
+	{
+		return rect.get_width();
+	}
+
+	function get_height(): Integer
+	{
+		return rect.get_height();
+	}
+
+	function get_rect(): Rect
+	{
+		return clone(rect);
+	}
+
+	function get_local_rect(): Rect
+	{
+		return Rect(0, 0, rect.get_width(), rect.get_height());
+	}
+
+	function get_parent(): SubView
+	{
+		return parent;
+	}
+
+	function get_children(): SubView[]
+	{
+		return children? clone(children) : [];
+	}
+
+	function get_child_count(): Integer
+	{
+		return children? children.length : 0;
+	}
+
+	function get_child(idx: Integer): SubView
+	{
+		return children[idx];
+	}
+
+	function get_child_index(view: SubView): Integer
+	{
+		if (!children) return -1;
+		for (var i=0; i<children.length; i++) {
+			if (children[i] === view) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	virtual function point_to_parent(point: Integer[]): SubView
+	{
+		if (parent) {
+			point[0] += rect.x1;
+			point[1] += rect.y1;
+			return parent;
+		}
+		return null;
+	}
+
+	function point_to_top(point: Integer[]): SubView
+	{
+		var subview = this;
+		for (;;) {
+			var v = subview.point_to_parent(point);
+			if (!v) break;
+			subview = v;
+			if (subview.is_logical_top_view()) {
+				return subview;
+			}
+		}
+		return subview;
+	}
+
+	function set_cursor(cursor)
+	{
+		this.cursor = cursor;
+	}
+
+	function get_cursor(): Dynamic
+	{
+		return cursor;
+	}
+
+	function add(view: SubView)
+	{
+		if (view.parent) {
+			throw error("view is already added");
+		}
+		if (view.root) {
+			throw error("view is already root");
+		}
+		if (!children) {
+			children = [];
+		}
+		view.parent = this;
+		children[] = view;
+		view.repaint();
+	}
+
+	function remove(view: SubView)
+	{
+		if (view.parent !== this) {
+			throw error("view is not child");
+		}
+		var rect: Rect = null;
+		for (var i=0; i<children.length; i++) {
+			if (children[i] === view) {
+				children.remove(i);
+				view.parent = null;
+				rect = view.rect;
+				break;
+			}
+		}
+		if (children.length == 0) {
+			children = null;
+		}
+		if (rect) {
+			repaint(rect);
+		}
+	}
+
+	function remove_all()
+	{
+		if (!children) {
+			return;
+		}
+		var rect = Rect();
+		for (var i=0; i<children.length; i++) {
+			var view = children[i];
+			rect.union(view.rect);
+			view.parent = null;
+		}
+		children = null;
+		repaint(rect);
+	}
+
+	function remove_self()
+	{
+		if (parent) {
+			parent.remove(this);
+		}
+	}
+
+	function set_focusable(enable: Boolean)
+	{
+		if (enable) {
+			flags |= FLAG_FOCUSABLE;
+		}
+		else {
+			flags &= ~FLAG_FOCUSABLE;
+		}
+	}
+
+	function is_focusable(): Boolean
+	{
+		return (flags & FLAG_FOCUSABLE) != 0;
+	}
+
+	function focus()
+	{
+		var root = get_root();
+		if (!root) return;
+		if (this === root.focus) return;
+		if (root.focus) {
+			root.focus.handle_focus_event(FocusEvent::create(EVENT_FOCUS_LOST, root.focus, FOCUS_NORMAL));
+		}
+		root.focus = this;
+		handle_focus_event(FocusEvent::create(EVENT_FOCUS_GAINED, this, FOCUS_NORMAL));
+		root.focus();
+	}
+
+	function unfocus()
+	{
+		var root = get_root();
+		if (!root) return;
+		if (this !== root.focus) return;
+		root.focus.handle_focus_event(FocusEvent::create(EVENT_FOCUS_LOST, root.focus, FOCUS_NORMAL));
+		root.focus = null;
+	}
+
+	function has_focus(): Boolean
+	{
+		var root = get_root();
+		if (!root) return false;
+		return root.focus === this;
+	}
+
+	function get_current_focus(): SubView
+	{
+		var root = get_root();
+		if (!root) return null;
+		return root.focus;
+	}
+
+	function set_logical_top_view(enable: Boolean)
+	{
+		if (enable) {
+			flags |= FLAG_LOGICAL_TOP_VIEW;
+		}
+		else {
+			flags &= ~FLAG_LOGICAL_TOP_VIEW;
+		}
+	}
+
+	function is_logical_top_view(): Boolean
+	{
+		return (flags & FLAG_LOGICAL_TOP_VIEW) != 0;
+	}
+
+	function get_next_child(view: SubView): SubView
+	{
+		return get_next_child(view, true);
+	}
+	
+	function @get_next_child(view: SubView, traverse_into: Boolean): SubView
+	{
+		for (;;) {
+			if (view === this) {
+				view = null;
+			}
+			
+			if (!view) {
+				return children? children[0] : null;
+			}
+			
+			if (traverse_into && (view.children as Boolean)) {
+				return view.children[0];
+			}
+			
+			var idx = view.parent.get_child_index(view);
+			if (idx == -1) {
+				throw error("shouldn't happen");
+			}
+			
+			if (idx+1 < view.parent.get_child_count()) {
+				return view.parent.get_child(idx+1);
+			}
+			
+			if (view.parent === this) {
+				return null;
+			}
+			
+			view = view.parent;
+			traverse_into = false;
+		}
+	}
+
+	function get_prev_child(view: SubView): SubView
+	{
+		if (view === this) {
+			view = null;
+		}
+		
+		if (!view) {
+			view = this;
+			while (view.children) {
+				view = view.children[view.children.length-1];
+			}
+			return view !== this? view : null;
+		}
+		
+		var idx = view.parent.get_child_index(view);
+		if (idx == -1) {
+			throw error("shouldn't happen");
+		}
+		
+		if (idx > 0) {
+			view = view.parent.get_child(idx-1);
+			while (view.children) {
+				view = view.children[view.children.length-1];
+			}
+			return view;
+		}
+		
+		if (view.parent === this) {
+			return null;
+		}
+		
+		return view.parent;
+	}
+
+	function get_next_focus_child(current_focus: SubView, wrap: Boolean): SubView
+	{
+		var wrapped = !wrap;
+		var view = current_focus;
+		do {
+			view = get_next_child(view);
+			if (!view) {
+				if (wrapped) break;
+				view = get_next_child(null);
+				if (!view) break;
+				wrapped = true;
+			}
+
+			if (view.is_focusable()) {
+				return view;
+			}
+		}
+		while (view !== current_focus);
+
+		return view;
+	}
+
+	function get_prev_focus_child(current_focus: SubView, wrap: Boolean): SubView
+	{
+		var wrapped = !wrap;
+		var view = current_focus;
+		do {
+			view = get_prev_child(view);
+			if (!view) {
+				if (wrapped) break;
+				view = get_prev_child(null);
+				if (!view) break;
+				wrapped = true;
+			}
+
+			if (view.is_focusable()) {
+				return view;
+			}
+		}
+		while (view !== current_focus);
+
+		return view;
+	}
+	
+	virtual function handle_resize()
+	{
+	}
+
+	virtual function handle_paint(p: Painter)
+	{
+		draw_children(p);
+	}
+
+	function draw_children(p: Painter)
+	{
+		if (!children) return;
+		var clip = p.get_clip_rect();
+		foreach (var child in children) {
+			if (clip.intersects(child.rect)) {
+				child.draw(p);
+			}
+		}
+	}
+
+	virtual function draw(p: Painter)
+	{
+		var r = rect;
+		p.push();
+		p.translate(r.x1, r.y1);
+		p.clip(0, 0, r.get_width(), r.get_height());
+		handle_paint(p);
+		p.pop();
+	}
+
+	virtual function accept_mouse_event(event: MouseEvent): Boolean
+	{
+		return true;
+	}
+
+	virtual function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function accept_touch_event(event: TouchEvent): Boolean
+	{
+		return true;
+	}
+
+	virtual function handle_touch_event(event: TouchEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function catch_touch_event(event: TouchEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function handle_key_event(event: KeyEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function catch_key_event(event: KeyEvent): Boolean
+	{
+		return false;
+	}
+
+	virtual function handle_focus_event(event: FocusEvent)
+	{
+	}
+
+	virtual function handle_repaint(rect: Rect)
+	{
+		rect.intersect(0, 0, this.rect.get_width(), this.rect.get_height());
+	}
+
+	function repaint()
+	{
+		repaint(0, 0, rect.get_width(), rect.get_height());
+	}
+
+	function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		process_repaint(Rect(x, y, width, height));
+	}
+
+	function repaint(rect: Rect)
+	{
+		process_repaint(clone(rect));
+	}
+
+	function @process_repaint(rect: Rect)
+	{
+		if (!rect.is_valid()) return;
+		var view = this;
+		while (view) {
+			view.handle_repaint(rect);
+			if (!rect.is_valid()) return;
+			rect.translate(view.rect.x1, view.rect.y1);
+			view = view.parent;
+		}
+		var root = get_root();
+		if (root) {
+			root.repaint(rect);
+		}
+	}
+	
+	function get_top_view(x: Integer, y: Integer): SubView
+	{
+		var view = this;
+		for (;;) {
+			var parent = view.parent;
+			if (!parent) break;
+			x += view.rect.x1;
+			y += view.rect.y1;
+			view = parent;
+			if (view.is_logical_top_view()) {
+				return view.get_top_child_view(x, y);
+			}
+		}
+		return view.get_top_child_view(x, y);
+	}
+
+	function get_top_child_view(x: Integer, y: Integer): SubView
+	{
+		var view = this;
+		if (!view.rect.contains(view.rect.x1 + x, view.rect.y1 + y)) {
+			return null;
+		}
+
+		var event = MouseEvent::create(EVENT_HIT_TEST, null, x, y, 0, 0, 0);
+		while (view.children) {
+			var next_view = null;
+			for (var i=view.children.length-1; i>=0; i--) {
+				var child = view.children[i];
+				if (!child.rect.contains(event.get_x(), event.get_y())) continue;
+
+				event.translate(-child.rect.x1, -child.rect.y1);
+				if (child.accept_mouse_event(event)) {
+					next_view = child;
+					break;
+				}
+				else {
+					event.translate(child.rect.x1, child.rect.y1);
+				}
+			}
+			if (next_view) {
+				view = next_view;
+				continue;
+			}
+			break;
+		}
+		return view;
+	}
+
+	function process_event(event: Event): Boolean
+	{
+		var root = get_root();
+		if (!root) return false;
+
+		var type = event.get_type();
+
+		switch (type) {
+			case EVENT_MOUSE_LEAVE: {
+				var mevt = event as MouseEvent;
+				if (root.last_entered_view) {
+					send_mouse_leave_event(root.last_entered_view);
+					root.last_entered_view = null;
+				}
+				break;
+			}
+			
+			case EVENT_MOUSE_MOVE:
+			case EVENT_MOUSE_DOWN:
+			case EVENT_MOUSE_UP:
+			case EVENT_MOUSE_WHEEL: {
+				var mevt = event as MouseEvent;
+				if ((type == EVENT_MOUSE_DOWN || type == EVENT_MOUSE_UP || type == EVENT_MOUSE_WHEEL) && (root.last_entered_view as Boolean)) { //XXX
+					if ((mevt.get_modifiers_before() & MOD_MOUSE_BUTTONS) != 0) {
+						mevt = clone(mevt);
+						for (var v = root.last_entered_view; v; v = v.parent) {
+							mevt.translate(-v.rect.x1, -v.rect.y1);
+						}
+						return dispatch_mouse_event(root, root.last_entered_view, mevt, false);
+					}
+				}
+				if (rect.contains(mevt.get_x(), mevt.get_y())) {
+					mevt = clone(mevt);
+					mevt.translate(-rect.x1, -rect.y1);
+					return dispatch_mouse_event(root, this, mevt, true);
+				}
+				else if (root.last_entered_view) {
+					send_mouse_leave_event(root.last_entered_view);
+					root.last_entered_view = null;
+				}
+				break;
+			}
+			
+			case EVENT_MOUSE_DRAG: {
+				if (root.last_entered_view) {
+					var mevt = clone(event) as MouseEvent;
+					for (var v = root.last_entered_view; v; v = v.parent) {
+						mevt.translate(-v.rect.x1, -v.rect.y1);
+					}
+					return dispatch_mouse_event(root, root.last_entered_view, mevt, false);
+				}
+				break;
+			}
+
+			case EVENT_TOUCH_START: {
+				var tevt = event as TouchEvent;
+				root.init_touch(tevt.get_id());
+				if (rect.contains(tevt.get_x(), tevt.get_y())) {
+					tevt = clone(tevt);
+					tevt.translate(-rect.x1, -rect.y1);
+					return dispatch_touch_event(root, this, tevt, true);
+				}
+				break;
+			}
+
+			case EVENT_TOUCH_MOVE:
+			case EVENT_TOUCH_END: {
+				var tevt = event as TouchEvent;
+				root.init_touch(tevt.get_id());
+				var last_entered_view = root.touch_last_entered_view[tevt.get_id()];
+				if (last_entered_view) {
+					root.touch_last_entered_view[tevt.get_id()] = null;
+					tevt = clone(tevt);
+					for (var v = last_entered_view; v; v = v.parent) {
+						tevt.translate(-v.rect.x1, -v.rect.y1);
+					}
+					var ret = dispatch_touch_event(root, last_entered_view, tevt, false);
+					send_touch_leave_event(last_entered_view, tevt.get_id(), tevt.get_time());
+					return ret;
+				}
+				break;
+			}
+	
+			case EVENT_KEY_DOWN:
+			case EVENT_KEY_UP:
+			case EVENT_KEY_TYPED: {
+				var kevt = event as KeyEvent;
+				if (root.focus) {
+					var view = root.focus;
+					kevt = clone(kevt);
+					kevt.set_view(view);
+					if (view.handle_key_event(kevt)) return true;
+					for (;;) {
+						view = view.get_parent();
+						if (!view) break;
+						if (view.catch_key_event(kevt)) return true;
+					}
+				}
+				if (type == EVENT_KEY_DOWN && kevt.get_key() == KEY_TAB) {
+					var view: SubView;
+					if ((kevt.get_modifiers() & MOD_SHIFT) != 0) {
+						view = get_prev_focus_child(root.focus, false);
+					}
+					else {
+						view = get_next_focus_child(root.focus, false);
+					}
+					if (view) {
+						view.focus();
+						return true;
+					}
+					if (root) {
+						if ((kevt.get_modifiers() & MOD_SHIFT) != 0) {
+							Timer::run_once(0, SubView::check_tab_prev#1, this);
+						}
+						else {
+							Timer::run_once(0, SubView::check_tab_next#1, this);
+						}
+					}
+				}
+				break;
+			}
+
+			case EVENT_FOCUS_GAINED: {
+				var fevt = event as FocusEvent;
+				switch (fevt.get_subtype()) {
+					case FOCUS_NORMAL:
+						if (root.last_focus) {
+							root.last_focus.focus();
+							root.last_focus = null;
+						}
+						break;
+
+					case FOCUS_NEXT: {
+						var view = get_next_focus_child(null, false);
+						if (view) view.focus();
+						break;
+					}
+
+					case FOCUS_PREV: {
+						var view = get_prev_focus_child(null, false);
+						if (view) view.focus();
+						break;
+					}
+				}
+				break;
+			}
+
+			case EVENT_FOCUS_LOST: {
+				root.last_focus = root.focus;
+				if (root.focus) {
+					root.focus.handle_focus_event(FocusEvent::create(EVENT_FOCUS_LOST, root.focus, FOCUS_NORMAL));
+					root.focus = null;
+				}
+				break;
+			}
+		}
+
+		return false;
+	}
+
+	function @check_tab_prev()
+	{
+		var root = get_root();
+		if (root != null && root.has_focus()) {
+			var view = get_prev_focus_child(null, false);
+			if (view) {
+				view.focus();
+			}
+		}
+	}
+
+	function @check_tab_next()
+	{
+		var root = get_root();
+		if (root != null && root.has_focus()) {
+			var view = get_next_focus_child(null, false);
+			if (view) {
+				view.focus();
+			}
+		}
+	}
+
+	function get_current_cursor(event: MouseEvent): Dynamic
+	{
+		return get_current_cursor(event.get_x(), event.get_y());
+	}
+
+	function get_current_cursor(x: Integer, y: Integer): Dynamic
+	{
+		var view = get_top_view(x - rect.x1, y - rect.y1);
+		if (view) {
+			return view.get_cursor();
+		}
+		return null;
+	}
+
+	function set_canvas_cursor(event: MouseEvent)
+	{
+		if ((event.get_modifiers() & MOD_MOUSE_BUTTONS) == 0) {
+			var root = get_root();
+			if (root) {
+				var cursor = get_current_cursor(event);
+				root.set_cursor(cursor);
+			}
+		}
+	}
+
+	static function @dispatch_mouse_event(root: SubViewRoot, view: SubView, event: MouseEvent, recurse: Boolean): Boolean
+	{
+		if (recurse) {
+			event.set_view(null);
+			while (view.children) {
+				var next_view = null;
+				for (var i=view.children.length-1; i>=0; i--) {
+					var child = view.children[i];
+					if (!child.rect.contains(event.get_x(), event.get_y())) continue;
+
+					event.translate(-child.rect.x1, -child.rect.y1);
+					if (child.accept_mouse_event(event)) {
+						next_view = child;
+						break;
+					}
+					else {
+						event.translate(child.rect.x1, child.rect.y1);
+					}
+				}
+				if (next_view) {
+					view = next_view;
+					continue;
+				}
+				break;
+			}
+		}
+
+		if (root.last_entered_view !== view) {
+			if (root.last_entered_view) {
+				send_mouse_leave_event(root.last_entered_view);
+			}
+			root.last_entered_view = view;
+			send_mouse_enter_event(view, event.get_x(), event.get_y(), event.get_modifiers(), event.is_touch());
+		}
+
+		event.set_view(view);
+
+		if (view.handle_mouse_event(event)) {
+			return true;
+		}
+		else {
+			for (;;) {
+				event.translate(view.rect.x1, view.rect.y1);
+				view = view.parent;
+				if (!view) break;
+				if (view.catch_mouse_event(event)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	static function @send_mouse_enter_event(view: SubView, x: Integer, y: Integer, modifiers: Integer, touch: Boolean)
+	{
+		for (var v = view; v; v = v.parent) {
+			x -= v.rect.x1;
+			y -= v.rect.y1;
+		}
+		var event = MouseEvent::create(EVENT_MOUSE_ENTER, view, x, y, 0, modifiers, 0);
+		event.set_touch(touch);
+		if (!view.handle_mouse_event(event)) {
+			for (;;) {
+				event.translate(view.rect.x1, view.rect.y1);
+				view = view.parent;
+				if (!view) break;
+				if (view.catch_mouse_event(event)) break;
+			}
+		}
+	}
+
+	static function @send_mouse_leave_event(view: SubView)
+	{
+		var event = MouseEvent::create(EVENT_MOUSE_LEAVE, view, 0, 0, 0, 0, 0);
+		if (!view.handle_mouse_event(event)) {
+			for (;;) {
+				view = view.parent;
+				if (!view) break;
+				if (view.catch_mouse_event(event)) break;
+			}
+		}
+	}
+
+	static function @dispatch_touch_event(root: SubViewRoot, view: SubView, event: TouchEvent, recurse: Boolean): Boolean
+	{
+		if (recurse) {
+			event.set_view(null);
+			while (view.children) {
+				var next_view = null;
+				for (var i=view.children.length-1; i>=0; i--) {
+					var child = view.children[i];
+					if (!child.rect.contains(event.get_x(), event.get_y())) continue;
+
+					event.translate(-child.rect.x1, -child.rect.y1);
+					if (child.accept_touch_event(event)) {
+						next_view = child;
+						break;
+					}
+					else {
+						event.translate(child.rect.x1, child.rect.y1);
+					}
+				}
+				if (next_view) {
+					view = next_view;
+					continue;
+				}
+				break;
+			}
+		}
+
+		if (root.touch_last_entered_view[event.get_id()] !== view) {
+			if (root.touch_last_entered_view[event.get_id()]) {
+				send_touch_leave_event(root.touch_last_entered_view[event.get_id()], event.get_id(), event.get_time());
+			}
+			root.touch_last_entered_view[event.get_id()] = view;
+			send_touch_enter_event(view, event.get_id(), event.get_x(), event.get_y(), event.is_mouse_emitter(), event.get_time());
+		}
+
+		event.set_view(view);
+
+		if (view.handle_touch_event(event)) {
+			return true;
+		}
+		else {
+			for (;;) {
+				event.translate(view.rect.x1, view.rect.y1);
+				view = view.parent;
+				if (!view) break;
+				if (view.catch_touch_event(event)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	static function @send_touch_enter_event(view: SubView, id: Integer, x: Integer, y: Integer, mouse_emitter: Boolean, time: Integer)
+	{
+		for (var v = view; v; v = v.parent) {
+			x -= v.rect.x1;
+			y -= v.rect.y1;
+		}
+		var event = TouchEvent::create(EVENT_TOUCH_ENTER, view, id, x, y, time);
+		event.set_mouse_emitter(mouse_emitter);
+		if (!view.handle_touch_event(event)) {
+			for (;;) {
+				event.translate(view.rect.x1, view.rect.y1);
+				view = view.parent;
+				if (!view) break;
+				if (view.catch_touch_event(event)) break;
+			}
+		}
+	}
+
+	static function @send_touch_leave_event(view: SubView, id: Integer, time: Integer)
+	{
+		var event = TouchEvent::create(EVENT_TOUCH_LEAVE, view, id, 0, 0, time);
+		if (!view.handle_touch_event(event)) {
+			for (;;) {
+				view = view.parent;
+				if (!view) break;
+				if (view.catch_touch_event(event)) break;
+			}
+		}
+	}
+
+	function @utility_func(type: Integer, params)
+	{
+		if (type == 0) {
+			var view = params as View;
+			view.add(this.as_view());
+		}
+		else if (type == 1) {
+			var view = params[0] as View;
+			var rect = params[1] as Rect;
+			view.add(this.as_view(), rect);
+		}
+		else if (type == 2) {
+			var menu = params[0] as Menu;
+			var x = params[1] as Integer;
+			var y = params[2] as Integer;
+			var root = get_root();
+			if (root) {
+				var point = [x, y];
+				point_to_top(point);
+				root.show_menu(menu, point[0], point[1]);
+			}
+		}
+	}
+}
+
+class SubViewRoot
+{
+	var @last_entered_view: SubView;
+	var @touch_last_entered_view: SubView[];
+	var @focus: SubView;
+	var @last_focus: SubView;
+
+	constructor create()
+	{
+	}
+
+	function @init_touch(id: Integer)
+	{
+		if (!touch_last_entered_view) {
+			touch_last_entered_view = [];
+		}
+		while (id >= touch_last_entered_view.length) {
+			touch_last_entered_view[] = null;
+		}
+	}
+
+	virtual function get_scale(): Float
+	{
+		return 1.0;
+	}
+
+	virtual function focus()
+	{
+	}
+
+	virtual function has_focus(): Boolean
+	{
+		return false;
+	}
+
+	virtual function repaint(rect: Rect)
+	{
+	}
+
+	virtual function set_cursor(cursor)
+	{
+	}
+
+	virtual function show_menu(menu: Menu, x: Integer, y: Integer)
+	{
+	}
+}
+
+class SubViewCanvasRoot: SubViewRoot
+{
+	var @marker;
+	var @canvas: Canvas;
+
+	function @marker() {}
+
+	constructor create(canvas: Canvas)
+	{
+		this.canvas = canvas;
+		marker = SubViewCanvasRoot::marker#1;
+	}
+
+	static function @is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= SubViewCanvasRoot::SIZE && (obj as SubViewCanvasRoot).marker === SubViewCanvasRoot::marker#1;
+	}
+
+	override function get_scale(): Float
+	{
+		return canvas.get_scale();
+	}
+
+	override function focus()
+	{
+		canvas.focus();
+	}
+
+	override function has_focus(): Boolean
+	{
+		return canvas.has_focus();
+	}
+
+	override function repaint(rect: Rect)
+	{
+		canvas.repaint(rect);
+	}
+
+	override function set_cursor(cursor)
+	{
+		if (is_int(cursor) && cursor > 0) {
+			canvas.set_cursor(cursor);
+		}
+		else {
+			canvas.set_cursor(CURSOR_ARROW);
+		}
+	}
+
+	override function show_menu(menu: Menu, x: Integer, y: Integer)
+	{
+		menu.show(canvas, x, y);
+	}
+}
+
+class SubViewWrapper: Canvas
+{
+	var @subview: SubView;
+	var @root: SubViewCanvasRoot;
+
+	constructor create(subview: SubView)
+	{
+		this.subview = subview;
+		set_focusable(true);
+		root = SubViewCanvasRoot::create(this);
+		subview.set_root(root);
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var ret = subview.process_event(event);
+		subview.set_canvas_cursor(event);
+		return ret;
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		return subview.process_event(event);
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		subview.process_event(event);
+	}
+
+	override function handle_resize()
+	{
+		var rect = get_content_rect();
+		subview.set_rect(0, 0, rect.get_width(), rect.get_height());
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		subview.draw(p);
+	}
+}

@@ -1,0 +1,8 @@
+function handle_request(request)
+{
+	return {
+		"<div style=\"font-family: sans-serif; font-size: 16px\">",
+		"<b>Error: This website is using JavaScript to generate content.</b>",
+		"</div>"
+	};
+}

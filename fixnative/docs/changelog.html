@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixNative Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixNative Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>ChangeLog</h2>
+
+<h3>Version 0.4 (2024/05/05):</h3>
+
+<ul>
+<li>Added support for WebAssembly</li>
+<li>Adjusted for syntax improvements in classes</li>
+<li>Changed destructor to hold external reference to callback data</li>
+<li>Fixed get_float function in Pointer</li>
+</ul>
+
+<h3>Version 0.3 (2021/10/03):</h3>
+
+<ul>
+<li>Adjusted for new symbol representation in tokens</li>
+</ul>
+
+<h3>Version 0.2 (2021/05/12):</h3>
+
+<ul>
+<li>Added ability to get pointer to shared array data</li>
+<li>Added proper setting of return type for functions called using the 'extern' token processor</li>
+<li>Added ability to create memory region from given pointer and size</li>
+<li>Renamed SYSTEM_MACOSX to SYSTEM_MACOS</li>
+<li>Fixed incorrect checking for memory range on raw pointers</li>
+<li>Fixed error when trying to bind library multiple times</li>
+</ul>
+
+<h3>Version 0.1 (2020/10/13):</h3>
+
+<ul>
+<li>Initial release</li>
+</ul>
+
+</body>
+</html>

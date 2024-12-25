@@ -1,0 +1,43 @@
+use "native/extern";
+use "classes";
+use "autoinit";
+
+import "native/native";
+
+extern "C" {
+	typedef void *GdkAtom;
+	typedef void GtkClipboard;
+
+	bind("glib");
+	void g_free(void *mem);
+
+	bind("gtk");
+	GtkClipboard *gtk_clipboard_get(GdkAtom selection);
+	void gtk_clipboard_set_text(GtkClipboard *clipboard, const char *text, int len);
+	char *gtk_clipboard_wait_for_text(GtkClipboard *clipboard);
+}
+
+function @init()
+{
+	Library::bind("glib", Library::open("libglib-2.0.so.0"));
+	Library::bind("gtk", Library::open("libgtk-x11-2.0.so.0"));
+}
+
+function gtk_clipboard_set(text: String)
+{
+	if (!text) {
+		text = "";
+	}
+	gtk_clipboard_set_text(gtk_clipboard_get(null), text, -1);
+}
+
+function gtk_clipboard_get(): String
+{
+	var ptr = gtk_clipboard_wait_for_text(gtk_clipboard_get(null));
+	if (!ptr) {
+		return null;
+	}
+	var str = ptr.get_string_utf8(0);
+	g_free(ptr);
+	return str;
+}

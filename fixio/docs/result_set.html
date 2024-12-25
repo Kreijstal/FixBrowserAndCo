@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>use "io/sql";</code>
+</p>
+
+<h2>ResultSet class</h2>
+
+<p>
+Provides access to SQL query results.
+</p>
+
+<p>
+Subclasses:
+<a href="sqlite_result_set.html">SQLiteResultSet</a>
+</p>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): ResultSet</code></dt>
+	<dd>
+		Creates a new instance of ResultSet class (for implementations only).
+	</dd>
+	<dt><code>function <b>close</b>()</code></dt>
+	<dd>
+		Closes the access to SQL query results.
+	</dd>
+</dl>
+
+<h3 id="traversing">Traversing</h3>
+
+<dl>
+	<dt><code>function <b>next</b>(): Boolean</code></dt>
+	<dd>
+		Advances to the next row (initially the cursor is before the first row).
+		Returns true if a row is available.
+	</dd>
+</dl>
+
+<h3 id="metadata">Metadata</h3>
+
+<dl>
+	<dt><code>function <b>get_column_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the number of columns.
+	</dd>
+	<dt><code>function <b>get_column_name</b>(idx: Integer): String</code></dt>
+	<dd>
+		Returns the name of the column at given index.
+	</dd>
+	<dt><code>function <b>get_column_index</b>(name: String): Integer</code></dt>
+	<dd>
+		Returns the column index for given name. Throws an error on a non-existing
+		name. In case there are duplicate names the first index is returned.
+	</dd>
+	<dt><code>function <b>get_column_type</b>(name_or_idx: String or Integer): Integer</code></dt>
+	<dd>
+		Returns the <a href="sql_connection.html#constants">type</a> of the given column.
+	</dd>
+</dl>
+
+<h3 id="data">Data access functions</h3>
+
+<dl>
+	<dt><code>function <b>is_null</b>(name_or_idx: String or Integer): Boolean</code></dt>
+	<dd>
+		Returns true when there is a <code>NULL</code> value in given column.
+	</dd>
+	<dt><code>
+		function <b>get_int</b>(name_or_idx: String or Integer): Integer<br>
+		function <b>get_long</b>(name_or_idx: String or Integer): <a href="util/long.html">Long</a><br>
+		function <b>get_float</b>(name_or_idx: String or Integer): Float<br>
+		function <b>get_double</b>(name_or_idx: String or Integer): <a href="util/double.html">Double</a><br>
+		function <b>get_string</b>(name_or_idx: String or Integer): String<br>
+		function <b>get_binary</b>(name_or_idx: String or Integer): Byte[]<br>
+	</code></dt>
+	<dd>
+		Returns the value in given column. Throws an error if <code>NULL</code> is encountered.
+	</dd>
+	<dt><code>
+		function <b>get_optional_int</b>(name_or_idx: String or Integer, def_value: Integer): Integer<br>
+		function <b>get_optional_long</b>(name_or_idx: String or Integer): <a href="util/long.html">Long</a><br>
+		function <b>get_optional_float</b>(name_or_idx: String or Integer, def_value: Float): Float<br>
+		function <b>get_optional_double</b>(name_or_idx: String or Integer): <a href="util/double.html">Double</a><br>
+		function <b>get_optional_string</b>(name_or_idx: String or Integer): String<br>
+		function <b>get_optional_binary</b>(name_or_idx: String or Integer): Byte[]<br>
+	</code></dt>
+	<dd>
+		A variant of the value retrieval functions that return <code>null</code> when the value
+		is not available (or the default value for primitive types).
+	</dd>
+</dl>
+
+</body>
+</html>

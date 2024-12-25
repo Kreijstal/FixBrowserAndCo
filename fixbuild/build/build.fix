@@ -1,0 +1,730 @@
+/*
+ * FixBuild v0.6 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/string";
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	@TASK_description,
+	@TASK_dependencies,
+	@TASK_line,
+	@TASK_SIZE
+};
+
+var @properties;
+var @ignored_counter;
+
+function @task_create()
+{
+	return object_create(TASK_SIZE);
+}
+
+function process_tokens(fname, tokens, src)
+{
+	if (!properties) {
+		properties = {};
+		properties{"verbose"} = parse_boolean#5;
+		properties{"processors"} = parse_boolean#5;
+		properties{"compress"} = parse_boolean#5;
+		properties{"exclude"} = parse_string_list#5;
+		properties{"sources"} = parse_string#5;
+		properties{"resources"} = parse_string#5;
+		properties{"main"} = parse_string_or_string_list#5;
+		properties{"targets"} = parse_string_list#5;
+		properties{"binary"} = parse_string#5;
+		properties{"gui"} = parse_boolean#5;
+		properties{"icon"} = parse_string_list#5;
+		properties{"wasm_raw"} = parse_boolean#5;
+	}
+
+	var builds = {};
+	var tasks = {
+		"build": task_create(),
+		"clean": task_create(),
+		"dist": task_create()
+	};
+	var default_task = null;
+	var has_prepare = false;
+	var has_cleanup = false;
+	var has_prebuild = false;
+	var has_postbuild = false;
+	var has_postbuild_fail = false;
+	var has_build = false;
+	var has_clean = false;
+	var has_dist = false;
+
+	var i = -TOK_SIZE;
+
+	i = expect_symbol(tokens, src, i, ';');
+	while (i < length(tokens) - TOK_SIZE) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] != KW_USE) {
+			i -= TOK_SIZE;
+			break;
+		}
+		i = expect_type(tokens, src, i, TOK_STRING, "string");
+		for (;;) {
+			i = expect_expression(tokens, src, i);
+			i = expect_next(tokens, src, i);
+			if (tokens[i+TOK_type] == ';') {
+				break;
+			}
+		}
+	}
+
+	i += TOK_SIZE;
+	array_insert_array(tokens, i, tokens_parse([], src, "import \"build:common\";", 0));
+	
+	var level = 0;
+	
+	for (; i<length(tokens); i+=TOK_SIZE) {
+		var type = tokens[i+TOK_type];
+		if (level == 0 && type == TOK_IDENT) {
+			var len = tokens[i+TOK_len];
+			if (len == 5 && get_token_value(tokens, src, i) == "build") {
+				i = parse_build(tokens, src, i, builds) - TOK_SIZE;
+				continue;
+			}
+			if (len == 7) {
+				var value = get_token_value(tokens, src, i);
+				if (value == "prepare") {
+					if (has_prepare) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate prepare entry"});
+					}
+					array_replace_range(tokens, i, i+TOK_SIZE, tokens_parse([], src, "function prepare()", tokens[i+TOK_line]));
+					i += TOK_SIZE;
+					has_prepare = true;
+					continue;
+				}
+				if (value == "cleanup") {
+					if (has_cleanup) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate cleanup entry"});
+					}
+					array_replace_range(tokens, i, i+TOK_SIZE, tokens_parse([], src, "function cleanup()", tokens[i+TOK_line]));
+					i += TOK_SIZE;
+					has_cleanup = true;
+					continue;
+				}
+			}
+			if (len == 8 && get_token_value(tokens, src, i) == "prebuild") {
+				if (has_prebuild) {
+					return 0, error({script_line(tokens[i+TOK_line]), ": duplicate prebuild entry"});
+				}
+				array_replace_range(tokens, i, i+TOK_SIZE, tokens_parse([], src, "function prebuild()", tokens[i+TOK_line]));
+				i += TOK_SIZE;
+				has_prebuild = true;
+				continue;
+			}
+			if (len == 9 && get_token_value(tokens, src, i) == "postbuild") {
+				var name = {""};
+				expect_name(tokens, src, i - TOK_SIZE, name);
+				if (name == "postbuild") {
+					if (has_postbuild) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate postbuild entry"});
+					}
+					array_replace_range(tokens, i, i+TOK_SIZE, tokens_parse([], src, "function postbuild()", tokens[i+TOK_line]));
+					i += TOK_SIZE;
+					has_postbuild = true;
+				}
+				else if (name == "postbuild-fail") {
+					if (has_postbuild_fail) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate postbuild-fail entry"});
+					}
+					array_replace_range(tokens, i, i+3*TOK_SIZE, tokens_parse([], src, "function postbuild_fail()", tokens[i+TOK_line]));
+					i += TOK_SIZE;
+					has_postbuild_fail = true;
+				}
+				continue;
+			}
+			if (len == 4 && get_token_value(tokens, src, i) == "task") {
+				var start = i;
+				var is_default = false;
+				if (i > 0 && tokens[i-TOK_SIZE+TOK_type] == KW_DEFAULT) {
+					is_default = true;
+					start -= TOK_SIZE;
+				}
+				var name = {""};
+				i = expect_name(tokens, src, i, name);
+				if (name == "build") {
+					if (has_build) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate task"});
+					}
+					has_build = true;
+				}
+				else if (name == "clean") {
+					if (has_clean) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate task"});
+					}
+					has_clean = true;
+				}
+				else if (name == "dist") {
+					if (has_dist) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate task"});
+					}
+					has_dist = true;
+				}
+				else {
+					if (hash_contains(tasks, name)) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate task"});
+					}
+				}
+				if (is_default) {
+					if (default_task) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": duplicate default task"});
+					}
+					default_task = name;
+				}
+				i = expect_next(tokens, src, i);
+				var deps = null;
+				if (tokens[i+TOK_type] == '(') {
+					deps = [];
+					for (;;) {
+						var dep_name = {""};
+						i = expect_name(tokens, src, i, dep_name);
+						deps[] = dep_name;
+						i = expect_next(tokens, src, i);
+						if (tokens[i+TOK_type] == ',') {
+							continue;
+						}
+						i -= TOK_SIZE;
+						break;
+					}
+					i = expect_symbol(tokens, src, i, ')');
+					i = expect_next(tokens, src, i);
+				}
+				var desc = null;
+				if (tokens[i+TOK_type] == TOK_STRING) {
+					desc = get_token_string(tokens, src, i);
+					i = expect_next(tokens, src, i);
+				}
+				var body = "";
+				if (tokens[i+TOK_type] == ';') {
+					body = "{}";
+				}
+				else {
+					i -= TOK_SIZE;
+				}
+				var adj_name = {name};
+				for (var j=0; j<length(adj_name); j++) {
+					if (adj_name[j] == '-') {
+						adj_name[j] = '_';
+					}
+				}
+				array_replace_range(tokens, start, i+TOK_SIZE, tokens_parse([], src, {"function task_", adj_name, "()", body}, tokens[i+TOK_line]));
+				var task = hash_get(tasks, name, null);
+				if (!task) {
+					task = object_create(TASK_SIZE);
+					tasks{name} = task;
+				}
+				if (desc) {
+					task->TASK_description = desc;
+				}
+				if (deps) {
+					if (!task->TASK_dependencies) {
+						task->TASK_dependencies = [];
+					}
+					array_append(task->TASK_dependencies, deps);
+				}
+				task->TASK_line = tokens[start+TOK_line];
+				i = start - TOK_SIZE;
+				continue;
+			}
+		}
+		else {
+			switch (type) {
+				case '(', '{', '[':
+					level++;
+					break;
+				case ')', '}', ']':
+					level--;
+					break;
+				case '@':
+					i += TOK_SIZE;
+					if (i < length(tokens)) {
+						if (tokens[i+TOK_type] == TOK_IDENT && tokens[i+TOK_len] == 6 && get_token_value(tokens, src, i) == "nofail") {
+							if (i+TOK_SIZE >= length(tokens) || tokens[i+TOK_SIZE+TOK_type] != '(') {
+								var s = {"var (__nofail_ignored_", ignored_counter++, ", __nofail_ignored_", ignored_counter++, ") ="};
+								array_replace_range(tokens, i-TOK_SIZE, i+TOK_SIZE, tokens_parse([], src, s, tokens[i+TOK_line]));
+								i -= 2*TOK_SIZE;
+								break;
+							}
+							else {
+								i -= TOK_SIZE;
+								break;
+							}
+						}
+						else {
+							i -= TOK_SIZE;
+							break;
+						}
+					}
+					else {
+						i -= TOK_SIZE;
+					}
+					break;
+			}
+		}
+	}
+
+	for (i=0; i<length(tasks); i++) {
+		var (k, v) = hash_entry(tasks, i);
+		var deps = v->TASK_dependencies;
+		if (deps) {
+			for (var j=0; j<length(deps); j++) {
+				if (deps[j] == k) {
+					return 0, error({script_line(v->TASK_line), ": task depends on itself"});
+				}
+				for (var m=j+1; m<length(deps); m++) {
+					if (deps[j] == deps[m]) {
+						return 0, error({script_line(v->TASK_line), ": duplicate task dependency"});
+					}
+				}
+				if (!hash_contains(tasks, deps[j])) {
+					return 0, error({script_line(v->TASK_line), ": unknown task dependency (", deps[j], ")"});
+				}
+			}
+		}
+	}
+
+	var s = {""};
+	array_append(s, "function main(exec, args) {");
+	array_append(s, {
+		"var builds = get_builds();",
+		"var serialized = unserialize(", token_escape_string(serialize(builds)), ");",
+		"for (var i=0; i<length(serialized); i++) {",
+			"var (k, v) = hash_entry(serialized, i);",
+			"builds{k} = v;",
+		"}",
+		"array_append(get_executable(), exec);",
+		"array_append(get_arguments(), args);",
+		"args = get_arguments();"
+	});
+	for (i=0; i<length(tasks); i++) {
+		var (k, v) = hash_entry(tasks, i);
+		if (k == "build" && !has_build) continue;
+		if (k == "clean" && !has_clean) continue;
+		if (k == "dist" && !has_dist) continue;
+		var adj_name = {k};
+		for (var j=0; j<length(adj_name); j++) {
+			if (adj_name[j] == '-') {
+				adj_name[j] = '_';
+			}
+		}
+		var desc = v->TASK_description;
+		var deps = v->TASK_dependencies;
+		var deps_str = "";
+		if (deps) {
+			deps_str = {", ["};
+			for (var j=0; j<length(deps); j++) {
+				if (j > 0) deps_str[] = ',';
+				array_append(deps_str, token_escape_string(deps[j]));
+			}
+			deps_str[] = ']';
+		}
+		array_append(s, {"register_task(", token_escape_string(k), ", task_", adj_name, "#0, ", desc? token_escape_string(desc) : "null", deps_str, ");"});
+	}
+	if (default_task) {
+		array_append(s, {"set_default_task(", token_escape_string(default_task), ");"});
+	}
+	if (has_prepare) {
+		array_append(s, "prepare();");
+	}
+	array_append(s, {
+		"if (length(args) >= 1 && args[0] == \"--help\") {",
+			"show_help();",
+			"if (!is_windows()) log(\"\");",
+			"return 0;",
+		"}"
+	});
+	var error_handle = {
+		"if (e && e != main#2) {",
+			"return 0, e;",
+		"}"
+	};
+	if (has_postbuild_fail && has_cleanup) {
+		error_handle = {
+			"if (e) {",
+				"if (e != main#2) {",
+					"dump(e);",
+				"}",
+				"(r, e) = postbuild_fail();",
+				"if (e) dump(e);",
+				"cleanup();",
+				"return 1;",
+			"}"
+		};
+	}
+	else if (has_postbuild_fail) {
+		error_handle = {
+			"if (e) {",
+				"if (e != main#2) {",
+					"dump(e);",
+				"}",
+				"postbuild_fail();",
+				"return 1;",
+			"}"
+		};
+	}
+	else if (has_cleanup) {
+		error_handle = {
+			"if (e) {",
+				"if (e != main#2) {",
+					"dump(e);",
+				"}",
+				"cleanup();",
+				"return 1;",
+			"}"
+		};
+	}
+	array_append(s, "var r, e;");
+	if (has_prebuild) {
+		array_append(s, "(r, e) = prebuild();");
+		if (has_cleanup) {
+			array_append(s, {
+				"if (e) {",
+					"dump(e);",
+					"cleanup();",
+					"return 1;",
+				"}"
+			});
+		}
+		else {
+			array_append(s, {
+				"if (e) {",
+					"return 0, e;",
+				"}"
+			});
+		}
+	}
+	array_append(s, {
+		"var task_was_run = false;",
+		"for (var i=0; i<length(args); i++) {",
+			"var value = args[i];",
+			"(r, e) = run_task(value);",
+			error_handle,
+			"if (!r) {",
+				"log({\"error: unknown task \", value});",
+				"e = main#2;",
+				error_handle,
+				"return 1;",
+			"}",
+			"task_was_run = true;",
+		"}",
+		"if (!task_was_run) {",
+			"(r, e) = run_task(get_default_task());",
+			error_handle,
+		"}"
+	});
+	if (has_postbuild) {
+		if (has_cleanup) {
+			array_append(s, {
+				"(r, e) = postbuild();",
+				"if (e) dump(e);",
+				"cleanup();"
+			});
+		}
+		else {
+			array_append(s, "postbuild();");
+		}
+	}
+	else if (has_cleanup) {
+		array_append(s, "cleanup();");
+	}
+	array_append(s, "}");
+	tokens_parse(tokens, src, s, 0);
+
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @parse_build(tokens, src, i, builds)
+{
+	var start = i;
+	var values = {};
+
+	i = expect_symbol(tokens, src, i, '{');
+	
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] == '}') {
+		// empty
+	}
+	else {
+		i -= TOK_SIZE;
+		for (;;) {
+			i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+			var name = get_token_value(tokens, src, i);
+			var prop = hash_get(properties, name, null);
+			if (!prop && string_starts_with(name, "binary_")) {
+				prop = properties{"binary"};
+			}
+			if (!prop) {
+				return 0, error({script_line(tokens[i+TOK_line]), ": unknown property ", name});
+			}
+			i = expect_symbol(tokens, src, i, ':');
+			i = prop(tokens, src, i, name, values);
+			i = expect_next(tokens, src, i);
+			var c = tokens[i+TOK_type];
+			if (c == ',') continue;
+			if (c == '}') break;
+			return 0, error({script_line(tokens[i+TOK_line]), ": expected ',' or '}'"});
+		}
+	}
+
+	if (!hash_contains(values, "main")) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": property 'main' is required"});
+	}
+	if (!hash_contains(values, "binary")) {
+		var main = values{"main"};
+		if (!is_string(main)) {
+			main = main[0];
+		}
+		var binary = {main};
+		var idx = string_rev_search_char(binary, '/');
+		if (idx != -1) {
+			array_remove(binary, 0, idx+1);
+		}
+		values{"binary"} = binary;
+	}
+
+	builds{values{"binary"}} = values;
+
+	i = expect_symbol(tokens, src, i, ';');
+	array_remove(tokens, start, i+TOK_SIZE-start);
+	return start;
+}
+
+function @parse_string(tokens, src, i, name, values)
+{
+	i = expect_type(tokens, src, i, TOK_STRING, "string");
+	values{name} = get_token_string(tokens, src, i);
+	return i;
+}
+
+function @parse_string_list(tokens, src, i, name, values)
+{
+	var value = [];
+	i = expect_symbol(tokens, src, i, '[');
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] == ']') {
+		// nothing
+	}
+	else {
+		i -= TOK_SIZE;
+		for (;;) {
+			i = expect_type(tokens, src, i, TOK_STRING, "string");
+			value[] = get_token_string(tokens, src, i);
+			i = expect_next(tokens, src, i);
+			var c = tokens[i+TOK_type];
+			if (c == ',') continue;
+			if (c == ']') break;
+			return 0, error({script_line(tokens[i+TOK_line]), ": expected ',' or ']'"});
+		}
+	}
+	values{name} = value;
+	return i;
+}
+
+function @parse_string_or_string_list(tokens, src, i, name, values)
+{
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] == TOK_STRING) {
+		return parse_string(tokens, src, i - TOK_SIZE, name, values);
+	}
+	else if (tokens[i+TOK_type] == '[') {
+		return parse_string_list(tokens, src, i - TOK_SIZE, name, values);
+	}
+	else {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected string or list of strings"});
+	}
+}
+
+function @parse_boolean(tokens, src, i, name, values)
+{
+	i = expect_type(tokens, src, i, TOK_IDENT, "boolean");
+	var value = get_token_value(tokens, src, i);
+	if (value == "true") {
+		values{name} = true;
+	}
+	else if (value == "false") {
+		values{name} = false;
+	}
+	else {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected boolean"});
+	}
+	return i;
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": unexpected end of file"});
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @expect_name(tokens, src, i, name)
+{
+	var start0 = i;
+	i = expect_next(tokens, src, i);
+	var last_pos = tokens[i+TOK_off];
+	for (;;) {
+		var start = tokens[i+TOK_off];
+		var end = start + tokens[i+TOK_len];
+		if (start != last_pos) {
+			i -= TOK_SIZE;
+			break;
+		}
+		var valid = true;
+		for (var j=start; j<end; j++) {
+			switch (src[j]) {
+				case '0'..'9', 'A'..'Z', 'a'..'z', '-':
+					continue;
+				default:
+					valid = false;
+					break;
+			}
+		}
+		if (!valid) {
+			i -= TOK_SIZE;
+			break;
+		}
+		array_append(name, src, start, end-start);
+		last_pos = end;
+		i += TOK_SIZE;
+	}
+	if (i == start0) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected name"});
+	}
+	return i;
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}

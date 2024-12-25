@@ -1,0 +1,341 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/async";
+import "io/tcp";
+import "cellsplit/util/crypto";
+
+const @BUF_SIZE = 2048;
+
+var DEBUG_CONNECTIONS;
+
+class Connection
+{
+	var @conn: AsyncTCPConnection;
+	var @buf_in: Byte[];
+	var @buf_out: Byte[];
+	var @packet: Byte[];
+	var @packet_stream: ArrayStream;
+	var @max_packet_size: Integer;
+	var @max_outgoing_size: Integer;
+	var @flush_scheduled: Boolean;
+	var @flush_callback;
+	var @flush_data;
+	var @close_callback;
+	var @close_data;
+	var @version: Integer;
+	var @in_cipher: SHA256Cipher;
+	var @out_cipher: SHA256Cipher;
+
+	constructor create(tcp_conn: AsyncTCPConnection, max_packet_size: Integer, max_outgoing_size: Integer)
+	{
+		conn = tcp_conn;
+		buf_in = [];
+		buf_out = [];
+		packet = [];
+		packet_stream = ArrayStream::create(packet, packet);
+		this.max_packet_size = max_packet_size;
+		this.max_outgoing_size = max_outgoing_size;
+
+		buf_in.set_length(BUF_SIZE);
+		tcp_conn.read(buf_in, 0, buf_in.length, Connection::handle_read#2, this);
+	}
+
+	function get_outgoing_size(): Integer
+	{
+		return buf_out.length;
+	}
+
+	function set_close_callback(close_callback, close_data)
+	{
+		this.close_callback = close_callback;
+		this.close_data = close_data;
+	}
+
+	virtual function receive_packet(stream: ArrayStream)
+	{
+	}
+
+	function get_stream(): ArrayStream
+	{
+		packet_stream.reset();
+		return packet_stream;
+	}
+
+	function send_packet(packet: Byte[])
+	{
+		var len = packet.length;
+		if (len > max_packet_size) {
+			throw error("tried to send bigger packet");
+		}
+		for (;;) {
+			if (len < 0x80) {
+				buf_out[] = len;
+				break;
+			}
+			buf_out[] = (len & 0x7F) | 0x80;
+			len >>>= 7;
+		}
+		buf_out.append(packet);
+
+		if (DEBUG_CONNECTIONS) {
+			if (length(DEBUG_CONNECTIONS) < 5 || hash_contains(DEBUG_CONNECTIONS, (this as Integer)|0)) {
+				DEBUG_CONNECTIONS{(this as Integer)|0} = buf_out.length;
+			}
+			/*
+			var map = hash_get(DEBUG_CONNECTIONS, (this as Integer)|0, null);
+			if (!map) {
+				map = {};
+				DEBUG_CONNECTIONS{(this as Integer)|0} = map;
+			}
+			//map{packet[0]} = hash_get(map, packet[0], 0)+packet.length;
+			map{packet[0]} = max(hash_get(map, packet[0], 0), packet.length);
+			*/
+		}
+
+		if (buf_out.length > max_outgoing_size) {
+			var e = error("outgoing buffer reached limit");
+			close_noerror();
+			if (close_callback) {
+				close_callback(close_data, this, e);
+				close_callback = null;
+				close_data = null;
+			}
+			else {
+				dump(e);
+			}
+			return;
+		}
+		
+		if (!flush_scheduled) {
+			async_run_later(0, Connection::flush#1, this);
+			flush_scheduled = true;
+		}
+	}
+
+	function flush(callback, data)
+	{
+		flush_callback = callback;
+		flush_data = data;
+
+		if (!flush_scheduled) {
+			async_run_later(0, Connection::flush#1, this);
+			flush_scheduled = true;
+		}
+	}
+
+	function @flush()
+	{
+		handle_write(0);
+	}
+	
+	function @handle_read(read: Integer)
+	{
+		if (read <= 0) {
+			var e = null;
+			if (read < 0) {
+				e = error("I/O error");
+			}
+			if (close_callback) {
+				close_callback(close_data, this, e);
+				close_callback = null;
+				close_data = null;
+			}
+			else {
+				dump(e);
+			}
+			return;
+		}
+
+		buf_in.set_length(buf_in.length - BUF_SIZE + read);
+
+		for (;;) {
+			var size_len = min(buf_in.length, 5);
+			if (size_len == 0) break;
+
+			var i, b, len = 0;
+			for (i=0; i<size_len; i++) {
+				b = buf_in[i];
+				len |= (b & 0x7F) << (i*7);
+				if ((b & 0x80) == 0) {
+					i++;
+					break;
+				}
+			}
+			if ((b & 0x80) == 0) {
+				if (len > max_packet_size) {
+					var e = error("packet size "+len+" is bigger than "+max_packet_size+" bytes");
+					close_noerror();
+					if (close_callback) {
+						close_callback(close_data, this, e);
+						close_callback = null;
+						close_data = null;
+					}
+					else {
+						dump(e);
+					}
+					return;
+				}
+				if (buf_in.length >= i+len) {
+					packet_stream.reset();
+					packet.set_length(len);
+					Array::copy(packet, 0, buf_in, i, len);
+					buf_in.remove(0, i+len);
+					var (r, e) = receive_packet(packet_stream);
+					if (e) {
+						close_noerror();
+						if (close_callback) {
+							close_callback(close_data, this, e);
+							close_callback = null;
+							close_data = null;
+						}
+						else {
+							dump(e);
+						}
+						return;
+					}
+					continue;
+				}
+				break;
+			}
+			else if (i == 5) {
+				var e = error("malformed packet size");
+				close_noerror();
+				if (close_callback) {
+					close_callback(close_data, this, e);
+					close_callback = null;
+					close_data = null;
+				}
+				else {
+					dump(e);
+				}
+				return;
+			}
+
+			break;
+		}
+
+		if (conn) {
+			var off = buf_in.length;
+			buf_in.set_length(off + BUF_SIZE);
+			conn.read(buf_in, off, BUF_SIZE, Connection::handle_read#2, this);
+		}
+	}
+
+	function @handle_write(written: Integer)
+	{
+		var close = false;
+		var e = null;
+		if (!conn) {
+			close = true;
+		}
+		else if (written < 0) {
+			e = error("I/O error");
+			close = true;
+		}
+
+		if (close) {
+			if (close_callback) {
+				close_callback(close_data, this, e);
+				close_callback = null;
+				close_data = null;
+			}
+			else if (e) {
+				dump(e);
+			}
+			return;
+		}
+
+		buf_out.remove(0, written);
+
+		if (buf_out.length > 0) {
+			conn.write(buf_out, 0, buf_out.length, Connection::handle_write#2, this);
+		}
+		else {
+			flush_scheduled = false;
+			if (flush_callback) {
+				var callback = flush_callback;
+				var data = flush_data;
+				flush_callback = null;
+				flush_data = null;
+				callback(data);
+			}
+		}
+	}
+
+	function close()
+	{
+		conn.close();
+		conn = null;
+	}
+
+	function @close_noerror()
+	{
+		var (r, e) = conn.close();
+		conn = null;
+	}
+
+	function set_version(version: Integer)
+	{
+		this.version = version;
+	}
+
+	function get_version(): Integer
+	{
+		return version;
+	}
+
+	function init_cipher(key: Byte[], server: Boolean)
+	{
+		if (in_cipher) {
+			throw error("cipher already initialized");
+		}
+		var server_key = [];
+		server_key.append("server");
+		server_key.append(key);
+		server_key = sha256(server_key);
+		var client_key = [];
+		client_key.append("client");
+		client_key.append(key);
+		client_key = sha256(client_key);
+		if (server) {
+			in_cipher = SHA256Cipher::create(client_key);
+			out_cipher = SHA256Cipher::create(server_key);
+		}
+		else {
+			in_cipher = SHA256Cipher::create(server_key);
+			out_cipher = SHA256Cipher::create(client_key);
+		}
+	}
+
+	function get_in_cipher(): SHA256Cipher
+	{
+		return in_cipher;
+	}
+
+	function get_out_cipher(): SHA256Cipher
+	{
+		return out_cipher;
+	}
+}

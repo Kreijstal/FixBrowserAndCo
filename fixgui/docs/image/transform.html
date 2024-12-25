@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixImage Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixImage Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "image/image";</code>
+</p>
+
+<h2>Transform class</h2>
+
+<p>
+Represents linear 2D transformation.
+</p>
+
+<h3>Members</h3>
+
+<dl>
+	<dt><code>
+		var m00: Float;<br>
+		var m01: Float;<br>
+		var m02: Float;<br>
+		var m10: Float;<br>
+		var m11: Float;<br>
+		var m12: Float;<br>
+	</code></dt>
+	<dd>
+		These represent the values of the transformation matrix. The first number is row and the second is column.
+	</dd>
+</dl>
+
+<h3>Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): Transform</code></dt>
+	<dd>
+		Creates an identity transform.
+	</dd>
+</dl>
+
+<h3>Operations</h3>
+
+<dl>
+	<dt><code>function <b>reset</b>()</code></dt>
+	<dd>
+		Resets back to identity transform.
+	</dd>
+	<dt><code>function <b>mul</b>(tr: Transform)</code></dt>
+	<dd>
+		Multiplies this transform with another.
+	</dd>
+	<dt><code>function <b>mul</b>(tr1: Transform, tr2: Transform)</code></dt>
+	<dd>
+		Stores multiplication of two transforms.
+	</dd>
+	<dt><code>function <b>invert</b>()</code></dt>
+	<dd>
+		Inverts this transform.
+	</dd>
+	<dt><code>function <b>invert</b>(tr: Transform)</code></dt>
+	<dd>
+		Stores invertion of another transform.
+	</dd>
+	<dt><code>function <b>translate</b>(tx: Float, ty: Float)</code></dt>
+	<dd>
+		Multiplies this transform with translation transform.
+	</dd>
+	<dt><code>function <b>rotate</b>(angle: Float)</code></dt>
+	<dd>
+		Multiplies this transform with rotate transform.
+	</dd>
+	<dt><code>function <b>scale</b>(scale: Float)<br>function <b>scale</b>(sx: Float, sy: Float)</code></dt>
+	<dd>
+		Multiplies this transform with scale transform.
+	</dd>
+	<dt><code>function <b>shear</b>(sx: Float, sy: Float)</code></dt>
+	<dd>
+		Multiplies this transform with shear transform.
+	</dd>
+	<dt><code>function <b>transform_x</b>(x: Float, y: Float): Float<br>function <b>transform_y</b>(x: Float, y: Float): Float</code></dt>
+	<dd>
+		Returns transformed X and Y coordinates.
+	</dd>
+</dl>
+
+</body>
+</html>

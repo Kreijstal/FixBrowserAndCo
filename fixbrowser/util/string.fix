@@ -1,0 +1,552 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+function string_append(base, str)
+{
+	string_append(base, str, 0, length(str));
+}
+
+function string_append(base, str, off)
+{
+	string_append(base, str, off, length(str) - off);
+}
+
+function string_append(base, str, off, len)
+{
+	var base_len = length(base);
+	array_set_length(base, base_len + len);
+	array_copy(base, base_len, str, off, len);
+}
+
+function string_substring(s, start)
+{
+	return array_extract(s, start, length(s)-start);
+}
+
+function string_substring(s, start, end)
+{
+	return array_extract(s, start, end-start);
+}
+
+function string_join(array, delim)
+{
+	if (length(array) == 0) {
+		return {""};
+	}
+	var s = {array[0]};
+	for (var i=1; i<length(array); i++) {
+		s = {s, delim, array[i]};
+	}
+	return s;
+}
+
+function string_starts_with(str, match)
+{
+	var len = length(match);
+	if (length(str) < len) return false;
+	return array_extract(str, 0, len) == match;
+}
+
+function string_ends_with(str, match)
+{
+	var len = length(match);
+	if (length(str) < len) return false;
+	return array_extract(str, length(str)-len, len) == match;
+}
+
+function string_replace_char(s, char, replacement)
+{
+	s = {s};
+	for (var i=0; i<length(s); i++) {
+		if (s[i] == char) {
+			s[i] = replacement;
+		}
+	}
+	return s;
+}
+
+function string_char(c)
+{
+	var s = {" "};
+	s[0] = c;
+	return s;
+}
+
+function string_to_lower_case(s)
+{
+	s = {s};
+	for (var i=0; i<length(s); i++) {
+		var c = s[i];
+		switch (c) {
+			case 'A'..'Z': s[i] = c - 'A' + 'a';
+		}
+	}
+	return s;
+}
+
+function string_to_upper_case(s)
+{
+	s = {s};
+	for (var i=0; i<length(s); i++) {
+		var c = s[i];
+		switch (c) {
+			case 'a'..'z': s[i] = c - 'a' + 'A';
+		}
+	}
+	return s;
+}
+
+function string_split(s, c)
+{
+	var result = [];
+	var last = 0;
+	for (var i=0; i<length(s); i++) {
+		if (s[i] == c) {
+			result[] = array_extract(s, last, i-last);
+			last = i+1;
+		}
+	}
+	if (last < length(s)) {
+		result[] = array_extract(s, last, length(s)-last);
+	}
+	return result;
+}
+
+function @default_whitespace(c)
+{
+	switch (c) {
+		case ' ', '\t', '\r', '\n': return true;
+	}
+	return false;
+}
+
+function string_trim(s)
+{
+	return string_trim(s, default_whitespace#1);
+}
+
+function string_trim(s, is_whitespace_func)
+{
+	var len = length(s);
+	var off1 = 0, off2 = len-1;
+	while (off1 < len && is_whitespace_func(s[off1])) {
+		off1++;
+	}
+	while (off2 > off1 && is_whitespace_func(s[off2])) {
+		off2--;
+	}
+	if (off1 == 0 && off2 == len-1) return {s};
+	return array_extract(s, off1, off2-off1+1);
+}
+
+function string_pad_left(s, len)
+{
+	return string_pad_left(s, len, ' ');
+}
+
+function string_pad_left(s, len, c)
+{
+	if (length(s) >= len) {
+		return {s};
+	}
+
+	var p = {""};
+	array_set_length(p, len);
+	array_fill(p, 0, len - length(s), c);
+	array_copy(p, len - length(s), s, 0, length(s));
+	return p;
+}
+
+function string_pad_right(s, len)
+{
+	return string_pad_right(s, len, ' ');
+}
+
+function string_pad_right(s, len, c)
+{
+	if (length(s) >= len) {
+		return {s};
+	}
+
+	var p = {""};
+	array_set_length(p, len);
+	array_copy(p, 0, s, 0, length(s));
+	array_fill(p, length(s), len - length(s), c);
+	return p;
+}
+
+function string_search_char(s, c)
+{
+	return string_search_char(s, c, 0, length(s));
+}
+
+function string_search_char(s, c, off)
+{
+	return string_search_char(s, c, off, length(s));
+}
+
+function string_search_char(s, c, off, end)
+{
+	for (var i=off; i<end; i++) {
+		if (s[i] == c) return i;
+	}
+	return -1;
+}
+
+function string_rev_search_char(s, c)
+{
+	return string_rev_search_char(s, c, 0, length(s));
+}
+
+function string_rev_search_char(s, c, off)
+{
+	return string_rev_search_char(s, c, off, length(s));
+}
+
+function string_rev_search_char(s, c, off, end)
+{
+	for (var i=end-1; i>=off; i--) {
+		if (s[i] == c) return i;
+	}
+	return -1;
+}
+
+function string_search_multi_char(s, chars)
+{
+	return string_search_multi_char(s, chars, 0, length(s));
+}
+
+function string_search_multi_char(s, chars, off)
+{
+	return string_search_multi_char(s, chars, off, length(s));
+}
+
+function string_search_multi_char(s, chars, off, end)
+{
+	for (var i=off; i<end; i++) {
+		var c = s[i];
+		for (var j=0; j<length(chars); j++) {
+			if (c == chars[j]) return i;
+		}
+	}
+	return -1;
+}
+
+function string_search_string(s, search)
+{
+	return string_search_string(s, search, 0);
+}
+
+function string_search_string(s, search, off)
+{
+	var len1 = length(s);
+	var len2 = length(search);
+	if (len2 == 0) return -1;
+
+	var c0 = search[0];
+
+	for (var i=off; i<len1; i++) {
+		if (s[i] == c0 && len1-i >= len2) {
+			var found = true;
+			for (var j=1; j<len2; j++) {
+				if (s[i+j] != search[j]) {
+					found = false;
+					break;
+				}
+			}
+			if (found) {
+				return i;
+			}
+		}
+	}
+	return -1;
+}
+
+function string_contains(s, search)
+{
+	return string_search_string(s, search) != -1;
+}
+
+function string_parse_int(value)
+{
+	var i, c, len = length(value), result, mul = 1;
+	for (i=0; i<len; i++) {
+		c = value[i];
+		switch (c) {
+			case '0'..'9':
+				result = result*10 + (c - '0') * mul;
+				continue;
+				
+			case '+':
+				if (i != 0) break;
+				continue;
+
+			case '-':
+				if (i != 0) break;
+				mul = -1;
+				continue;
+		}
+		return 0, error("invalid character");
+	}
+	if (len + (mul >> 1) == 0) {
+		return 0, error("no digits present");
+	}
+	return result;
+}
+
+function string_parse_hex_int(value)
+{
+	var i, c, len = length(value), result;
+	for (i=0; i<len; i++) {
+		c = value[i];
+		switch (c) {
+			case '0'..'9':
+				result = result*16 + (c - '0');
+				continue;
+
+			case 'a'..'f':
+				result = result*16 + (c - 'a' + 10);
+				continue;
+
+			case 'A'..'F':
+				result = result*16 + (c - 'A' + 10);
+				continue;
+		}
+		return 0, error("invalid character");
+	}
+	if (len == 0) {
+		return 0, error("no digits present");
+	}
+	return result;
+}
+
+function string_parse_long(value)
+{
+	var i, c, len = length(value), result = [0, 0], mul = 1;
+	for (i=0; i<len; i++) {
+		c = value[i];
+		switch (c) {
+			case '0'..'9': {
+				var (mlo, mhi) = mul64(result[0], result[1], 10, 0);
+				if (mhi < 0 && result[1] >= 0) return 0, error("integer overflow");
+				if (mhi >= 0 && result[1] < 0) return 0, error("integer overflow");
+				var (lo, c1) = add32(mlo, (c - '0') * mul);
+				var (hi, c2) = add32(mhi, mul >> 1, c1);
+				if (c2) return 0, error("integer overflow");
+				result[0] = lo;
+				result[1] = hi;
+				continue;
+			}
+				
+			case '+':
+				if (i != 0) break;
+				continue;
+				
+			case '-':
+				if (i != 0) break;
+				mul = -1;
+				continue;
+		}
+		return 0, error("invalid character");
+	}
+	if (len + (mul >> 1) == 0) {
+		return 0, error("no digits present");
+	}
+	return result;
+}
+
+// caveat: simple implementation with less accuracy
+function string_parse_float(value)
+{
+	var i=0, len = length(value);
+	if (len == 0) return 0, error("no digits present");
+
+	var result = 0.0, mul = 1.0;
+
+	var c = value[0];
+	if (c == '-') {
+		i++;
+		mul = -1.0;
+	}
+	else if (c == '+') {
+		i++;
+	}
+
+	while (i < len) {
+		c = value[i];
+		switch (c) {
+			case '0'..'9': {
+				result = {{result*10.0} + {float(c - '0') * mul}};
+				i++;
+				continue;
+			}
+		}
+		break;
+	}
+
+	if (i == len) {
+		return result;
+	}
+
+	c = value[i++];
+	if (c == '.') {
+		var div = mul;
+		while (i < len) {
+			div = {div * 10.0};
+			c = value[i];
+			switch (c) {
+				case '0'..'9': {
+					result = {result + {float(c - '0') / div}};
+					i++;
+					continue;
+				}
+			}
+			break;
+		}
+	
+		if (i == len) {
+			return result;
+		}
+		c = value[i++];
+	}
+
+	if (c == 'e' || c == 'E') {
+		if (i == len) {
+			return 0, error("invalid exponent");
+		}
+		if (value[i] == '+') {
+			i++;
+			if (i == len) {
+				return 0, error("invalid exponent");
+			}
+		}
+		var (exp, err) = string_parse_int(string_substring(value, i, len));
+		if (err) {
+			return 0, error("invalid exponent");
+		}
+		result = {result * pow(10.0, float(exp))};
+		return result;
+	}
+
+	if (i != len) {
+		return 0, error("invalid character");
+	}
+	
+	return result;
+}
+
+function string_long(value)
+{
+	var vlo = value[0], vhi = value[1];
+
+	if (vlo == 0 && vhi == 0x80000000) {
+		return {"-9223372036854775808"};
+	}
+
+	var result = {""};
+	var pos = 20, neg = false;
+	array_set_length(result, pos);
+
+	if (vhi < 0) {
+		neg = true;
+		(vlo, vhi) = mul64(vlo, vhi, -1, -1);
+	}
+
+	while (vlo != 0 || vhi != 0) {
+		var (dlo, dhi) = div64(vlo, vhi, 10, 0);
+		var (rlo, rhi) = rem64(vlo, vhi, 10, 0);
+		result[--pos] = '0'+rlo;
+		vlo = dlo;
+		vhi = dhi;
+	}
+
+	if (neg) {
+		result[--pos] = '-';
+	}
+	return array_extract(result, pos, length(result)-pos);
+}
+
+function string_int_hex(value)
+{
+	var s = {""}, zero=true;
+	for (var i=0; i<8; i++) {
+		var digit = value >>> 28;
+		value <<= 4;
+		if (digit < 10) {
+			if (digit == 0 && zero) {
+				continue;
+			}
+			s[] = '0' + digit;
+		}
+		else {
+			s[] = 'a' + (digit - 10);
+		}
+		zero = false;
+	}
+	if (zero) s[] = '0';
+	return s;
+}
+
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function @assert_inexact(value, result, err)
+{
+	if ({fabs({value - result}) > err}) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function @assert_exception(func, data, msg)
+{
+	var (r, e) = func(data);
+	if (!e) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got none)"});
+	}
+	if (e[0] != msg) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got '", e[0], "')"});
+	}
+}
+
+function test_string()
+{
+	assert_exception(string_parse_int#1, "", "no digits present");
+	assert_exception(string_parse_int#1, "-", "no digits present");
+	assert_exception(string_parse_int#1, " 1", "invalid character");
+	assert_exception(string_parse_int#1, "x", "invalid character");
+	assert_exception(string_parse_int#1, "2147483648", "integer overflow");
+	assert(string_parse_int("0"), 0);
+	assert(string_parse_int("0000000000000"), 0);
+	assert(string_parse_int("123456789"), 123456789);
+	assert(string_parse_int("-123456789"), -123456789);
+	assert(string_parse_int("-2147483648"), -2147483648);
+	assert(string_parse_int("-000002147483648"), -2147483648);
+	assert(string_parse_float("12345678"), 12345678.0);
+	assert(string_parse_float("123456789"), 123456792.0);
+	assert_inexact(string_parse_float("123.45"), 123.45, 0.0001);
+	assert_inexact(string_parse_float("-123.45"), -123.45, 0.0001);
+	assert_inexact(string_parse_float("123.45e+3"), 123450.0, 0.01);
+	assert_inexact(string_parse_float("-123.45e-3"), -0.12345, 0.01);
+}

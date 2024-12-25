@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/double";</code>
+</p>
+
+<h2>Double class</h2>
+
+<p>
+This class allows to work easilly with 64-bit floats.
+</p>
+
+<p>
+Supported operators:
+<code>+</code>,
+<code>-</code>,
+<code>*</code>,
+<code>/</code>,
+<code>&lt;</code>,
+<code>&gt;</code>,
+<code>&lt;=</code>,
+<code>&gt;=</code>,
+<code>==</code>,
+<code>!=</code>,
+<code>+=</code>,
+<code>-=</code>,
+<code>*=</code>,
+<code>/=</code>
+with Double, Float, Integer and <a href="long.html">Long</a> types.<br>
+A short variant of the constructors is available: <code>Double(...)</code>
+</p>
+
+<ul>
+	<li><a href="#members">Members</a></li>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#operations">Operations</a></li>
+	<li><a href="#properties">Properties</a></li>
+</ul>
+
+<h3 id="members">Members</h3>
+
+<dl>
+	<dt><code>
+		var lo: Integer;<br>
+		var hi: Integer;<br>
+	</code></dt>
+	<dd>
+		The low and high order part of the 64-bit float.
+	</dd>
+</dl>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): Double<br>
+		static function <b>create</b>(value: Float): Double<br>
+		static function <b>create</b>(lo: Integer, hi: Integer): Double<br>
+	</code></dt>
+	<dd>
+		Creates a new double with given value (or zero).
+	</dd>
+	<dt><code>
+		static function <b>from_int</b>(value: Integer): Double<br>
+		static function <b>from_long</b>(value: <a href="long.html">Long</a>): Double<br>
+	</code></dt>
+	<dd>
+		Creates a new double from integer.
+	</dd>
+	<dt><code>static function <b>from_string</b>(s: String): Double</code></dt>
+	<dd>
+		Creates a new double from string representation, throwing an error on improper format.
+	</dd>
+</dl>
+
+<h3 id="operations">Operations</h3>
+
+<dl>
+	<dt><code>
+		function <b>set</b>(other: Double): Double<br>
+		function <b>set_int</b>(value: Integer): Double<br>
+		function <b>set_long</b>(value: <a href="long.html">Long</a>): Double<br>
+		function <b>set_float</b>(value: Float): Double<br>
+		function <b>set_string</b>(s: String): Double<br>
+		function <b>set_raw</b>(lo: Integer, hi: Integer): Double<br>
+	</code></dt>
+	<dd>
+		Sets the value. Returns itself.
+	</dd>
+	<dt><code>function <b>dup</b>(): Double</code></dt>
+	<dd>
+	</dd>
+	<dt><code>
+		function <b>add</b>(other: Double): Double<br>
+		function <b>add_int</b>(value: Integer): Double<br>
+		function <b>add_long</b>(value: <a href="long.html">Long</a>): Double<br>
+		function <b>add_float</b>(value: Float): Double<br>
+	</code></dt>
+	<dd>
+		Adds another value into this. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>sub</b>(other: Double): Double<br>
+		function <b>sub_int</b>(value: Integer): Double<br>
+		function <b>sub_long</b>(value: <a href="long.html">Long</a>): Double<br>
+		function <b>sub_float</b>(value: Float): Double<br>
+	</code></dt>
+	<dd>
+		Subtracts another value from this. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>mul</b>(other: Double): Double<br>
+		function <b>mul_int</b>(value: Integer): Double<br>
+		function <b>mul_long</b>(value: <a href="long.html">Long</a>): Double<br>
+		function <b>mul_float</b>(value: Float): Double<br>
+	</code></dt>
+	<dd>
+		Multiplies another value with this. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>div</b>(other: Double): Double<br>
+		function <b>div_int</b>(value: Integer): Double<br>
+		function <b>div_long</b>(value: <a href="long.html">Long</a>): Double<br>
+		function <b>div_float</b>(value: Float): Double<br>
+	</code></dt>
+	<dd>
+		Divides by another value. Returns itself.
+	</dd>
+	<dt><code>function <b>neg</b>(): Double</code></dt>
+	<dd>
+	</dd>
+	<dt><code>
+		function <b>set_min</b>(a: Double, b: Double): Double<br>
+		function <b>set_max</b>(a: Double, b: Double): Double<br>
+	</code></dt>
+	<dd>
+		Sets the min/max value. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>min</b>(other: Double): Double<br>
+		function <b>min_float</b>(value: Float): Double<br>
+		function <b>max</b>(other: Double): Double<br>
+		function <b>max_float</b>(value: Float): Double<br>
+	</code></dt>
+	<dd>
+		Sets the min/max value. Returns itself.
+	</dd>
+	<dt><code>function <b>floor</b>(): Double</code></dt>
+	<dd>
+		Applies floor function. Returns itself.
+	</dd>
+	<dt><code>function <b>ceil</b>(): Double</code></dt>
+	<dd>
+		Applies ceil function. Returns itself.
+	</dd>
+	<dt><code>function <b>round</b>(): Double</code></dt>
+	<dd>
+		Applies round function. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>get_round_int</b>(): Integer<br>
+		function <b>get_round_long</b>(): <a href="long.html">Long</a><br>
+	</code></dt>
+	<dd>
+		Returns the value as rounded integer.
+	</dd>
+	<dt><code>
+		function <b>pow</b>(other: Double): Double<br>
+		function <b>pow_float</b>(value: Float): Double<br>
+	</code></dt>
+	<dd>
+		Applies pow function. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>sqrt</b>(): Double<br>
+		function <b>cbrt</b>(): Double<br>
+		function <b>exp</b>(): Double<br>
+		function <b>ln</b>(): Double<br>
+		function <b>log2</b>(): Double<br>
+		function <b>log10</b>(): Double<br>
+		function <b>sin</b>(): Double<br>
+		function <b>cos</b>(): Double<br>
+		function <b>asin</b>(): Double<br>
+		function <b>acos</b>(): Double<br>
+		function <b>tan</b>(): Double<br>
+		function <b>atan</b>(): Double<br>
+		function <b>atan2</b>(x: Double): Double<br>
+	</code></dt>
+	<dd>
+		Applies common math functions. Returns itself.
+	</dd>
+	<dt><code>function <b>set_atan2</b>(y: Double, x: Double): Double</code></dt>
+	<dd>
+		Sets the result of atan2 function. Returns itself.
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>is_zero</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the value is positive or negative zero.
+	</dd>
+	<dt><code>
+		function <b>cmp_lt</b>(other: Double): Boolean<br>
+		function <b>cmp_lt_int</b>(value: Integer): Boolean<br>
+		function <b>cmp_lt_long</b>(value: <a href="long.html">Long</a>): Boolean<br>
+		function <b>cmp_lt_float</b>(value: Float): Boolean<br>
+		function <b>cmp_le</b>(other: Double): Boolean<br>
+		function <b>cmp_le_int</b>(value: Integer): Boolean<br>
+		function <b>cmp_le_long</b>(value: <a href="long.html">Long</a>): Boolean<br>
+		function <b>cmp_le_float</b>(value: Float): Boolean<br>
+		function <b>cmp_gt</b>(other: Double): Boolean<br>
+		function <b>cmp_gt_int</b>(value: Integer): Boolean<br>
+		function <b>cmp_gt_long</b>(value: <a href="long.html">Long</a>): Boolean<br>
+		function <b>cmp_gt_float</b>(value: Float): Boolean<br>
+		function <b>cmp_ge</b>(other: Double): Boolean<br>
+		function <b>cmp_ge_int</b>(value: Integer): Boolean<br>
+		function <b>cmp_ge_long</b>(value: <a href="long.html">Long</a>): Boolean<br>
+		function <b>cmp_ge_float</b>(value: Float): Boolean<br>
+		function <b>cmp_eq</b>(other: Double): Boolean<br>
+		function <b>cmp_eq_int</b>(value: Integer): Boolean<br>
+		function <b>cmp_eq_long</b>(value: <a href="long.html">Long</a>): Boolean<br>
+		function <b>cmp_eq_float</b>(value: Float): Boolean<br>
+		function <b>cmp_ne</b>(other: Double): Boolean<br>
+		function <b>cmp_ne_int</b>(value: Integer): Boolean<br>
+		function <b>cmp_ne_long</b>(value: <a href="long.html">Long</a>): Boolean<br>
+		function <b>cmp_ne_float</b>(value: Float): Boolean<br>
+	</code></dt>
+	<dd>
+		Returns the result of comparison. There are 6 variants:<br>
+		<b>lt</b> - less than<br>
+		<b>le</b> - less than or equal<br>
+		<b>gt</b> - greater than<br>
+		<b>ge</b> - greater than or equal<br>
+		<b>eq</b> - equal<br>
+		<b>ne</b> - not equal<br>
+	</dd>
+	<dt><code>
+		function <b>to_int</b>(): Integer<br>
+		function <b>to_long</b>(): <a href="long.html">Long</a><br>
+		function <b>to_float</b>(): Float<br>
+		function <b>to_string</b>(): String<br>
+	</code></dt>
+	<dd>
+		Returns the various representations of the value.
+	</dd>
+</dl>
+
+</body>
+</html>

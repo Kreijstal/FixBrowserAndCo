@@ -1,0 +1,220 @@
+/*
+ * FixScript Image v0.7 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+class Rect
+{
+	var x1: Integer;
+	var y1: Integer;
+	var x2: Integer;
+	var y2: Integer;
+
+	static function create(): Rect
+	{
+		return [0, 0, 0, 0] as Rect;
+	}
+	
+	static function create(x: Integer, y: Integer, width: Integer, height: Integer): Rect
+	{
+		return [x, y, x+width, y+height] as Rect;
+	}
+
+	function get_x(): Integer
+	{
+		return x1;
+	}
+
+	function get_y(): Integer
+	{
+		return y1;
+	}
+
+	function get_width(): Integer
+	{
+		return x2 - x1;
+	}
+
+	function get_height(): Integer
+	{
+		return y2 - y1;
+	}
+	
+	function is_valid(): Boolean
+	{
+		return x2 > x1 && y2 > y1;
+	}
+
+	function set(r: Rect): Rect
+	{
+		x1 = r.x1;
+		y1 = r.y1;
+		x2 = r.x2;
+		y2 = r.y2;
+		return this;
+	}
+
+	function set(x: Integer, y: Integer, width: Integer, height: Integer): Rect
+	{
+		x1 = x;
+		y1 = y;
+		x2 = x+width;
+		y2 = y+height;
+		return this;
+	}
+	
+	function clear(): Rect
+	{
+		x1 = 0;
+		y1 = 0;
+		x2 = 0;
+		y2 = 0;
+		return this;
+	}
+	
+	function intersect(r: Rect): Rect
+	{
+		x1 = max(x1, r.x1);
+		y1 = max(y1, r.y1);
+		x2 = min(x2, r.x2);
+		y2 = min(y2, r.y2);
+		return this;
+	}
+
+	function intersect(x: Integer, y: Integer, width: Integer, height: Integer): Rect
+	{
+		x1 = max(x1, x);
+		y1 = max(y1, y);
+		x2 = min(x2, x+width);
+		y2 = min(y2, y+height);
+		return this;
+	}
+	
+	function union(r: Rect): Rect
+	{
+		if (is_valid()) {
+			x1 = min(x1, r.x1);
+			y1 = min(y1, r.y1);
+			x2 = max(x2, r.x2);
+			y2 = max(y2, r.y2);
+		}
+		else {
+			set(r);
+		}
+		return this;
+	}
+
+	function union(x: Integer, y: Integer, width: Integer, height: Integer): Rect
+	{
+		if (is_valid()) {
+			x1 = min(x1, x);
+			y1 = min(y1, y);
+			x2 = max(x2, x+width);
+			y2 = max(y2, y+height);
+		}
+		else {
+			set(x, y, width, height);
+		}
+		return this;
+	}
+	
+	function translate(x: Integer, y: Integer): Rect
+	{
+		x1 += x;
+		y1 += y;
+		x2 += x;
+		y2 += y;
+		return this;
+	}
+
+	function scale(scale: Float): Rect
+	{
+		x1 = iround(float(x1) * scale);
+		y1 = iround(float(y1) * scale);
+		x2 = iround(float(x2) * scale);
+		y2 = iround(float(y2) * scale);
+		return this;
+	}
+
+	function scale(sx: Float, sy: Float): Rect
+	{
+		x1 = iround(float(x1) * sx);
+		y1 = iround(float(y1) * sy);
+		x2 = iround(float(x2) * sx);
+		y2 = iround(float(y2) * sy);
+		return this;
+	}
+
+	function contains(x: Integer, y: Integer): Boolean
+	{
+		return x >= x1 && y >= y1 && x < x2 && y < y2;
+	}
+
+	function contains(rect: Rect): Boolean
+	{
+		if (!is_valid() || !rect.is_valid()) {
+			return false;
+		}
+		return rect.x1 >= x1 && rect.y1 >= y1 && rect.x2 <= x2 && rect.y2 <= y2;
+	}
+
+	function intersects(rect: Rect): Boolean
+	{
+		if (!is_valid() || !rect.is_valid()) {
+			return false;
+		}
+		var x1 = max(this.x1, rect.x1);
+		var y1 = max(this.y1, rect.y1);
+		var x2 = min(this.x2, rect.x2);
+		var y2 = min(this.y2, rect.y2);
+		return x2 > x1 && y2 > y1;
+	}
+	
+	function normalize(): Rect
+	{
+		if (x1 > x2) {
+			var tmp = x1;
+			x1 = x2;
+			x2 = tmp;
+		}
+		if (y1 > y2) {
+			var tmp = y1;
+			y1 = y2;
+			y2 = tmp;
+		}
+		return this;
+	}
+
+	function to_string(): String
+	{
+		return "[x="+x1+",y="+y1+",width="+(x2-x1)+",height="+(y2-y1)+"]";
+	}
+}
+
+function Rect(): Rect
+{
+	return [0, 0, 0, 0] as Rect;
+}
+
+function Rect(x: Integer, y: Integer, width: Integer, height: Integer): Rect
+{
+	return [x, y, x+width, y+height] as Rect;
+}

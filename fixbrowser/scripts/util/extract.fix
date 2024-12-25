@@ -1,0 +1,12 @@
+import "util/string";
+
+function extract_string(s, prefix, suffix)
+{
+	var start = string_search_string(s, prefix);
+	if (start == -1) return null;
+	start += length(prefix);
+	
+	var end = string_search_string(s, suffix, start);
+	if (end == -1) return null;
+	return string_substring(s, start, end);
+}

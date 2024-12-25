@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixBuild Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixBuild Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>ChangeLog</h2>
+
+<h3>Version 0.6 (2024/05/05):</h3>
+
+<ul>
+<li>Added ability to get path to FixBuild binary and get list of available targets in build scripts</li>
+<li>Added ability to specify multiple main scripts for cases where static detection is insufficient</li>
+<li>Added embedded SQLite library</li>
+<li>Added support for WebAssembly target</li>
+<li>Improved storing of executable variants using binary differences</li>
+<li>Adjusted for syntax improvements in classes</li>
+<li>Changed noprocessors to processors and nocompress to compress in build properties</li>
+<li>Moved set_log_function to FixIO library</li>
+<li>Fixed returning of error for unknown backend commands</li>
+<li>Fixed finding of executable file in GUI applications on MacOS</li>
+<li>Fixed processing of just referenced scripts instead of all scripts</li>
+<li>Fixed compression of libraries when token processing is disabled</li>
+<li>Fixed setting of executable permission for binaries to UNIX-like systems only</li>
+</ul>
+
+<h3>Version 0.5 (2022/12/27):</h3>
+
+<ul>
+<li>Added ability to import other scripts from build script</li>
+<li>Added automatic creation of main script if not present</li>
+<li>Added ability to call default log function from a custom log function</li>
+<li>Added version to header when showing help</li>
+<li>Added computation of PE checksum for Windows executables</li>
+<li>Improved icon support on Windows to not use custom icon when not specified</li>
+<li>Adjusted for tokenization change of numbers (separate leading plus/minus token)</li>
+</ul>
+
+<h3>Version 0.4 (2022/03/14):</h3>
+
+<ul>
+<li>Added integration of FixTask with FixIO</li>
+<li>Fixed usage of compatible symbols on Linux 64bit</li>
+</ul>
+
+<h3>Version 0.3 (2021/10/03):</h3>
+
+<ul>
+<li>Added support for icons</li>
+<li>Added matches and find functions in build scripts</li>
+<li>Added automatic excluding of nested projects</li>
+<li>Adjusted for new symbol representation in tokens</li>
+<li>Fixed initialization of tasks not being done in every case</li>
+<li>Fixed traversing of invalid symlinks</li>
+</ul>
+
+<h3>Version 0.2 (2021/05/12):</h3>
+
+<ul>
+<li>Added ability to set custom logging function</li>
+<li>Added internal parameters for getting scripts</li>
+<li>Added support for build scripts</li>
+<li>Renamed 'macosx64' target to 'macos'</li>
+<li>Fixed crash when calling non-existing functions in token processors</li>
+<li>Fixed compression of scripts</li>
+<li>Fixed ability to include *.fix files in resources</li>
+<li>Fixed random resource reading failures due to missing mutex</li>
+<li>Fixed problems with finding and opening of executable file</li>
+<li>Fixed compilation of FixGUI on Haiku 32bit</li>
+</ul>
+
+<h3>Version 0.1 (2020/10/13):</h3>
+
+<ul>
+<li>Initial release</li>
+</ul>
+
+</body>
+</html>

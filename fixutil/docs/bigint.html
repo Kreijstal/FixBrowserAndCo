@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/bigint";</code>
+</p>
+
+<h2>BigInteger class</h2>
+
+<p>
+This class allows to work easilly with arbitrary big integers.
+</p>
+
+<p>
+Supported operators:
+<code>+</code>,
+<code>-</code>,
+<code>*</code>,
+<code>/</code>,
+<code>%</code>,
+<code>&lt;&lt;</code>,
+<code>&gt;&gt;</code>,
+<code>&lt;</code>,
+<code>&gt;</code>,
+<code>&lt;=</code>,
+<code>&gt;=</code>
+with BigInteger and Integer types.<br>
+A short variant of the constructors is available: <code>BigInteger(...)</code>
+</p>
+
+<p>
+Note: the non-class functions are using a shorter <code>bigint</code> prefix for functions.
+</p>
+
+<ul>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#operations">Operations</a></li>
+	<li><a href="#properties">Properties</a></li>
+</ul>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): BigInteger<br>
+		static function <b>create</b>(value: Integer): BigInteger<br>
+	</code></dt>
+	<dd>
+		Creates a new big integer with given value (or zero).
+	</dd>
+	<dt><code>static function <b>from_uint</b>(value: Integer): BigInteger</code></dt>
+	<dd>
+		Creates a new big integer with given unsigned integer value.
+	</dd>
+	<dt><code>static function <b>from_string</b>(s: String): BigInteger</code></dt>
+	<dd>
+		Creates a new big integer from string representation, throwing an error on improper format.
+	</dd>
+	<dt><code>static function <b>from_hex_string</b>(s: String): BigInteger</code></dt>
+	<dd>
+		Creates a new big integer from hexadecimal string representation (can be negative and
+		can contain an optional <code>0x</code> prefix), throwing an error on improper format.
+	</dd>
+	<dt><code>
+		static function <b>from_bytes_BE</b>(bytes: Byte[]): BigInteger<br>
+		static function <b>from_bytes_BE</b>(bytes: Byte[], off: Integer, len: Integer): BigInteger<br>
+		static function <b>from_bytes_LE</b>(bytes: Byte[]): BigInteger<br>
+		static function <b>from_bytes_LE</b>(bytes: Byte[], off: Integer, len: Integer): BigInteger<br>
+	</code></dt>
+	<dd>
+		Creates a new big positive integer from bytes representing the number. The
+		bytes can be in either Big Endian (BE) or Little Endian (LE) ordering and
+		optionally you can pass an offset and length within the provided array.
+	</dd>
+</dl>
+
+<h3 id="operations">Operations</h3>
+
+<dl>
+	<dt><code>function <b>add</b>(other: BigInteger): BigInteger</code></dt>
+	<dd>
+		Adds two big integers and returns the result.
+	</dd>
+	<dt><code>function <b>sub</b>(other: BigInteger): BigInteger</code></dt>
+	<dd>
+		Subtracts two big integers and returns the result.
+	</dd>
+	<dt><code>function <b>mul</b>(other: BigInteger): BigInteger</code></dt>
+	<dd>
+		Multiplies two big integers and returns the result.
+	</dd>
+	<dt><code>function <b>div</b>(other: BigInteger): BigInteger</code></dt>
+	<dd>
+		Divides two big integers and returns the quotient.
+	</dd>
+	<dt><code>function <b>rem</b>(other: BigInteger): BigInteger</code></dt>
+	<dd>
+		Divides two big integers and returns the remainder.
+	</dd>
+	<dt><code>function <b>divrem</b>(other: BigInteger): BigInteger</code></dt>
+	<dd>
+		Divides two big integers and returns the result as two values (first
+		is the quotient and the second is the remainder). You need to explicitly
+		check for errors by comparing the first value to <code>null</code>.
+	</dd>
+	<dt><code>function <b>mod</b>(other: BigInteger): BigInteger</code></dt>
+	<dd>
+		Divides two big integers and returns the modulus.
+	</dd>
+	<dt><code>function <b>abs</b>(): BigInteger</code></dt>
+	<dd>
+		Returns the absolute value.
+	</dd>
+	<dt><code>function <b>shl</b>(amount: Integer): BigInteger</code></dt>
+	<dd>
+		Shifts the bits left (towards high order part) and returns the result.
+	</dd>
+	<dt><code>function <b>shr</b>(amount: Integer): BigInteger</code></dt>
+	<dd>
+		Shifts the bits right (towards low order part) and returns the result.
+	</dd>
+	<dt><code>function <b>modpow</b>(exponent: BigInteger, modulus: BigInteger): BigInteger</code></dt>
+	<dd>
+		Computes modular exponentiation and returns the result.
+	</dd>
+	<dt><code>function <b>modinverse</b>(modulus: BigInteger): BigInteger</code></dt>
+	<dd>
+		Computes modular multiplicative inverse and returns the result.
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>is_zero</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the value is zero.
+	</dd>
+	<dt><code>
+		function <b>cmp_lt</b>(other: Integer): Boolean<br>
+		function <b>cmp_le</b>(other: Integer): Boolean<br>
+		function <b>cmp_gt</b>(other: Integer): Boolean<br>
+		function <b>cmp_ge</b>(other: Integer): Boolean<br>
+	</code></dt>
+	<dd>
+		Returns the result of comparison. There are 4 variants:<br>
+		<b>lt</b> - less than<br>
+		<b>le</b> - less than or equal<br>
+		<b>gt</b> - greater than<br>
+		<b>ge</b> - greater than or equal<br>
+	</dd>
+	<dt><code>function <b>get_bit_size</b>(): Integer</code></dt>
+	<dd>
+		Returns the number of bits used to represent the value.
+	</dd>
+	<dt><code>function <b>is_bit_set</b>(pos: Integer): Boolean</code></dt>
+	<dd>
+		Returns whether a bit on given position is set.
+	</dd>
+	<dt><code>function <b>to_int</b>(): Integer</code></dt>
+	<dd>
+		Returns the value as a 32-bit signed integer, throwing an error in case it can't fit.
+	</dd>
+	<dt><code>function <b>to_uint</b>(): Integer</code></dt>
+	<dd>
+		Returns the value as a 32-bit unsigned integer, throwing an error in case it can't fit.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the string representation of the value.
+	</dd>
+	<dt><code>
+		function <b>to_hex_string</b>(): String<br>
+		function <b>to_hex_string</b>(use_prefix: Boolean): String<br>
+	</code></dt>
+	<dd>
+		Returns the hex string representation of the value. Optionally
+		you can disable prepending of the <code>0x</code> prefix.
+	</dd>
+	<dt><code>
+		function <b>to_bytes_BE</b>(): Byte[]<br>
+		function <b>to_bytes_LE</b>(): Byte[]<br>
+	</code></dt>
+	<dd>
+		Returns the byte representation of the value. Negative numbers
+		are not supported. The bytes can be in either Big Endian (BE) or
+		Little Endian (LE) ordering.
+	</dd>
+</dl>
+
+</body>
+</html>

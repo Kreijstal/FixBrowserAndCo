@@ -1,0 +1,361 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "io/stream";
+import "util/long";
+import "util/double";
+
+const {
+	SQL_TYPE_UNKNOWN = -1,
+	SQL_TYPE_INTEGER,
+	SQL_TYPE_LONG,
+	SQL_TYPE_FLOAT,
+	SQL_TYPE_DOUBLE,
+	SQL_TYPE_STRING,
+	SQL_TYPE_BINARY
+};
+
+macro @SHORT_QUERY_METHOD(name, ret_kw, ret_type)
+{
+	function name(query: String or ParamString): ret_type
+	{
+		if (is_string(query)) {
+			ret_kw this.name(query, null, null);
+		}
+		else {
+			var ps = query as ParamString;
+			ret_kw this.name(ps.get_query(), ps.get_signature(), ps.get_params());
+		}
+	}
+}
+
+macro @FIELD_QUERY_METHOD(type_name, ret_type)
+{
+	SHORT_QUERY_METHOD(type_name#_query, return, ret_type)
+
+	function type_name#_query(query: String, sig: String, params: Dynamic[]): ret_type
+	{
+		var rs = this.query(query, sig, params);
+		if (!rs.next()) throw error("no row returned");
+		return rs.get_#type_name(0);
+	}
+}
+
+class SQLConnection
+{
+	constructor create()
+	{
+	}
+
+	virtual function close()
+	{
+		throw error("not implemented");
+	}
+
+	virtual function begin()
+	{
+		throw error("not implemented");
+	}
+
+	virtual function commit()
+	{
+		throw error("not implemented");
+	}
+
+	virtual function rollback()
+	{
+		throw error("not implemented");
+	}
+
+	virtual function in_transaction(): Boolean
+	{
+		throw error("not implemented");
+	}
+
+	SHORT_QUERY_METHOD(query, return, ResultSet)
+	SHORT_QUERY_METHOD(update, /* nothing */, Void)
+
+	virtual function query(query: String, sig: String, params: Dynamic[]): ResultSet
+	{
+		throw error("not implemented");
+	}
+
+	virtual function update(query: String, sig: String, params: Dynamic[])
+	{
+		throw error("not implemented");
+	}
+
+	virtual function last_insert_id(): Long
+	{
+		throw error("not implemented");
+	}
+
+	FIELD_QUERY_METHOD(int, Integer)
+	FIELD_QUERY_METHOD(long, Long)
+	FIELD_QUERY_METHOD(float, Float)
+	FIELD_QUERY_METHOD(double, Double)
+	FIELD_QUERY_METHOD(string, String)
+	FIELD_QUERY_METHOD(binary, Byte[])
+
+	SHORT_QUERY_METHOD(row_query, return, ResultSet)
+
+	function row_query(query: String, sig: String, params: Dynamic[]): ResultSet
+	{
+		var rs = this.query(query, sig, params);
+		if (!rs.next()) {
+			rs.close();
+			throw error("row not present");
+		}
+		return rs;
+	}
+}
+
+function @null_value() {}
+
+macro @GET_TYPE_METHOD(type_name, ret_type)
+{
+	function get_#type_name(name_or_idx: String or Integer): ret_type
+	{
+		var value = get_optional_#type_name(name_or_idx);
+		if (!value) {
+			throw error("unexpected null value");
+		}
+		return value;
+	}
+}
+
+class ResultSet
+{
+	constructor create()
+	{
+	}
+
+	virtual function close()
+	{
+		throw error("not implemented");
+	}
+
+	virtual function next(): Boolean
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_column_count(): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_column_name(idx: Integer): String
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_column_index(name: String): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_column_type(name_or_idx: String or Integer): Integer
+	{
+		throw error("not implemented");
+	}
+
+	virtual function is_null(name_or_idx: String or Integer): Boolean
+	{
+		throw error("not implemented");
+	}
+
+	function get_int(name_or_idx: String or Integer): Integer
+	{
+		var value = get_optional_int(name_or_idx, null_value#0 as Integer);
+		if (value as Dynamic === null_value#0) {
+			throw error("unexpected null value");
+		}
+		return value;
+	}
+
+	function get_float(name_or_idx: String or Integer): Float
+	{
+		var value = get_optional_float(name_or_idx, null_value#0 as Float);
+		if (value as Dynamic === null_value#0) {
+			throw error("unexpected null value");
+		}
+		return value;
+	}
+
+	GET_TYPE_METHOD(long, Long)
+	GET_TYPE_METHOD(double, Double)
+	GET_TYPE_METHOD(string, String)
+	GET_TYPE_METHOD(binary, Byte[])
+
+	virtual function get_optional_int(name_or_idx: String or Integer, def_value: Integer): Integer
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_optional_long(name_or_idx: String or Integer): Long
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_optional_float(name_or_idx: String or Integer, def_value: Float): Float
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_optional_double(name_or_idx: String or Integer): Double
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_optional_string(name_or_idx: String or Integer): String
+	{
+		throw error("not implemented");
+	}
+	
+	virtual function get_optional_binary(name_or_idx: String or Integer): Byte[]
+	{
+		throw error("not implemented");
+	}
+}
+
+class ParamString
+{
+	var @query: String;
+	var @sig: String;
+	var @params: Dynamic[];
+
+	constructor create(query: String)
+	{
+		this.query = {query};
+	}
+
+	constructor create(query: String, sig: String, params: Dynamic[])
+	{
+		this.query = {query};
+		this.sig = clone(sig);
+		this.params = clone(params);
+	}
+
+	function clone(): ParamString
+	{
+		var ps = new ParamString;
+		ps.query = {query};
+		ps.sig = clone(sig);
+		ps.params = clone(params);
+		return ps;
+	}
+
+	function wrap(): ParamString
+	{
+		query.insert_char(0, '(');
+		query[] = ')';
+		return this;
+	}
+
+	function wrap(prefix: String, suffix: String): ParamString
+	{
+		query.insert(0, prefix);
+		query += suffix;
+		return this;
+	}
+
+	operator + (p1: ParamString, p2: ParamString)
+	{
+		var ps = new ParamString;
+		ps.query = p1.query + p2.query;
+		ps.sig = clone(p1.sig);
+		ps.params = clone(p1.params);
+		if (!p1.params && p2.params != null) { //XXX
+			ps.sig = {""};
+			ps.params = [];
+		}
+		if (p2.params) {
+			ps.sig += p2.sig;
+			ps.params.append(p2.params);
+		}
+		return ps;
+	}
+
+	operator + (p1: ParamString, p2: String)
+	{
+		var ps = new ParamString;
+		ps.query = p1.query + p2;
+		ps.sig = clone(p1.sig);
+		ps.params = clone(p1.params);
+		return ps;
+	}
+
+	operator + (p1: String, p2: ParamString)
+	{
+		var ps = new ParamString;
+		ps.query = p1 + p2.query;
+		ps.sig = clone(p2.sig);
+		ps.params = clone(p2.params);
+		return ps;
+	}
+
+	operator += (other: ParamString)
+	{
+		this.query += other.query;
+		if (other.params) {
+			if (!this.params) {
+				this.sig = {""};
+				this.params = [];
+			}
+			this.sig += other.sig;
+			this.params.append(other.params);
+		}
+	}
+
+	operator += (other: String)
+	{
+		this.query += other;
+	}
+
+	function get_query(): String
+	{
+		return query;
+	}
+
+	function get_signature(): String
+	{
+		return sig;
+	}
+
+	function get_params(): Dynamic[]
+	{
+		return params;
+	}
+}
+
+function ParamString(query: String): ParamString
+{
+	return ParamString::create(query);
+}
+
+function ParamString(query: String, sig: String, params: Dynamic[]): ParamString
+{
+	return ParamString::create(query, sig, params);
+}

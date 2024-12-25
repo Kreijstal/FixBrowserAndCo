@@ -1,0 +1,41 @@
+--- wasm-support.c.orig	2024-05-05 18:21:01.000000000 +0200
++++ wasm-support.c	2024-06-03 09:47:43.000000000 +0200
+@@ -112,8 +112,8 @@
+ 
+ extern int main(int argc, char **argv);
+ 
+-static double string_to_double(const char *s);
+-static char *double_to_string(char *buf, double input_value);
++double string_to_double(const char *s);
++char *double_to_string(char *buf, double input_value);
+ 
+ 
+ void *malloc(size_t size) EXPORT("malloc")
+@@ -3529,7 +3529,7 @@
+ 
+ 
+ // buffer must be at least 29 bytes long
+-static char *double_to_string(char *buf, double input_value)
++char *double_to_string(char *buf, double input_value) EXPORT("double_to_string")
+ {
+    union {
+       double f;
+@@ -3849,7 +3849,7 @@
+ #endif
+ 
+ 
+-static double string_to_double(const char *s)
++double string_to_double(const char *s) EXPORT("string_to_double")
+ {
+    union {
+       double f;
+@@ -4374,6 +4374,9 @@
+ 
+ double cbrt(double x)
+ {
++   if (x < 0) {
++      return -pow(-x, 0.33333333333333333);
++   }
+    return pow(x, 0.33333333333333333);
+ }
+ 

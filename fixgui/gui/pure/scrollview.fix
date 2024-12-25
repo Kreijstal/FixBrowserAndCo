@@ -1,0 +1,103 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/subview";
+import "gui/subview/scrollbar";
+import "gui/subview/scrollview";
+import "gui/native/windows";
+import "gui/pure/common";
+import "gui/pure/scrollbar";
+
+class PureScrollView: SubScrollView
+{
+	constructor create(content: SubView)
+	{
+		super::create(content);
+	}
+
+	function set_border(enable: Boolean)
+	{
+		if (enable) {
+			switch (get_theme_type()) {
+				case THEME_WINDOWS_CLASSIC:
+				case THEME_WINDOWS: {
+					set_border(2, 2, 2, 2);
+					break;
+				}
+			}
+		}
+		else {
+			set_border(0, 0, 0, 0);
+		}
+	}
+
+	override function create_scrollbar(type: Integer): SubScrollBar
+	{
+		return PureScrollBar::create(type);
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var color = 0xFFCCCCCC;
+
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC:
+			case THEME_WINDOWS: {
+				color = Windows::get_system_color(COLOR_BTNFACE);
+				break;
+			}
+
+			case THEME_COCOA_FLAT: {
+				color = 0xFFECECEC;
+				break;
+			}
+		}
+
+		var horiz = get_horizontal_scrollbar();
+		var vert = get_vertical_scrollbar();
+		var horiz_size = horiz? horiz.get_height() : 0;
+		var vert_size = vert? vert.get_width() : 0;
+		var border = get_border();
+		p.fill_rect(get_width() - vert_size - border[2], get_height() - horiz_size - border[3], vert_size, horiz_size, color);
+
+		if (border[0] > 0) {
+			switch (get_theme_type()) {
+				case THEME_WINDOWS_CLASSIC:
+				case THEME_WINDOWS: {
+					var face_color = Windows::get_system_color(COLOR_BTNFACE);
+					var highlight_color = Windows::get_system_color(COLOR_BTNHIGHLIGHT);
+					var light_color = Windows::get_system_color(COLOR_3DLIGHT);
+					var shadow_color = Windows::get_system_color(COLOR_BTNSHADOW);
+					var dark_shadow_color = Windows::get_system_color(COLOR_3DDKSHADOW);
+
+					draw_highlight_rect(p, 0, 0, get_width(), get_height(), shadow_color, highlight_color, face_color);
+					draw_highlight_rect(p, 1, 1, get_width()-2, get_height()-2, dark_shadow_color, light_color, face_color);
+					break;
+				}
+			}
+		}
+
+		draw_children(p);
+	}
+}

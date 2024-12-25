@@ -1,0 +1,19 @@
+Version 0.4 (2024/05/05):
+- Added support for WebAssembly
+- Adjusted for syntax improvements in classes
+- Changed destructor to hold external reference to callback data
+- Fixed get_float function in Pointer
+
+Version 0.3 (2021/10/03):
+- Adjusted for new symbol representation in tokens
+
+Version 0.2 (2021/05/12):
+- Added ability to get pointer to shared array data
+- Added proper setting of return type for functions called using the 'extern' token processor
+- Added ability to create memory region from given pointer and size
+- Renamed SYSTEM_MACOSX to SYSTEM_MACOS
+- Fixed incorrect checking for memory range on raw pointers
+- Fixed error when trying to bind library multiple times
+
+Version 0.1 (2020/10/13):
+- Initial release

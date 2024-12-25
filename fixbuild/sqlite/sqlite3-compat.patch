@@ -1,0 +1,32 @@
+--- sqlite3.c.orig	2023-10-10 17:08:59.000000000 +0200
++++ sqlite3.c	2024-02-28 20:29:43.278875768 +0100
+@@ -38050,6 +38050,29 @@
+ static int openDirectory(const char*, int*);
+ static int unixGetpagesize(void);
+ 
++#if defined(FIXBUILD_BINCOMPAT) && defined(__linux__)
++#include <sys/syscall.h>
++#include <unistd.h>
++
++static int compat_fcntl(int fd, int cmd, ...)
++{
++   va_list ap;
++   void *arg;
++
++   va_start(ap, cmd);
++   arg = va_arg(ap, void *);
++   va_end(ap);
++
++   #if !defined(SYS_fcntl64) && defined(__x86_64__)
++      #define SYS_fcntl64 SYS_fcntl
++   #endif
++
++   return syscall(SYS_fcntl64, fd, cmd, arg);
++}
++
++#define fcntl compat_fcntl
++#endif
++
+ /*
+ ** Many system calls are accessed through pointer-to-functions so that
+ ** they may be overridden at runtime to facilitate fault injection during

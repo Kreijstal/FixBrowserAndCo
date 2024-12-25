@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>ChangeLog</h2>
+
+<h3>Version 0.6 (2024/05/05):</h3>
+
+<ul>
+<li>Added ability to create constant strings in Heap</li>
+<li>Added ability to compare values in Heap</li>
+<li>Added Barrier</li>
+<li>Added support for WebAssembly</li>
+<li>Adjusted for syntax improvements in classes</li>
+<li>Fixed loading of scripts in Heap by checking for already loaded scripts first</li>
+<li>Fixed obtaining of error when sending non-copyable reference through synchronous channel</li>
+</ul>
+
+<h3>Version 0.5 (2022/12/27):</h3>
+
+<ul>
+<li>Improved returning of values from custom script native functions</li>
+<li>Fixed lockup when sending channel messages by enabling reentrant locking on POSIX systems</li>
+<li>Fixed integration with FixIO async event loop</li>
+<li>Fixed counting of elapsed time for timeouts</li>
+<li>Fixed concise reporting of token processor errors when reloading scripts</li>
+</ul>
+
+<h3>Version 0.4 (2022/03/14):</h3>
+
+<ul>
+<li>Added running of compute tasks in parallel with ability to access parent heap concurrently</li>
+<li>Added support for atomic operations on shared arrays</li>
+<li>Added support for setting of stack size in Heap</li>
+<li>Added Dispatcher</li>
+<li>Added asynchronous variant of channel call</li>
+<li>Added simple way to handle messages from single channel</li>
+<li>Added optional integration with FixIO async event loop</li>
+<li>Improved returning of errors in synchronous channel call</li>
+<li>Renamed fixtask_get_cores_count to fixtask_get_core_count in C API</li>
+<li>Changed setting of channel queue size to be possible in original heap only</li>
+<li>Fixed passing of wrong core ID when using fixtask_run_on_compute_threads</li>
+<li>Fixed comparison of channel handles with sender/receiver variants</li>
+<li>Fixed lockup when sending messages to synchronous channels from multiple threads</li>
+</ul>
+
+<h3>Version 0.3 (2021/10/03):</h3>
+
+<ul>
+<li>Added ability to start tasks using function handle directly</li>
+<li>Added support for channels</li>
+</ul>
+
+<h3>Version 0.2 (2021/05/12):</h3>
+
+<ul>
+<li>Added ability to create custom FixScript heaps</li>
+<li>Added ComputeTask and Global classes</li>
+<li>Fixed waiting on messages with timeout</li>
+<li>Fixed overinflation of heap when sending messages between tasks</li>
+</ul>
+
+<h3>Version 0.1 (2020/04/23):</h3>
+
+<ul>
+<li>Initial release</li>
+</ul>
+
+</body>
+</html>

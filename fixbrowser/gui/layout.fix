@@ -1,0 +1,855 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	@VIEW_name,
+	@VIEW_handler,
+	@VIEW_params,
+	@VIEW_SIZE
+};
+
+const {
+	@SIDE_NONE,
+	@SIDE_MIN,
+	@SIDE_MAX
+};
+
+const @OFFSET_SMALL  = 8000000.0;
+const @OFFSET_MEDIUM = 8000001.0;
+const @OFFSET_LARGE  = 8000002.0;
+
+function process_tokens(fname, tokens, src)
+{
+	var view_handlers = {};
+	view_handlers{"Form"} = process_form#1;
+	view_handlers{"Label"} = process_label#1;
+	view_handlers{"TextField"} = process_text_field#1;
+	view_handlers{"TextArea"} = process_text_area#1;
+	view_handlers{"Button"} = process_button#1;
+	view_handlers{"Table"} = process_table#1;
+
+	var classes = {};
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (tokens[i+TOK_type] == TOK_IDENT && tokens[i+TOK_len] == 5 && src[tokens[i+TOK_off]] == 'c') {
+			if (array_extract(src, tokens[i+TOK_off], 5) == "class") {
+				i = process_class(tokens, src, i + TOK_SIZE, view_handlers, classes);
+				continue;
+			}
+		}
+	}
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (tokens[i+TOK_type] == TOK_IDENT && tokens[i+TOK_len] == 3) {
+			var off = tokens[i+TOK_off];
+			if (src[off++] == 'n' && src[off++] == 'e' && src[off++] == 'w') {
+				i = process_new(tokens, src, i, classes);
+				continue;
+			}
+		}
+	}
+
+	for (var i=0; i<length(classes); i++) {
+		var (cls_name, views) = hash_entry(classes, i);
+		var code = {"function @_designer_create_views_", cls_name, "(parent: ", cls_name, "): ", cls_name, " {"};
+		var form_var = null;
+		var global_has_cocoa = false;
+		var global_has_haiku = false;
+		for (var j=0; j<length(views); j++) {
+			var params = views[j]->VIEW_params;
+			for (var k=0; k<length(params); k++) {
+				var (pname, pvalue) = hash_entry(params, k);
+				if (length(pname) > 6 && pname[5] == '_' && array_extract(pname, 0, 6) == "cocoa_") {
+					global_has_cocoa = true;
+				}
+				if (length(pname) > 6 && pname[5] == '_' && array_extract(pname, 0, 6) == "haiku_") {
+					global_has_haiku = true;
+				}
+			}
+		}
+		if (global_has_cocoa) {
+			array_append(code, "var cocoa_is_present = Cocoa::is_present();");
+		}
+		if (global_has_haiku) {
+			array_append(code, "var haiku_is_present = Haiku::is_present();");
+		}
+		for (var j=0; j<length(views); j++) {
+			array_append(code, views[j]->VIEW_handler(views[j]));
+			if (views[j]->VIEW_handler == process_form#1) {
+				form_var = views[j];
+			}
+		}
+		if (!form_var) {
+			return 0, error({"form variable not found in class ", cls_name});
+		}
+		var form_width = -1.0, form_height = -1.0;
+		var form_size = hash_get(form_var->VIEW_params, "size", null);
+		if (form_size) {
+			form_width = form_size[0];
+			form_height = form_size[1];
+		}
+		array_append(code, {"parent.", form_var->VIEW_name, " = Form::create((null as View).get_sizing(), ", form_width, ", ", form_height, ");"});
+		for (var j=0; j<length(views); j++) {
+			var view = views[j];
+			if (view->VIEW_handler == process_form#1) continue;
+			var has_cocoa = has_system_specific_layout(view, "cocoa");
+			var has_haiku = has_system_specific_layout(view, "haiku");
+			var has_any = has_cocoa || has_haiku;
+			if (has_cocoa) {
+				array_append(code, "if (cocoa_is_present) {");
+				append_view_anchor_code(code, view, form_var, "cocoa");
+				array_append(code, "}");
+			}
+			if (has_haiku) {
+				array_append(code, "if (haiku_is_present) {");
+				append_view_anchor_code(code, view, form_var, "haiku");
+				array_append(code, "}");
+			}
+			if (has_any) {
+				array_append(code, "else {");
+			}
+			append_view_anchor_code(code, view, form_var, null);
+			if (has_any) {
+				array_append(code, "}");
+			}
+		}
+		array_append(code, {"parent.", form_var->VIEW_name, ".layout();"});
+		array_append(code, "return parent;}");
+		array_append(code, {"function @_designer_finalize_", cls_name, "(real_class: ", cls_name, ", tmp_class: ", cls_name, "): ", cls_name, " {"});
+		for (var j=0; j<length(views); j++) {
+			var view = views[j];
+			array_append(code, {"real_class.", view->VIEW_name, " = tmp_class.", view->VIEW_name, ";"});
+			if (view->VIEW_handler != process_form#1) {
+				array_append(code, {"real_class.add(real_class.", view->VIEW_name, ");"});
+			}
+		}
+		array_append(code, {"real_class.set_minimum_size(real_class.", form_var->VIEW_name, ".get_width(), real_class.", form_var->VIEW_name, ".get_height());"});
+		array_append(code, {"real_class.", form_var->VIEW_name, ".set_view(real_class);"});
+		array_append(code, "return real_class;}");
+		tokens_parse(tokens, src, code, 0);
+	}
+
+	//dump(classes);
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @has_system_specific_layout(view, prefix)
+{
+	var len = length(prefix);
+	var params = view->VIEW_params;
+	for (var i=0; i<length(params); i++) {
+		var (pname, pvalue) = hash_entry(params, i);
+		if (length(pname) > len && pname[len] == '_' && array_extract(pname, 0, len) == prefix) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function @param_get(params, name, def_value, prefix)
+{
+	if (prefix) {
+		var value = hash_get(params, {prefix, "_", name}, def_value);
+		if (value != def_value) {
+			return value;
+		}
+	}
+	return hash_get(params, name, def_value);
+}
+
+function @append_view_anchor_code(code, view, form_var, prefix)
+{
+	var params = view->VIEW_params;
+	var width = -1.0, height = -1.0;
+	var size = param_get(params, "size", null, prefix);
+	if (size) {
+		width = size[0];
+		height = size[1];
+	}
+	array_append(code, {"parent.", form_var->VIEW_name, ".add(parent.", view->VIEW_name, ", ", width, ", ", height, ", Anchors::create()"});
+	var left = param_get(params, "left", null, prefix);
+	var top = param_get(params, "top", null, prefix);
+	var right = param_get(params, "right", null, prefix);
+	var bottom = param_get(params, "bottom", null, prefix);
+	if (left) append_anchor_code(code, "left", left, form_var);
+	if (top) append_anchor_code(code, "top", top, form_var);
+	if (right) append_anchor_code(code, "right", right, form_var);
+	if (bottom) append_anchor_code(code, "bottom", bottom, form_var);
+	array_append(code, ");");
+}
+
+function @append_anchor_code(code, name, params, form_var)
+{
+	if (params[1] == SIDE_NONE && !params[3]) {
+		return;
+	}
+	var var_name = "null";
+	if (params[0] && params[0] != form_var->VIEW_name) {
+		var_name = {"parent.", params[0]};
+	}
+	array_append(code, {".", name, "(", var_name, ", ", params[1], ", ", params[2], ", ", params[3], " as Boolean)"});
+}
+
+function @process_class(tokens, src, i, view_handlers, classes)
+{
+	var cur_class = null;
+
+	while (tokens[i+TOK_type] != TOK_IDENT) {
+		i += TOK_SIZE;
+	}
+	var cls_name = get_token_value(tokens, src, i);
+	while (tokens[i+TOK_type] != '{') {
+		i += TOK_SIZE;
+	}
+	i += TOK_SIZE;
+
+	var form_var = null;
+	
+	var level = 0;
+	for (; i<length(tokens); i+=TOK_SIZE) {
+		switch (tokens[i+TOK_type]) {
+			case '{':
+				level++;
+				break;
+
+			case '}':
+				if (--level == 0) {
+					return i;
+				}
+				break;
+
+			case KW_VAR: {
+				if (level != 0) continue;
+				i += TOK_SIZE;
+				if (tokens[i+TOK_type] == '@') {
+					i += TOK_SIZE;
+				}
+				if (tokens[i+TOK_type] != TOK_IDENT) {
+					return 0, error({"expected variable name at line ", tokens[i+TOK_line]});
+				}
+				var var_name = get_token_value(tokens, src, i);
+				i += TOK_SIZE;
+				if (tokens[i+TOK_type] != ':') {
+					continue;
+				}
+				i += TOK_SIZE;
+				var type_name = get_token_value(tokens, src, i);
+
+				var func = hash_get(view_handlers, type_name, null);
+				if (!func) {
+					continue;
+				}
+				
+				var start = i+TOK_SIZE;
+				i = expect_symbol(tokens, src, i, '{');
+				var params = {};
+				i = parse_params(tokens, src, i, params, null, null);
+				array_remove(tokens, start, i+TOK_SIZE-start);
+				i = start - TOK_SIZE;
+				//dump(params);
+
+				if (!cur_class) {
+					cur_class = [];
+					classes{cls_name} = cur_class;
+				}
+				var view = object_create(VIEW_SIZE);
+				view->VIEW_name = var_name;
+				view->VIEW_handler = func;
+				view->VIEW_params = params;
+				cur_class[] = view;
+
+				if (type_name == "Form") {
+					if (form_var) {
+						return 0, error({"only one Form variable can be declared at line ", tokens[i+TOK_line]});
+					}
+					form_var = var_name;
+				}
+				break;
+			}
+
+			case TOK_IDENT: {
+				if (tokens[i+TOK_len] == 6 && src[tokens[i+TOK_off]] == 's' && get_token_value(tokens, src, i) == "system") {
+					var start = i;
+					i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+					var system = get_token_value(tokens, src, i);
+					if (system == "Cocoa") {
+						i = parse_system_views(tokens, src, i, cur_class, "cocoa", parse_cocoa_params#6);
+					}
+					else if (system == "Haiku") {
+						i = parse_system_views(tokens, src, i, cur_class, "haiku", parse_haiku_params#6);
+					}
+					else {
+						return 0, error({"unknown system name at line ", tokens[i+TOK_line]});
+					}
+					array_remove(tokens, start, i+TOK_SIZE-start);
+					i = start - TOK_SIZE;
+				}
+				break;
+			}
+		}
+	}
+	return i;
+}
+
+function @process_new(tokens, src, i, classes)
+{
+	i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+	var cls_name = get_token_value(tokens, src, i);
+
+	var views = hash_get(classes, cls_name, null);
+	if (!views) return i;
+
+	var form_var = null;
+	for (var j=0; j<length(views); j++) {
+		if (views[j]->VIEW_handler == process_form#1) {
+			form_var = views[j];
+			break;
+		}
+	}
+	if (!form_var) {
+		return 0, error({"form variable not found in class ", cls_name});
+	}
+
+	i -= TOK_SIZE;
+	var new_tokens = [];
+	tokens_parse(new_tokens, src, {"({ var _tmp_class = _designer_create_views_", cls_name, "(new ", cls_name, ") as ", cls_name, "; var ", form_var->VIEW_name, " = _tmp_class.", form_var->VIEW_name, "; var _real_class = "}, tokens[i+TOK_line]);
+	array_insert_array(tokens, i, new_tokens);
+	i += length(new_tokens);
+	//log({"len=", length(new_tokens)});
+	
+	//log({"start=", get_token_value(tokens, src, i)});
+	i = expect_expression(tokens, src, i);
+	i += TOK_SIZE;
+	//log({"end=", get_token_value(tokens, src, i)});
+
+	array_clear(new_tokens);
+	tokens_parse(new_tokens, src, {"; = _designer_finalize_", cls_name, "(_real_class, _tmp_class) } as ", cls_name, ")"}, tokens[i+TOK_line]); //XXX
+	array_insert_array(tokens, i, new_tokens);
+	return i + length(new_tokens) - TOK_SIZE;
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({"expected ", what, " at line ", tokens[i+TOK_line]});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({"expected '", s, "' at line ", tokens[i+TOK_line]});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @expect_float(tokens, src, i)
+{
+	i += TOK_SIZE;
+	var type = tokens[i+TOK_type];
+	if (type != TOK_NUMBER && type != TOK_FLOAT_NUMBER) {
+		return 0, error({"expected float number at line ", tokens[i+TOK_line]});
+	}
+	return i;
+}
+
+function @expect_float_or_def(tokens, src, i)
+{
+	i += TOK_SIZE;
+	var type = tokens[i+TOK_type];
+	if (type != TOK_NUMBER && type != TOK_FLOAT_NUMBER && (type != TOK_IDENT || get_token_value(tokens, src, i) != "def")) {
+		return 0, error({"expected float number (or def) at line ", tokens[i+TOK_line]});
+	}
+	return i;
+}
+
+function @parse_params(tokens, src, i, params, prefix, extra_handler_func)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] == '}') {
+		return i;
+	}
+	i -= TOK_SIZE;
+
+	for (;;) {
+		i += TOK_SIZE;
+		var anchor = false;
+		if (tokens[i+TOK_type] == '#') {
+			anchor = true;
+		}
+		else {
+			i -= TOK_SIZE;
+		}
+		i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+		var name = get_token_value(tokens, src, i);
+		var is_side = (name == "left" || name == "top" || name == "right" || name == "bottom");
+		var value;
+
+		if (anchor && !is_side) {
+			return 0, error({"anchors can be used for sides only at line ", tokens[i+TOK_line]});
+		}
+
+		if (name == "size") {
+			i = expect_symbol(tokens, src, i, ':');
+			value = [];
+			i = expect_symbol(tokens, src, i, '[');
+			for (var j=0; j<2; j++) {
+				if (j > 0) {
+					i = expect_symbol(tokens, src, i, ',');
+				}
+				i = expect_float_or_def(tokens, src, i);
+				if (tokens[i+TOK_type] == TOK_IDENT) {
+					value[] = -1.0;
+				}
+				else {
+					value[] = string_parse_float(get_token_value(tokens, src, i));
+				}
+			}
+			i = expect_symbol(tokens, src, i, ']');
+		}
+		else if (is_side) {
+			value = [];
+
+			i += TOK_SIZE;
+			if (tokens[i+TOK_type] == ':') {
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				value[] = get_token_value(tokens, src, i);
+				i = expect_symbol(tokens, src, i, '.');
+				i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+				var anchor_type = get_token_value(tokens, src, i);
+				if (anchor_type == "min") {
+					value[] = SIDE_MIN;
+				}
+				else if (anchor_type == "max") {
+					value[] = SIDE_MAX;
+				}
+				else {
+					return 0, error({"expected 'min' or 'max' at line ", tokens[i+TOK_line]});
+				}
+				var offset = 0.0;
+				
+				i += TOK_SIZE;
+				switch (tokens[i+TOK_type]) {
+					case TOK_NUMBER:
+					case TOK_FLOAT_NUMBER:
+						if (src[tokens[i+TOK_off]] != '-') {
+							return 0, error({"expected + or - at line ", tokens[i+TOK_line]});
+						}
+						offset = string_parse_float(get_token_value(tokens, src, i));
+						break;
+
+					case 0x20 .. 0xFF: {
+						var sym = tokens[i+TOK_type];
+						if (sym == ',' || sym == '}') {
+							i -= TOK_SIZE;
+							break;
+						}
+						if (sym != '+' && sym != '-') {
+							return 0, error({"expected + or - at line ", tokens[i+TOK_line]});
+						}
+						i += TOK_SIZE;
+						switch (tokens[i+TOK_type]) {
+							case TOK_IDENT: {
+								var ident = get_token_value(tokens, src, i);
+								if (ident == "small") {
+									offset = OFFSET_SMALL;
+								}
+								else if (ident == "medium") {
+									offset = OFFSET_MEDIUM;
+								}
+								else if (ident == "large") {
+									offset = OFFSET_LARGE;
+								}
+								else {
+									return 0, error({"expected 'small', 'medium' or 'large' at line ", tokens[i+TOK_line]});
+								}
+								break;
+							}
+							
+							case TOK_NUMBER:
+							case TOK_FLOAT_NUMBER: {
+								var val = get_token_value(tokens, src, i);
+								if (val[0] == '-') {
+									return 0, error({"expected offset at line ", tokens[i+TOK_line]});
+								}
+								offset = string_parse_float(val);
+								break;
+							}
+							
+							default:
+								return 0, error({"expected offset at line ", tokens[i+TOK_line]});
+						}
+						if (sym == '-') {
+							offset = {0.0 - offset};
+						}
+						break;
+					}
+
+					default:
+						return 0, error({"expected offset at line ", tokens[i+TOK_line]});
+				}
+
+				value[] = offset;
+				value[] = anchor;
+			}
+			else {
+				i -= TOK_SIZE;
+				value[] = null;
+				value[] = SIDE_NONE;
+				value[] = 0.0;
+				value[] = anchor;
+			}
+		}
+		else if (name == "label") {
+			i = expect_symbol(tokens, src, i, ':');
+			i = expect_type(tokens, src, i, TOK_STRING, "string");
+			value = get_token_string(tokens, src, i);
+		}
+		else {
+			if (extra_handler_func) {
+				var value_out = [null];
+				i = extra_handler_func(tokens, src, i, params, name, value_out);
+				value = value_out[0];
+			}
+			else {
+				return 0, error({"unknown property '", name, "' at line ", tokens[i+TOK_line]});
+			}
+		}
+
+		if (prefix) {
+			name = {prefix, "_", name};
+		}
+		
+		if (hash_contains(params, name)) {
+			return 0, error({"duplicate property at line ", tokens[i+TOK_line]});
+		}
+		params{name} = value;
+
+		i += TOK_SIZE;
+		if (tokens[i+TOK_type] == ',') {
+			continue;
+		}
+		if (tokens[i+TOK_type] == '}') {
+			break;
+		}
+		return 0, error({"expected , or { at line ", tokens[i+TOK_line]});
+	}
+
+	return i;
+}
+
+function @parse_system_views(tokens, src, i, views, prefix, extra_handler_func)
+{
+	i = expect_symbol(tokens, src, i, '{');
+
+	for (;;) {
+		i += TOK_SIZE;
+		if (tokens[i+TOK_type] == '}') break;
+		i -= TOK_SIZE;
+		i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+		var var_name = get_token_value(tokens, src, i);
+		var view = null;
+		for (var j=0; j<length(views); j++) {
+			if (views[j]->VIEW_name == var_name) {
+				view = views[j];
+				break;
+			}
+		}
+		if (!view) {
+			return 0, error({"unknown view name at line ", tokens[i+TOK_line]});
+		}
+		i = expect_symbol(tokens, src, i, '{');
+		i = parse_params(tokens, src, i, view->VIEW_params, prefix, extra_handler_func);
+		i = expect_symbol(tokens, src, i, ';');
+	}
+
+	i = expect_symbol(tokens, src, i, ';');
+	return i;
+}
+
+function @parse_cocoa_params(tokens, src, i, params, name, value_out)
+{
+	var value;
+
+	if (name == "bezel_style") {
+		i = expect_symbol(tokens, src, i, ':');
+		i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+		var enum_name = get_token_value(tokens, src, i);
+		switch (length(enum_name)) {
+			case 4:
+				if (enum_name == "push") { value = "BS_PUSH"; break; }
+				if (enum_name == "help") { value = "BS_HELP"; break; }
+				break;
+			case 5:
+				if (enum_name == "round") { value = "BS_ROUND"; break; }
+				if (enum_name == "bevel") { value = "BS_BEVEL"; break; }
+				break;
+			case 6:
+				if (enum_name == "square") { value = "BS_SQUARE"; break; }
+				if (enum_name == "inline") { value = "BS_INLINE"; break; }
+				break;
+			case 8:
+				if (enum_name == "gradient") { value = "BS_GRADIENT"; break; }
+				if (enum_name == "textured") { value = "BS_TEXTURED"; break; }
+				if (enum_name == "recessed") { value = "BS_RECESSED"; break; }
+				break;
+			case 10:
+				if (enum_name == "disclosure") { value = "BS_DISCLOSURE"; break; }
+				break;
+			case 12:
+				if (enum_name == "rounded_rect") { value = "BS_ROUNDED_RECT"; break; }
+				break;
+			case 16:
+				if (enum_name == "rounded_textured") { value = "BS_ROUNDED_TEXTURED"; break; }
+				break;
+			case 19:
+				if (enum_name == "disclosure_triangle") { value = "BS_DISCLOSURE_TRIANGLE"; break; }
+				break;
+		}
+		if (!value) {
+			return 0, error({"unknown value at line ", tokens[i+TOK_line]});
+		}
+	}
+	else if (name == "control_size") {
+		i = expect_symbol(tokens, src, i, ':');
+		i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+		var enum_name = get_token_value(tokens, src, i);
+		switch (length(enum_name)) {
+			case 4: if (enum_name == "mini") value = "CS_MINI"; break;
+			case 5: if (enum_name == "small") value = "CS_SMALL"; break;
+			case 7: if (enum_name == "regular") value = "CS_REGULAR"; break;
+		}
+		if (!value) {
+			return 0, error({"unknown value at line ", tokens[i+TOK_line]});
+		}
+	}
+	else if (name == "search") {
+		value = true;
+	}
+	else {
+		return 0, error({"unknown property '", name, "' at line ", tokens[i+TOK_line]});
+	}
+
+	value_out[0] = value;
+	return i;
+}
+
+function @parse_haiku_params(tokens, src, i, params, name, value_out)
+{
+	return 0, error({"unknown property '", name, "' at line ", tokens[i+TOK_line]});
+}
+
+function @process_form(view)
+{
+	return "";
+}
+
+function @process_label(view)
+{
+	var name = view->VIEW_name;
+	var params = view->VIEW_params;
+	var label = hash_get(params, "label", "");
+	
+	var s = {"{ var label = ", token_escape_string(label), ";"};
+	var cocoa_label = hash_get(params, "cocoa_label", null);
+	if (cocoa_label) {
+		array_append(s, {"if (cocoa_is_present) label = ", token_escape_string(cocoa_label), ";"});
+	}
+	var haiku_label = hash_get(params, "haiku_label", null);
+	if (haiku_label) {
+		array_append(s, {"if (haiku_is_present) label = ", token_escape_string(haiku_label), ";"});
+	}
+	array_append(s, {"parent.", name, " = Label::create(label);"});
+	
+	array_append(s, "}");
+	return s;
+}
+
+function @process_text_field(view)
+{
+	var name = view->VIEW_name;
+	var params = view->VIEW_params;
+	
+	var s = {"{"};
+	var cocoa_search = hash_get(params, "cocoa_search", false);
+	if (cocoa_search) {
+		array_append(s, "if (cocoa_is_present) {");
+		array_append(s, {"parent.", name, " = Cocoa::create_search_field();"});
+		array_append(s, "} else {");
+	}
+	array_append(s, {"parent.", name, " = TextField::create();"});
+	if (cocoa_search) {
+		array_append(s, "}");
+	}
+	array_append(s, "}");
+	return s;
+}
+
+function @process_text_area(view)
+{
+	var name = view->VIEW_name;
+	var params = view->VIEW_params;
+	
+	var s = {"{"};
+	array_append(s, {"parent.", name, " = TextArea::create();"});
+	array_append(s, "}");
+	return s;
+}
+
+function @process_button(view)
+{
+	var name = view->VIEW_name;
+	var params = view->VIEW_params;
+	var label = hash_get(params, "label", "");
+	
+	var s = {"{ var label = ", token_escape_string(label), ";"};
+	var cocoa_label = hash_get(params, "cocoa_label", null);
+	if (cocoa_label) {
+		array_append(s, {"if (cocoa_is_present) label = ", token_escape_string(cocoa_label), ";"});
+	}
+	var haiku_label = hash_get(params, "haiku_label", null);
+	if (haiku_label) {
+		array_append(s, {"if (haiku_is_present) label = ", token_escape_string(haiku_label), ";"});
+	}
+	array_append(s, {"parent.", name, " = Button::create(label, 0);"});
+	
+	var cocoa_bezel_style = hash_get(params, "cocoa_bezel_style", -1);
+	if (cocoa_bezel_style != -1) {
+		array_append(s, {"Cocoa::set_bezel_style(parent.", name, ", ", cocoa_bezel_style, ");"});
+	}
+	
+	var cocoa_control_size = hash_get(params, "cocoa_control_size", -1);
+	if (cocoa_control_size != -1) {
+		array_append(s, {"Cocoa::set_control_size(parent.", name, ", ", cocoa_control_size, ");"});
+	}
+	
+	array_append(s, "}");
+	return s;
+}
+
+function @process_table(view)
+{
+	var name = view->VIEW_name;
+	var params = view->VIEW_params;
+	
+	var s = {"{"};
+	array_append(s, {"parent.", name, " = Table::create();"});
+	array_append(s, "}");
+	return s;
+}

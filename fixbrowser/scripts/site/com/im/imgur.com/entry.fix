@@ -1,0 +1,25 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	var elems = element_query_all(document, "div.post-image-container[id]");
+	for (var i=0; i<length(elems); i++) {
+		var id = element_get_attr(elems[i], "id");
+		var div = element_query(elems[i], "div.post-image");
+		if (div) {
+			var src = {"https://i.imgur.com/", id, ".jpg"};
+
+			var img = element_create("img");
+			element_set_attr(img, "src", src);
+			element_set_attr(img, "class", "post-image-placeholder");
+			element_set_attr(img, "style", "opacity: 1");
+			element_set_attr(img, "border", "0");
+
+			var link = element_create("a");
+			element_set_attr(link, "href", src);
+			element_append_child(link, img);
+			
+			element_append_child(div, link);
+		}
+	}
+}

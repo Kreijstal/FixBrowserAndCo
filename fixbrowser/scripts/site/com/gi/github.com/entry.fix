@@ -1,0 +1,13 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "github.githubassets.com")) return true;
+	if (domain_ends_with(dest, "githubusercontent.com")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	remove_element(document, "div.signup-prompt-bg");
+}

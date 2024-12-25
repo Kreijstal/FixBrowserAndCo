@@ -1,0 +1,184 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "gui/font";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/native/windows";
+import "gui/native/cocoa";
+
+const {
+	THEME_WINDOWS_CLASSIC = 1,
+	THEME_WINDOWS,
+	THEME_COCOA_FLAT,
+	THEME_CUSTOM
+};
+
+var @theme_type: Integer;
+var @default_font: SystemFont;
+var @default_font2: SystemFont;
+
+function get_theme_type(): Integer
+{
+	if (theme_type == 0) {
+		if (Windows::is_present()) {
+			theme_type = THEME_WINDOWS_CLASSIC;
+			if (Windows::get_theme_image(1, 1, "BUTTON", 1, 1)) {
+				theme_type = THEME_WINDOWS;
+			}
+			Windows::register_theme_change_notify(reset_theme#0);
+		}
+		/*
+		else if (Cocoa::is_present()) {
+			theme_type = THEME_COCOA_FLAT;
+		}
+		*/
+		else {
+			theme_type = THEME_CUSTOM;
+		}
+	}
+	return theme_type;
+}
+
+function @reset_theme()
+{
+	theme_type = 0;
+}
+
+function get_default_font(): SystemFont
+{
+	if (!default_font) {
+		if (Windows::is_present()) {
+			default_font = Windows::get_system_font(FONT_MESSAGE);
+		}
+		else if (Cocoa::is_present()) {
+			//default_font = SystemFont::create("", 11, FONT_NORMAL);
+		}
+		if (!default_font) {
+			default_font = SystemFont::create("Tahoma", 11, FONT_NORMAL);
+			default_font2 = SystemFont::create("Tahoma", 22, FONT_NORMAL);
+		}
+	}
+	return default_font;
+}
+
+function adjust_default_font(view: SubView, font: SystemFont): SystemFont
+{
+	if (Cocoa::is_present()) {
+		var scale = view.get_scale();
+		if (scale > 1.0 && font === default_font) {
+			font = default_font2;
+		}
+		else if (scale == 1.0 && font === default_font2) {
+			font = default_font;
+		}
+	}
+	return font;
+}
+
+function draw_rect(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)
+{
+	if (width < 1 || height < 1) return;
+	if (width < 2 || height < 2) {
+		p.fill_rect(x, y, width, height, color);
+		return;
+	}
+	p.fill_rect(x, y, width, 1, color);
+	p.fill_rect(x, y+height-1, width, 1, color);
+	p.fill_rect(x, y+1, 1, height-2, color);
+	p.fill_rect(x+width-1, y+1, 1, height-2, color);
+}
+
+function draw_highlight_rect(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, color1: Integer, color2: Integer, color3: Integer)
+{
+	if (width < 1 || height < 1) return;
+	if (width < 2 || height < 2) {
+		p.fill_rect(x, y, width, height, color3);
+		return;
+	}
+	p.fill_rect(x, y, width-1, 1, color1);
+	p.fill_rect(x, y+1, 1, height-2, color1);
+	p.fill_rect(x+width-1, y, 1, height, color2);
+	p.fill_rect(x, y+height-1, width-1, 1, color2);
+}
+
+function draw_rubber_band(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)
+{
+	var img = Image::create(2, 2);
+	var pixels = img.get_pixels();
+	pixels[0] = color;
+	pixels[3] = color;
+
+	var tr = Transform::create();
+	tr.translate(x+1, y);
+	p.fill_rect(x, y, width, 1, Shader { blend(sample_nearest(img, tr)); });
+	p.fill_rect(x, y+height-1, width, 1, Shader { blend(sample_nearest(img, tr)); });
+	p.fill_rect(x, y+1, 1, height-2, Shader { blend(sample_nearest(img, tr)); });
+	p.fill_rect(x+width-1, y+1, 1, height-2, Shader { blend(sample_nearest(img, tr)); });
+}
+
+function draw_pattern(p: Painter, ox: Integer, oy: Integer, x: Integer, y: Integer, width: Integer, height: Integer, color1: Integer, color2: Integer)
+{
+	var img = Image::create(2, 2);
+	var pixels = img.get_pixels();
+	pixels[0] = color1;
+	pixels[1] = color2;
+	pixels[2] = color2;
+	pixels[3] = color1;
+
+	var tr = Transform::create();
+	tr.translate(ox, oy);
+	p.fill_rect(x, y, width, height, Shader {
+		replace(sample_nearest(img, tr));
+	});
+}
+
+function custom_draw_button(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, state: Integer, scale: Float)
+{
+	var extra = round(scale - 1.0) * 0.5;
+	var shape = Shape::round_rect(x+0.5+extra, y+0.5+extra, width-1-extra*2, height-1-extra*2, 2*scale, 2*scale);
+	var color = 0xFFFFFFFF;
+	if ((state & BUTTON_HOVER) != 0) {
+		color = 0xFFEEEEEE;
+	}
+	if ((state & BUTTON_PRESSED) != 0) {
+		color = 0xFFCCCCCC;
+	}
+	p.fill_shape(shape, color);
+	p.fill_shape(shape.get_outline(iround(1.0*scale)), 0xFFCCCCCC);
+}
+
+function custom_draw_slider(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, state: Integer, scale: Float)
+{
+	var shape = Shape::round_rect(x+0.5, y+0.5, width-1, height-1, 2*scale, 2*scale);
+	var color = 0xFFCCCCCC;
+	if ((state & BUTTON_HOVER) != 0) {
+		color = 0xFFD4D4D4;
+	}
+	if ((state & BUTTON_PRESSED) != 0) {
+		color = 0xFFBBBBBB;
+	}
+	p.fill_shape(shape, color);
+}

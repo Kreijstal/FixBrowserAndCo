@@ -1,0 +1,1898 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/charset/charset";
+import "util/string";
+
+const {
+	TOKEN_type = 0,
+	TOKEN_value = 1,
+
+	// for TOKEN_HASH:
+	TOKEN_type_id = 2,
+
+	// for TOKEN_DIMENSION:
+	TOKEN_unit = 2,
+
+	// for TOKEN_UNICODE_RANGE:
+	TOKEN_start_char = 2,
+	TOKEN_end_char = 3,
+
+	@TOKEN_SIZE = 4
+};
+
+const {
+	@PARSER_buf = TOKEN_SIZE,
+	@PARSER_pos,
+	@PARSER_again,
+	@PARSER_tokens,
+	@PARSER_SIZE
+};
+
+const {
+	SIMPLEBLOCK_associated_token = PARSER_SIZE,
+	@SIMPLEBLOCK_SIZE
+};
+
+const {
+	FUNCTION_name = PARSER_SIZE,
+	@FUNCTION_SIZE
+};
+
+const {
+	DECLARATION_name = PARSER_SIZE,
+	DECLARATION_important,
+	@DECLARATION_SIZE
+};
+
+const {
+	TOKEN_EOF,
+	TOKEN_IDENT,
+	@TOKEN_FUNCTION,
+	TOKEN_AT_KEYWORD,
+	TOKEN_HASH,
+	TOKEN_STRING,
+	TOKEN_BAD_STRING,
+	TOKEN_URL,
+	TOKEN_BAD_URL,
+	TOKEN_DELIM,
+	TOKEN_NUMBER,
+	TOKEN_PERCENTAGE,
+	TOKEN_DIMENSION,
+	TOKEN_UNICODE_RANGE,
+	TOKEN_INCLUDE_MATCH,
+	TOKEN_DASH_MATCH,
+	TOKEN_PREFIX_MATCH,
+	TOKEN_SUFFIX_MATCH,
+	TOKEN_SUBSTRING_MATCH,
+	TOKEN_COLUMN,
+	TOKEN_WHITESPACE,
+	TOKEN_CDO,
+	TOKEN_CDC,
+	TOKEN_COLON,
+	TOKEN_SEMICOLON,
+	TOKEN_COMMA,
+	TOKEN_SQUARE_LBRACKET,
+	@TOKEN_SQUARE_RBRACKET,
+	TOKEN_LBRACKET,
+	@TOKEN_RBRACKET,
+	TOKEN_CURLY_LBRACKET,
+	@TOKEN_CURLY_RBRACKET,
+
+	COMPONENT_SIMPLE_BLOCK,
+	COMPONENT_FUNCTION,
+	COMPONENT_RULE,
+	COMPONENT_DECLARATION
+};
+
+const {
+	RULE_prelude,
+	RULE_name,
+	RULE_value,
+	@RULE_SIZE
+};
+
+const {
+	ANB_step,
+	ANB_offset
+};
+
+function @get_buf(buf, off)
+{
+	if (off < length(buf)) {
+		return buf[off];
+	}
+	return 0;
+}
+
+function @create_buffer()
+{
+	var par = object_create(PARSER_SIZE);
+	par->PARSER_tokens = [];
+	return par;
+}
+
+function rewind_buffer(par)
+{
+	par->PARSER_pos = 0;
+	par->PARSER_again = false;
+}
+
+function @add_token(buf, token)
+{
+	var tokens = buf->PARSER_tokens;
+	var len = length(tokens);
+	array_set_length(tokens, len + TOKEN_SIZE);
+	array_copy(tokens, len, token, 0, TOKEN_SIZE);
+}
+
+function @clone_token(token)
+{
+	return array_extract(token, 0, TOKEN_SIZE);
+}
+
+function @get_token_count(buf)
+{
+	var tokens = buf->PARSER_tokens;
+	return length(tokens) / TOKEN_SIZE;
+}
+
+function @get_token_idx(idx)
+{
+	return idx * TOKEN_SIZE;
+}
+
+function @token_type_to_string(type)
+{
+	switch (type) {
+		case TOKEN_IDENT:            return "ident";
+		case TOKEN_FUNCTION:         return "function";
+		case TOKEN_AT_KEYWORD:       return "at_keyword";
+		case TOKEN_HASH:             return "hash";
+		case TOKEN_STRING:           return "string";
+		case TOKEN_BAD_STRING:       return "bad_string";
+		case TOKEN_URL:              return "url";
+		case TOKEN_BAD_URL:          return "bad_url";
+		case TOKEN_DELIM:            return "delim";
+		case TOKEN_NUMBER:           return "number";
+		case TOKEN_PERCENTAGE:       return "percentage";
+		case TOKEN_DIMENSION:        return "dimension";
+		case TOKEN_UNICODE_RANGE:    return "unicode_range";
+		case TOKEN_INCLUDE_MATCH:    return "include_match";
+		case TOKEN_DASH_MATCH:       return "dash_match";
+		case TOKEN_PREFIX_MATCH:     return "prefix_match";
+		case TOKEN_SUFFIX_MATCH:     return "suffix_match";
+		case TOKEN_SUBSTRING_MATCH:  return "substring_match";
+		case TOKEN_COLUMN:           return "column";
+		case TOKEN_WHITESPACE:       return "whitespace";
+		case TOKEN_CDO:              return "'<!--'";
+		case TOKEN_CDC:              return "'-->'";
+		case TOKEN_COLON:            return "':'";
+		case TOKEN_SEMICOLON:        return "';'";
+		case TOKEN_COMMA:            return "','";
+		case TOKEN_SQUARE_LBRACKET:  return "'['";
+		case TOKEN_SQUARE_RBRACKET:  return "']'";
+		case TOKEN_LBRACKET:         return "'('";
+		case TOKEN_RBRACKET:         return "')'";
+		case TOKEN_CURLY_LBRACKET:   return "'{'";
+		case TOKEN_CURLY_RBRACKET:   return "'}'";
+
+		case COMPONENT_SIMPLE_BLOCK: return "SimpleBlock";
+		case COMPONENT_FUNCTION:     return "Function";
+		case COMPONENT_RULE:         return "Rule";
+		case COMPONENT_DECLARATION:  return "Declaration";
+	}
+
+	return {type};
+}
+
+function dump_token(token, level)
+{
+	var s = {""};
+	for (var i=0; i<level; i++) {
+		s[] = ' ';
+		s[] = ' ';
+	}
+
+	string_append(s, {"token type=", token_type_to_string(token->TOKEN_type)});
+
+	switch (token->TOKEN_type) {
+		case TOKEN_IDENT:
+		case TOKEN_FUNCTION:
+		case TOKEN_AT_KEYWORD:
+		case TOKEN_HASH:
+		case TOKEN_STRING:
+		case TOKEN_BAD_STRING:
+		case TOKEN_URL:
+		case TOKEN_BAD_URL:
+			string_append(s, {" value='", token->TOKEN_value, "'"});
+			break;
+
+		case TOKEN_NUMBER:
+		case TOKEN_PERCENTAGE:
+			string_append(s, {" value=", token->TOKEN_value});
+			break;
+
+		case TOKEN_DELIM:
+			string_append(s, {" value='", string_char(token->TOKEN_value), "'"});
+			break;
+	}
+
+	switch (token->TOKEN_type) {
+		case TOKEN_HASH:
+			string_append(s, {" type_id=", token->TOKEN_type_id? "true":"false"});
+			break;
+
+		case TOKEN_UNICODE_RANGE:
+			string_append(s, {" from=0x", string_pad_left(string_int_hex(token->TOKEN_start_char), 4, '0'), " to=0x", string_pad_left(string_int_hex(token->TOKEN_end_char), 4, '0')});
+			break;
+
+		case TOKEN_DIMENSION:
+			string_append(s, {" value=", token->TOKEN_value, " unit='", token->TOKEN_unit, "'"});
+			break;
+
+		case COMPONENT_SIMPLE_BLOCK:
+			string_append(s, {" associated_token=", token_type_to_string(token->TOKEN_value->SIMPLEBLOCK_associated_token)});
+			break;
+
+		case COMPONENT_FUNCTION:
+			string_append(s, {" name='", token->TOKEN_value->FUNCTION_name, "'"});
+			break;
+
+		case COMPONENT_DECLARATION:
+			string_append(s, {" name='", token->TOKEN_value->DECLARATION_name, "'"});
+			break;
+	}
+
+	log(s);
+
+	if (token->TOKEN_type == COMPONENT_SIMPLE_BLOCK || token->TOKEN_type == COMPONENT_FUNCTION || token->TOKEN_type == COMPONENT_DECLARATION) {
+		var block = token->TOKEN_value;
+		rewind_buffer(block);
+		while (next_token(block) != TOKEN_EOF) {
+			dump_token(block, level+1);
+		}
+	}
+	if (token->TOKEN_type == COMPONENT_RULE) {
+		dump_rule(token->TOKEN_value, level+1);
+	}
+}
+
+function next_token(par)
+{
+	if (par->PARSER_again) {
+		par->PARSER_again = false;
+		return par->TOKEN_type;
+	}
+	var tokens = par->PARSER_tokens;
+	if (tokens) {
+		var pos = par->PARSER_pos;
+		if (pos < length(tokens)) {
+			array_copy(par, 0, tokens, pos, TOKEN_SIZE);
+			par->PARSER_pos = pos + TOKEN_SIZE;
+		}
+		else {
+			par->TOKEN_type = TOKEN_EOF;
+		}
+	}
+	else {
+		par->TOKEN_type = consume_token(par);
+	}
+	return par->TOKEN_type;
+}
+
+function back_token(par)
+{
+	par->PARSER_again = true;
+}
+
+function @consume_token(par)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+	if (pos == length(buf)) return TOKEN_EOF;
+
+	var c = buf[pos++];
+
+	while (c == '/' && pos < length(buf) && buf[pos] == '*') {
+		pos++;
+		while (pos < length(buf)) {
+			c = buf[pos++];
+			if (c == '*' && pos < length(buf) && buf[pos] == '/') {
+				pos++;
+				break;
+			}
+		}
+		if (pos == length(buf)) {
+			par->PARSER_pos = pos;
+			return TOKEN_EOF;
+		}
+		c = buf[pos++];
+	}
+	
+	switch (c) {
+		case '\n', '\t', ' ':
+			while (pos < length(buf)) {
+				switch (buf[pos]) {
+					case '\n', '\t', ' ':
+						pos++;
+						continue;
+				}
+				break;
+			}
+			par->PARSER_pos = pos;
+			return TOKEN_WHITESPACE;
+
+		case '"':
+			par->PARSER_pos = pos;
+			return consume_string_token(par, '"');
+
+		case '#':
+			par->TOKEN_type_id = false;
+			if (pos < length(buf)) {
+				var c2 = buf[pos];
+				if (is_name_code_char(c2) || (pos+1 < length(buf) && starts_with_valid_escape(c2, buf[pos+1]))) {
+					if (starts_identifier(c2, get_buf(buf, pos+1), get_buf(buf, pos+2))) {
+						par->TOKEN_type_id = true;
+					}
+					par->PARSER_pos = pos;
+					par->TOKEN_value = consume_name(par);
+					return TOKEN_HASH;
+				}
+			}
+			break;
+
+		case '$':
+			if (pos < length(buf) && buf[pos] == '=') {
+				pos++;
+				par->PARSER_pos = pos;
+				return TOKEN_SUFFIX_MATCH;
+			}
+			break;
+
+		case '\'':
+			par->PARSER_pos = pos;
+			return consume_string_token(par, '\'');
+
+		case '(':
+			par->PARSER_pos = pos;
+			return TOKEN_LBRACKET;
+
+		case ')':
+			par->PARSER_pos = pos;
+			return TOKEN_RBRACKET;
+
+		case '*':
+			if (pos < length(buf) && buf[pos] == '=') {
+				pos++;
+				par->PARSER_pos = pos;
+				return TOKEN_SUBSTRING_MATCH;
+			}
+			break;
+
+		case '+':
+			if (starts_number(c, get_buf(buf, pos), get_buf(buf, pos+1))) {
+				pos--;
+				par->PARSER_pos = pos;
+				return consume_numeric_token(par);
+			}
+			break;
+
+		case ',':
+			par->PARSER_pos = pos;
+			return TOKEN_COMMA;
+
+		case '-': {
+			var c2 = get_buf(buf, pos);
+			var c3 = get_buf(buf, pos+1);
+			if (starts_number(c, c2, c3)) {
+				pos--;
+				par->PARSER_pos = pos;
+				return consume_numeric_token(par);
+			}
+			if (starts_identifier(c, c2, c3)) {
+				pos--;
+				par->PARSER_pos = pos;
+				return consume_ident_like_token(par);
+			}
+			if (c2 == '-' && c3 == '>') {
+				pos += 2;
+				par->PARSER_pos = pos;
+				return TOKEN_CDC;
+			}
+			break;
+		}
+
+		case '.': {
+			var c2 = get_buf(buf, pos);
+			var c3 = get_buf(buf, pos+1);
+			if (starts_number(c, c2, c3)) {
+				pos--;
+				par->PARSER_pos = pos;
+				return consume_numeric_token(par);
+			}
+			break;
+		}
+
+		case ':':
+			par->PARSER_pos = pos;
+			return TOKEN_COLON;
+
+		case ';':
+			par->PARSER_pos = pos;
+			return TOKEN_SEMICOLON;
+
+		case '<':
+			if (pos+2 < length(buf) && buf[pos] == '!' && buf[pos+1] == '-' && buf[pos+2] == '-') {
+				pos += 3;
+				par->PARSER_pos = pos;
+				return TOKEN_CDO;
+			}
+			break;
+
+		case '@': {
+			var c2 = get_buf(buf, pos);
+			var c3 = get_buf(buf, pos+1);
+			var c4 = get_buf(buf, pos+2);
+			if (starts_identifier(c2, c3, c4)) {
+				par->PARSER_pos = pos;
+				par->TOKEN_value = consume_name(par);
+				return TOKEN_AT_KEYWORD;
+			}
+			break;
+		}
+
+		case '[':
+			par->PARSER_pos = pos;
+			return TOKEN_SQUARE_LBRACKET;
+
+		case '\\':
+			if (starts_with_valid_escape(c, get_buf(buf, pos))) {
+				pos--;
+				par->PARSER_pos = pos;
+				return consume_ident_like_token(par);
+			}
+			break;
+
+		case ']':
+			par->PARSER_pos = pos;
+			return TOKEN_SQUARE_RBRACKET;
+
+		case '^':
+			if (pos < length(buf) && buf[pos] == '=') {
+				pos++;
+				par->PARSER_pos = pos;
+				return TOKEN_PREFIX_MATCH;
+			}
+			break;
+
+		case '{':
+			par->PARSER_pos = pos;
+			return TOKEN_CURLY_LBRACKET;
+
+		case '}':
+			par->PARSER_pos = pos;
+			return TOKEN_CURLY_RBRACKET;
+
+		case '0'..'9':
+			pos--;
+			par->PARSER_pos = pos;
+			return consume_numeric_token(par);
+
+		case 'u', 'U': {
+			var c2 = get_buf(buf, pos);
+			if (c2 == '+') {
+				var c3 = get_buf(buf, pos+1);
+				if (is_hex_digit(c3) || c3 == '?') {
+					pos++;
+					par->PARSER_pos = pos;
+					return consume_unicode_range_token(par);
+				}
+			}
+
+			pos--;
+			par->PARSER_pos = pos;
+			return consume_ident_like_token(par);
+		}
+
+		case 'A'..'T', 'V'..'Z', 'a'..'t', 'v'..'z', 0x80..0x7FFFFFFF, '_':
+			pos--;
+			par->PARSER_pos = pos;
+			return consume_ident_like_token(par);
+
+		case '|':
+			if (pos < length(buf)) {
+				var c2 = buf[pos];
+				if (c2 == '=') {
+					pos++;
+					par->PARSER_pos = pos;
+					return TOKEN_DASH_MATCH;
+				}
+				if (c2 == '|') {
+					pos++;
+					par->PARSER_pos = pos;
+					return TOKEN_COLUMN;
+				}
+			}
+			break;
+
+		case '~':
+			if (pos < length(buf) && buf[pos] == '=') {
+				pos++;
+				par->PARSER_pos = pos;
+				return TOKEN_INCLUDE_MATCH;
+			}
+			break;
+	}
+
+	par->TOKEN_value = c;
+	par->PARSER_pos = pos;
+	return TOKEN_DELIM;
+}
+
+function @consume_string_token(par, end_char)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	var value = par->TOKEN_value = {""};
+
+	for (;;) {
+		if (pos == length(buf)) {
+			par->PARSER_pos = pos;
+			return TOKEN_STRING;
+		}
+
+		var c = buf[pos++];
+		if (c == end_char) {
+			par->PARSER_pos = pos;
+			return TOKEN_STRING;
+		}
+		
+		switch (c) {
+			case '\n':
+				par->PARSER_pos = pos - 1;
+				return TOKEN_BAD_STRING;
+
+			case '\\': {
+				if (pos == length(buf)) continue;
+				var c2 = buf[pos];
+				if (c2 == '\n') {
+					pos++;
+					continue;
+				}
+				if (starts_with_valid_escape(c, c2)) {
+					par->PARSER_pos = pos;
+					value[] = consume_escaped_char(par);
+					pos = par->PARSER_pos;
+				}
+				continue;
+			}
+			
+			default:
+				value[] = c;
+				continue;
+		}
+	}
+}
+
+function @starts_with_valid_escape(c1, c2)
+{
+	if (c1 != '\\') return false;
+	if (c2 == '\n') return false;
+	return true;
+}
+
+function @consume_escaped_char(par)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	for (;;) {
+		if (pos == length(buf)) {
+			par->PARSER_pos = pos;
+			return 0xFFFD;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case '0'..'9':
+			case 'a'..'f':
+			case 'A'..'F': {
+				var value = 0;
+				for (var i=0; i<6; i++) {
+					var ok = true;
+					switch (c) {
+						case '0'..'9': value = value*16 + (c - '0'); break;
+						case 'a'..'f': value = value*16 + (c - 'a' + 10); break;
+						case 'A'..'F': value = value*16 + (c - 'A' + 10); break;
+						default: ok = false; pos--;
+					}
+					if (!ok || pos == length(buf)-1) break;
+					c = buf[pos++];
+				}
+				if (pos < length(buf) && is_whitespace(buf[pos])) {
+					pos++;
+				}
+				if (value == 0 || (value >= 0xD800 && value <= 0xDFFF) || value > 0x10FFFF) {
+					value = 0xFFFD;
+				}
+				par->PARSER_pos = pos;
+				return value;
+			}
+
+			default:
+				par->PARSER_pos = pos;
+				return c;
+		}
+	}
+}
+
+function @consume_numeric_token(par)
+{
+	par->TOKEN_value = consume_number(par);
+
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	var c = get_buf(buf, pos);
+
+	if (starts_identifier(c, get_buf(buf, pos+1), get_buf(buf, pos+2))) {
+		par->TOKEN_unit = consume_name(par);
+		return TOKEN_DIMENSION;
+	}
+
+	if (c == '%') {
+		pos++;
+		par->PARSER_pos = pos;
+		return TOKEN_PERCENTAGE;
+	}
+
+	return TOKEN_NUMBER;
+}
+
+function @consume_number(par)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	var repr = {""};
+	var is_number = false;
+
+	var c = buf[pos];
+	if (c == '+' || c == '-') {
+		repr[] = c;
+		pos++;
+	}
+	
+	while (pos < length(buf)) {
+		c = buf[pos];
+		if (!is_digit(c)) break;
+		repr[] = c;
+		pos++;
+	}
+
+	if (pos+1 < length(buf) && buf[pos] == '.' && is_digit(buf[pos+1])) {
+		repr[] = buf[pos++];
+		repr[] = buf[pos++];
+		is_number = true;
+		while (pos < length(buf)) {
+			c = buf[pos];
+			if (!is_digit(c)) break;
+			repr[] = c;
+			pos++;
+		}
+	}
+
+	if (pos < length(buf) && (buf[pos] == 'e' || buf[pos] == 'E')) {
+		var has_sign_digit = (pos+2 < length(buf) && (buf[pos+1] == '-' || buf[pos+1] == '+') && is_digit(buf[pos+2]));
+		var has_digit = (pos+1 < length(buf) && is_digit(buf[pos+1]));
+		if (has_sign_digit || has_digit) {
+			repr[] = buf[pos++];
+			if (has_sign_digit) {
+				repr[] = buf[pos++];
+			}
+			repr[] = buf[pos++];
+			is_number = true;
+			while (pos < length(buf)) {
+				c = buf[pos];
+				if (!is_digit(c)) break;
+				repr[] = c;
+				pos++;
+			}
+		}
+	}
+
+	var value;
+	if (!is_number) {
+		var (r, e) = string_parse_int(repr);
+		if (e) {
+			is_number = true;
+		}
+		else {
+			value = r;
+		}
+	}
+	if (is_number) {
+		value = string_parse_float(repr);
+	}
+
+	par->PARSER_pos = pos;
+	return [repr, value, is_number];
+}
+
+function @consume_ident_like_token(par)
+{
+	var name = consume_name(par);
+
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	var c = get_buf(buf, pos);
+	if (c == '(') {
+		pos++;
+		if (length(name) == 3 && string_to_lower_case(name) == "url") {
+			par->PARSER_pos = pos;
+			return consume_url_token(par);
+		}
+		par->PARSER_pos = pos;
+		par->TOKEN_value = name;
+		return TOKEN_FUNCTION;
+	}
+	
+	par->TOKEN_value = name;
+	return TOKEN_IDENT;
+}
+
+function @consume_url_token(par)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	while (pos < length(buf)) {
+		var c = buf[pos];
+		if (!is_whitespace(c)) break;
+		pos++;
+	}
+
+	if (pos == length(buf)) {
+		return TOKEN_URL;
+	}
+
+	var c = buf[pos];
+	if (c == '"' || c == '\'') {
+		pos++;
+		par->PARSER_pos = pos;
+		var token = consume_string_token(par, c);
+		if (token == TOKEN_BAD_STRING) {
+			consume_remnants_of_bad_url(par);
+			return TOKEN_BAD_URL;
+		}
+		pos = par->PARSER_pos;
+		while (pos < length(buf)) {
+			c = buf[pos];
+			if (!is_whitespace(c)) break;
+			pos++;
+		}
+		if (pos == length(buf)) {
+			par->PARSER_pos = pos;
+			return TOKEN_URL;
+		}
+		if (buf[pos] == ')') {
+			pos++;
+			par->PARSER_pos = pos;
+			return TOKEN_URL;
+		}
+		par->PARSER_pos = pos;
+		consume_remnants_of_bad_url(par);
+		return TOKEN_BAD_URL;
+	}
+
+	var value = {""};
+
+	while (pos < length(buf)) {
+		c = buf[pos++];
+		switch (c) {
+			case ')':
+				par->PARSER_pos = pos;
+				par->TOKEN_value = value;
+				return TOKEN_URL;
+
+			case '\n', '\t', ' ':
+				while (pos < length(buf)) {
+					c = buf[pos];
+					if (!is_whitespace(c)) break;
+					pos++;
+				}
+				if (pos == length(buf)) {
+					par->PARSER_pos = pos;
+					par->TOKEN_value = value;
+					return TOKEN_URL;
+				}
+				if (pos < length(buf) && buf[pos] == ')') {
+					pos++;
+					par->PARSER_pos = pos;
+					par->TOKEN_value = value;
+					return TOKEN_URL;
+				}
+				par->PARSER_pos = pos;
+				consume_remnants_of_bad_url(par);
+				return TOKEN_BAD_URL;
+
+			case '"', '\'', '(':
+				par->PARSER_pos = pos;
+				consume_remnants_of_bad_url(par);
+				return TOKEN_BAD_URL;
+
+			case '\\':
+				if (pos < length(buf) && starts_with_valid_escape(c, buf[pos])) {
+					par->PARSER_pos = pos;
+					value[] = consume_escaped_char(par);
+					pos = par->PARSER_pos;
+					break;
+				}
+				par->PARSER_pos = pos;
+				consume_remnants_of_bad_url(par);
+				return TOKEN_BAD_URL;
+
+			default:
+				value[] = c;
+		}
+	}
+
+	par->PARSER_pos = pos;
+	par->TOKEN_value = value;
+	return TOKEN_URL;
+}
+
+function @consume_remnants_of_bad_url(par)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	while (pos < length(buf)) {
+		var c = buf[pos++];
+		if (c == ')') break;
+		if (pos < length(buf) && starts_with_valid_escape(c, buf[pos])) {
+			par->PARSER_pos = pos;
+			consume_escaped_char(par);
+			pos = par->PARSER_pos;
+		}
+	}
+}
+
+function @interpret_hex_number(buf, start, end, replacement)
+{
+	var value = 0;
+	for (var i=start; i<end; i++) {
+		var c = buf[i];
+		if (c == '?') c = replacement;
+		switch (c) {
+			case '0'..'9': value = value*16 + (c - '0'); break;
+			case 'a'..'f': value = value*16 + (c - 'a' + 10); break;
+			case 'A'..'F': value = value*16 + (c - 'A' + 10); break;
+		}
+	}
+	return value;
+}
+
+function @consume_unicode_range_token(par)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	var start = pos;
+	var cnt = 0;
+	var question_marks = false;
+
+	while (cnt < 6) {
+		var c = buf[pos];
+		if (!is_hex_digit(c)) break;
+		pos++;
+		cnt++;
+	}
+
+	while (cnt < 6) {
+		var c = buf[pos];
+		if (c != '?') break;
+		pos++;
+		cnt++;
+		question_marks = true;
+	}
+
+	if (question_marks) {
+		par->TOKEN_start_char = interpret_hex_number(buf, start, pos, '0');
+		par->TOKEN_end_char = interpret_hex_number(buf, start, pos, 'F');
+		par->PARSER_pos = pos;
+		return TOKEN_UNICODE_RANGE;
+	}
+
+	par->TOKEN_start_char = interpret_hex_number(buf, start, pos, '?');
+
+	if (pos+1 < length(buf) && buf[pos] == '-' && is_hex_digit(buf[pos+1])) {
+		pos++;
+		start = pos;
+		cnt = 0;
+		while (cnt < 6) {
+			var c = buf[pos];
+			if (!is_hex_digit(c)) break;
+			pos++;
+			cnt++;
+		}
+		par->TOKEN_end_char = interpret_hex_number(buf, start, pos, '?');
+	}
+	else {
+		par->TOKEN_end_char = par->TOKEN_start_char;
+	}
+
+	par->PARSER_pos = pos;
+	return TOKEN_UNICODE_RANGE;
+}
+
+function @starts_identifier(c1, c2, c3)
+{
+	if (is_name_start_code_char(c1)) {
+		return true;
+	}
+	
+	switch (c1) {
+		case '-':
+			return (is_name_start_code_char(c2) || starts_with_valid_escape(c2, c3));
+			
+		case '\\':
+			return starts_with_valid_escape(c1, c2);
+	}
+	return false;
+}
+
+function @starts_number(c1, c2, c3)
+{
+	switch (c1) {
+		case '+', '-':
+			if (is_digit(c2)) return true;
+			if (c2 == '.' && is_digit(c3)) return true;
+			return false;
+		
+		case '.':
+			if (is_digit(c2)) return true;
+			return false;
+
+		case '0'..'9':
+			return true;
+	}
+	return false;
+}
+
+function @consume_name(par)
+{
+	var buf = par->PARSER_buf;
+	var pos = par->PARSER_pos;
+
+	var result = {""};
+
+	for (;;) {
+		if (pos == length(buf)) {
+			par->PARSER_pos = pos;
+			return result;
+		}
+
+		var c = buf[pos++];
+		if (is_name_code_char(c)) {
+			result[] = c;
+			continue;
+		}
+
+		if (pos < length(buf) && starts_with_valid_escape(c, buf[pos])) {
+			par->PARSER_pos = pos;
+			result[] = consume_escaped_char(par);
+			pos = par->PARSER_pos;
+			continue;
+		}
+
+		par->PARSER_pos = pos-1;
+		return result;
+	}
+}
+
+function @is_whitespace(c)
+{
+	switch (c) {
+		case '\n', '\t', ' ': return true;
+	}
+	return false;
+}
+
+function @is_name_start_code_char(c)
+{
+	if (c >= 0x80) return true;
+	switch (c) {
+		case 'a'..'z', 'A'..'Z', '_':
+			return true;
+	}
+	return false;
+}
+
+function @is_name_code_char(c)
+{
+	if (is_name_start_code_char(c)) return true;
+	switch (c) {
+		case '0'..'9', '-':
+			return true;
+	}
+	return false;
+}
+
+function @is_digit(c)
+{
+	switch (c) {
+		case '0'..'9': return true;
+	}
+	return false;
+}
+
+function @is_hex_digit(c)
+{
+	switch (c) {
+		case '0'..'9': return true;
+		case 'a'..'f': return true;
+		case 'A'..'F': return true;
+	}
+	return false;
+}
+
+function parser_create(buf, charset)
+{
+	var new_buf = {""};
+	for (var i=0; i<length(buf); i++) {
+		var c = buf[i];
+		switch (c) {
+			case '\r':
+				if (i+1 < length(buf) && buf[i+1] == '\n') {
+					i++;
+				}
+			case 0x0C:
+				new_buf[] = '\n';
+				continue;
+
+			default:
+				new_buf[] = c;
+				continue;
+		}
+	}
+
+	charset_convert(charset, new_buf);
+
+	for (var i=0; i<length(buf); i++) {
+		if (buf[i] == 0) {
+			buf[i] = 0xFFFD;
+		}
+	}
+
+	var par = object_create(PARSER_SIZE);
+	par->PARSER_buf = new_buf;
+	return par;
+}
+
+function parse_stylesheet(par)
+{
+	return consume_list_of_rules(par, true);
+}
+
+function parse_list_of_rules(par)
+{
+	return consume_list_of_rules(par, false);
+}
+
+function parse_rule(par)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token == TOKEN_EOF) {
+		return 0, error("syntax error");
+	}
+	
+	var rule;
+	if (token == TOKEN_AT_KEYWORD) {
+		rule = consume_at_rule(par);
+	}
+	else {
+		rule = consume_qualified_rule(par);
+		if (!rule) {
+			return 0, error("syntax error");
+		}
+	}
+
+	token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token == TOKEN_EOF) {
+		return rule;
+	}
+	return 0, error("syntax error");
+}
+
+function parse_declaration(par)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token != TOKEN_IDENT) {
+		return 0, error("syntax error");
+	}
+	var decl = consume_declaration(par);
+	if (!decl) {
+		return 0, error("syntax error");
+	}
+	return decl;
+}
+
+function parse_list_of_declarations(par)
+{
+	return consume_list_of_declarations(par);
+}
+
+function parse_component_value(par)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token == TOKEN_EOF) {
+		return 0, error("syntax error");
+	}
+
+	back_token(par);
+	var value = clone_token(consume_component_value(par));
+
+	token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+
+	if (token == TOKEN_EOF) {
+		return value;
+	}
+	return 0, error("syntax error");
+}
+
+function parse_list_of_component_values(par)
+{
+	var buf = create_buffer();
+	for (;;) {
+		var value = consume_component_value(par);
+		if (value->TOKEN_type == TOKEN_EOF) break;
+		add_token(buf, value);
+	}
+	return buf;
+}
+
+function dump_rule(rule, level)
+{
+	var prefix = {""};
+	for (var i=0; i<level; i++) {
+		prefix[] = ' ';
+		prefix[] = ' ';
+	}
+	if (rule->RULE_name) {
+		log({prefix, "at-rule name='", rule->RULE_name, "'"});
+	}
+	else {
+		log({prefix, "rule"});
+	}
+	log({prefix, "  prelude:"});
+	rewind_buffer(rule->RULE_prelude);
+	while (next_token(rule->RULE_prelude) != TOKEN_EOF) {
+		dump_token(rule->RULE_prelude, level+2);
+	}
+	if (rule->RULE_value) {
+		log({prefix, "  block:"});
+		rewind_buffer(rule->RULE_value);
+		while (next_token(rule->RULE_value) != TOKEN_EOF) {
+			dump_token(rule->RULE_value, level+2);
+		}
+	}
+}
+
+function dump_rule_list(rules)
+{
+	log({"num_rules=", length(rules)});
+	for (var i=0; i<length(rules); i++) {
+		var rule = rules[i];
+		dump_rule(rule, 0);
+	}
+}
+
+function @consume_list_of_rules(par, toplevel)
+{
+	var rules = [];
+	
+	for (;;) {
+		var token = next_token(par);
+		switch (token) {
+			case TOKEN_WHITESPACE:
+				break;
+
+			case TOKEN_EOF:
+				return rules;
+
+			case TOKEN_CDO, TOKEN_CDC:
+				if (!toplevel) {
+					back_token(par);
+					var rule = consume_qualified_rule(par);
+					if (rule) rules[] = rule;
+				}
+				break;
+
+			case TOKEN_AT_KEYWORD: {
+				back_token(par);
+				var rule = consume_at_rule(par);
+				if (rule) rules[] = rule;
+				break;
+			}
+
+			default: {
+				back_token(par);
+				var rule = consume_qualified_rule(par);
+				if (rule) rules[] = rule;
+				break;
+			}
+		}
+	}
+}
+
+function @consume_at_rule(par)
+{
+	var rule = object_create(RULE_SIZE);
+	rule->RULE_prelude = create_buffer();
+	rule->RULE_name = par->TOKEN_value;
+	rule->RULE_value = null;
+
+	for (;;) {
+		var token = next_token(par);
+		switch (token) {
+			case TOKEN_SEMICOLON, TOKEN_EOF:
+				return rule;
+
+			case TOKEN_CURLY_LBRACKET:
+				rule->RULE_value = consume_simple_block(par);
+				return rule;
+
+			case COMPONENT_SIMPLE_BLOCK:
+				if (par->TOKEN_value->SIMPLEBLOCK_associated_token == TOKEN_CURLY_LBRACKET) {
+					rule->RULE_value = par->TOKEN_value;
+					return rule;
+				}
+				break;
+		}
+		back_token(par);
+		add_token(rule->RULE_prelude, consume_component_value(par));
+	}
+}
+
+function @consume_qualified_rule(par)
+{
+	var rule = object_create(RULE_SIZE);
+	rule->RULE_prelude = create_buffer();
+	rule->RULE_value = null;
+	
+	for (;;) {
+		var token = next_token(par);
+		switch (token) {
+			case TOKEN_EOF:
+				return null;
+
+			case TOKEN_CURLY_LBRACKET:
+				rule->RULE_value = consume_simple_block(par);
+				return rule;
+
+			case COMPONENT_SIMPLE_BLOCK:
+				if (par->TOKEN_value->SIMPLEBLOCK_associated_token == TOKEN_CURLY_LBRACKET) {
+					rule->RULE_value = par->TOKEN_value;
+					return rule;
+				}
+				break;
+		}
+		back_token(par);
+		add_token(rule->RULE_prelude, consume_component_value(par));
+	}
+}
+
+function @consume_list_of_declarations(par)
+{
+	var buf = create_buffer();
+
+	for (;;) {
+		var token = next_token(par);
+		switch (token) {
+			case TOKEN_WHITESPACE, TOKEN_SEMICOLON:
+				break;
+
+			case TOKEN_EOF:
+				return buf;
+
+			case TOKEN_AT_KEYWORD: {
+				var tok = object_create(TOKEN_SIZE);
+				tok->TOKEN_type = COMPONENT_RULE;
+				tok->TOKEN_value = consume_at_rule(par);
+				add_token(buf, tok);
+				break;
+			}
+
+			case TOKEN_IDENT: {
+				var tmp = create_buffer();
+				add_token(tmp, par);
+				token = next_token(par);
+				while (token != TOKEN_SEMICOLON && token != TOKEN_EOF) {
+					add_token(tmp, par);
+					token = next_token(par);
+				}
+				rewind_buffer(tmp);
+				next_token(tmp);
+				var decl = consume_declaration(tmp);
+				if (decl) {
+					add_token(buf, decl);
+				}
+				break;
+			}
+
+			default: {
+				for (;;) {
+					consume_component_value(par);
+					token = next_token(par);
+					if (token == TOKEN_SEMICOLON || token == TOKEN_EOF) {
+						break;
+					}
+					back_token(par);
+				}
+				break;
+			}
+		}
+	}
+}
+
+function @consume_declaration(par)
+{
+	var decl = object_extend(create_buffer(), DECLARATION_SIZE);
+	decl->TOKEN_type = COMPONENT_DECLARATION;
+	decl->TOKEN_value = decl;
+	decl->DECLARATION_name = par->TOKEN_value;
+
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token != TOKEN_COLON) {
+		return null;
+	}
+
+	token = next_token(par);
+	while (token != TOKEN_EOF) {
+		add_token(decl, par);
+		token = next_token(par);
+	}
+
+	var tokens = decl->PARSER_tokens;
+	var count = get_token_count(decl);
+	while (count > 0 && tokens[get_token_idx(count-1)+TOKEN_type] == TOKEN_WHITESPACE) {
+		count--;
+	}
+	if (count >= 2) {
+		var idx = get_token_idx(count-2);
+		if (tokens[idx+TOKEN_type] == TOKEN_DELIM && tokens[idx+TOKEN_value] == '!') {
+			idx = get_token_idx(count-1);
+			if (tokens[idx+TOKEN_type] == TOKEN_IDENT) {
+				var value = tokens[idx+TOKEN_value];
+				if (length(value) == 9 && string_to_lower_case(value) == "important") {
+					array_set_length(tokens, get_token_idx(count-2));
+					decl->DECLARATION_important = true;
+				}
+			}
+		}
+	}
+	return decl;
+}
+
+function @consume_component_value(par)
+{
+	var token = next_token(par);
+	switch (token) {
+		case TOKEN_CURLY_LBRACKET, TOKEN_SQUARE_LBRACKET, TOKEN_LBRACKET:
+			return consume_simple_block(par);
+
+		case TOKEN_FUNCTION:
+			return consume_function(par);
+	}
+	return par;
+}
+
+function @consume_simple_block(par)
+{
+	var block = object_extend(create_buffer(), SIMPLEBLOCK_SIZE);
+	block->TOKEN_type = COMPONENT_SIMPLE_BLOCK;
+	block->TOKEN_value = block;
+	block->SIMPLEBLOCK_associated_token = par->TOKEN_type;
+
+	var mirror;
+	switch (par->TOKEN_type) {
+		case TOKEN_CURLY_LBRACKET:  mirror = TOKEN_CURLY_RBRACKET; break;
+		case TOKEN_SQUARE_LBRACKET: mirror = TOKEN_SQUARE_RBRACKET; break;
+		case TOKEN_LBRACKET:        mirror = TOKEN_RBRACKET; break;
+	}
+
+	for (;;) {
+		var token = next_token(par);
+		if (token == mirror) {
+			return block;
+		}
+		switch (token) {
+			case TOKEN_EOF:
+				return block;
+
+			default:
+				back_token(par);
+				add_token(block, consume_component_value(par));
+				break;
+		}
+	}
+}
+
+function @consume_function(par)
+{
+	var func = object_extend(create_buffer(), FUNCTION_SIZE);
+	func->TOKEN_type = COMPONENT_FUNCTION;
+	func->TOKEN_value = func;
+	func->FUNCTION_name = {par->TOKEN_value};
+
+	for (;;) {
+		var token = next_token(par);
+		switch (token) {
+			case TOKEN_EOF, TOKEN_RBRACKET:
+				return func;
+
+			default:
+				back_token(par);
+				add_token(func, consume_component_value(par));
+				break;
+		}
+	}
+}
+
+function is_anb_syntax_start(par)
+{
+	switch (par->TOKEN_type) {
+		case TOKEN_IDENT: {
+			var lc = string_to_lower_case(par->TOKEN_value);
+			if (lc == "odd") {
+				return true;
+			}
+			if (lc == "even") {
+				return true;
+			}
+			if (lc == "n") {
+				return true;
+			}
+			if (lc == "-n") {
+				return true;
+			}
+			if (lc == "n-") {
+				return true;
+			}
+			if (lc == "-n-") {
+				return true;
+			}
+			if (string_starts_with(lc, "n-")) {
+				var (r, e) = string_parse_int(string_substring(lc, 1));
+				return !e;
+			}
+			if (string_starts_with(lc, "-n-")) {
+				var (r, e) = string_parse_int(string_substring(lc, 2));
+				return !e;
+			}
+			break;
+		}
+
+		case TOKEN_NUMBER: {
+			var val = par->TOKEN_value;
+			if (!val[2]) {
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_DIMENSION: {
+			var val = par->TOKEN_value;
+			var unit = string_to_lower_case(par->TOKEN_unit);
+			if (val[2]) break;
+
+			if (unit == "n") {
+				return true;
+			}
+			if (unit == "n-") {
+				return true;
+			}
+			if (string_starts_with(unit, "n-")) {
+				var (r, e) = string_parse_int(string_substring(unit, 1));
+				return !e;
+			}
+			break;
+		}
+
+		case TOKEN_DELIM: {
+			if (par->TOKEN_value == '+') {
+				return true;
+			}
+			break;
+		}
+	}
+
+	return false;
+}
+
+function parse_anb_syntax(par)
+{
+	var token = next_token(par);
+	switch (token) {
+		case TOKEN_IDENT: {
+			var lc = string_to_lower_case(par->TOKEN_value);
+			if (lc == "odd") {
+				return [2, 1];
+			}
+			if (lc == "even") {
+				return [2, 0];
+			}
+			if (lc == "n") {
+				var result = parse_anb_plusminus(par, 1);
+				if (result) return result;
+				result = parse_anb_signed_integer(par, 1);
+				if (result) return result;
+				return [1, 0];
+			}
+			if (lc == "-n") {
+				var result = parse_anb_plusminus(par, -1);
+				if (result) return result;
+				result = parse_anb_signed_integer(par, -1);
+				if (result) return result;
+				return [-1, 0];
+			}
+			if (lc == "n-") {
+				return parse_anb_signless_integer(par, 1, true);
+			}
+			if (lc == "-n-") {
+				return parse_anb_signless_integer(par, -1, true);
+			}
+			if (string_starts_with(lc, "n-")) {
+				return [1, string_parse_int(string_substring(lc, 1))];
+			}
+			if (string_starts_with(lc, "-n-")) {
+				return [-1, string_parse_int(string_substring(lc, 2))];
+			}
+			break;
+		}
+
+		case TOKEN_NUMBER: {
+			var val = par->TOKEN_value;
+			if (!val[2]) {
+				return [0, val[1]];
+			}
+			break;
+		}
+
+		case TOKEN_DIMENSION: {
+			var val = par->TOKEN_value;
+			var unit = string_to_lower_case(par->TOKEN_unit);
+			if (val[2]) break;
+
+			if (unit == "n") {
+				var result = parse_anb_plusminus(par, val[1]);
+				if (result) return result;
+				result = parse_anb_signed_integer(par, val[1]);
+				if (result) return result;
+				return [val[1], 0];
+			}
+			if (unit == "n-") {
+				return parse_anb_signless_integer(par, val[1], true);
+			}
+			if (string_starts_with(unit, "n-")) {
+				return [val[1], string_parse_int(string_substring(unit, 1))];
+			}
+			break;
+		}
+
+		case TOKEN_DELIM: {
+			if (par->TOKEN_value == '+') {
+				token = next_token(par);
+				if (token == TOKEN_IDENT) {
+					var lc = string_to_lower_case(par->TOKEN_value);
+					if (lc == "n") {
+						var result = parse_anb_plusminus(par, 1);
+						if (result) return result;
+						result = parse_anb_signed_integer(par, 1);
+						if (result) return result;
+						return [1, 0];
+					}
+					if (lc == "n-") {
+						return parse_anb_signless_integer(par, 1, true);
+					}
+					if (string_starts_with(lc, "n-")) {
+						return [1, string_parse_int(string_substring(lc, 1))];
+					}
+				}
+			}
+			break;
+		}
+	}
+
+	return 0, error("syntax error");
+}
+
+function @parse_anb_signed_integer(par, a_value)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token == TOKEN_NUMBER) {
+		var val = par->TOKEN_value;
+		if (!val[2]) {
+			if (val[0][0] == '+') {
+				return [a_value, val[1]];
+			}
+			else if (par->TOKEN_value[0][0] == '-') {
+				return [a_value, val[1]];
+			}
+		}
+	}
+	back_token(par);
+	return null;
+}
+
+function @parse_anb_signless_integer(par, a_value, neg)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token == TOKEN_NUMBER) {
+		var val = par->TOKEN_value;
+		if (!val[2]) {
+			if (is_digit(val[0][0])) {
+				return [a_value, neg? -val[1] : val[1]];
+			}
+		}
+	}
+	return 0, error("syntax error");
+}
+
+function @parse_anb_plusminus(par, a_value)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	if (token == TOKEN_DELIM) {
+		if (par->TOKEN_value == '+') {
+			return parse_anb_signless_integer(par, a_value, false);
+		}
+		if (par->TOKEN_value == '-') {
+			return parse_anb_signless_integer(par, a_value, true);
+		}
+	}
+	back_token(par);
+	return null;
+}
+
+function serialize_anb_syntax(anb)
+{
+	var step = anb->ANB_step;
+	var offset = anb->ANB_offset;
+
+	if (step == 0) {
+		return {offset};
+	}
+
+	var s = {step, "n"};
+	if (offset == 0) {
+		return s;
+	}
+	if (offset > 0) {
+		s[] = '+';
+	}
+	return {s, offset};
+}
+
+function @assert_anb(value, result)
+{
+	var par = parser_create({value, "{}"}, null);
+	var rules = parse_stylesheet(par);
+	var buf = rules[0]->RULE_prelude;
+	value = parse_anb_syntax(buf);
+
+	if (next_token(buf) != TOKEN_EOF) {
+		return 0, error("assert failed (trailing data)");
+	}
+	
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function @assert_anb_invalid(value)
+{
+	var par = parser_create({value, "{}"}, null);
+	var rules = parse_stylesheet(par);
+	var buf = rules[0]->RULE_prelude;
+	var (r, e) = parse_anb_syntax(buf);
+
+	if (!e && next_token(buf) != TOKEN_EOF) {
+		e = true;
+	}
+	
+	if (!e) {
+		return 0, error({"assert failed (expected error but got none)"});
+	}
+}
+
+function test_anb_syntax()
+{
+	assert_anb("odd", [2, 1]);
+	assert_anb("even", [2, 0]);
+	assert_anb("5", [0, 5]);
+	assert_anb("-5", [0, -5]);
+	assert_anb("5n", [5, 0]);
+	assert_anb("+n", [1, 0]);
+	assert_anb("n", [1, 0]);
+	assert_anb("-n", [-1, 0]);
+	assert_anb("1n-2", [1, -2]);
+	assert_anb("n-2", [1, -2]);
+	assert_anb("+n-2", [1, -2]);
+	assert_anb("-n-2", [-1, -2]);
+	assert_anb("5n+2", [5, 2]);
+	assert_anb("-5n+2", [-5, 2]);
+	assert_anb("5n-2", [5, -2]);
+	assert_anb("-5n-2", [-5, -2]);
+	assert_anb("5n +2", [5, 2]);
+	assert_anb("-5n +2", [-5, 2]);
+	assert_anb("5n -2", [5, -2]);
+	assert_anb("-5n -2", [-5, -2]);
+	assert_anb("n-2", [1, -2]);
+	assert_anb("n+2", [1, 2]);
+	assert_anb("+n-2", [1, -2]);
+	assert_anb("+n+2", [1, 2]);
+	assert_anb("-n-2", [-1, -2]);
+	assert_anb("-n+2", [-1, 2]);
+	assert_anb("n -2", [1, -2]);
+	assert_anb("n +2", [1, 2]);
+	assert_anb("+n -2", [1, -2]);
+	assert_anb("+n +2", [1, 2]);
+	assert_anb("-n -2", [-1, -2]);
+	assert_anb("-n +2", [-1, 2]);
+	assert_anb("5n- 2", [5, -2]);
+	assert_anb("-5n- 2", [-5, -2]);
+	assert_anb("+n- 2", [1, -2]);
+	assert_anb("n- 2", [1, -2]);
+	assert_anb("-n- 2", [-1, -2]);
+	assert_anb("5n + 2", [5, 2]);
+	assert_anb("5n - 2", [5, -2]);
+	assert_anb("+n + 2", [1, 2]);
+	assert_anb("n + 2", [1, 2]);
+	assert_anb("-n + 2", [-1, 2]);
+
+	// examples:
+
+	assert_anb("2n+0", [2, 0]);
+	assert_anb("4n+1", [4, 1]);
+	assert_anb("-n+6", [-1, 6]);
+	assert_anb("0n+5", [0, 5]);
+	assert_anb("5", [0, 5]);
+	assert_anb("1n+0", [1, 0]);
+	assert_anb("n+0", [1, 0]);
+	assert_anb("n", [1, 0]);
+	assert_anb("2n+0", [2, 0]);
+	assert_anb("2n", [2, 0]);
+	assert_anb("3n + 1", [3, 1]);
+	assert_anb("+3n - 2", [3, -2]);
+	assert_anb("-n+ 6", [-1, 6]);
+
+	assert_anb_invalid("3 n");
+	assert_anb_invalid("+ 2n");
+	assert_anb_invalid("+ 2");
+}
+
+function css_escape(value)
+{
+	var s = {""};
+	for (var i=0; i<length(value); i++) {
+		var c = value[i];
+		switch (c) {
+			case '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '.', '/', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^', '`', '{', '|', '}', '~':
+				s[] = '\\';
+				s[] = c;
+				break;
+
+			case ':':
+				// compatibility for IE < 8:
+				string_append(s, "\\3A ");
+				break;
+
+			case 0: string_append(s, "\\FFFD "); break;
+			case 1 .. 9: string_append(s, "\\0"); s[] = c + '0'; s[] = ' '; break;
+			case 10 .. 15: string_append(s, "\\0"); s[] = (c - 10) + 'A'; s[] = ' '; break;
+			case 16 .. 25: string_append(s, "\\1"); s[] = (c - 16) + '0'; s[] = ' '; break;
+			case 26 .. 31: string_append(s, "\\1"); s[] = (c - 26) + 'A'; s[] = ' '; break;
+
+			default:
+				s[] = c;
+				break;
+		}
+	}
+	return s;
+}
+
+function css_serialize_namespace(value)
+{
+	if (value == "*") {
+		return value;
+	}
+	return css_escape(value);
+}
+
+function css_serialize_type(value)
+{
+	if (value == "*") {
+		return value;
+	}
+	return css_escape(value);
+}
+
+function css_serialize_string(value)
+{
+	var s = {"\""};
+	for (var i=0; i<length(value); i++) {
+		var c = value[i];
+		switch (c) {
+			case '"', '\\', '<', '>':
+				s[] = '\\';
+				s[] = c;
+				break;
+
+			case 0: string_append(s, "\\FFFD "); break;
+			case 1 .. 9: string_append(s, "\\0"); s[] = c + '0'; s[] = ' '; break;
+			case 10 .. 15: string_append(s, "\\0"); s[] = (c - 10) + 'A'; s[] = ' '; break;
+			case 16 .. 25: string_append(s, "\\1"); s[] = (c - 16) + '0'; s[] = ' '; break;
+			case 26 .. 31: string_append(s, "\\1"); s[] = (c - 26) + 'A'; s[] = ' '; break;
+
+			default:
+				s[] = c;
+				break;
+		}
+	}
+	s[] = '"';
+	return s;
+}
+
+function number_as_float(num)
+{
+	return num[2]? num[1] : float(num[1]);
+}

@@ -1,0 +1,854 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "browser/html/html";
+import "browser/html/element";
+import "browser/css/css";
+import "browser/css/selector";
+import "browser/css/value";
+import "browser/css/property";
+import "browser/css/stylesheet";
+import "util/string";
+
+class @Context
+{
+	var @type_map: Dynamic[String];
+	var @id_map: Dynamic[String];
+	var @class_map: Dynamic[String];
+	var @attrib_map: Dynamic[String];
+	var @other_list: Dynamic;
+	var @cnt: Integer;
+	var @cur_selectors: Dynamic;
+	var @element_styles: Value[Integer][Integer];
+	var @dedup_styles: Value[Integer][Dynamic];
+	var @empty_styles: Value[Integer];
+
+	constructor create(element_styles: Value[Integer][Integer])
+	{
+		this.element_styles = element_styles;
+		type_map = {};
+		id_map = {};
+		class_map = {};
+		attrib_map = {};
+		other_list = [];
+		cur_selectors = [];
+		dedup_styles = {};
+		empty_styles = {};
+	}
+}
+
+// note: keep synchronized with native code
+const {
+	@SM_selector,
+	@SM_properties,
+	@SM_specificity,
+	@SM_cnt,
+	@SM_SIZE
+};
+
+const {
+	@SPEC_STYLE      = 0x40000000,
+	@SPEC_ID_MASK    = 0x3FF00000,
+	@SPEC_ID_INC     = 0x00100000,
+	@SPEC_CLASS_MASK = 0x000FFC00,
+	@SPEC_CLASS_INC  = 0x00000400,
+	@SPEC_TYPE_MASK  = 0x000003FF,
+	@SPEC_TYPE_INC   = 0x00000001
+};
+
+class CSSMatcher
+{
+	static function create(document: Element): CSSMatcher;
+	function matches(element: Element, selector: Selector): Boolean;
+}
+
+var @num_props: Integer, @num_uniq_props: Integer;
+var @cancel_check_cnt: Integer;
+
+function apply_css(document: Element, stylesheets: Stylesheet[], external_sheets: Stylesheet[String], element_styles: Value[Integer][Integer], cancel_check_func)
+{
+	var ctx = Context::create(element_styles);
+
+	perf_reset();
+
+	for (var elem = document.get_first_child_tag(); elem; elem = elem.get_next_tag()) {
+		find_styles(ctx, elem, stylesheets, external_sheets);
+	}
+	perf_log("find_styles");
+
+	for (var i=0; i<length(stylesheets); i++) {
+		prepare_sheet(ctx, stylesheets[i]);
+	}
+	perf_log("prepare_sheets");
+
+	var css_matcher = CSSMatcher::create(document);
+	perf_log("native_css_matcher_prepare");
+
+	for (var elem = document.get_first_child_tag(); elem; elem = elem.get_next_tag()) {
+		build_styles(ctx, elem, cancel_check_func, css_matcher);
+	}
+	perf_log("build_styles");
+
+	ctx = null;
+	heap_collect();
+	log("heap="+heap_size());
+	log("num_props="+num_props+" num_uniq_props="+num_uniq_props);
+	log("element_styles="+length(serialize(element_styles)));
+}
+
+function @find_styles(ctx: Context, element: Element, stylesheets: Stylesheet[], external_sheets: Stylesheet[String])
+{
+	var type = element_get_type(element);
+	if (type == "style") {
+		if (element.get_children_count() == 1) {
+			var text = element.get_first_child();
+			if (text.get_type() == "#text") {
+				var s = text.get_data();
+				var (sheet, err) = css_parse(s, null);
+				if (err) {
+					log("error during parsing CSS:\n"+to_string(err, true));
+				}
+				else {
+					stylesheets[] = sheet;
+				}
+			}
+		}
+	}
+	else if (type == "link") {
+		if (element.get_attr("rel") == "stylesheet") {
+			var href = element.get_attr("href");
+			var sheet = hash_get(external_sheets, href, null) as Stylesheet;
+			if (sheet) {
+				stylesheets[] = sheet;
+			}
+		}
+	}
+
+	for (var elem = element.get_first_child_tag(); elem; elem = elem.get_next_tag()) {
+		find_styles(ctx, elem, stylesheets, external_sheets);
+	}
+}
+
+function @prepare_sheet(ctx: Context, sheet: Stylesheet)
+{
+	var rules =	sheet.rules;
+
+	for (var i=0; i<length(rules); i++) {
+		var rule = rules[i];
+
+		switch (rule.type) {
+			case RULE_SELECTOR: {
+				var group = rule.selector;
+				for (var j=0; j<length(group); j++) {
+					var selector = group[j];
+					var specificity = calc_specificity(selector, 0);
+					if (!assign_selector(ctx, selector, selector, rule.properties, specificity)) {
+						var list = ctx.other_list;
+						list[] = selector;
+						list[] = rule.properties;
+						list[] = specificity;
+						list[] = ctx.cnt;
+					}
+					ctx.cnt++;
+				}
+				break;
+			}
+		}
+	}
+}
+
+function @assign_to_map(map: Dynamic[String], key: String, selector: Selector, properties: Property[], specificity: Integer, cnt: Integer)
+{
+	var list = hash_get(map, key, null);
+	if (!list) {
+		list = [];
+		map[key] = list;
+	}
+	list[] = selector;
+	list[] = properties;
+	list[] = specificity;
+	list[] = cnt;
+}
+
+function @assign_selector(ctx: Context, selector: Selector, orig_selector: Selector, properties: Property[], specificity: Integer): Boolean
+{
+	switch (selector.type) {
+		case SEL_TYPE:
+			if (selector.elem_name == "*") {
+				var list = ctx.other_list;
+				list[] = orig_selector;
+				list[] = properties;
+				list[] = specificity;
+				list[] = ctx.cnt;
+			}
+			else {
+				assign_to_map(ctx.type_map, selector.elem_name, orig_selector, properties, specificity, ctx.cnt);
+			}
+			return true;
+
+		case SEL_ID:
+			assign_to_map(ctx.id_map, selector.id_name, orig_selector, properties, specificity, ctx.cnt);
+			return true;
+
+		case SEL_CLASS:
+			assign_to_map(ctx.class_map, selector.class_name, orig_selector, properties, specificity, ctx.cnt);
+			return true;
+
+		case SEL_ATTRIB:
+		case SEL_ATTRIB_PREFIX:
+		case SEL_ATTRIB_SUFFIX:
+		case SEL_ATTRIB_SUBSTRING:
+		case SEL_ATTRIB_EXACT:
+		case SEL_ATTRIB_INCLUDE:
+		case SEL_ATTRIB_DASH:
+			assign_to_map(ctx.attrib_map, selector.attrib_name, orig_selector, properties, specificity, ctx.cnt);
+			return true;
+
+		case SEL_PSEUDO_ELEMENT:
+		case SEL_PSEUDO_CLASS:
+			return false;
+
+		case SEL_FUNCTION_IDENT:
+		case SEL_FUNCTION_STRING:
+		case SEL_FUNCTION_ANB:
+		case SEL_NOT: {
+			var list = ctx.other_list;
+			list[] = orig_selector;
+			list[] = properties;
+			list[] = specificity;
+			list[] = ctx.cnt;
+			return true;
+		}
+
+		case SEL_SEQUENCE: {
+			var selectors = selector.selectors;
+			for (var i=length(selectors)-1; i>=0; i--) {
+				if (assign_selector(ctx, selectors[i], orig_selector, properties, specificity)) return true;
+			}
+			return false;
+		}
+
+		case COMB_DESCENDANT:
+		case COMB_CHILD:
+		case COMB_NEXT_SIBLING:
+		case COMB_SUBSEQUENT_SIBLING:
+			return assign_selector(ctx, selector.second, orig_selector, properties, specificity);
+	}
+
+	return false;
+}
+
+function @calc_specificity(selector: Selector, specificity: Integer): Integer
+{
+	switch (selector.type) {
+		case SEL_TYPE:
+			if (selector.elem_name == "*") {
+				return specificity;
+			}
+			// fallthrough
+
+		case SEL_PSEUDO_ELEMENT:
+			if ((specificity & SPEC_TYPE_MASK) != SPEC_TYPE_MASK) {
+				specificity += SPEC_TYPE_INC;
+			}
+			return specificity;
+
+		case SEL_ID:
+			if ((specificity & SPEC_ID_MASK) != SPEC_ID_MASK) {
+				specificity += SPEC_ID_INC;
+			}
+			return specificity;
+
+		case SEL_CLASS:
+		case SEL_ATTRIB:
+		case SEL_ATTRIB_PREFIX:
+		case SEL_ATTRIB_SUFFIX:
+		case SEL_ATTRIB_SUBSTRING:
+		case SEL_ATTRIB_EXACT:
+		case SEL_ATTRIB_INCLUDE:
+		case SEL_ATTRIB_DASH:
+		case SEL_PSEUDO_CLASS:
+		case SEL_FUNCTION_IDENT:
+		case SEL_FUNCTION_STRING:
+		case SEL_FUNCTION_ANB:
+			if ((specificity & SPEC_CLASS_MASK) != SPEC_CLASS_MASK) {
+				specificity += SPEC_CLASS_INC;
+			}
+			return specificity;
+
+		case SEL_NOT:
+			return calc_specificity(selector.not_selector, specificity);
+
+		case SEL_SEQUENCE: {
+			var selectors = selector.selectors;
+			for (var i=0; i<length(selectors); i++) {
+				specificity = calc_specificity(selectors[i], specificity);
+			}
+			return specificity;
+		}
+
+		case COMB_DESCENDANT:
+		case COMB_CHILD:
+		case COMB_NEXT_SIBLING:
+		case COMB_SUBSEQUENT_SIBLING:
+			specificity = calc_specificity(selector.first, specificity);
+			specificity = calc_specificity(selector.second, specificity);
+			return specificity;
+	}
+
+	return specificity;
+}
+
+function @build_styles(ctx: Context, element: Element, cancel_check_func, css_matcher: CSSMatcher)
+{
+	var cur_selectors = ctx.cur_selectors;
+	array_set_length(cur_selectors, 0);
+
+	var attrs = element.get_attrs();
+	if (attrs) {
+		var id = hash_get(attrs, "id", null);
+		if (id) {
+			var list = hash_get(ctx.id_map, id, null);
+			if (list) {
+				array_append(cur_selectors, list);
+			}
+		}
+
+		var class = hash_get(attrs, "class", null);
+		if (class) {
+			var classes = string_split(class, ' ');
+			for (var i=0; i<length(classes); i++) {
+				var cls = classes[i];
+				if (length(cls) == 0) continue;
+				var list = hash_get(ctx.class_map, string_trim(cls), null);
+				if (list) {
+					array_append(cur_selectors, list);
+				}
+			}
+		}
+
+		var style = hash_get(attrs, "style", null);
+		if (style) {
+			var (props, e) = css_parse_inline_style(style) as Property[];
+			if (props) {
+				cur_selectors[] = null;       // selector
+				cur_selectors[] = props;      // properties
+				cur_selectors[] = SPEC_STYLE; // specificity
+				cur_selectors[] = 0;          // cnt
+			}
+		}
+
+		foreach (var k, v in attrs) {
+			var list = hash_get(ctx.attrib_map, k, null);
+			if (list) {
+				array_append(cur_selectors, list);
+			}
+		}
+	}
+
+	var list = hash_get(ctx.type_map, element.get_type(), null);
+	if (list) {
+		array_append(cur_selectors, list);
+	}
+	
+	array_append(cur_selectors, ctx.other_list);
+
+	if (length(cur_selectors) > 0) {
+		if (length(cur_selectors) > SM_SIZE) {
+			sort_current_selectors(cur_selectors);
+		}
+		//log(cur_selectors);
+
+		var properties: Property[Integer] = {};
+
+		for (var i=0; i<length(cur_selectors); i+=SM_SIZE) {
+			var selector = cur_selectors[i+SM_selector];
+			//if (selector && !match_selector(element, selector)) {
+			if (selector && !css_matcher.matches(element, selector)) {
+				continue;
+			}
+			var props = cur_selectors[i+SM_properties] as Property[];
+			for (var j=0; j<length(props); j++) {
+				var prop = props[j];
+				add_property(properties, prop);
+			}
+		}
+
+		var props: Value[Integer] = {};
+		foreach (var k, v in properties) {
+			props[k] = v.value;
+		}
+
+		var parent = element.get_parent();
+		if (parent) {
+			var parent_styles = hash_get(ctx.element_styles, (parent as Integer)|0, null) as Value[Integer];
+			if (parent_styles) {
+ 				foreach (var k, v in parent_styles) {
+ 					if (is_property_inherited(k) && !hash_contains(props, k)) {
+ 						props[k] = v;
+ 					}
+ 				}
+			}
+		}
+
+		var dedup_props = hash_get(ctx.dedup_styles, props, null) as Value[Integer];
+		if (!dedup_props) {
+			ctx.dedup_styles[props] = props;
+			dedup_props = props;
+			num_uniq_props++;
+		}
+		num_props++;
+
+		ctx.element_styles[(element as Integer)|0] = dedup_props;
+	}
+	else {
+		var props: Value[Integer] = null;
+
+		var parent = element.get_parent();
+		if (parent) {
+			var parent_styles = hash_get(ctx.element_styles, (parent as Integer)|0, null) as Value[Integer];
+			if (parent_styles) {
+				foreach (var k, v in parent_styles) {
+					if (is_property_inherited(k)) {
+						if (!props) props = {};
+						props[k] = v;
+					}
+				}
+			}
+		}
+
+		if (props) {
+			var dedup_props = hash_get(ctx.dedup_styles, props, null) as Value[Integer];
+			if (!dedup_props) {
+				ctx.dedup_styles[props] = props;
+				dedup_props = props;
+				num_uniq_props++;
+			}
+			num_props++;
+
+			ctx.element_styles[(element as Integer)|0] = dedup_props;
+		}
+		else {
+			ctx.element_styles[(element as Integer)|0] = ctx.empty_styles;
+		}
+	}
+
+	if (--cancel_check_cnt <= 0) {
+		cancel_check_cnt = 10;
+		cancel_check_func();
+	}
+	for (var elem = element.get_first_child_tag(); elem; elem = elem.get_next_tag()) {
+		build_styles(ctx, elem, cancel_check_func, css_matcher);
+	}
+}
+
+function @add_property(properties: Property[Integer], prop: Property)
+{
+	var type = prop.type;
+	if (type == PROP_FONT) {
+		var value = prop.value;
+		for (var i=0, n=value.child_count(); i<n; i++) {
+			var value2 = value.child_get(i);
+			switch (value2.type) {
+				case VALUE_MULTIPLE: {
+					add_property(properties, Property::create(PROP_FONT_FAMILY, "font-family", value2, prop.important));
+					break;
+				}
+
+				case VALUE_SLASH_GROUP: {
+					add_property(properties, Property::create(PROP_FONT_SIZE, "font-size", value2.child_get(0), prop.important));
+					add_property(properties, Property::create(PROP_LINE_HEIGHT, "line-height", value2.child_get(1), prop.important));
+					break;
+				}
+
+				case VALUE_XX_SMALL:
+				case VALUE_SMALLER:
+				case VALUE_X_SMALL:
+				case VALUE_SMALL:
+				case VALUE_LARGER:
+				case VALUE_MEDIUM:
+				case VALUE_LARGE:
+				case VALUE_X_LARGE:
+				case VALUE_XX_LARGE:
+				case VALUE_LENGTH: {
+					add_property(properties, Property::create(PROP_FONT_SIZE, "font-size", value2, prop.important));
+					break;
+				}
+
+				case VALUE_BOLDER:
+				case VALUE_LIGHTER:
+				case VALUE_FONT_WEIGHT: {
+					add_property(properties, Property::create(PROP_FONT_WEIGHT, "font-weight", value2, prop.important));
+					break;
+				}
+
+				case VALUE_NORMAL:
+				case VALUE_ITALIC:
+				case VALUE_OBLIQUE: {
+					add_property(properties, Property::create(PROP_FONT_STYLE, "font-style", value2, prop.important));
+					break;
+				}
+			}
+		}
+		return;
+	}
+	else if (type == PROP_LIST_STYLE) {
+		var type_set = false;
+		var image_set = false;
+		var value = prop.value;
+		for (var i=0, n=value.child_count(); i<n; i++) {
+			var value2 = value.child_get(i);
+			switch (value2.type) {
+				case VALUE_NONE:
+					if (type_set) {
+						add_property(properties, Property::create(PROP_LIST_STYLE_IMAGE, "list-style-image", value2, prop.important));
+						image_set = true;
+					}
+					else {
+						add_property(properties, Property::create(PROP_LIST_STYLE_TYPE, "list-style-type", value2, prop.important));
+						type_set = true;
+					}
+					break;
+
+				case VALUE_DISC:
+				case VALUE_CIRCLE:
+				case VALUE_SQUARE:
+				case VALUE_DECIMAL:
+				case VALUE_ARMENIAN:
+				case VALUE_GEORGIAN:
+				case VALUE_LOWER_ROMAN:
+				case VALUE_UPPER_ROMAN:
+				case VALUE_LOWER_GREEK:
+				case VALUE_LOWER_LATIN:
+				case VALUE_UPPER_LATIN:
+				case VALUE_LOWER_ALPHA:
+				case VALUE_UPPER_ALPHA:
+				case VALUE_DECIMAL_LEADING_ZERO:
+					add_property(properties, Property::create(PROP_LIST_STYLE_TYPE, "list-style-type", value2, prop.important));
+					type_set = true;
+					break;
+		
+				case VALUE_INSIDE:
+				case VALUE_OUTSIDE:
+					add_property(properties, Property::create(PROP_LIST_STYLE_POSITION, "list-style-position", value2, prop.important));
+					break;
+
+				default:
+					add_property(properties, Property::create(PROP_LIST_STYLE_IMAGE, "list-style-image", value2, prop.important));
+					image_set = true;
+					break;
+			}
+		}
+		if (!image_set) {
+			add_property(properties, Property::create(PROP_LIST_STYLE_IMAGE, "list-style-image", value_create(VALUE_NONE), prop.important));
+		}
+		return;
+	}
+	
+	if (prop.important) {
+		properties[type] = prop;
+	}
+	else {
+		var prev = hash_get(properties, type, null) as Property;
+		if (!prev || !prev.important) {
+			properties[type] = prop;
+		}
+	}
+}
+
+function @match_selector(element: Element, selector: Selector): Boolean
+{
+	switch (selector.type) {
+		case SEL_TYPE: {
+			var name = selector.elem_name;
+			if (name == "*") {
+				return true;
+			}
+			if (element.is_type(name)) {
+				return true;
+			}
+			return false;
+		}
+
+		case SEL_ID: {
+			var elem_value = element.get_attr("id");
+			if (!elem_value) return false;
+
+			var match_value = selector.id_name;
+			return elem_value == match_value;
+		}
+
+		case SEL_CLASS: {
+			return element.contains_class(selector.class_name);
+		}
+
+		case SEL_ATTRIB: {
+			var elem_value = element.get_attr(selector.attrib_name);
+			return elem_value != null;
+		}
+
+		case SEL_ATTRIB_PREFIX: {
+			var elem_value = element.get_attr(selector.attrib_name);
+			if (!elem_value) return false;
+			
+			var match_value = selector.attrib_value;
+			return string_starts_with(elem_value, match_value);
+		}
+
+		case SEL_ATTRIB_SUFFIX: {
+			var elem_value = element.get_attr(selector.attrib_name);
+			if (!elem_value) return false;
+			
+			var match_value = selector.attrib_value;
+			return string_ends_with(elem_value, match_value);
+		}
+
+		case SEL_ATTRIB_SUBSTRING: {
+			var elem_value = element.get_attr(selector.attrib_name);
+			if (!elem_value) return false;
+			
+			var match_value = selector.attrib_value;
+			return string_contains(elem_value, match_value);
+		}
+
+		case SEL_ATTRIB_EXACT: {
+			var elem_value = element.get_attr(selector.attrib_name);
+			if (!elem_value) return false;
+			
+			var match_value = selector.attrib_value;
+			return elem_value == match_value;
+		}
+
+		case SEL_ATTRIB_INCLUDE: {
+			var elem_value = element.get_attr(selector.attrib_name);
+			if (!elem_value) return false;
+			
+			var match_value = selector.attrib_value;
+			return contains(elem_value, match_value);
+		}
+
+		case SEL_ATTRIB_DASH: {
+			var elem_value = element.get_attr(selector.attrib_name);
+			if (!elem_value) return false;
+			
+			var match_value = selector.attrib_value;
+			if (elem_value == match_value) return true;
+			if (length(elem_value) > length(match_value) && string_starts_with(elem_value, match_value) && elem_value[length(match_value)] == '-') {
+				return true;
+			}
+			return false;
+		}
+
+		case SEL_PSEUDO_ELEMENT:
+			return false;
+
+		case SEL_PSEUDO_CLASS: {
+			var name = string_to_lower_case(selector.pseudo_name);
+			switch (length(name)) {
+				case 4:
+					if (name == "root") {
+						var parent = element.get_parent();
+						if (parent != null && parent.is_type("#document")) {
+							return true;
+						}
+						return false;
+					}
+					break;
+
+				case 5:
+					if (name == "empty") {
+						for (var elem = element.get_first_child(); elem; elem = elem.get_next()) {
+							if (elem.is_type("#comment")) {
+								continue;
+							}
+							if (elem.is_type("#text") && length(elem.get_data()) == 0) {
+								continue;
+							}
+							return false;
+						}
+						return true;
+					}
+					break;
+
+				case 10:
+					if (name == "last-child") {
+						if (!element.get_next_tag()) {
+							return true;
+						}
+						return false;
+					}
+					if (name == "only-child") {
+						if (!element.get_prev_tag() && !element.get_next_tag()) {
+							return true;
+						}
+						return false;
+					}
+					break;
+
+				case 11:
+					if (name == "first-child") {
+						if (!element.get_prev_tag()) {
+							return true;
+						}
+						return false;
+					}
+					break;
+
+				case 12:
+					if (name == "last-of-type") {
+						var type = element.get_type();
+						for (var elem = element.get_next_tag(); elem; elem = elem.get_next_tag()) {
+							if (elem.is_type(type)) {
+								return false;
+							}
+						}
+						return true;
+					}
+					if (name == "only-of-type") {
+						var type = element.get_type();
+						for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
+							if (elem.is_type(type)) {
+								return false;
+							}
+						}
+						for (var elem = element.get_next_tag(); elem; elem = elem.get_next_tag()) {
+							if (elem.is_type(type)) {
+								return false;
+							}
+						}
+						return true;
+					}
+					break;
+
+				case 13:
+					if (name == "first-of-type") {
+						var type = element.get_type();
+						for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
+							if (elem.is_type(type)) {
+								return false;
+							}
+						}
+						return true;
+					}
+					break;
+			}
+			return false;
+		}
+
+		case SEL_FUNCTION_IDENT:
+		case SEL_FUNCTION_STRING:
+		case SEL_FUNCTION_ANB:
+			return false;
+
+		case SEL_NOT:
+			return !match_selector(element, selector.not_selector);
+		
+		case SEL_SEQUENCE: {
+			var selectors = selector.selectors;
+			for (var i=0; i<length(selectors); i++) {
+				if (!match_selector(element, selectors[i])) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		case COMB_DESCENDANT: {
+			if (!match_selector(element, selector.second)) return false;
+
+			var parent = element;
+			for (;;) {
+				parent = parent.get_parent();
+				if (!parent || parent.is_type("#document")) break;
+
+				if (match_selector(parent, selector.first)) return true;
+			}
+			return false;
+		}
+
+		case COMB_CHILD: {
+			if (!match_selector(element, selector.second)) return false;
+
+			var parent = element.get_parent();
+			if (!parent || parent.is_type("#document")) {
+				return false;
+			}
+			return match_selector(parent, selector.first);
+		}
+
+		case COMB_NEXT_SIBLING: {
+			if (!match_selector(element, selector.second)) return false;
+
+			var prev = element.get_prev_tag();
+			if (!prev) return false;
+
+			return match_selector(prev, selector.first);
+		}
+
+		case COMB_SUBSEQUENT_SIBLING: {
+			if (!match_selector(element, selector.second)) return false;
+
+			for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
+				if (match_selector(elem, selector.first)) return true;
+			}
+			return false;
+		}
+	}
+
+	throw error("unknown selector operation");
+}
+
+function @contains(s: String, match: String): Boolean
+{
+	var idx = 0, len = length(match), found = true;
+
+	for (var i=0; i<length(s); i++) {
+		var c = s[i];
+		switch (c) {
+			case ' ', '\t', '\n', '\r', 0x0C:
+				if (found && idx == len) {
+					return true;
+				}
+				idx = 0;
+				found = true;
+				break;
+
+			default:
+				if (idx < len) {
+					if (c != match[idx]) {
+						found = false;
+					}
+				}
+				else {
+					found = false;
+				}
+				idx++;
+				break;
+		}
+	}
+
+	if (found && idx == len) {
+		return true;
+	}
+	return false;
+}

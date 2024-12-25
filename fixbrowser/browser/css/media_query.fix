@@ -1,0 +1,434 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/css/parser";
+import "browser/css/property";
+import "browser/css/value";
+import "util/string";
+
+const {
+	MEDIA_WIDTH,
+	MEDIA_HEIGHT,
+	MEDIA_DEVICE_WIDTH,
+	MEDIA_DEVICE_HEIGHT,
+	MEDIA_ORIENTATION,
+	MEDIA_ASPECT_RATIO,
+	MEDIA_DEVICE_ASPECT_RATIO,
+
+	MEDIA_ALL,
+	MEDIA_SCREEN,
+
+	MEDIA_ONLY,
+	MEDIA_NOT,
+	MEDIA_AND,
+	MEDIA_OR
+};
+
+const {
+	CMP_EXISTS,
+	CMP_EXACT,
+	CMP_MIN,
+	CMP_MAX
+};
+
+const {
+	MEDIA_type = 0,
+
+	// values:
+	MEDIA_cmp = 1,
+	MEDIA_value = 2,
+
+	// logical:
+	MEDIA_first = 1,
+	MEDIA_second = 2,
+
+	@MEDIA_SIZE = 3
+};
+
+const @UNKNOWN_FEATURE = -1;
+
+function media_create(type)
+{
+	return media_create(type, null, null);
+}
+
+function media_create(type, first)
+{
+	return media_create(type, first, null);
+}
+
+function media_create(type, cmp_or_first, value_or_second)
+{
+	var media = object_create(MEDIA_SIZE);
+	media->MEDIA_type = type;
+	media->MEDIA_cmp = cmp_or_first;
+	media->MEDIA_value = value_or_second;
+	return media;
+}
+
+function @consume_whitespace(par)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	back_token(par);
+}
+
+function parse_media_query_list(par)
+{
+	var media;
+	
+	for (;;) {
+		consume_whitespace(par);
+		var token = next_token(par);
+		if (token != TOKEN_IDENT && token != COMPONENT_SIMPLE_BLOCK) break;
+
+		back_token(par);
+		var media2 = parse_media_query(par);
+		media = media? media_create(MEDIA_OR, media, media2) : media2;
+
+		if (next_token(par) != TOKEN_COMMA) break;
+	}
+	
+	return media;
+}
+
+function @flush(par)
+{
+	for (;;) {
+		var token = next_token(par);
+		if (token == TOKEN_EOF || token == TOKEN_COMMA) break;
+	}
+	back_token(par);
+}
+
+function @expect_ident_or_flush(par)
+{
+	if (next_token(par) != TOKEN_IDENT) {
+		back_token(par);
+		flush(par);
+		return false;
+	}
+	return true;
+}
+
+function @parse_media_query(par)
+{
+	if (next_token(par) == COMPONENT_SIMPLE_BLOCK && par->TOKEN_value->SIMPLEBLOCK_associated_token == TOKEN_LBRACKET) {
+		back_token(par);
+		var media = parse_expression(par);
+		if (!media) return null;
+		
+		if (media == UNKNOWN_FEATURE) {
+			return media_create(MEDIA_NOT, media_create(MEDIA_ALL));
+		}
+
+		for (;;) {
+			if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "and") {
+				consume_whitespace(par);
+				var expr = parse_expression(par);
+				if (!expr) return null;
+				if (expr == UNKNOWN_FEATURE) {
+					return media_create(MEDIA_NOT, media_create(MEDIA_ALL));
+				}
+				media = media_create(MEDIA_AND, media, expr);
+			}
+			else {
+				back_token(par);
+				break;
+			}
+		}
+		return media;
+	}
+	else {
+		back_token(par);
+	}
+
+	if (!expect_ident_or_flush(par)) return null;
+
+	var use_only = false, use_not = false;
+
+	var name = string_to_lower_case(par->TOKEN_value);
+	if (name == "only") {
+		use_only = true;
+		consume_whitespace(par);
+		if (!expect_ident_or_flush(par)) return null;
+		name = string_to_lower_case(par->TOKEN_value);
+	}
+	else if (name == "not") {
+		use_not = true;
+		consume_whitespace(par);
+		if (!expect_ident_or_flush(par)) return null;
+		name = string_to_lower_case(par->TOKEN_value);
+	}
+
+	var type = -1;
+	switch (length(name)) {
+		case 3:
+			if (name == "all") { type = MEDIA_ALL; break; }
+			break;
+
+		case 6:
+			if (name == "screen") { type = MEDIA_SCREEN; break; }
+			break;
+	}
+
+	if (type == -1) {
+		type = MEDIA_ALL;
+		use_not = !use_not;
+		use_only = false;
+	}
+
+	var media = media_create(type);
+
+	consume_whitespace(par);
+	
+	for (;;) {
+		if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "and") {
+			consume_whitespace(par);
+			var expr = parse_expression(par);
+			if (!expr) return null;
+			if (expr == UNKNOWN_FEATURE) {
+				return media_create(MEDIA_NOT, media_create(MEDIA_ALL));
+			}
+			media = media_create(MEDIA_AND, media, expr);
+		}
+		else {
+			back_token(par);
+			break;
+		}
+	}
+
+	if (use_only) {
+		media = media_create(MEDIA_ONLY, media);
+	}
+	if (use_not) {
+		media = media_create(MEDIA_NOT, media);
+	}
+	return media;
+}
+
+function @parse_expression(par)
+{
+	if (next_token(par) != COMPONENT_SIMPLE_BLOCK) {
+		flush(par);
+		return null;
+	}
+
+	var block = par->TOKEN_value;
+	if (block->SIMPLEBLOCK_associated_token != TOKEN_LBRACKET) {
+		flush(par);
+		return null;
+	}
+
+	rewind_buffer(block);
+	consume_whitespace(block);
+	
+	if (next_token(block) != TOKEN_IDENT) {
+		flush(par);
+		return null;
+	}
+	var name = string_to_lower_case(block->TOKEN_value);
+
+	var type = -1, cmp = CMP_EXISTS, value;
+
+	if (string_starts_with(name, "min-")) {
+		cmp = CMP_MIN;
+		array_remove(name, 0, 4);
+	}
+	else if (string_starts_with(name, "max-")) {
+		cmp = CMP_MAX;
+		array_remove(name, 0, 4);
+	}
+	
+	switch (length(name)) {
+		case 5:
+			if (name == "width") { type = MEDIA_WIDTH; break; }
+			break;
+
+		case 6:
+			if (name == "height") { type = MEDIA_HEIGHT; break; }
+			break;
+
+		case 11:
+			if (name == "orientation") { type = MEDIA_ORIENTATION; break; }
+			break;
+
+		case 12:
+			if (name == "device-width") { type = MEDIA_DEVICE_WIDTH; break; }
+			if (name == "aspect-ratio") { type = MEDIA_ASPECT_RATIO; break; }
+			break;
+
+		case 13:
+			if (name == "device-height") { type = MEDIA_DEVICE_HEIGHT; break; }
+			break;
+
+		case 19:
+			if (name == "device-aspect-ratio") { type = MEDIA_DEVICE_ASPECT_RATIO; break; }
+			break;
+	}
+
+	if (type == -1) {
+		consume_whitespace(par);
+		return UNKNOWN_FEATURE;
+	}
+
+	consume_whitespace(block);
+	if (next_token(block) == TOKEN_COLON) {
+		if (cmp == CMP_EXISTS) {
+			cmp = CMP_EXACT;
+		}
+		consume_whitespace(block);
+
+		switch (type) {
+			case MEDIA_WIDTH:
+			case MEDIA_HEIGHT:
+			case MEDIA_DEVICE_WIDTH:
+			case MEDIA_DEVICE_HEIGHT: {
+				var (len, e) = parse_length(block);
+				if (e) {
+					flush(par);
+					return null;
+				}
+				if ({len->VALUE_value < 0.0}) {
+					flush(par);
+					return null;
+				}
+				value = len;
+				break;
+			}
+				
+			case MEDIA_ORIENTATION: {
+				if (cmp == CMP_MIN || cmp == CMP_MAX) {
+					flush(par);
+					return null;
+				}
+				if (next_token(block) != TOKEN_IDENT) {
+					flush(par);
+					return null;
+				}
+				var orient = string_to_lower_case(block->TOKEN_value);
+				if (orient == "portrait") {
+					value = value_create(VALUE_PORTRAIT);
+				}
+				else if (orient == "landscape") {
+					value = value_create(VALUE_LANDSCAPE);
+				}
+				else {
+					flush(par);
+					return null;
+				}
+				break;
+			}
+				
+			case MEDIA_ASPECT_RATIO:
+			case MEDIA_DEVICE_ASPECT_RATIO: {
+				if (next_token(block) != TOKEN_NUMBER) {
+					flush(par);
+					return null;
+				}
+				var v1 = block->TOKEN_value;
+				consume_whitespace(block);
+				if (next_token(block) != TOKEN_DELIM || block->TOKEN_value != '/') {
+					flush(par);
+					return null;
+				}
+				consume_whitespace(block);
+				if (next_token(block) != TOKEN_NUMBER) {
+					flush(par);
+					return null;
+				}
+				var v2 = block->TOKEN_value;
+				if (v1[2] || v2[2] || v1[1] < 1 || v2[1] < 1) {
+					flush(par);
+					return null;
+				}
+				value = value_create_slash_group(value_create_integer(v1[1]), value_create_integer(v2[1]));
+				break;
+			}
+
+			default: return 0, error("unhandled case");
+		}
+	}
+	else {
+		back_token(block);
+
+		if (cmp == CMP_MIN || cmp == CMP_MAX) {
+			flush(par);
+			return null;
+		}
+	}
+	
+	consume_whitespace(block);
+	if (next_token(block) != TOKEN_EOF) {
+		flush(par);
+		return null;
+	}
+
+	consume_whitespace(par);
+	return media_create(type, cmp, value);
+}
+
+function serialize_media_query(media)
+{
+	switch (media->MEDIA_type) {
+		case MEDIA_ALL:    return "all";
+		case MEDIA_SCREEN: return "screen";
+
+		case MEDIA_ONLY:
+			return {"only ", serialize_media_query(media->MEDIA_first)};
+
+		case MEDIA_NOT:
+			return {"not ", serialize_media_query(media->MEDIA_first)};
+
+		case MEDIA_AND:
+			return {serialize_media_query(media->MEDIA_first), " and ", serialize_media_query(media->MEDIA_second)};
+
+		case MEDIA_OR:
+			return {serialize_media_query(media->MEDIA_first), ", ", serialize_media_query(media->MEDIA_second)};
+	}
+
+	var s = {"("};
+	switch (media->MEDIA_cmp) {
+		case CMP_EXISTS, CMP_EXACT: break;
+		case CMP_MIN: string_append(s, "min-"); break;
+		case CMP_MAX: string_append(s, "max-"); break;
+		default: return 0, error("unknown compare type");
+	}
+	switch (media->MEDIA_type) {
+		case MEDIA_WIDTH:               string_append(s, "width"); break;
+		case MEDIA_HEIGHT:              string_append(s, "height"); break;
+		case MEDIA_DEVICE_WIDTH:        string_append(s, "device-width"); break;
+		case MEDIA_DEVICE_HEIGHT:       string_append(s, "device-height"); break;
+		case MEDIA_ORIENTATION:         string_append(s, "orientation"); break;
+		case MEDIA_ASPECT_RATIO:        string_append(s, "aspect-ratio"); break;
+		case MEDIA_DEVICE_ASPECT_RATIO: string_append(s, "device-aspect-ratio"); break;
+		default: return 0, error("unknown media type");
+	}
+	if (media->MEDIA_cmp != CMP_EXISTS) {
+		s[] = ':';
+		s[] = ' ';
+		string_append(s, value_to_string(media->MEDIA_value));
+	}
+	s[] = ')';
+	return s;
+}

@@ -1,0 +1,12 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "cdn.arstechnica.net")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	remove_class_in_element(document, "div.comments-row", "comments-row");
+}

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixImage Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixImage Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "image/image";</code>
+</p>
+
+<h2>Painter class</h2>
+
+<p>
+Painter is used to draw 2D shapes into an <a href="image.html">Image</a>.
+</p>
+
+<h3>Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(img: <a href="image.html">Image</a>): Painter</code></dt>
+	<dd>
+		Creates a new painter for given image.
+	</dd>
+</dl>
+
+<h3>Properties</h3>
+
+<dl>
+	<dt><code>function <b>get_image</b>(): <a href="image.html">Image</a></code></dt>
+	<dd>
+		Returns the image this painter is created for.
+	</dd>
+	<dt><code>function <b>get_transform</b>(): <a href="transform.html">Transform</a></code></dt>
+	<dd>
+		Returns the current 2D transform of the painter as a direct reference.
+	</dd>
+</dl>
+
+<h3>State</h3>
+
+<dl>
+	<dt><code>function <b>push</b>()</code></dt>
+	<dd>
+		Pushes the drawing state (current translation, rotation, antialiasing settings, etc.)
+		into a stack so it can be later restored by the <code>pop</code> function.
+	</dd>
+	<dt><code>function <b>pop</b>()</code></dt>
+	<dd>
+		Pops the drawing state from a stack to restore the state to what was set when calling a previous <code>push</code> function.
+	</dd>
+	<dt><code>function <b>set_subpixel_rendering</b>(enabled: Boolean)</code></dt>
+	<dd>
+		Sets subpixel rendering.
+	</dd>
+	<dt><code>function <b>set_subpixel_order</b>(value: Integer)</code></dt>
+	<dd>
+		Sets the order of pixels used in subpixel rendering (either <code>SUBPIXEL_RGB</code> or <code>SUBPIXEL_BGR</code>).
+	</dd>
+	<dt><code>function <b>set_blend_gamma</b>(value: Float)</code></dt>
+	<dd>
+		Sets blending gamma adjustment, this may be required for shapes to have the same thickness
+		on both black and white backgrounds. Typically it is used mainly for font rendering to fine-tune
+		the appearance in small sizes. When the gamma is other than 1.0 (no adjustment) the performance
+		is affected.
+	</dd>
+</dl>
+
+<h3>Transform</h3>
+
+<dl>
+	<dt><code>function <b>translate</b>(tx: Float, ty: Float)</code></dt>
+	<dd>
+		Translates the subsequent drawing.
+	</dd>
+	<dt><code>function <b>rotate</b>(angle: Float)</code></dt>
+	<dd>
+		Rotates the subsequent drawing.
+	</dd>
+	<dt><code>function <b>scale</b>(s: Float)<br>function <b>scale</b>(sx: Float, sy: Float)</code></dt>
+	<dd>
+		Scales the subsequent drawing.
+	</dd>
+	<dt><code>function <b>shear</b>(sx: Float, sy: Float)</code></dt>
+	<dd>
+		Shears the subsequent drawing.
+	</dd>
+	<dt><code>function <b>apply</b>(tr: <a href="transform.html">Transform</a>)</code></dt>
+	<dd>
+		Applies given transform for subsequent drawing.
+	</dd>
+</dl>
+
+<h3>Clipping</h3>
+
+<dl>
+	<dt><code>function <b>clip</b>(rect: <a href="rect.html">Rect</a>)<br>function <b>clip</b>(x: Integer, y: Integer, width: Integer, height: Integer)</code></dt>
+	<dd>
+		Clips the rendering with given rectangle. The clipping can be made smaller only.
+	</dd>
+	<dt><code>function <b>clip_shape</b>(shape: <a href="shape.html">Shape</a>)</code></dt>
+	<dd>
+		Clips the rendering with given 2D shape, multiple clipping shapes are simply added into one shape,
+		it is essential that the clip shape is non-overlapping and is in the clockwise direction.
+	</dd>
+	<dt><code>function <b>get_clip_rect</b>(): <a href="rect.html">Rect</a></code></dt>
+	<dd>
+		Returns the current clipping rectangle.
+	</dd>
+</dl>
+
+<h3>Drawing</h3>
+
+<dl>
+	<dt><code>function <b>clear_rect</b>(rect: <a href="rect.html">Rect</a>, color: Integer)<br>function <b>clear_rect</b>(x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)</code></dt>
+	<dd>
+		Clears (by setting the pixels without any blending) the rectangle with given color.
+	</dd>
+	<dt><code>function <b>fill_rect</b>(rect: <a href="rect.html">Rect</a>, color: Integer)<br>function <b>fill_rect</b>(x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)</code></dt>
+	<dd>
+		Fills the rectangle with given color.
+	</dd>
+	<dt><code>function <b>fill_rect</b>(x: Integer, y: Integer, width: Integer, height: Integer, <a href="index.html#shaders">&lt;shader&gt;</a>)</code></dt>
+	<dd>
+		Fills the rectangle using the colors produced by the shader.
+	</dd>
+	<dt><code>function <b>fill_shape</b>(shape: <a href="shape.html">Shape</a>, color: Integer)</code></dt>
+	<dd>
+		Fills a 2D shape with given color.
+	</dd>
+	<dt><code>function <b>fill_shape</b>(shape: <a href="shape.html">Shape</a>, <a href="index.html#shaders">&lt;shader&gt;</a>)</code></dt>
+	<dd>
+		Fills a 2D shape using the colors produced by the shader.
+	</dd>
+	<dt><code>function <b>draw_image</b>(x: Integer, y: Integer, img: <a href="image.html">Image</a>)</code></dt>
+	<dd>
+		Draws an image. To customize drawing (eg. to draw only part of the image or other effects) use <code>fill_rect</code>
+		or <code>fill_shape</code> with <a href="index.html#shaders">shaders</a>.
+	</dd>
+</dl>
+
+<h3>Batched rendering</h3>
+
+<dl>
+	<dt><code>function <b>batch_begin</b>()</code></dt>
+	<dd>
+		Starts rendering in a batch. The next drawing operations are stored and binned into small
+		tiles of the image. Then when you call <code>batch_flush</code> or <code>batch_end</code>
+		the tiles are actually rendered, making the rendering evenly spread across CPU cores and
+		thus being faster and more efficient.<br>
+		<b>Note:</b> The used images, transforms and other referenced data in the drawing operations
+		are stored by reference and must not change until the batch is actually rendered.
+	</dd>
+	<dt><code>function <b>batch_flush</b>()</code></dt>
+	<dd>
+		Renders drawing operations currently accumulated in the batch without disabling the batch
+		rendering mode.
+	</dd>
+	<dt><code>function <b>batch_end</b>()</code></dt>
+	<dd>
+		Renders drawing operations currently accumulated in the batch and disables the batch
+		rendering mode for next drawing operations.
+	</dd>
+</dl>
+
+</body>
+</html>

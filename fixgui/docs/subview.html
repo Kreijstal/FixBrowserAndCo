@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/subview";</code>
+</p>
+
+<h2>SubView class</h2>
+
+<p>
+Super class of custom views.
+</p>
+
+<p>
+Subclasses:
+SubLabel,
+SubButton,
+SubTextField,
+SubScrollBar,
+SubScrollView,
+SubDivider,
+CodeEditor
+</p>
+
+<ul>
+	<li><a href="#object">Object</a></li>
+	<li><a href="#attributes">Attributes</a></li>
+	<li><a href="#root">Root &amp; View compatibility</a></li>
+	<li><a href="#scale">Scaling</a></li>
+	<li><a href="#position">Position &amp; size</a></li>
+	<li><a href="#hierarchy">Hierarchy</a></li>
+	<li><a href="#cursor">Mouse cursor</a></li>
+	<li><a href="#focus">Focus</a></li>
+	<li><a href="#events">Events &amp; drawing</a></li>
+	<li><a href="#repainting">Repainting</a></li>
+</ul>
+
+<h3 id="object">Object</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): SubView</code></dt>
+	<dd>
+		Creates the subview.
+	</dd>
+	<dt><code>static function <b>is_instance</b>(obj): Boolean</code></dt>
+	<dd>
+		Returns true when the passed object is a subview.
+	</dd>
+</dl>
+
+<h3 id="attributes">Attributes</h3>
+
+<dl>
+	<dt><code>function <b>set_attribute</b>(key: Dynamic, value: Dynamic)</code></dt>
+	<dd>
+		Sets an attribute, use <code>null</code> as a value to remove an attribute.
+	</dd>
+	<dt><code>function <b>get_attribute</b>(key: Dynamic): Dynamic</code></dt>
+	<dd>
+		Returns the value of an attribute or <code>null</code> when it's not present.
+	</dd>
+</dl>
+
+<h3 id="root">Root &amp; View compatibility</h3>
+
+<dl>
+	<dt id="as_view"><code>function as_view(): <a href="canvas.html">Canvas</a></code></dt>
+	<dd>
+		Returns a corresponding SubViewCanvasRoot wrapper so the subview can be
+		directly added as a native canvas. It is created on the first use of
+		this function. You can also add subviews directly into views as this method
+		is called internally.
+	</dd>
+	<dt><code>function <b>assign_view</b>(canvas: <a href="canvas.html">Canvas</a>)</code></dt>
+	<dd>
+		Explicitly assignes the subview to the provided canvas.
+	</dd>
+	<dt><code>function <b>set_root</b>(root: SubViewRoot)</code></dt>
+	<dd>
+		Sets the SubViewRoot. The subview must not have a parent.
+	</dd>
+	<dt><code>function <b>get_root</b>(): SubViewRoot</code></dt>
+	<dd>
+		Returns the SubViewRoot for this subview hierarchy.
+	</dd>
+</dl>
+
+<h3 id="scale">Scaling</h3>
+
+<dl>
+	<dt><code>function <b>get_scale</b>(): Float</code></dt>
+	<dd>
+		Returns the scale of this subview (the SubViewRoot scale is used
+		or the default scale if the subview is without a root).
+	</dd>
+	<dt><code>function <b>set_default_scale</b>(scale: Float)</code></dt>
+	<dd>
+		Sets the default scale of this subview (used when not yet assigned
+		to a SubViewRoot).
+	</dd>
+</dl>
+
+<h3 id="position">Position &amp; size</h3>
+
+<dl>
+	<dt><code>
+		function <b>set_rect</b>(rect: <a href="image/rect.html">Rect</a>)
+		function <b>set_rect</b>(x: Integer, y: Integer, width: Integer, height: Integer)
+	</code></dt>
+	<dd>
+		Sets the rectangle within the parent subview coordinate system.
+	</dd>
+	<dt><code>function <b>get_x</b>(): Integer</code></dt>
+	<dd>
+		Returns the X coordinate of the subview.
+	</dd>
+	<dt><code>function <b>get_y</b>(): Integer</code></dt>
+	<dd>
+		Returns the Y coordinate of the subview.
+	</dd>
+	<dt><code>function <b>get_width</b>(): Integer</code></dt>
+	<dd>
+		Returns the width of the subview.
+	</dd>
+	<dt><code>function <b>get_height</b>(): Integer</code></dt>
+	<dd>
+		Returns the height of the subview.
+	</dd>
+	<dt><code>function <b>get_rect</b>(): <a href="image/rect.html">Rect</a></code></dt>
+	<dd>
+		Returns a copy of the subview rectangle in the parent subview coordinate system.
+	</dd>
+	<dt><code>function <b>get_local_rect</b>(): <a href="image/rect.html">Rect</a></code></dt>
+	<dd>
+		Returns a copy of the subview rectangle in the local coordinate system (the X and Y
+		coordinates are always zero).
+	</dd>
+</dl>
+
+<h3 id="hierarchy">Hierarchy</h3>
+
+<dl>
+	<dt><code>function <b>add</b>(view: SubView)</code></dt>
+	<dd>
+		Adds given subview to this subview.
+	</dd>
+	<dt><code>function <b>remove</b>(view: SubView)</code></dt>
+	<dd>
+		Removes given subview from this subview.
+	</dd>
+	<dt><code>function <b>remove_all</b>()</code></dt>
+	<dd>
+		Removes all child subviews.
+	</dd>
+	<dt><code>function <b>remove_self</b>()</code></dt>
+	<dd>
+		Removes itself from the parent subview. Does nothing when the subview has no parent.
+	</dd>
+	<dt><code>function <b>get_parent</b>(): SubView</code></dt>
+	<dd>
+		Returns the parent of this subview.
+	</dd>
+	<dt><code>function <b>get_children</b>(): SubView[]</code></dt>
+	<dd>
+		Returns children subviews in an array (as a copy).
+	</dd>
+	<dt><code>function <b>get_child_count</b>(): Integer</code></dt>
+	<dd>
+		Returns the number of child subviews.
+	</dd>
+	<dt><code>function <b>get_child</b>(idx: Integer): SubView</code></dt>
+	<dd>
+		Returns the child subview by index.
+	</dd>
+	<dt><code>function <b>get_child_index</b>(view: SubView): Integer</code></dt>
+	<dd>
+		Returns the index for given child subview.
+	</dd>
+	<dt><code>virtual function <b>point_to_parent</b>(point: Integer[]): SubView</code></dt>
+	<dd>
+		Adjusts the point to the parent coordinate system. The default implementation adds the
+		position in the parent.
+	</dd>
+	<dt><code>function <b>point_to_top</b>(point: Integer[]): SubView</code></dt>
+	<dd>
+		Adjusts the point to the topmost subview and returns it.
+	</dd>
+	<dt><code>function <b>set_logical_top_view</b>(enable: Boolean)</code></dt>
+	<dd>
+		Sets this subview as a logical topmost subview.
+	</dd>
+	<dt><code>function <b>is_logical_top_view</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when this subview is a logical topmost subview.
+	</dd>
+	<dt><code>
+		function <b>get_next_child</b>(view: SubView): SubView<br>
+		function <b>get_prev_child</b>(view: SubView): SubView<br>
+		function <b>get_next_focus_child</b>(current_focus: SubView, wrap: Boolean): SubView<br>
+		function <b>get_prev_focus_child</b>(current_focus: SubView, wrap: Boolean): SubView<br>
+	</code></dt>
+	<dd>
+		Allows traversing between child subviews in depth-first order. 
+	</dd>
+	<dt><code>function <b>get_top_view</b>(x: Integer, y: Integer): SubView</code></dt>
+	<dd>
+		Returns the topmost subview for given coordinates within the same subview hierarchy.
+	</dd>
+	<dt><code>function <b>get_top_child_view</b>(x: Integer, y: Integer): SubView</code></dt>
+	<dd>
+		Returns the topmost subview for given coordinates inside this subview.
+	</dd>
+</dl>
+
+<h3 id="cursor">Mouse cursor</h3>
+
+<dl>
+	<dt><code>function <b>set_cursor</b>(cursor)</code></dt>
+	<dd>
+		Sets the mouse cursor. The cursor value can be completely custom. By default the
+		integer values are interpreted the same as for <a href="view.html#set_cursor">View</a>.
+	</dd>
+	<dt><code>function <b>get_cursor</b>(): Dynamic</code></dt>
+	<dd>
+		Returns the mouse cursor.
+	</dd>
+	<dt><code>
+		function <b>get_current_cursor</b>(event: MouseEvent)<br>
+		function <b>get_current_cursor</b>(x: Integer, y: Integer)<br>
+	</code></dt>
+	<dd>
+		Returns the current mouse cursor for given coordinates. The children
+		subviews are traversed to get the topmost subview under the coordinates.
+		You can also pass directly a MouseEvent to get the coordinates.
+	</dd>
+	<dt><code>function <b>set_canvas_cursor</b>(event: MouseEvent)</code></dt>
+	<dd>
+		Used by the SubViewRoot to set the proper cursor for <a href="canvas.html">Canvas</a>.
+	</dd>
+</dl>
+
+<h3 id="focus">Focus</h3>
+
+<dl>
+	<dt><code>function <b>set_focusable</b>(enable: Boolean)</code></dt>
+	<dd>
+		Sets the subview focusable.
+	</dd>
+	<dt><code>function <b>is_focusable</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the subview is focusable.
+	</dd>
+	<dt><code>function <b>focus</b>()</code></dt>
+	<dd>
+		Focuses this subview (making it receive keyboard events).
+	</dd>
+	<dt><code>function <b>unfocus</b>()</code></dt>
+	<dd>
+		Unfocuses this subview if it had focus.
+	</dd>
+	<dt><code>function <b>has_focus</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether this subview has keyboard focus.
+	</dd>
+	<dt><code>function <b>get_current_focus</b>(): SubView</code></dt>
+	<dd>
+		Returns the focused subview (if any) within the same subview hierarchy.
+	</dd>
+</dl>
+
+<h3 id="events">Events &amp; drawing</h3>
+
+<dl>
+	<dt><code>virtual function <b>handle_resize</b>()</code></dt>
+	<dd>
+		Override to handle resizing of the subview.
+	</dd>
+	<dt><code>virtual function <b>handle_paint</b>(p: <a href="image/painter.html">Painter</a>)</code></dt>
+	<dd>
+		Override to handle painting of the subview. The default implementation just calls the
+		<code>draw_children</code> method.
+	</dd>
+	<dt><code>function <b>draw_children</b>(p: <a href="image/painter.html">Painter</a>)</code></dt>
+	<dd>
+		Draws the children subviews.
+	</dd>
+	<dt><code>virtual function <b>draw</b>(p: <a href="image/painter.html">Painter</a>)</code></dt>
+	<dd>
+		Override to customize drawing of the subview. The default implementation translates
+		and clips the painting to the position/size and calls the <code>handle_paint</code>
+		method.
+	</dd>
+	<dt><code>
+		virtual function <b>accept_mouse_event</b>(event: MouseEvent): Boolean<br>
+		virtual function <b>accept_touch_event</b>(event: TouchEvent): Boolean<br>
+	</code></dt>
+	<dd>
+		Override filtering of mouse/touch events. The default implementation returns true. Return false
+		in case you don't want to receive the given mouse/touch event.
+	</dd>
+	<dt><code>
+		virtual function <b>handle_mouse_event</b>(event: MouseEvent): Boolean<br>
+		virtual function <b>handle_touch_event</b>(event: TouchEvent): Boolean<br>
+		virtual function <b>handle_key_event</b>(event: KeyEvent): Boolean<br>
+	</code></dt>
+	<dd>
+		Override to process mouse/touch/key events. Return true if you handled the event and want to stop
+		further processing.
+	</dd>
+	<dt><code>
+		virtual function <b>catch_mouse_event</b>(event: MouseEvent): Boolean<br>
+		virtual function <b>catch_touch_event</b>(event: TouchEvent): Boolean<br>
+		virtual function <b>catch_key_event</b>(event: KeyEvent): Boolean<br>
+	</code></dt>
+	<dd>
+		Override to process unhandled mouse/touch/key events from children. Return true to stop further
+		processing.
+	</dd>
+	<dt><code>virtual function <b>handle_focus_event</b>(event: FocusEvent)</code></dt>
+	<dd>
+		Override to process the focus event. The default implementation does nothing.
+	</dd>
+	<dt><code>virtual function <b>handle_repaint</b>(rect: <a href="image/rect.html">Rect</a>)</code></dt>
+	<dd>
+		Override to adjust repainting of dirty rectangles. The default implementation
+		intersects the rectangle with itself. The repainting is cancelled when the
+		rectangle becomes invalid.
+	</dd>
+	<dt><code>function <b>process_event</b>(event: Event): Boolean</code></dt>
+	<dd>
+		Processes the given (possibly artifical) event. Returns true if it was handled.
+	</dd>
+</dl>
+
+<h3 id="repainting">Repainting</h3>
+
+<dl>
+	<dt><code>
+		function <b>repaint</b>()<br>
+		function <b>repaint</b>(x: Integer, y: Integer, width: Integer, height: Integer)<br>
+		function <b>repaint</b>(rect: <a href="image/rect.html">Rect</a>)<br>
+	</code></dt>
+	<dd>
+		Schedules a repaint of either the whole subview or it's part. The repainting will be
+		done after other events are processed. The area from multiple calls is combined to do
+		a single repainting at once.<br><br>
+		The repaint is handled by the <code>handle_repaint</code> event handler for the current
+		view and all the parents. Then it is passed to the SubViewRoot class. The request
+		is ignored when there is no root assigned.
+	</dd>
+</dl>
+
+</body>
+</html>

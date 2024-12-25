@@ -1,0 +1,837 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+const {
+	EVENT_HIT_TEST,
+	EVENT_MOUSE_MOVE,
+	EVENT_MOUSE_DRAG,
+	EVENT_MOUSE_DOWN,
+	EVENT_MOUSE_UP,
+	EVENT_MOUSE_ENTER,
+	EVENT_MOUSE_LEAVE,
+	EVENT_MOUSE_WHEEL,
+	EVENT_MOUSE_RELATIVE,
+	EVENT_TOUCH_START,
+	EVENT_TOUCH_END,
+	EVENT_TOUCH_MOVE,
+	EVENT_TOUCH_ENTER,
+	EVENT_TOUCH_LEAVE,
+	EVENT_KEY_DOWN,
+	EVENT_KEY_UP,
+	EVENT_KEY_TYPED,
+	EVENT_FOCUS_GAINED,
+	EVENT_FOCUS_LOST
+};
+
+const {
+	FOCUS_NORMAL,
+	FOCUS_NEXT,
+	FOCUS_PREV
+};
+
+const {
+	MOUSE_BUTTON_LEFT,
+	MOUSE_BUTTON_MIDDLE,
+	MOUSE_BUTTON_RIGHT
+};
+
+const {
+	MOD_CTRL    = 0x01,
+	MOD_SHIFT   = 0x02,
+	MOD_ALT     = 0x04,
+	MOD_CMD     = 0x08,
+	MOD_LBUTTON = 0x10,
+	MOD_MBUTTON = 0x20,
+	MOD_RBUTTON = 0x40,
+
+	MOD_KEY_BUTTONS   = 0x0F, // MOD_CTRL | MOD_SHIFT | MOD_ALT | MOD_CMD
+	MOD_MOUSE_BUTTONS = 0x70  // MOD_LBUTTON | MOD_MBUTTON | MOD_RBUTTON
+};
+
+const {
+	KEY_NONE,
+	KEY_ESCAPE,
+	KEY_F1,
+	KEY_F2,
+	KEY_F3,
+	KEY_F4,
+	KEY_F5,
+	KEY_F6,
+	KEY_F7,
+	KEY_F8,
+	KEY_F9,
+	KEY_F10,
+	KEY_F11,
+	KEY_F12,
+	KEY_PRINT_SCREEN,
+	KEY_SCROLL_LOCK,
+	KEY_PAUSE,
+	KEY_GRAVE,
+	KEY_NUM1,
+	KEY_NUM2,
+	KEY_NUM3,
+	KEY_NUM4,
+	KEY_NUM5,
+	KEY_NUM6,
+	KEY_NUM7,
+	KEY_NUM8,
+	KEY_NUM9,
+	KEY_NUM0,
+	KEY_MINUS,
+	KEY_EQUAL,
+	KEY_BACKSPACE,
+	KEY_TAB,
+	KEY_Q,
+	KEY_W,
+	KEY_E,
+	KEY_R,
+	KEY_T,
+	KEY_Y,
+	KEY_U,
+	KEY_I,
+	KEY_O,
+	KEY_P,
+	KEY_LBRACKET,
+	KEY_RBRACKET,
+	KEY_BACKSLASH,
+	KEY_CAPS_LOCK,
+	KEY_A,
+	KEY_S,
+	KEY_D,
+	KEY_F,
+	KEY_G,
+	KEY_H,
+	KEY_J,
+	KEY_K,
+	KEY_L,
+	KEY_SEMICOLON,
+	KEY_APOSTROPHE,
+	KEY_ENTER,
+	KEY_LSHIFT,
+	KEY_Z,
+	KEY_X,
+	KEY_C,
+	KEY_V,
+	KEY_B,
+	KEY_N,
+	KEY_M,
+	KEY_COMMA,
+	KEY_PERIOD,
+	KEY_SLASH,
+	KEY_RSHIFT,
+	KEY_LCONTROL,
+	KEY_LMETA,
+	KEY_LALT,
+	KEY_SPACE,
+	KEY_RALT,
+	KEY_RMETA,
+	KEY_RMENU,
+	KEY_RCONTROL,
+	KEY_INSERT,
+	KEY_DELETE,
+	KEY_HOME,
+	KEY_END,
+	KEY_PAGE_UP,
+	KEY_PAGE_DOWN,
+	KEY_LEFT,
+	KEY_UP,
+	KEY_RIGHT,
+	KEY_DOWN,
+	KEY_NUM_LOCK,
+	KEY_NUMPAD_SLASH,
+	KEY_NUMPAD_STAR,
+	KEY_NUMPAD_MINUS,
+	KEY_NUMPAD_PLUS,
+	KEY_NUMPAD_ENTER,
+	KEY_NUMPAD_DOT,
+	KEY_NUMPAD0,
+	KEY_NUMPAD1,
+	KEY_NUMPAD2,
+	KEY_NUMPAD3,
+	KEY_NUMPAD4,
+	KEY_NUMPAD5,
+	KEY_NUMPAD6,
+	KEY_NUMPAD7,
+	KEY_NUMPAD8,
+	KEY_NUMPAD9
+};
+
+class Event
+{
+	var @type: Integer;
+	var @view;
+
+	constructor @create(type: Integer, view)
+	{
+		this.type = type;
+		this.view = view;
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+
+	function get_view(): Dynamic
+	{
+		return view;
+	}
+
+	function set_view(view)
+	{
+		this.view = view;
+	}
+
+	function to_string(): String
+	{
+		switch (type) {
+			case EVENT_HIT_TEST:
+			case EVENT_MOUSE_MOVE:
+			case EVENT_MOUSE_DRAG:
+			case EVENT_MOUSE_DOWN:
+			case EVENT_MOUSE_UP:
+			case EVENT_MOUSE_ENTER:
+			case EVENT_MOUSE_LEAVE:
+			case EVENT_MOUSE_WHEEL:
+			case EVENT_MOUSE_RELATIVE:
+				return (this as MouseEvent).to_string();
+
+			case EVENT_TOUCH_START:
+			case EVENT_TOUCH_END:
+			case EVENT_TOUCH_MOVE:
+			case EVENT_TOUCH_ENTER:
+			case EVENT_TOUCH_LEAVE:
+				return (this as TouchEvent).to_string();
+
+			case EVENT_KEY_DOWN:
+			case EVENT_KEY_UP:
+			case EVENT_KEY_TYPED:
+				return (this as KeyEvent).to_string();
+
+			case EVENT_FOCUS_GAINED:
+			case EVENT_FOCUS_LOST:
+				return (this as FocusEvent).to_string();
+		}
+		return "???";
+	}
+}
+
+class MouseEvent: Event
+{
+	var @x: Integer;
+	var @y: Integer;
+	var @button: Integer;
+	var @modifiers: Integer;
+	var @click_count: Integer;
+	var @wheel_x: Float;
+	var @wheel_y: Float;
+	var @scroll_x: Integer;
+	var @scroll_y: Integer;
+	var @touch: Boolean;
+
+	constructor create(type: Integer, view, x: Integer, y: Integer, button: Integer, modifiers: Integer, click_count: Integer)
+	{
+		super::create(type, view);
+		this.x = x;
+		this.y = y;
+		this.button = button;
+		this.modifiers = modifiers;
+		this.click_count = click_count;
+	}
+
+	constructor create_wheel(view, x: Integer, y: Integer, modifiers: Integer, wheel_x: Float, wheel_y: Float, scroll_x: Integer, scroll_y: Integer)
+	{
+		super::create(EVENT_MOUSE_WHEEL, view);
+		this.x = x;
+		this.y = y;
+		this.modifiers = modifiers;
+		this.wheel_x = wheel_x;
+		this.wheel_y = wheel_y;
+		this.scroll_x = scroll_x;
+		this.scroll_y = scroll_y;
+	}
+
+	function translate(dx: Integer, dy: Integer)
+	{
+		x += dx;
+		y += dy;
+	}
+
+	function set_position(x: Integer, y: Integer)
+	{
+		this.x = x;
+		this.y = y;
+	}
+
+	function get_x(): Integer
+	{
+		return x;
+	}
+
+	function get_y(): Integer
+	{
+		return y;
+	}
+
+	function get_button(): Integer
+	{
+		return button;
+	}
+
+	function get_modifiers(): Integer
+	{
+		return modifiers;
+	}
+
+	function get_click_count(): Integer
+	{
+		return click_count;
+	}
+
+	function get_wheel_x(): Float
+	{
+		return wheel_x;
+	}
+
+	function get_wheel_y(): Float
+	{
+		return wheel_y;
+	}
+
+	function has_scroll_data(): Boolean
+	{
+		return scroll_x != 0 || scroll_y != 0;
+	}
+
+	function get_scroll_x(): Integer
+	{
+		return scroll_x;
+	}
+
+	function get_scroll_y(): Integer
+	{
+		return scroll_y;
+	}
+
+	function get_modifiers_before(): Integer
+	{
+		var mod = modifiers;
+		if (type == EVENT_MOUSE_DOWN) {
+			switch (button) {
+				case MOUSE_BUTTON_LEFT:   mod &= ~MOD_LBUTTON; break;
+				case MOUSE_BUTTON_MIDDLE: mod &= ~MOD_MBUTTON; break;
+				case MOUSE_BUTTON_RIGHT:  mod &= ~MOD_RBUTTON; break;
+			}
+		}
+		else if (type == EVENT_MOUSE_UP) {
+			switch (button) {
+				case MOUSE_BUTTON_LEFT:   mod |= MOD_LBUTTON; break;
+				case MOUSE_BUTTON_MIDDLE: mod |= MOD_MBUTTON; break;
+				case MOUSE_BUTTON_RIGHT:  mod |= MOD_RBUTTON; break;
+			}
+		}
+		return mod;
+	}
+
+	function is_drag_event(): Boolean
+	{
+		switch (type) {
+			case EVENT_MOUSE_DRAG: return true; 
+
+			case EVENT_MOUSE_DOWN:
+			case EVENT_MOUSE_UP:
+			case EVENT_MOUSE_WHEEL:
+				return (get_modifiers_before() & MOD_MOUSE_BUTTONS) != 0;
+		}
+		return false;
+	}
+
+	function set_touch(touch: Boolean)
+	{
+		this.touch = touch;
+	}
+
+	function is_touch(): Boolean
+	{
+		return touch;
+	}
+
+	function to_string(): String
+	{
+		var s = "[type="+type_to_string(type)+", view=#"+(view as Integer|0);
+		if (type != EVENT_MOUSE_LEAVE) {
+			s += ", x="+x+", y="+y;
+		}
+		switch (type) {
+			case EVENT_MOUSE_MOVE:
+			case EVENT_MOUSE_DRAG:
+			case EVENT_MOUSE_ENTER:
+			case EVENT_MOUSE_RELATIVE:
+				s += ", modifiers="+modifiers_to_string(modifiers);
+				break;
+
+			case EVENT_MOUSE_DOWN:
+			case EVENT_MOUSE_UP:
+				s += ", button="+button_to_string(button)+", modifiers="+modifiers_to_string(modifiers);
+				if (type == EVENT_MOUSE_DOWN) {
+					s += ", click_count="+click_count;
+				}
+				break;
+
+			case EVENT_MOUSE_WHEEL:
+				s += ", modifiers="+modifiers_to_string(modifiers);
+				s += ", wheel_x="+wheel_x+", wheel_y="+wheel_y;
+				s += ", scroll_x="+scroll_x+", scroll_y="+scroll_y;
+				break;
+		}
+		if (touch) {
+			s += ", touch";
+		}
+		s += "]";
+		return s;
+	}
+}
+
+class TouchEvent: Event
+{
+	var @id: Integer;
+	var @x: Integer;
+	var @y: Integer;
+	var @mouse_emitter: Boolean;
+	var @cancelled: Boolean;
+	var @time: Integer;
+
+	constructor create(type: Integer, view, id: Integer, x: Integer, y: Integer, time: Integer)
+	{
+		super::create(type, view);
+		this.id = id;
+		this.x = x;
+		this.y = y;
+		this.time = time;
+	}
+
+	function get_id(): Integer
+	{
+		return id;
+	}
+
+	function translate(dx: Integer, dy: Integer)
+	{
+		x += dx;
+		y += dy;
+	}
+
+	function set_position(x: Integer, y: Integer)
+	{
+		this.x = x;
+		this.y = y;
+	}
+
+	function get_x(): Integer
+	{
+		return x;
+	}
+
+	function get_y(): Integer
+	{
+		return y;
+	}
+
+	function set_mouse_emitter(mouse_emitter: Boolean)
+	{
+		this.mouse_emitter = mouse_emitter;
+	}
+
+	function is_mouse_emitter(): Boolean
+	{
+		return mouse_emitter;
+	}
+
+	function set_cancelled(cancelled: Boolean)
+	{
+		this.cancelled = cancelled;
+	}
+
+	function is_cancelled(): Boolean
+	{
+		return cancelled;
+	}
+
+	function get_time(): Integer
+	{
+		return time;
+	}
+
+	function to_string(): String
+	{
+		var s = "[type="+type_to_string(type)+", view=#"+(view as Integer|0);
+		s += ", id="+id;
+		if (type != EVENT_TOUCH_LEAVE) {
+			s += ", x="+x+", y="+y;
+		}
+		if (type == EVENT_TOUCH_END) {
+			s += ", cancelled="+cancelled;
+		}
+		if (mouse_emitter) {
+			s += ", mouse_emitter";
+		}
+		s += ", time="+time;
+		s += "]";
+		return s;
+	}
+}
+
+class KeyEvent: Event
+{
+	var @key: Integer;
+	var @chars: String;
+	var @modifiers: Integer;
+
+	constructor create(type: Integer, view, key: Integer, modifiers: Integer)
+	{
+		super::create(type, view);
+		this.key = key;
+		this.modifiers = modifiers;
+	}
+
+	constructor create_typed(view, chars: String, modifiers: Integer)
+	{
+		super::create(EVENT_KEY_TYPED, view);
+		this.chars = chars;
+		this.modifiers = modifiers;
+	}
+
+	function get_key(): Integer
+	{
+		return key;
+	}
+
+	function get_chars(): String
+	{
+		return chars;
+	}
+
+	function get_modifiers(): Integer
+	{
+		return modifiers;
+	}
+
+	function to_string(): String
+	{
+		var s = "[type="+type_to_string(type);
+		switch (type) {
+			case EVENT_KEY_DOWN:
+			case EVENT_KEY_UP:
+				s += ", key="+key_to_string(key)+", modifiers="+modifiers_to_string(modifiers);
+				break;
+
+			case EVENT_KEY_TYPED:
+				s += ", chars='"+chars+"', modifiers="+modifiers_to_string(modifiers);
+				break;
+		}
+		s += "]";
+		return s;
+	}
+}
+
+class FocusEvent: Event
+{
+	var @subtype: Integer;
+
+	constructor create(type: Integer, view, subtype: Integer)
+	{
+		super::create(type, view);
+		this.subtype = subtype;
+	}
+
+	function get_subtype(): Integer
+	{
+		return subtype;
+	}
+
+	function to_string(): String
+	{
+		var s = "[type="+type_to_string(type)+", view=#"+(view as Integer|0);
+		if (type == EVENT_FOCUS_GAINED) {
+			s += ", subtype="+focus_subtype_to_string(subtype);
+		}
+		s += "]";
+		return s;
+	}
+}
+
+class EventListeners
+{
+	static function create(): EventListeners
+	{
+		return [] as EventListeners;
+	}
+
+	function add(func, data)
+	{
+		var arr = this as Dynamic[];
+		arr[] = func;
+		arr[] = data;
+		arr[] = false;
+	}
+
+	function add_weak(func, data)
+	{
+		if (!data) {
+			throw error("data not provided");
+		}
+		data = weakref_create(data);
+		var arr = this as Dynamic[];
+		arr[] = func;
+		arr[] = data;
+		arr[] = true;
+	}
+
+	function remove(func, data)
+	{
+		var arr = this as Dynamic[];
+		for (var i=0; i<arr.length; i+=3) {
+			var entry_func = arr[i+0];
+			var entry_data = arr[i+1];
+			var entry_weak = arr[i+2] as Boolean;
+			if (entry_weak) {
+				entry_data = weakref_get(entry_data);
+				if (!entry_data) {
+					arr.remove(i, 3);
+					i -= 3;
+					continue;
+				}
+			}
+			if (entry_func === func && entry_data === data) {
+				arr.remove(i, 3);
+				return;
+			}
+		}
+	}
+
+	function notify(event)
+	{
+		var arr = this as Dynamic[];
+		for (var i=0; i<arr.length; i+=3) {
+			var func = arr[i+0];
+			var data = arr[i+1];
+			var weak = arr[i+2] as Boolean;
+			if (weak) {
+				data = weakref_get(data);
+				if (!data) {
+					arr.remove(i, 3);
+					i -= 3;
+					continue;
+				}
+			}
+			func(data, event);
+		}
+	}
+
+	function is_empty(): Boolean
+	{
+		return (this as Dynamic[]).length == 0;
+	}
+}
+
+function modifiers_cmd_mask(): Integer;
+
+function @type_to_string(type: Integer): String
+{
+	switch (type) {
+		case EVENT_HIT_TEST:       return "HIT_TEST";
+		case EVENT_MOUSE_MOVE:     return "MOUSE_MOVE";
+		case EVENT_MOUSE_DRAG:     return "MOUSE_DRAG";
+		case EVENT_MOUSE_DOWN:     return "MOUSE_DOWN";
+		case EVENT_MOUSE_UP:       return "MOUSE_UP";
+		case EVENT_MOUSE_ENTER:    return "MOUSE_ENTER";
+		case EVENT_MOUSE_LEAVE:    return "MOUSE_LEAVE";
+		case EVENT_MOUSE_WHEEL:    return "MOUSE_WHEEL";
+		case EVENT_MOUSE_RELATIVE: return "MOUSE_RELATIVE";
+		case EVENT_TOUCH_START:    return "EVENT_TOUCH_START";
+		case EVENT_TOUCH_END:      return "EVENT_TOUCH_END";
+		case EVENT_TOUCH_MOVE:     return "EVENT_TOUCH_MOVE";
+		case EVENT_TOUCH_ENTER:    return "EVENT_TOUCH_ENTER";
+		case EVENT_TOUCH_LEAVE:    return "EVENT_TOUCH_LEAVE";
+		case EVENT_KEY_DOWN:       return "KEY_DOWN";
+		case EVENT_KEY_UP:         return "KEY_UP";
+		case EVENT_KEY_TYPED:      return "KEY_TYPED";
+		case EVENT_FOCUS_GAINED:   return "FOCUS_GAINED";
+		case EVENT_FOCUS_LOST:     return "FOCUS_LOST";
+	}
+	return "???";
+}
+
+function @button_to_string(type: Integer): String
+{
+	switch (type) {
+		case MOUSE_BUTTON_LEFT:   return "LEFT";
+		case MOUSE_BUTTON_MIDDLE: return "MIDDLE";
+		case MOUSE_BUTTON_RIGHT:  return "RIGHT";
+	}
+	return "???";
+}
+
+function @focus_subtype_to_string(subtype: Integer): String
+{
+	switch (subtype) {
+		case FOCUS_NORMAL: return "FOCUS_NORMAL";
+		case FOCUS_NEXT:   return "FOCUS_NEXT";
+		case FOCUS_PREV:   return "FOCUS_PREV";
+	}
+	return "???";
+}
+
+function @flag(s: String, name: String)
+{
+	if (s.length > 0) s[] = '|';
+	s += name;
+}
+
+function @modifiers_to_string(mod: Integer): String
+{
+	var s = {""};
+	if ((mod & MOD_CTRL) as Boolean) flag(s, "CTRL");
+	if ((mod & MOD_SHIFT) as Boolean) flag(s, "SHIFT");
+	if ((mod & MOD_ALT) as Boolean) flag(s, "ALT");
+	if ((mod & MOD_CMD) as Boolean) flag(s, "CMD");
+	if ((mod & MOD_LBUTTON) as Boolean) flag(s, "LBUTTON");
+	if ((mod & MOD_MBUTTON) as Boolean) flag(s, "MBUTTON");
+	if ((mod & MOD_RBUTTON) as Boolean) flag(s, "RBUTTON");
+	if (s.length == 0) {
+		return "(none)";
+	}
+	return s;
+}
+
+function @key_to_string(type: Integer): String
+{
+	switch (type) {
+		case KEY_NONE:             return "NONE";
+		case KEY_ESCAPE:           return "ESCAPE";
+		case KEY_F1:               return "F1";
+		case KEY_F2:               return "F2";
+		case KEY_F3:               return "F3";
+		case KEY_F4:               return "F4";
+		case KEY_F5:               return "F5";
+		case KEY_F6:               return "F6";
+		case KEY_F7:               return "F7";
+		case KEY_F8:               return "F8";
+		case KEY_F9:               return "F9";
+		case KEY_F10:              return "F10";
+		case KEY_F11:              return "F11";
+		case KEY_F12:              return "F12";
+		case KEY_PRINT_SCREEN:     return "PRINT_SCREEN";
+		case KEY_SCROLL_LOCK:      return "SCROLL_LOCK";
+		case KEY_PAUSE:            return "PAUSE";
+		case KEY_GRAVE:            return "GRAVE";
+		case KEY_NUM1:             return "NUM1";
+		case KEY_NUM2:             return "NUM2";
+		case KEY_NUM3:             return "NUM3";
+		case KEY_NUM4:             return "NUM4";
+		case KEY_NUM5:             return "NUM5";
+		case KEY_NUM6:             return "NUM6";
+		case KEY_NUM7:             return "NUM7";
+		case KEY_NUM8:             return "NUM8";
+		case KEY_NUM9:             return "NUM9";
+		case KEY_NUM0:             return "NUM0";
+		case KEY_MINUS:            return "MINUS";
+		case KEY_EQUAL:            return "EQUAL";
+		case KEY_BACKSPACE:        return "BACKSPACE";
+		case KEY_TAB:              return "TAB";
+		case KEY_Q:                return "Q";
+		case KEY_W:                return "W";
+		case KEY_E:                return "E";
+		case KEY_R:                return "R";
+		case KEY_T:                return "T";
+		case KEY_Y:                return "Y";
+		case KEY_U:                return "U";
+		case KEY_I:                return "I";
+		case KEY_O:                return "O";
+		case KEY_P:                return "P";
+		case KEY_LBRACKET:         return "LBRACKET";
+		case KEY_RBRACKET:         return "RBRACKET";
+		case KEY_BACKSLASH:        return "BACKSLASH";
+		case KEY_CAPS_LOCK:        return "CAPS_LOCK";
+		case KEY_A:                return "A";
+		case KEY_S:                return "S";
+		case KEY_D:                return "D";
+		case KEY_F:                return "F";
+		case KEY_G:                return "G";
+		case KEY_H:                return "H";
+		case KEY_J:                return "J";
+		case KEY_K:                return "K";
+		case KEY_L:                return "L";
+		case KEY_SEMICOLON:        return "SEMICOLON";
+		case KEY_APOSTROPHE:       return "APOSTROPHE";
+		case KEY_ENTER:            return "ENTER";
+		case KEY_LSHIFT:           return "LSHIFT";
+		case KEY_Z:                return "Z";
+		case KEY_X:                return "X";
+		case KEY_C:                return "C";
+		case KEY_V:                return "V";
+		case KEY_B:                return "B";
+		case KEY_N:                return "N";
+		case KEY_M:                return "M";
+		case KEY_COMMA:            return "COMMA";
+		case KEY_PERIOD:           return "PERIOD";
+		case KEY_SLASH:            return "SLASH";
+		case KEY_RSHIFT:           return "RSHIFT";
+		case KEY_LCONTROL:         return "LCONTROL";
+		case KEY_LMETA:            return "LMETA";
+		case KEY_LALT:             return "LALT";
+		case KEY_SPACE:            return "SPACE";
+		case KEY_RALT:             return "RALT";
+		case KEY_RMETA:            return "RMETA";
+		case KEY_RMENU:            return "RMENU";
+		case KEY_RCONTROL:         return "RCONTROL";
+		case KEY_INSERT:           return "INSERT";
+		case KEY_DELETE:           return "DELETE";
+		case KEY_HOME:             return "HOME";
+		case KEY_END:              return "END";
+		case KEY_PAGE_UP:          return "PAGE_UP";
+		case KEY_PAGE_DOWN:        return "PAGE_DOWN";
+		case KEY_LEFT:             return "LEFT";
+		case KEY_UP:               return "UP";
+		case KEY_RIGHT:            return "RIGHT";
+		case KEY_DOWN:             return "DOWN";
+		case KEY_NUM_LOCK:         return "NUM_LOCK";
+		case KEY_NUMPAD_SLASH:     return "NUMPAD_SLASH";
+		case KEY_NUMPAD_STAR:      return "NUMPAD_STAR";
+		case KEY_NUMPAD_MINUS:     return "NUMPAD_MINUS";
+		case KEY_NUMPAD_PLUS:      return "NUMPAD_PLUS";
+		case KEY_NUMPAD_ENTER:     return "NUMPAD_ENTER";
+		case KEY_NUMPAD_DOT:       return "NUMPAD_DOT";
+		case KEY_NUMPAD0:          return "NUMPAD0";
+		case KEY_NUMPAD1:          return "NUMPAD1";
+		case KEY_NUMPAD2:          return "NUMPAD2";
+		case KEY_NUMPAD3:          return "NUMPAD3";
+		case KEY_NUMPAD4:          return "NUMPAD4";
+		case KEY_NUMPAD5:          return "NUMPAD5";
+		case KEY_NUMPAD6:          return "NUMPAD6";
+		case KEY_NUMPAD7:          return "NUMPAD7";
+		case KEY_NUMPAD8:          return "NUMPAD8";
+		case KEY_NUMPAD9:          return "NUMPAD9";
+	}
+	return "??? "+type;
+}

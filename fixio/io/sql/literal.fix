@@ -1,0 +1,365 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "classes";
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const @LITERAL_PLACEHOLDER = "__fixio_sql_literal";
+
+function process_tokens(fname, tokens, src)
+{
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (tokens[i+TOK_type] == TOK_STRING && i >= TOK_SIZE*2) {
+			if (tokens[i-TOK_SIZE+TOK_type] == '(' && tokens[i-TOK_SIZE*2+TOK_type] == TOK_IDENT) {
+				var off = i-TOK_SIZE*2;
+				switch (tokens[off+TOK_len]) {
+					case 5:
+						if (i >= TOK_SIZE*3 && tokens[off-TOK_SIZE+TOK_type] == '.' && get_token_value(tokens, src, off) == "query") {
+							parse_literal(tokens, src, i);
+							continue;
+						}
+						break;
+
+					case 6: {
+						if (i < TOK_SIZE*3) break;
+						var prev_sym = tokens[off-TOK_SIZE+TOK_type];
+						if (prev_sym == '.') {
+							var ident = get_token_value(tokens, src, off);
+							if (ident == "update") {
+								parse_literal(tokens, src, i);
+								continue;
+							}
+						}
+						else if (prev_sym == ':') {
+							var ident = get_token_value(tokens, src, off);
+							if (ident == "create") {
+								var prev_sym2 = tokens[off-TOK_SIZE*2+TOK_type];
+								if (prev_sym2 == ':') {
+									off -= TOK_SIZE*3;
+									if (tokens[off+TOK_type] == TOK_IDENT && tokens[off+TOK_len] == 11 && get_token_value(tokens, src, off) == "ParamString") {
+										parse_literal(tokens, src, i);
+										continue;
+									}
+								}
+							}
+						}
+						break;
+					}
+
+					case 9:
+						if (i >= TOK_SIZE*3 && tokens[off-TOK_SIZE+TOK_type] == '.') {
+							var ident = get_token_value(tokens, src, off);
+							if (ident == "int_query") {
+								parse_literal(tokens, src, i);
+								continue;
+							}
+							else if (ident == "row_query") {
+								parse_literal(tokens, src, i);
+								continue;
+							}
+						}
+						break;
+
+					case 10:
+						if (i >= TOK_SIZE*3 && tokens[off-TOK_SIZE+TOK_type] == '.' && get_token_value(tokens, src, off) == "long_query") {
+							parse_literal(tokens, src, i);
+							continue;
+						}
+						break;
+
+					case 11: {
+						var ident = get_token_value(tokens, src, off);
+						if (ident == "ParamString") {
+							parse_literal(tokens, src, i);
+							continue;
+						}
+						else if (i >= TOK_SIZE*3 && tokens[off-TOK_SIZE+TOK_type] == '.' && ident == "float_query") {
+							parse_literal(tokens, src, i);
+							continue;
+						}
+						break;
+					}
+
+					case 12:
+						if (i >= TOK_SIZE*3 && tokens[off-TOK_SIZE+TOK_type] == '.') {
+							var ident = get_token_value(tokens, src, off);
+							if (ident == "double_query") {
+								parse_literal(tokens, src, i);
+								continue;
+							}
+							else if (ident == "string_query") {
+								parse_literal(tokens, src, i);
+								continue;
+							}
+							else if (ident == "binary_query") {
+								parse_literal(tokens, src, i);
+								continue;
+							}
+						}
+						break;
+				}
+			}
+		}
+	}
+
+	var ctx = class_context_get(fname);
+	class_context_register_function_call(ctx, LITERAL_PLACEHOLDER, placeholder_get_types#4, placeholder_adjust_call#7, null);
+
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @placeholder_get_types(data, name, num_params, line)
+{
+	var params = [TYPE_DYNAMIC, TYPE_STRING];
+	for (var i=1; i<num_params; i++) {
+		params[] = TYPE_DYNAMIC;
+	}
+	return params;
+}
+
+function @placeholder_adjust_call(data, name, types, tokens, src, start, end)
+{
+	var off = start + TOK_SIZE*2;
+	var sig_start = off + TOK_SIZE*2;
+	var sig = {""};
+	for (var i=2; i<length(types); i++) {
+		var param_type = types[i];
+		var valid = false;
+		off = expect_symbol(tokens, src, off, ',');
+		if (is_array(param_type)) {
+			switch (param_type[0]) {
+				case EXT_TYPE_CLASS: {
+					var cls_name = class_type_get_class_name(param_type);
+					if (cls_name == "Long") {
+						sig[] = 'l';
+						valid = true;
+					}
+					else if (cls_name == "Double") {
+						sig[] = 'd';
+						valid = true;
+					}
+					break;
+				}
+
+				case EXT_TYPE_ARRAY:
+					if (class_type_get_base(param_type) == TYPE_INTEGER) {
+						sig[] = 'b';
+						valid = true;
+					}
+					break;
+			}
+		}
+		else {
+			switch (param_type) {
+				case TYPE_INTEGER: sig[] = 'i'; valid = true; break;
+				case TYPE_FLOAT:   sig[] = 'f'; valid = true; break;
+				case TYPE_BOOLEAN: sig[] = 'i'; valid = true; break; // TODO
+				case TYPE_STRING:  sig[] = 's'; valid = true; break;
+				default:
+			}
+		}
+		if (!valid) {
+			return 0, error({script_line(tokens[off+TOK_SIZE+TOK_line]), ": unsupported type ", class_type_to_string(param_type), " for SQL parameter ", i-2});
+		}
+		off = expect_expression(tokens, src, off);
+	}
+	off = expect_symbol(tokens, src, off, ')');
+
+	tokens[off+TOK_type] = ']';
+	tokens[off+TOK_off] = length(src);
+	src[] = ']';
+
+	var sig_tokens = tokens_parse([], src, {token_escape_string(sig), ", ["}, tokens[sig_start+TOK_line]);
+	array_insert_array(tokens, sig_start, sig_tokens);
+	array_remove(tokens, start, 2*TOK_SIZE);
+	end += length(sig_tokens) - 2*TOK_SIZE;
+	return end;
+}
+
+function @parse_literal(tokens, src, i)
+{
+	var start = i;
+	var query_string = null;
+	var num_params = 0;
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == '+') {
+			i = expect_type(tokens, src, i, TOK_STRING, "string literal");
+			if (!query_string) {
+				query_string = get_token_string(tokens, src, start);
+			}
+			array_append(query_string, get_token_string(tokens, src, i));
+		}
+		else {
+			i -= TOK_SIZE;
+			break;
+		}
+	}
+	if (query_string) {
+		var escaped = token_escape_string(query_string);
+		tokens[start+TOK_off] = length(src);
+		tokens[start+TOK_len] = length(escaped);
+		array_append(src, escaped);
+		array_remove(tokens, start+TOK_SIZE, i-start);
+		i = start;
+	}
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == ',') {
+			num_params++;
+			i = expect_expression(tokens, src, i);
+		}
+		else {
+			i -= TOK_SIZE;
+			break;
+		}
+	}
+	i = expect_symbol(tokens, src, i, ')');
+
+	if (num_params > 0) {
+		var prefix_tokens = tokens_parse([], src, {LITERAL_PLACEHOLDER, "("}, tokens[start+TOK_line]);
+		var suffix_tokens = tokens_parse([], src, ")", tokens[i+TOK_line]);
+		array_insert_array(tokens, i, suffix_tokens);
+		array_insert_array(tokens, start, prefix_tokens);
+	}
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": unexpected end of file"});
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}

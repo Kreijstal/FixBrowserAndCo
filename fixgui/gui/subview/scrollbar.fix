@@ -1,0 +1,458 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/event";
+
+const {
+	SCROLL_HORIZ,
+	SCROLL_VERT
+};
+
+const {
+	SCROLL_BUTTON_UP,
+	SCROLL_BUTTON_DOWN,
+	SCROLL_BUTTON_LEFT,
+	SCROLL_BUTTON_RIGHT,
+	SCROLL_TRACK_UP,
+	SCROLL_TRACK_DOWN,
+	SCROLL_TRACK_LEFT,
+	SCROLL_TRACK_RIGHT
+};
+
+const {
+	SBA_PREV,
+	SBA_NEXT,
+	SBA_PAGE_PREV,
+	SBA_PAGE_NEXT,
+	SBA_START,
+	SBA_END
+};
+
+const {
+	@AREA_BTN1,
+	@AREA_BTN2,
+	@AREA_TRACK1,
+	@AREA_TRACK2,
+	@AREA_SLIDER
+};
+
+class SubScrollBar: SubView
+{
+	var @type: Integer;
+	var @size: Integer;
+	var @state_btn1: Integer;
+	var @state_btn2: Integer;
+	var @state_slider: Integer;
+	var @state_track1: Integer;
+	var @state_track2: Integer;
+	var @slider_start: Integer;
+	var @slider_end: Integer;
+	var @last_area: Integer;
+	var @scroll_coord: Integer;
+	var @scroll_pos: Integer;
+	var @value: Integer;
+	var @maximum: Integer;
+	var @increment: Integer;
+	var @page_size: Integer;
+	var @change_action;
+	var @change_data;
+	var @timer: Timer;
+	var @initial_delay: Integer;
+	var @repeat_delay: Integer;
+
+	constructor create(type: Integer)
+	{
+		this.type = type;
+		last_area = -1;
+		scroll_coord = -1;
+		increment = 1;
+		page_size = 10;
+		initial_delay = 400;
+		repeat_delay = 100;
+	}
+
+	virtual function get_default_size(scale: Float): Integer
+	{
+		return iround(20*scale);
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+
+	function get_value(): Integer
+	{
+		return value;
+	}
+	
+	function set_value(value: Integer)
+	{
+		set_value(value, false);
+	}
+
+	function set_value(value: Integer, ignore_action: Boolean)
+	{
+		if (value < 0) value = 0;
+		if (value > maximum) value = maximum;
+		if (value == this.value) return;
+		this.value = value;
+		update_slider();
+		repaint();
+		if (!ignore_action && change_action) {
+			change_action(change_data);
+		}
+	}
+
+	function get_maximum(): Integer
+	{
+		return maximum;
+	}
+
+	function set_maximum(maximum: Integer)
+	{
+		if (maximum < 0) maximum = 0;
+		this.maximum = maximum;
+		if (value > maximum) value = maximum;
+		update_slider();
+		repaint();
+	}
+
+	function get_increment(): Integer
+	{
+		return increment;
+	}
+
+	function set_increment(increment: Integer)
+	{
+		this.increment = increment;
+	}
+
+	function get_page_size(): Integer
+	{
+		return page_size;
+	}
+
+	function set_page_size(page_size: Integer)
+	{
+		this.page_size = page_size;
+	}
+
+	function set_state(value: Integer, maximum: Integer, page_size: Integer)
+	{
+		set_maximum(maximum);
+		set_value(value);
+		set_page_size(page_size);
+	}
+
+	function set_change_action(action, data)
+	{
+		change_action = action;
+		change_data = data;
+	}
+
+	function set_repeat_delay(initial: Integer, repeat: Integer)
+	{
+		initial_delay = initial;
+		repeat_delay = repeat;
+	}
+
+	virtual function do_action(action: Integer)
+	{
+		switch (action) {
+			case SBA_PREV: set_value(get_value() - increment); break;
+			case SBA_NEXT: set_value(get_value() + increment); break;
+			case SBA_PAGE_PREV: set_value(get_value() - page_size); break;
+			case SBA_PAGE_NEXT: set_value(get_value() + page_size); break;
+			case SBA_START: set_value(0); break;
+			case SBA_END: set_value(maximum); break;
+		}
+	}
+
+	function scroll_at(coord: Integer)
+	{
+		var slider_size = slider_end - slider_start;
+		var total = max(0, (type == SCROLL_VERT? get_height() : get_width()) - size*2) - slider_size;
+		coord = max(0, min(coord - slider_size/2 - size, total));
+		if (coord != slider_start) {
+			slider_start = coord;
+			slider_end = coord + slider_size;
+			update_value();
+			repaint();
+		}
+	}
+
+	function @update_slider()
+	{
+		var total = max(0, (type == SCROLL_VERT? get_height() : get_width()) - size*2);
+		if (maximum == 0) {
+			slider_start = 0;
+			slider_end = total;
+			return;
+		}
+		var min_size = get_slider_min_size();
+		var slider_size = max(min_size, min(iround(float(page_size) / float(maximum+page_size) * float(total)), total-1));
+		if (min_size < 0) {
+			slider_size = min(-min_size, total-1);
+		}
+		if (slider_size > total) {
+			slider_size = total;
+		}
+		total -= slider_size;
+		slider_start = max(0, min(iround(float(value) / float(maximum) * float(total)), total));
+		slider_end = slider_start + slider_size;
+	}
+
+	function @update_value()
+	{
+		var slider_size = slider_end - slider_start;
+		var total = max(0, (type == SCROLL_VERT? get_height() : get_width()) - size*2) - slider_size;
+		var new_value = max(0, min(iround(float(slider_start) / float(total) * float(maximum)), maximum));
+		if (new_value != value) {
+			value = new_value;
+			if (change_action) {
+				change_action(change_data);
+			}
+		}
+	}
+
+	override function handle_resize()
+	{
+		var w = get_width();
+		var h = get_height();
+
+		if (type == SCROLL_VERT) {
+			size = min(w, h/2);
+		}
+		else {
+			size = min(h, w/2);
+		}
+		update_slider();
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var w = get_width();
+		var h = get_height();
+
+		paint_background(p);
+
+		if (type == SCROLL_VERT) {
+			paint_button(p, 0, 0, w, size, SCROLL_BUTTON_UP, state_btn1);
+			paint_button(p, 0, h-size, w, size, SCROLL_BUTTON_DOWN, state_btn2);
+			paint_slider(p, 0, size+slider_start, w, slider_end-slider_start, state_slider);
+			paint_track(p, 0, size, w, slider_start, SCROLL_TRACK_UP, state_track1);
+			paint_track(p, 0, size+slider_end, w, (h-size)-(size+slider_end), SCROLL_TRACK_DOWN, state_track2);
+		}
+		else {
+			paint_button(p, 0, 0, size, h, SCROLL_BUTTON_LEFT, state_btn1);
+			paint_button(p, w-size, 0, size, h, SCROLL_BUTTON_RIGHT, state_btn2);
+			paint_slider(p, size+slider_start, 0, slider_end-slider_start, h, state_slider);
+			paint_track(p, size, 0, slider_start, h, SCROLL_TRACK_LEFT, state_track1);
+			paint_track(p, size+slider_end, 0, (w-size)-(size+slider_end), h, SCROLL_TRACK_RIGHT, state_track2);
+		}
+
+		draw_children(p);
+	}
+
+	virtual function get_slider_min_size(): Integer
+	{
+		return iround(10*get_scale());
+	}
+
+	virtual function paint_background(p: Painter)
+	{
+	}
+
+	virtual function paint_track(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, type: Integer, state: Integer)
+	{
+		var color = 0xFF0000FF;
+		if ((state & BUTTON_HOVER) != 0) {
+			color = 0xFF8888FF;
+		}
+		if ((state & BUTTON_PRESSED) != 0) {
+			color = 0xFF444488;
+		}
+		p.fill_rect(x, y, width, height, color);
+	}
+
+	virtual function paint_button(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, type: Integer, state: Integer)
+	{
+		var color = 0xFFFF00FF;
+		if ((state & BUTTON_HOVER) != 0) {
+			color = 0xFFFF88FF;
+		}
+		if ((state & BUTTON_PRESSED) != 0) {
+			color = 0xFF884488;
+		}
+		p.fill_rect(x, y, width, height, color);
+	}
+
+	virtual function paint_slider(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, state: Integer, state: Integer)
+	{
+		var color = 0xFFFFCC00;
+		if ((state & BUTTON_HOVER) != 0) {
+			color = 0xFFFFCC88;
+		}
+		if ((state & BUTTON_PRESSED) != 0) {
+			color = 0xFF886644;
+		}
+		p.fill_rect(x, y, width, height, color);
+	}
+
+	function @state_idx(area: Integer): Integer
+	{
+		switch (area) {
+			case AREA_BTN1: return SUBSCROLLBAR_state_btn1;
+			case AREA_BTN2: return SUBSCROLLBAR_state_btn2;
+			case AREA_TRACK1: return SUBSCROLLBAR_state_track1;
+			case AREA_TRACK2: return SUBSCROLLBAR_state_track2;
+			case AREA_SLIDER: return SUBSCROLLBAR_state_slider;
+		}
+		return -1;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var mx = event.get_x();
+		var my = event.get_y();
+		var coord = (type == SCROLL_VERT? my : mx);
+		var total = (type == SCROLL_VERT? get_height() : get_width());
+
+		var area = -1;
+		if (coord < size) {
+			area = AREA_BTN1;
+		}
+		else if (coord >= total-size) {
+			area = AREA_BTN2;
+		}
+		else if (coord < size+slider_start) {
+			area = AREA_TRACK1;
+		}
+		else if (coord >= size+slider_end) {
+			area = AREA_TRACK2;
+		}
+		else {
+			area = AREA_SLIDER;
+		}
+
+		if (event.get_type() == EVENT_MOUSE_LEAVE) {
+			area = -1;
+			scroll_coord = -1;
+		}
+		if (event.get_type() == EVENT_MOUSE_DRAG) {
+			area = last_area;
+		}
+
+		if (area != last_area) {
+			if (last_area != -1) {
+				(this as Dynamic)[state_idx(last_area)] &= ~BUTTON_HOVER;
+			}
+			if (area != -1) {
+				(this as Dynamic)[state_idx(area)] |= BUTTON_HOVER;
+			}
+			repaint();
+		}
+
+		switch (event.get_type()) {
+			case EVENT_MOUSE_DOWN:
+				if ((event.get_modifiers() & MOD_LBUTTON) != 0 && area != -1) {
+					(this as Dynamic)[state_idx(area)] |= BUTTON_PRESSED;
+					if (area == AREA_SLIDER) {
+						scroll_coord = coord;
+						scroll_pos = slider_start;
+					}
+					else {
+						last_area = area;
+						if (timer) {
+							timer.stop();
+							timer = null;
+						}
+						var weak = weakref_create(this);
+						do_timer_action(weak);
+						timer = Timer::run(500, SubScrollBar::do_timer_action#1, weak);
+					}
+					repaint();
+				}
+				break;
+
+			case EVENT_MOUSE_UP:
+				if ((event.get_modifiers() & MOD_LBUTTON) == 0 && last_area != -1) {
+					(this as Dynamic)[state_idx(last_area)] &= ~BUTTON_PRESSED;
+					if (last_area == AREA_SLIDER) {
+						scroll_coord = -1;
+						//update_slider();
+					}
+					repaint();
+					if (timer) {
+						timer.stop();
+						timer = null;
+					}
+				}
+				break;
+
+			case EVENT_MOUSE_DRAG:
+				if ((event.get_modifiers() & MOD_LBUTTON) != 0 && area == AREA_SLIDER && scroll_coord != -1) {
+					var slider_size = slider_end - slider_start;
+					var delta = coord - scroll_coord;
+					slider_start = scroll_pos + delta;
+					if (slider_start < 0) {
+						slider_start = 0;
+					}
+					if (slider_start + slider_size > total-size*2) {
+						slider_start = total-size*2 - slider_size;
+					}
+					slider_end = slider_start + slider_size;
+					update_value();
+					repaint();
+				}
+				break;
+		}
+
+		last_area = area;
+		return false;
+	}
+
+	static function @do_timer_action(weak): Boolean
+	{
+		var scroll = weakref_get(weak) as SubScrollBar;
+		if (!scroll) {
+			return false;
+		}
+		switch (scroll.last_area) {
+			case AREA_BTN1: scroll.do_action(SBA_PREV); break;
+			case AREA_BTN2: scroll.do_action(SBA_NEXT); break;
+			case AREA_TRACK1: scroll.do_action(SBA_PAGE_PREV); break;
+			case AREA_TRACK2: scroll.do_action(SBA_PAGE_NEXT); break;
+		}
+		if (scroll.timer) {
+			scroll.timer.set_interval(100);
+		}
+		return true;
+	}
+}

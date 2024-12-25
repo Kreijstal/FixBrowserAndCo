@@ -1,0 +1,259 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/http/request";
+import "util/string";
+
+const @HEADERS_BUF_SIZE = 1024;
+const @MAX_HEADER_SIZE  = 16384;
+
+const {
+	@STATE_START_LINE,
+	@STATE_HEADER_NAME,
+	@STATE_HEADER_VALUE,
+	@STATE_CR1,
+	@STATE_LF1,
+	@STATE_CR2,
+	@STATE_READ_POST
+};
+
+function normalize_header_name(s)
+{
+	var first = true;
+	for (var i=0; i<length(s); i++) {
+		var c = s[i];
+		switch (c) {
+			case 'A'..'Z':
+				if (!first) {
+					s[i] = c - 'A' + 'a';
+				}
+				break;
+
+			case 'a'..'z':
+				if (first) {
+					s[i] = c - 'a' + 'A';
+				}
+				break;
+
+			case '-':
+				first = true;
+				continue;
+		}
+		first = false;
+	}
+	return s;
+}
+
+function @is_whitespace(c)
+{
+	return c == ' ' || c == '\t';
+}
+
+function @trim_right(s)
+{
+	var len = length(s);
+	while (len > 0 && is_whitespace(s[len-1])) {
+		len--;
+	}
+	array_set_length(s, len);
+}
+
+function @parse_start_line_server(req, s)
+{
+	var parts = string_split(s, ' ');
+	if (length(parts) != 3) {
+		return 0, error("invalid start line");
+	}
+
+	if (parts[2] != "HTTP/1.0" && parts[2] != "HTTP/1.1") {
+		return 0, error("unsupported HTTP version");
+	}
+
+	var method = parts[0];
+	if (method == "GET")     { req->REQ_method = METHOD_GET; } else
+	if (method == "HEAD")    { req->REQ_method = METHOD_HEAD; } else
+	if (method == "POST")    { req->REQ_method = METHOD_POST; } else
+	if (method == "PUT")     { req->REQ_method = METHOD_PUT; } else
+	if (method == "DELETE")  { req->REQ_method = METHOD_DELETE; } else
+	if (method == "CONNECT") { req->REQ_method = METHOD_CONNECT; } else
+	if (method == "OPTIONS") { req->REQ_method = METHOD_OPTIONS; } else
+	if (method == "TRACE")   { req->REQ_method = METHOD_TRACE; }
+
+	req->REQ_path = parts[1];
+}
+
+function @parse_start_line_client(req, s)
+{
+	var parts = string_split(s, ' ');
+	if (length(parts) < 2) {
+		return 0, error("invalid start line");
+	}
+
+	if (parts[0] != "HTTP/1.0" && parts[0] != "HTTP/1.1") {
+		return 0, error("unsupported HTTP version");
+	}
+
+	req->REQ_code = string_parse_int(parts[1]);
+	req->REQ_status = length(parts) > 2? parts[2] : "OK";
+}
+
+function parse_headers(stream, req, client)
+{
+	var buf = {""}, name = {""}, value = {""};
+	var total_read = 0;
+	array_set_length(buf, HEADERS_BUF_SIZE);
+
+	var state = STATE_START_LINE;
+	var headers = req->REQ_headers;
+
+	var post_data, post_size;
+
+	for (;;) {
+		var r = stream_read_part(stream, buf, 0, length(buf));
+		if (r < 0) return 0, error("unexpected end of headers");
+		total_read += r;
+		if (total_read > MAX_HEADER_SIZE) {
+			return 0, error("max header size exceeded");
+		}
+		for (var i=0; i<r; i++) {
+			var c = buf[i];
+			switch (state) {
+				case STATE_START_LINE:
+					if (c == '\r') {
+						if (client) {
+							parse_start_line_client(req, value);
+						}
+						else {
+							parse_start_line_server(req, value);
+						}
+						array_set_length(value, 0);
+						state = STATE_CR1;
+						break;
+					}
+					if (length(value) == 0 && is_whitespace(c)) {
+						return 0, error("invalid whitespace on start line");
+					}
+					value[] = c;
+					break;
+
+				case STATE_HEADER_NAME:
+					if (c == ':') {
+						trim_right(name);
+						normalize_header_name(name);
+						state = STATE_HEADER_VALUE;
+						break;
+					}
+					if (length(name) > 0 || !is_whitespace(c)) {
+						name[] = c;
+					}
+					break;
+
+				case STATE_HEADER_VALUE:
+					if (c == '\r') {
+						trim_right(value);
+						var list = hash_get(headers, name, null);
+						if (!list) {
+							list = [];
+							headers{{name}} = list;
+						}
+						if (name == "Set-Cookie" || name == "Date" || name == "Expires") {
+							list[] = string_trim(value, is_whitespace#1);
+						}
+						else {
+							var parts = string_split(value, name == "Cookie"? ';' : ',');
+							for (var j=0; j<length(parts); j++) {
+								list[] = string_trim(parts[j], is_whitespace#1);
+							}
+						}
+						array_set_length(name, 0);
+						array_set_length(value, 0);
+						state = STATE_CR1;
+						break;
+					}
+					if (length(value) > 0 || !is_whitespace(c)) {
+						value[] = c;
+					}
+					break;
+
+				case STATE_CR1:
+					if (c == '\n') {
+						state = STATE_LF1;
+						break;
+					}
+					return 0, error("invalid header format");
+
+				case STATE_LF1:
+					if (c == '\r') {
+						state = STATE_CR2;
+						break;
+					}
+					if (!is_whitespace(c)) {
+						name[] = c;
+					}
+					state = STATE_HEADER_NAME;
+					break;
+
+				case STATE_CR2:
+					if (c == '\n') {
+						if (req->REQ_method == METHOD_POST) {
+							var content_type = request_get_header(req, "Content-Type");
+							if (content_type) {
+								var idx = string_search_char(content_type, ';');
+								if (idx != -1) {
+									array_set_length(content_type, idx);
+								}
+								content_type = string_trim(content_type);
+								if (content_type == "application/x-www-form-urlencoded") {
+									var content_len = request_get_header(req, "Content-Length");
+									var (len, e) = string_parse_int(content_len);
+									if (!e) {
+										post_data = {""};
+										post_size = len;
+										state = STATE_READ_POST;
+										break;
+									}
+								}
+							}
+						}
+
+						i++;
+						array_copy(buf, 0, buf, i, r - i);
+						array_set_length(buf, r - i);
+						return buf;
+					}
+					return 0, error("invalid header format");
+
+				case STATE_READ_POST:
+					post_data[] = c;
+					if (length(post_data) == post_size) {
+						req->REQ_post_data = post_data;
+
+						i++;
+						array_copy(buf, 0, buf, i, r - i);
+						array_set_length(buf, r - i);
+						return buf;
+					}
+					break;
+			}
+		}
+	}
+}

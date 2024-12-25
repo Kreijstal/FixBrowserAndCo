@@ -1,0 +1,367 @@
+var @tlds;
+var @uk_subdomains;
+
+function get_domain_suffix_length(parts)
+{
+	if (!tlds) {
+		init_tlds();
+	}
+
+	var len = length(parts);
+	if (len == 0) return 0;
+
+	var func = hash_get(tlds, parts[len-1], null);
+	if (!func) return 1;
+
+	return func(parts);
+}
+
+function @register_tld(name)
+{
+	tlds{name} = null;
+}
+
+function @register_tld(name, func)
+{
+	tlds{name} = func;
+}
+
+function @create_set(arr)
+{
+	var set = {};
+	for (var i=0; i<length(arr); i++) {
+		set{arr[i]} = true;
+	}
+	return set;
+}
+
+function @init_tlds()
+{
+	tlds = {};
+
+	// source: https://en.wikipedia.org/wiki/List_of_Internet_top-level_domains
+	// retrieved on 2019/01/22
+
+	register_tld("com");
+	register_tld("org");
+	register_tld("net");
+	register_tld("int");
+	register_tld("edu");
+	register_tld("gov");
+	register_tld("mil");
+	register_tld("arpa");
+
+	register_tld("ac"); // Ascension Island
+	register_tld("ad"); // Andorra
+	register_tld("ae"); // United Arab Emirates
+	register_tld("af"); // Afghanistan
+	register_tld("ag"); // Antigua and Barbuda
+	register_tld("ai"); // Anguilla
+	register_tld("al"); // Albania
+	register_tld("am"); // Armenia
+	register_tld("an"); // Netherlands Antilles
+	register_tld("ao"); // Angola
+	register_tld("aq"); // Antarctica
+	register_tld("ar"); // Argentina
+	register_tld("as"); // American Samoa (United States)
+	register_tld("at"); // Austria
+	register_tld("au"); // Australia
+	register_tld("aw"); // Aruba (Kingdom of the Netherlands)
+	register_tld("ax"); // Aland (Finland)
+	register_tld("az"); // Azerbaijan
+
+	register_tld("ba"); // Bosnia and Herzegovina
+	register_tld("bb"); // Barbados
+	register_tld("bd"); // Bangladesh
+	register_tld("be"); // Belgium
+	register_tld("bf"); // Burkina Faso
+	register_tld("bg"); // Bulgaria
+	register_tld("bh"); // Bahrain
+	register_tld("bi"); // Burundi
+	register_tld("bj"); // Benin
+	register_tld("bl"); // Saint Barthélemy (France)
+	register_tld("bm"); // Bermuda
+	register_tld("bn"); // Brunei
+	register_tld("bo"); // Bolivia
+	register_tld("bq"); // Bonaire
+	register_tld("br"); // Brazil
+	register_tld("bs"); // Bahamas
+	register_tld("bt"); // Bhutan
+	register_tld("bv"); // Bouvet Island
+	register_tld("bw"); // Botswana
+	register_tld("by"); // Belarus
+	register_tld("bz"); // Belize
+
+	register_tld("ca"); // Canada
+	register_tld("cc"); // Cocos (Keeling) Islands (Australia)
+	register_tld("cd"); // Democratic Republic of the Congo
+	register_tld("cf"); // Central African Republic
+	register_tld("cg"); // Republic of the Congo
+	register_tld("ch"); // Switzerland
+	register_tld("ci"); // Ivory Coast
+	register_tld("ck"); // Cook Islands
+	register_tld("cl"); // Chile
+	register_tld("cm"); // Cameroon
+	register_tld("cn"); // People's Republic of China
+	register_tld("co"); // Colombia
+	register_tld("cr"); // Costa Rica
+	register_tld("cu"); // Cuba
+	register_tld("cv"); // Cape Verde
+	register_tld("cw"); // Curaçao (Kingdom of the Netherlands)
+	register_tld("cx"); // Christmas Island
+	register_tld("cy"); // Cyprus
+	register_tld("cz"); // Czech Republic
+
+	register_tld("de"); // Germany
+	register_tld("dj"); // Djibouti
+	register_tld("dk"); // Denmark
+	register_tld("dm"); // Dominica
+	register_tld("do"); // Dominican Republic
+	register_tld("dz"); // Algeria
+
+	register_tld("ec"); // Ecuador
+	register_tld("ee"); // Estonia
+	register_tld("eg"); // Egypt
+	register_tld("eh"); // Western Sahara
+	register_tld("er"); // Eritrea
+	register_tld("es"); // Spain
+	register_tld("et"); // Ethiopia
+	register_tld("eu"); // European Union
+
+	register_tld("fi"); // Finland
+	register_tld("fj"); // Fiji
+	register_tld("fk"); // Falkland Islands
+	register_tld("fm"); // Federated States of Micronesia
+	register_tld("fo"); // Faroe Islands (Kingdom of Denmark)
+	register_tld("fr"); // France
+
+	register_tld("ga"); // Gabon
+	register_tld("gb"); // United Kingdom
+	register_tld("gd"); // Grenada
+	register_tld("ge"); // Georgia
+	register_tld("gf"); // French Guiana (France)
+	register_tld("gg"); // Guernsey (United Kingdom)
+	register_tld("gh"); // Ghana
+	register_tld("gi"); // Gibraltar (United Kingdom)
+	register_tld("gl"); // Greenland (Kingdom of Denmark)
+	register_tld("gm"); // The Gambia
+	register_tld("gn"); // Guinea
+	register_tld("gp"); // Guadeloupe (France)
+	register_tld("gq"); // Equatorial Guinea
+	register_tld("gr"); // Greece
+	register_tld("gs"); // South Georgia and the South Sandwich Islands
+	register_tld("gt"); // Guatemala
+	register_tld("gu"); // Guam (United States)
+	register_tld("gw"); // Guinea-Bissau
+	register_tld("gy"); // Guyana
+
+	register_tld("hk"); // Hong Kong
+	register_tld("hm"); // Heard Island and McDonald Islands
+	register_tld("hn"); // Honduras
+	register_tld("hr"); // Croatia
+	register_tld("ht"); // Haiti
+	register_tld("hu"); // Hungary
+
+	register_tld("id"); // Indonesia
+	register_tld("ie"); // Ireland
+	register_tld("il"); // Israel
+	register_tld("im"); // Isle of Man (United Kingdom)
+	register_tld("in"); // India
+	register_tld("io"); // British Indian Ocean Territory
+	register_tld("iq"); // Iraq
+	register_tld("ir"); // Iran
+	register_tld("is"); // Iceland
+	register_tld("it"); // Italy
+	register_tld("je"); // Jersey (United Kingdom)
+	register_tld("jm"); // Jamaica
+	register_tld("jo"); // Jordan
+	register_tld("jp"); // Japan
+
+	register_tld("ke"); // Kenya
+	register_tld("kg"); // Kyrgyzstan
+	register_tld("kh"); // Cambodia
+	register_tld("ki"); // Kiribati
+	register_tld("km"); // Comoros
+	register_tld("kn"); // Saint Kitts and Nevis
+	register_tld("kp"); // North Korea
+	register_tld("kr"); // South Korea
+	register_tld("kw"); // Kuwait
+	register_tld("ky"); // Cayman Islands
+	register_tld("kz"); // Kazakhstan
+
+	register_tld("la"); // Laos
+	register_tld("lb"); // Lebanon
+	register_tld("lc"); // Saint Lucia
+	register_tld("li"); // Liechtenstein
+	register_tld("lk"); // Sri Lanka
+	register_tld("lr"); // Liberia
+	register_tld("ls"); // Lesotho
+	register_tld("lt"); // Lithuania
+	register_tld("lu"); // Luxembourg
+	register_tld("lv"); // Latvia
+	register_tld("ly"); // Libya
+
+	register_tld("ma"); // Morocco
+	register_tld("mc"); // Monaco
+	register_tld("md"); // Moldova
+	register_tld("me"); // Montenegro
+	register_tld("mf"); // Collectivity of Saint Martin (France)
+	register_tld("mg"); // Madagascar
+	register_tld("mh"); // Marshall Islands
+	register_tld("mk"); // Macedonia
+	register_tld("ml"); // Mali
+	register_tld("mm"); // Myanmar
+	register_tld("mn"); // Mongolia
+	register_tld("mo"); // Macau
+	register_tld("mp"); // Northern Mariana Islands (United States)
+	register_tld("mq"); // Martinique (France)
+	register_tld("mr"); // Mauritania
+	register_tld("ms"); // Montserrat
+	register_tld("mt"); // Malta
+	register_tld("mu"); // Mauritius
+	register_tld("mv"); // Maldives
+	register_tld("mw"); // Malawi
+	register_tld("mx"); // Mexico
+	register_tld("my"); // Malaysia
+	register_tld("mz"); // Mozambique
+
+	register_tld("na"); // Namibia
+	register_tld("nc"); // New Caledonia (France)|
+	register_tld("ne"); // Niger
+	register_tld("nf"); // Norfolk Island
+	register_tld("ng"); // Nigeria
+	register_tld("ni"); // Nicaragua
+	register_tld("nl"); // Netherlands
+	register_tld("no"); // Norway
+	register_tld("np"); // Nepal
+	register_tld("nr"); // Nauru
+	register_tld("nu"); // Niue
+	register_tld("nz"); // New Zealand
+
+	register_tld("om"); // Oman
+	register_tld("pa"); // Panama
+	register_tld("pe"); // Peru
+	register_tld("pf"); // French Polynesia (France)
+	register_tld("pg"); // Papua New Guinea
+	register_tld("ph"); // Philippines
+	register_tld("pk"); // Pakistan
+	register_tld("pl"); // Poland
+	register_tld("pm"); // Saint-Pierre and Miquelon (France)
+	register_tld("pn"); // Pitcairn Islands
+	register_tld("pr"); // Puerto Rico (United States)
+	register_tld("ps"); // Palestine
+	register_tld("pt"); // Portugal
+	register_tld("pw"); // Palau
+	register_tld("py"); // Paraguay
+	register_tld("qa"); // Qatar
+
+	register_tld("re"); // Réunion (France)
+	register_tld("ro"); // Romania
+	register_tld("rs"); // Serbia
+	register_tld("ru"); // Russia
+	register_tld("rw"); // Rwanda
+
+	register_tld("sa"); // Saudi Arabia
+	register_tld("sb"); // Solomon Islands
+	register_tld("sc"); // Seychelles
+	register_tld("sd"); // Sudan
+	register_tld("se"); // Sweden
+	register_tld("sg"); // Singapore
+	register_tld("sh"); // Saint Helena
+	register_tld("si"); // Slovenia
+	register_tld("sj"); // Svalbard and Jan Mayen Islands
+	register_tld("sk"); // Slovakia
+	register_tld("sl"); // Sierra Leone
+	register_tld("sm"); // San Marino
+	register_tld("sn"); // Senegal
+	register_tld("so"); // Somalia
+	register_tld("sr"); // Suriname
+	register_tld("ss"); // South Sudan
+	register_tld("st"); // S?o Tomé and Príncipe
+	register_tld("su"); // Soviet Union
+	register_tld("sv"); // El Salvador
+	register_tld("sx"); // Sint Maarten
+	register_tld("sy"); // Syria
+	register_tld("sz"); // Eswatini
+
+	register_tld("tc"); // Turks and Caicos Islands
+	register_tld("td"); // Chad
+	register_tld("tf"); // French Southern and Antarctic Lands
+	register_tld("tg"); // Togo
+	register_tld("th"); // Thailand
+	register_tld("tj"); // Tajikistan
+	register_tld("tk"); // Tokelau
+	register_tld("tl"); // East Timor
+	register_tld("tm"); // Turkmenistan
+	register_tld("tn"); // Tunisia
+	register_tld("to"); // Tonga
+	register_tld("tp"); // East Timor
+	register_tld("tr"); // Turkey
+	register_tld("tt"); // Trinidad and Tobago
+	register_tld("tv"); // Tuvalu
+	register_tld("tw"); // Taiwan
+	register_tld("tz"); // Tanzania
+
+	register_tld("ua"); // Ukraine
+	register_tld("ug"); // Uganda
+	register_tld("uk", domain_uk#1); // United Kingdom
+	register_tld("um"); // United States Minor Outlying Islands
+	register_tld("us"); // United States of America
+	register_tld("uy"); // Uruguay
+	register_tld("uz"); // Uzbekistan
+	register_tld("va"); // Vatican City
+	register_tld("vc"); // Saint Vincent and the Grenadines
+	register_tld("ve"); // Venezuela
+	register_tld("vg"); // British Virgin Islands
+	register_tld("vi"); // United States Virgin Islands (United States)
+	register_tld("vn"); // Vietnam
+	register_tld("vu"); // Vanuatu
+
+	register_tld("wf"); // Wallis and Futuna
+	register_tld("ws"); // Samoa
+	register_tld("ye"); // Yemen
+	register_tld("yt"); // Mayotte
+	register_tld("za"); // South Africa
+	register_tld("zm"); // Zambia
+	register_tld("zw"); // Zimbabwe
+}
+
+function @domain_uk(parts)
+{
+	// source: https://en.wikipedia.org/wiki/.uk
+	// updated on 2019/01/22
+
+	if (!uk_subdomains) {
+		uk_subdomains = create_set([
+			"ac",
+			"co",
+			"gov",
+			"jcpc",
+			"judiciary",
+			"ltd",
+			"me",
+			"mod",
+			"mil",
+			"net",
+			"nhs",
+			"nic",
+			"org",
+			"plc",
+			"police",
+			"princeofwales",
+			"royal",
+			"sch",
+			"supremecourt"
+		]);
+	}
+
+	var len = length(parts);
+	if (len == 1) return 1;
+
+	var name = parts[len-2];
+	if (name == "sch") return 3;
+	if (hash_contains(uk_subdomains, name)) {
+		return 2;
+	}
+	return 1;
+}

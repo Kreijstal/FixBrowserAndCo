@@ -1,0 +1,97 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/font";
+import "gui/subview";
+import "gui/subview/scrollview";
+import "gui/subview/list";
+import "gui/pure/common";
+import "gui/pure/scrollview";
+
+class PureList: SubList
+{
+	constructor create()
+	{
+		set_renderer(PureListRenderer::create());
+	}
+
+	override function create_scrollview(content: SubView): SubScrollView
+	{
+		var scroll = PureScrollView::create(content);
+		scroll.set_border(true);
+		return scroll;
+	}
+
+	function set_renderer(renderer: PureListRenderer)
+	{
+		var font = get_default_font();
+		renderer.font = font;
+		set_row_height(font.get_height()+2);
+		(this as SubList).set_renderer(renderer);
+	}
+}
+
+class PureListRenderer: ListRenderer
+{
+	var @font: SystemFont;
+
+	constructor create()
+	{
+	}
+
+	override function get_width(value: Dynamic): Integer
+	{
+		if (!is_string(value)) {
+			value = to_string(value);
+		}
+		return font.get_string_advance(value)+4;
+	}
+
+	override function draw_item(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, value: Dynamic, state: Integer)
+	{
+		if (!is_string(value)) {
+			value = to_string(value);
+		}
+		draw_background(p, x, y, width, height, state);
+		var color = 0xFF000000;
+		if ((state & LIST_STATE_SELECTED) != 0) { //XXX
+			color = 0xFFFFFFFF;
+		}
+		font.draw_string(p, x+2, y+1+font.get_ascent(), value, color);
+	}
+
+	virtual function draw_background(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, state: Integer)
+	{
+		if ((state & LIST_STATE_SELECTED) != 0) { //XXX
+			p.fill_rect(x, y, width, height, 0xFF0000CC);
+		}
+		if ((state & LIST_STATE_CURSOR) != 0) { //XXX
+			var color = 0xFF000000;
+			if ((state & LIST_STATE_SELECTED) != 0) { //XXX
+				color = 0xFF0000CC ^ 0xFFFFFF;
+			}
+			draw_rubber_band(p, x, y, width, height, color);
+		}
+	}
+}

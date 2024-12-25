@@ -1,0 +1,223 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/string";
+import "browser/html/html";
+import "browser/html/element";
+
+const {
+	@ENTRY_data,
+	@ENTRY_document,
+	@ENTRY_SIZE
+};
+
+const {
+	@STATE_NONE,
+	@STATE_DATA,
+	@STATE_DOCUMENT
+};
+
+function @create_entry()
+{
+	var entry = object_create(ENTRY_SIZE);
+	entry->ENTRY_data = {""};
+	entry->ENTRY_document = {""};
+	return entry;
+}
+
+function @append(str, value)
+{
+	if (length(str) != 0) {
+		str[] = '\n';
+	}
+	string_append(str, value);
+}
+
+function @read_data(fname)
+{
+	var entries = [];
+	var entry = create_entry();
+
+	var buf = string_from_utf8(file_read(fname));
+	var pos = 0;
+	var line = {""};
+	var state = STATE_NONE;
+
+	while (pos < length(buf)) {
+		var c = buf[pos++];
+		if (c != '\n') {
+			line[] = c;
+			continue;
+		}
+		//log({"line=", line});
+
+		if (line == "") {
+			entries[] = entry;
+			entry = create_entry();
+			array_set_length(line, 0);
+			continue;
+		}
+
+		if (line[0] == '#') {
+			state = STATE_NONE;
+		}
+
+		switch (state) {
+			case STATE_DATA:
+				append(entry->ENTRY_data, line);
+				break;
+
+			case STATE_DOCUMENT:
+				append(entry->ENTRY_document, line);
+				break;
+		}
+
+		if (line == "#data") {
+			state = STATE_DATA;
+		}
+		else if (line == "#document") {
+			state = STATE_DOCUMENT;
+		}
+
+		array_set_length(line, 0);
+	}
+
+	entries[] = entry;
+	return entries;
+}
+
+function @dump_elem(s, elem, level)
+{
+	s[] = '|';
+	s[] = ' ';
+	for (var i=0; i<level; i++) {
+		s[] = ' ';
+		s[] = ' ';
+	}
+	var type = element_get_type(elem);
+	if (type == "#text") {
+		s[] = '"';
+		string_append(s, element_get_data(elem));
+		s[] = '"';
+	}
+	else if (type == "#comment") {
+		string_append(s, "<!-- ");
+		string_append(s, element_get_data(elem));
+		string_append(s, " -->");
+	}
+	else {
+		s[] = '<';
+		string_append(s, type);
+		s[] = '>';
+	}
+	s[] = '\n';
+	var attrs = element_get_attrs(elem);
+	if (attrs) {
+		for (var i=0; i<length(attrs); i++) {
+			var (k, v) = hash_entry(attrs, i);
+			s[] = '|';
+			s[] = ' ';
+			for (var j=0; j<=level; j++) {
+				s[] = ' ';
+				s[] = ' ';
+			}
+			string_append(s, k);
+			s[] = '=';
+			s[] = '"';
+			string_append(s, v);
+			s[] = '"';
+			s[] = '\n';
+		}
+	}
+	for (var e = element_get_first_child(elem); e; e = element_get_next(e)) {
+		dump_elem(s, e, level+1);
+	}
+}
+
+function @dump_doc(doc)
+{
+	var s = {""};
+	for (var e = element_get_first_child(doc); e; e = element_get_next(e)) {
+		dump_elem(s, e, 0);
+	}
+	if (length(s) > 0) {
+		array_set_length(s, length(s)-1);
+	}
+	return s;
+}
+
+function @test_entry(entry)
+{
+	var (document, err) = html_parse(entry->ENTRY_data, null);
+	if (err) {
+		//log({"error: ", err[0]});
+		//if (err[0] != "not implemented") {
+			log({"input:\n", entry->ENTRY_data});
+			dump(err);
+		//}
+		return -1;
+	}
+	//element_dump(document);
+	var doc = dump_doc(document);
+	//log(entry->ENTRY_document);
+	var match = (doc == entry->ENTRY_document);
+	//log({"match=", match});
+	if (!match) {
+		//log({"input:\n", entry->ENTRY_data, "\nproduced:\n", doc, "\nexpected:\n", entry->ENTRY_document});
+	}
+	return match;
+}
+
+function test_tree_construction()
+{
+	var total_pass = 0, total_fail = 0, total_err = 0;
+
+	var dir = "tests/html/data/tree-construction/";
+	var list = file_list(dir);
+	for (var i=0; i<length(list); i++) {
+		if (!string_ends_with(list[i], ".dat")) continue;
+		//if (list[i] == "plain-text-unsafe.dat") continue;
+
+		log({list[i], ":"});
+		var entries = read_data({dir, list[i]});
+
+		var pass = 0, fail = 0, err = 0;
+		for (var j=0; j<length(entries); j++) {
+			var res = test_entry(entries[j]);
+			switch (res) {
+				case 1: pass++; break;
+				case 0: fail++; break;
+				case -1: err++; break;
+			}
+		}
+		log({"  pass=", pass, " fail=", fail, " err=", err});
+
+		total_pass += pass;
+		total_fail += fail;
+		total_err += err;
+	}
+
+	var rating = {float(total_pass) / float(total_pass + total_fail + total_err)};
+	log("\nRESULTS:");
+	log({"pass=", total_pass, " fail=", total_fail, " err=", total_err, " rating=", {rating * 100.0}, "%"});
+
+	//test_entry(read_data({dir, "inbody01.dat"})[0]);
+}

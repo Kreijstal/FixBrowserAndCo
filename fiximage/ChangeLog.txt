@@ -1,0 +1,38 @@
+Version 0.7 (2024/05/05):
+- Added short variants of Rect constructors
+- Added variants of string functions with offset/length in Font and ScaledFont
+- Adjusted for syntax improvements in classes
+
+Version 0.6 (2022/12/27):
+- Added ability to get bounds of characters and strings in Font
+- Added public enum of the part types in Shape
+- Added support for grid fitting of fonts at particular sizes
+- Added variant of contains method that works with Rect
+- Added intersects method in Rect
+- Changed Rect to output width and height in to_string function
+
+Version 0.5 (2022/03/14):
+- Added initial support for loading of SVG images
+- Updated for API change in fixscript_lock_array
+- Fixed handling of overflow for internal reference counts
+
+Version 0.4 (2021/10/03):
+- Added fiximage_create to C API
+- Adjusted for new symbol representation in tokens
+
+Version 0.3 (2021/05/12):
+- Added fiximage_get_core_count to C API
+- Added functions for getting X and Y in Rect
+- Fixed color conversion functions to be public
+
+Version 0.2 (2020/04/20):
+- Added draw_image function
+- Added batched rendering for faster and more efficient drawing
+- Added functions for conversion between HSV/HSL and RGB color representations
+- Added type identification for images with attached data on native side
+- Added get_clip_rect function to Painter
+- Renamed C functions to start with fiximage prefix
+- Renamed get_advance to get_char_advance in Font
+
+Version 0.1 (2019/12/26):
+- Initial release

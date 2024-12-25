@@ -1,0 +1,517 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/scrollview";
+
+const {
+	LIST_ADD,
+	LIST_UPDATE,
+	LIST_REMOVE
+};
+
+const {
+	LIST_STATE_CURSOR   = 0x01,
+	LIST_STATE_SELECTED = 0x02,
+	LIST_STATE_HOVER    = 0x04
+};
+
+class SubList: SubView
+{
+	var @scroll: SubScrollView;
+	var @content: ContentView;
+	var @model: ListModel;
+	var @widths: Integer[];
+	var @max_width: Integer;
+
+	constructor create()
+	{
+		content = ContentView::create(this);
+		set_model(DefaultListModel::create());
+		set_renderer(ListRenderer::create());
+		widths = [];
+		max_width = 0;
+	}
+
+	virtual function create_scrollview(content: SubView): SubScrollView
+	{
+		return SubScrollView::create(content);
+	}
+
+	function set_model(model: ListModel)
+	{
+		if (model === this.model) return;
+		if (this.model) {
+			this.model.listeners().remove(SubList::handle_model_change#2, this);
+		}
+		this.model = model;
+		content.model = model;
+		model.listeners().add_weak(SubList::handle_model_change#2, this);
+	}
+
+	function get_model(): ListModel
+	{
+		return model;
+	}
+
+	function set_renderer(renderer: ListRenderer)
+	{
+		if (renderer === content.renderer) return;
+		content.renderer = renderer;
+		repaint();
+	}
+
+	function get_renderer(): ListRenderer
+	{
+		return content.renderer;
+	}
+
+	function set_row_height(height: Integer)
+	{
+		if (height == content.row_height) return;
+		content.row_height = height;
+		handle_resize();
+		repaint();
+	}
+
+	function get_row_height(): Integer
+	{
+		return content.row_height;
+	}
+
+	function set_editable(editable: Boolean)
+	{
+		content.editable = editable;
+	}
+
+	function is_editable(): Boolean
+	{
+		return content.editable;
+	}
+
+	function get_row_count(): Integer
+	{
+		return model.get_row_count();
+	}
+
+	function get_value(row: Integer): Dynamic
+	{
+		return model.get_value(row);
+	}
+
+	function set_value(row: Integer, value: Dynamic)
+	{
+		model.set_value(row, value);
+	}
+
+	function add_value(value: Dynamic)
+	{
+		model.add_value(value);
+	}
+
+	function insert_value(row: Integer, value: Dynamic)
+	{
+		model.insert_value(row, value);
+	}
+
+	function add_values(values: Dynamic[])
+	{
+		model.add_values(values);
+	}
+
+	function insert_values(row: Integer, values: Dynamic[])
+	{
+		model.insert_values(row, values);
+	}
+
+	function remove_values(first: Integer, last: Integer)
+	{
+		model.remove_values(first, last);
+	}
+
+	function clear()
+	{
+		model.clear();
+	}
+
+	override function handle_resize()
+	{
+		if (!scroll) {
+			scroll = create_scrollview(content);
+			add(scroll);
+		}
+		scroll.set_content_size(max_width, model.get_row_count() * content.row_height);
+		scroll.set_rect(0, 0, get_width(), get_height());
+	}
+
+	virtual function paint_background(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		p.fill_rect(x, y, width, height, 0xFFFFFFFF);
+	}
+
+	function @handle_model_change(event: ListEvent)
+	{
+		log("change="+event.to_string());
+
+		var first = event.get_first_row();
+		var last = event.get_last_row();
+		var count = last - first + 1;
+		var renderer = content.renderer;
+
+		switch (event.get_type()) {
+			case LIST_ADD: {
+				var len = widths.length;
+				widths.set_length(len+count);
+				Array::copy(widths, last+1, widths, first, len-first);
+				var values = model.get_values(first, count, []);
+				var max_width = 0;
+				for (var i=first; i<=last; i++) {
+					var w = renderer.get_width(values[i-first]);
+					widths[i] = w;
+					max_width = max(max_width, w);
+				}
+				if (max_width > this.max_width) {
+					this.max_width = max_width;
+					handle_resize();
+				}
+				break;
+			}
+
+			case LIST_UPDATE: {
+				var values = model.get_values(first, count, []);
+				for (var i=first; i<=last; i++) {
+					widths[i] = renderer.get_width(values[i-first]);
+				}
+				var max_width = 0;
+				for (var i=0; i<widths.length; i++) {
+					max_width = max(max_width, widths[i]);
+				}
+				if (max_width != this.max_width) {
+					this.max_width = max_width;
+					handle_resize();
+				}
+				break;
+			}
+
+			case LIST_REMOVE: {
+				widths.remove(first, count);
+				var max_width = 0;
+				for (var i=0; i<widths.length; i++) {
+					max_width = max(max_width, widths[i]);
+				}
+				if (max_width != this.max_width) {
+					this.max_width = max_width;
+					handle_resize();
+				}
+				break;
+			}
+		}
+
+		repaint();
+	}
+}
+
+class ListModel
+{
+	var @_listeners: EventListeners; //XXX
+
+	constructor create()
+	{
+		_listeners = EventListeners::create();
+	}
+
+	virtual function get_row_count(): Integer
+	{
+		return 0;
+	}
+
+	virtual function is_editable(row: Integer): Boolean
+	{
+		return false;
+	}
+
+	virtual function get_value(row: Integer): Dynamic
+	{
+		throw error("not implemented");
+	}
+
+	virtual function set_value(row: Integer, value: Dynamic)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function get_values(row: Integer, count: Integer, values: Dynamic[]): Dynamic[]
+	{
+		values.set_length(count);
+		for (var i=0; i<count; i++) {
+			values[i] = get_value(row++);
+		}
+		return values;
+	}
+
+	virtual function set_values(row: Integer, count: Integer, values: Dynamic[])
+	{
+		for (var i=0; i<count; i++) {
+			set_value(row++, values[i]);
+		}
+	}
+
+	virtual function add_value(value: Dynamic)
+	{
+		insert_value(get_row_count(), value);
+	}
+
+	virtual function insert_value(row: Integer, value: Dynamic)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function add_values(values: Dynamic[])
+	{
+		insert_values(get_row_count(), values);
+	}
+
+	virtual function insert_values(row: Integer, values: Dynamic[])
+	{
+		for (var i=0; i<values.length; i++) {
+			insert_value(row++, values[i]);
+		}
+	}
+
+	virtual function remove_values(first: Integer, last: Integer)
+	{
+		throw error("not implemented");
+	}
+
+	virtual function clear()
+	{
+		var num_rows = get_row_count();
+		if (num_rows > 0) {
+			remove_values(0, num_rows-1);
+		}
+	}
+
+	function listeners(): EventListeners
+	{
+		return _listeners;
+	}
+}
+
+class DefaultListModel: ListModel
+{
+	var @data: Dynamic[];
+
+	constructor create()
+	{
+		data = [];
+	}
+
+	override function get_row_count(): Integer
+	{
+		return data.length;
+	}
+
+	override function is_editable(row: Integer): Boolean
+	{
+		return true;
+	}
+
+	override function get_value(row: Integer): Dynamic
+	{
+		if (row < 0 || row >= data.length) {
+			throw error("invalid row: "+row);
+		}
+		return data[row];
+	}
+
+	override function set_value(row: Integer, value: Dynamic)
+	{
+		if (row < 0 || row >= data.length) {
+			throw error("invalid row: "+row);
+		}
+		data[row] = value;
+		listeners().notify(ListEvent::create(this, LIST_UPDATE, row, row));
+	}
+
+	override function get_values(row: Integer, count: Integer, values: Dynamic[]): Dynamic[]
+	{
+		if (row < 0 || row+count > data.length) {
+			throw error("invalid range : "+row+" to "+(row+count-1));
+		}
+		values.set_length(count);
+		Array::copy(values, 0, data, row, count);
+		return values;
+	}
+
+	override function set_values(row: Integer, count: Integer, values: Dynamic[])
+	{
+		if (row < 0 || row+count > data.length) {
+			throw error("invalid range : "+row+" to "+(row+count-1));
+		}
+		Array::copy(data, row, values, 0, count);
+		listeners().notify(ListEvent::create(this, LIST_UPDATE, row, row+count-1));
+	}
+
+	override function add_value(value: Dynamic)
+	{
+		var row = data.length;
+		data[] = value;
+		listeners().notify(ListEvent::create(this, LIST_ADD, row, row));
+	}
+
+	override function insert_value(row: Integer, value: Dynamic)
+	{
+		if (row < 0 || row > data.length) {
+			throw error("invalid row: "+row);
+		}
+		data.insert(row, value);
+		listeners().notify(ListEvent::create(this, LIST_ADD, row, row));
+	}
+
+	override function add_values(values: Dynamic[])
+	{
+		var row = data.length;
+		data.append(values);
+		listeners().notify(ListEvent::create(this, LIST_ADD, row, data.length-1));
+	}
+
+	override function insert_values(row: Integer, values: Dynamic[])
+	{
+		if (row < 0 || row > data.length) {
+			throw error("invalid row: "+row);
+		}
+		data.insert_array(row, values);
+		listeners().notify(ListEvent::create(this, LIST_ADD, row, row+values.length-1));
+	}
+
+	override function remove_values(first: Integer, last: Integer)
+	{
+		if (first < 0 || last < 0 || first > last || last >= data.length) {
+			throw error("invalid range: "+first+" to "+last);
+		}
+		data.remove(first, last-first+1);
+		listeners().notify(ListEvent::create(this, LIST_REMOVE, first, last));
+	}
+
+	override function clear()
+	{
+		var num_rows = data.length;
+		if (num_rows == 0) return;
+		data.clear();
+		listeners().notify(ListEvent::create(this, LIST_REMOVE, 0, num_rows-1));
+	}
+}
+
+class ListEvent
+{
+	var @model: ListModel;
+	var @type: Integer;
+	var @first: Integer;
+	var @last: Integer;
+	
+	constructor create(model: ListModel, type: Integer, first: Integer, last: Integer)
+	{
+		this.model = model;
+		this.type = type;
+		this.first = first;
+		this.last = last;
+	}
+
+	function get_model(): ListModel
+	{
+		return model;
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+
+	function get_first_row(): Integer
+	{
+		return first;
+	}
+
+	function get_last_row(): Integer
+	{
+		return last;
+	}
+
+	function to_string(): String
+	{
+		return "[model=#"+((model as Integer)|0)+", type="+type_to_string(type)+", first="+first+", last="+last+"]";
+	}
+
+	static function @type_to_string(type: Integer): String
+	{
+		switch (type) {
+			case LIST_ADD:    return "LIST_ADD";
+			case LIST_UPDATE: return "LIST_UPDATE";
+			case LIST_REMOVE: return "LIST_REMOVE";
+		}
+		return "???";
+	}
+}
+
+class ListRenderer
+{
+	constructor create()
+	{
+	}
+
+	virtual function get_width(value: Dynamic): Integer
+	{
+		return 0;
+	}
+
+	virtual function draw_item(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer, value: Dynamic, state: Integer)
+	{
+	}
+}
+
+class @ContentView: SubView
+{
+	var @list: SubList;
+	var @model: ListModel;
+	var @renderer: ListRenderer;
+	var @row_height: Integer;
+	var @editable: Boolean;
+
+	constructor create(list: SubList)
+	{
+		this.list = list;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		list.paint_background(p, 0, 0, get_width(), get_height());
+		for (var i=0; i<model.get_row_count(); i++) {
+			var state = 0;
+			if (i == 0) state |= LIST_STATE_CURSOR;
+			renderer.draw_item(p, 0, i*row_height, get_width(), row_height, model.get_value(i), state);
+		}
+		draw_children(p);
+	}
+}

@@ -1,0 +1,282 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+class Vector
+{
+	var x: Float;
+	var y: Float;
+
+	static function create(): Vector
+	{
+		return [0.0, 0.0] as Vector;
+	}
+
+	static function create(x: Float, y: Float): Vector
+	{
+		return [x, y] as Vector;
+	}
+
+	function clone(): Vector
+	{
+		return [x, y] as Vector;
+	}
+
+	function set(vec: Vector): Vector
+	{
+		x = vec.x;
+		y = vec.y;
+		return this;
+	}
+
+	function set(x: Float, y: Float): Vector
+	{
+		this.x = x;
+		this.y = y;
+		return this;
+	}
+
+	function add(vec: Vector): Vector
+	{
+		x += vec.x;
+		y += vec.y;
+		return this;
+	}
+
+	function add(dx: Float, dy: Float): Vector
+	{
+		x += dx;
+		y += dy;
+		return this;
+	}
+
+	function sub(vec: Vector): Vector
+	{
+		x -= vec.x;
+		y -= vec.y;
+		return this;
+	}
+
+	function sub(dx: Float, dy: Float): Vector
+	{
+		x -= dx;
+		y -= dy;
+		return this;
+	}
+
+	function mul(value: Float): Vector
+	{
+		x *= value;
+		y *= value;
+		return this;
+	}
+
+	function div(value: Float): Vector
+	{
+		x /= value;
+		y /= value;
+		return this;
+	}
+
+	function normalize(): Vector
+	{
+		var x = this.x;
+		var y = this.y;
+		var len = sqrt(x*x + y*y);
+		this.x = x / len;
+		this.y = y / len;
+		return this;
+	}
+
+	function get_normalized(): Vector
+	{
+		var x = this.x;
+		var y = this.y;
+		var len = sqrt(x*x + y*y);
+		return [x / len, y / len] as Vector;
+	}
+
+	function length(): Float
+	{
+		var x = this.x;
+		var y = this.y;
+		return sqrt(x*x + y*y);
+	}
+
+	function length_sqr(): Float
+	{
+		var x = this.x;
+		var y = this.y;
+		return x*x + y*y;
+	}
+
+	function to_string(): String
+	{
+		return "("+x+", "+y+")";
+	}
+
+	operator + (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x + vec2.x,
+			vec1.y + vec2.y
+		] as Vector;
+	}
+
+	operator += (vec: Vector)
+	{
+		this.x += vec.x;
+		this.y += vec.y;
+		return this;
+	}
+
+	operator - (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x - vec2.x,
+			vec1.y - vec2.y
+		] as Vector;
+	}
+
+	operator -= (vec: Vector)
+	{
+		this.x -= vec.x;
+		this.y -= vec.y;
+		return this;
+	}
+
+	operator * (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x * vec2.x,
+			vec1.y * vec2.y
+		] as Vector;
+	}
+
+	operator *= (vec: Vector)
+	{
+		this.x *= vec.x;
+		this.y *= vec.y;
+		return this;
+	}
+
+	operator * (vec: Vector, scalar: Float)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator * (vec: Vector, scalar: Integer)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator * (scalar: Float, vec: Vector)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator * (scalar: Integer, vec: Vector)
+	{
+		return [
+			vec.x * scalar,
+			vec.y * scalar
+		] as Vector;
+	}
+
+	operator *= (scalar: Float)
+	{
+		this.x *= scalar;
+		this.y *= scalar;
+		return this;
+	}
+
+	operator *= (scalar: Integer)
+	{
+		this.x *= scalar;
+		this.y *= scalar;
+		return this;
+	}
+
+	operator / (vec1: Vector, vec2: Vector)
+	{
+		return [
+			vec1.x / vec2.x,
+			vec1.y / vec2.y
+		] as Vector;
+	}
+
+	operator /= (vec: Vector)
+	{
+		this.x /= vec.x;
+		this.y /= vec.y;
+		return this;
+	}
+
+	operator / (vec: Vector, scalar: Float)
+	{
+		return [
+			vec.x / scalar,
+			vec.y / scalar
+		] as Vector;
+	}
+
+	operator / (vec: Vector, scalar: Integer)
+	{
+		return [
+			vec.x / scalar,
+			vec.y / scalar
+		] as Vector;
+	}
+
+	operator /= (scalar: Float)
+	{
+		this.x /= scalar;
+		this.y /= scalar;
+		return this;
+	}
+
+	operator /= (scalar: Integer)
+	{
+		this.x /= scalar;
+		this.y /= scalar;
+		return this;
+	}
+}
+
+function Vector(): Vector
+{
+	return [0.0, 0.0] as Vector;
+}
+
+function Vector(x: Float, y: Float): Vector
+{
+	return [x, y] as Vector;
+}

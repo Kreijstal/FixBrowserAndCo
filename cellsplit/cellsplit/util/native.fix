@@ -1,0 +1,164 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "native/extern";
+use "classes";
+use "autoinit";
+
+import "image/image";
+import "native/native";
+
+const {
+	@MOVEFILE_REPLACE_EXISTING = 1
+};
+
+extern "C" {
+	bind("c");
+	int rename(char *oldpath, char *newpath);
+
+	bind("kernel32");
+	typedef int BOOL;
+	typedef uint32_t DWORD;
+	BOOL STDCALL MoveFileExW(void *existing_fname, void *new_fname, DWORD flags);
+
+	bind("cellsplit");
+	int get_image_info(void *buf, int len, int *width, int *height);
+	void *load_image(void *buf, int len, int *width, int *height);
+	void convert_image(void *img, int width, int height, uint32_t *pixels, int stride);
+	void free_image(void *img);
+	void *save_jpg(int width, int height, int stride, uint32_t *pixels, int quality, int *len_out);
+}
+
+var @tmp_mem: Memory;
+
+function @init()
+{
+	if (System::get_type() == SYSTEM_WINDOWS) {
+		Library::bind("kernel32");
+		Library::bind("cellsplit");
+	}
+	else if (System::get_type() == SYSTEM_LINUX) {
+		Library::bind("c", Library::open("libc.so.6"));
+		var lib: Library;
+		if (System::get_arch() == ARCH_X86) {
+			lib = Library::open("./cellsplit32.so");
+		}
+		else if (System::get_arch() == ARCH_X86_64) {
+			lib = Library::open("./cellsplit64.so");
+		}
+		if (!lib) {
+			lib = Library::open("./cellsplit.so");
+		}
+		Library::bind("cellsplit", lib);
+	}
+	else {
+		Library::bind("c");
+		Library::bind("cellsplit", Library::open("./cellsplit.so"));
+	}
+	tmp_mem = Memory::alloc(8);
+}
+
+function rename_file(old_fname: String, new_fname: String)
+{
+	if (System::get_type() == SYSTEM_WINDOWS) {
+		var src = to_utf16(old_fname);
+		var dest = to_utf16(new_fname);
+		if (MoveFileExW(src, dest, MOVEFILE_REPLACE_EXISTING) == 0) {
+			throw error("can't rename file '"+old_fname+"' to '"+new_fname+"'");
+		}
+	}
+	else {
+		if (rename(old_fname, new_fname) != 0) {
+			throw error("can't rename file '"+old_fname+"' to '"+new_fname+"'");
+		}
+	}
+}
+
+function check_image_dimensions(data: Byte[], max_width: Integer, max_height: Integer): Boolean
+{
+	var data_ptr = Pointer::from_shared_array(data);
+	if (get_image_info(data_ptr, data.length, tmp_mem.with_offset(0), tmp_mem.with_offset(4)) == 0) {
+		return false;
+	}
+	var width = tmp_mem.get_int(0);
+	var height = tmp_mem.get_int(4);
+	if (width > max_width || height > max_height) {
+		return false;
+	}
+	return true;
+}
+
+function load_image(data: Byte[]): Image
+{
+	var data_ptr = Pointer::from_shared_array(data);
+	var native_img = load_image(data_ptr, data.length, tmp_mem.with_offset(0), tmp_mem.with_offset(4));
+	var width = tmp_mem.get_int(0);
+	var height = tmp_mem.get_int(4);
+	var img = Image::create(width, height);
+	convert_image(native_img, width, height, Pointer::from_shared_array(img.get_pixels()), img.get_stride());
+	free_image(native_img);
+	return img;
+}
+
+function image_to_jpg(img: Image, quality: Integer): Byte[]
+{
+	var ptr = save_jpg(img.get_width(), img.get_height(), img.get_stride(), Pointer::from_shared_array(img.get_pixels()), quality, tmp_mem);
+	if (!ptr) {
+		throw error("error when saving image to JPG");
+	}
+	var len = tmp_mem.get_int(0);
+	var (lo, hi) = ptr.get_value();
+	return Memory::create(lo, hi, len, true).get_view(0, len, 1);
+}
+
+function @to_utf16(s: String): Memory
+{
+	var len = s.length;
+	for (var i=0; i<s.length; i++) {
+		var c = s[i];
+		if (c >= 0x10000 && c <= 0x10FFFF) {
+			len++;
+		}
+	}
+
+	var mem = Memory::alloc((len+1)*2);
+	var shared = mem.get_view(0, len+1, 2);
+	var j = 0;
+	for (var i=0; i<s.length; i++) {
+		var c = s[i];
+		if (c >= 0x10000 && c <= 0x10FFFF) {
+			c -= 0x10000;
+			shared[j++] = 0xD800 + (c >> 10);
+			shared[j++] = 0xDC00 + (c & 0x3FF);
+		}
+		else if (c >= 0xD800 && c <= 0xDFFF) {
+			shared[j++] = 0xFFFD;
+		}
+		else if (c < 0 || c > 0x10FFFF) {
+			shared[j++] = 0xFFFD;
+		}
+		else {
+			shared[j++] = c;
+		}
+	}
+	shared[j] = 0;
+	return mem;
+}

@@ -1,0 +1,84 @@
+import "util/common";
+import "util/string";
+
+function embed_disqus(request, document, thread_elem, shortname, page_url, title)
+{
+	if (!title) {
+		var title_elem = element_query(document, "html > head > title");
+		title = title_elem? element_extract_text(title_elem) : "";
+	}
+	if (!page_url) {
+		page_url = request_get_url(request);
+	}
+	var url = link_with_params({"https://", shortname, ".disqus.com/embed"}, {"url": page_url, "title": title});
+	element_set_html(thread_elem, {"<iframe src=\"", make_same_domain_link(request, url), "\" style=\"width: 100%; height: 75vh\" autoresize=\"height\" frameborder=\"0\"></iframe>"});
+}
+
+function adjust_document(request, document)
+{
+	var thread_elem = element_query(document, "div#disqus_thread");
+	var script_elem = element_get_next_tag(thread_elem);
+	if (script_elem) {
+		var noscript_elem = element_get_next_tag(script_elem);
+		if (noscript_elem) {
+			element_remove(noscript_elem);
+		}
+		var script = element_extract_text(script_elem);
+		var shortname = extract_shortname(script);
+		if (!shortname) {
+			shortname = extract_shortname2(script);
+		}
+		if (shortname) {
+			embed_disqus(request, document, thread_elem, shortname, null, null);
+		}
+	}
+	else {
+		var scripts = element_query_all(document, "script");
+		for (var i=0; i<length(scripts); i++) {
+			var script = element_extract_text(scripts[i]);
+			var shortname = extract_shortname(script);
+			if (!shortname) {
+				shortname = extract_shortname2(script);
+			}
+			if (shortname) {
+				embed_disqus(request, document, thread_elem, shortname, null, null);
+				break;
+			}
+		}
+	}
+}
+
+function @extract_shortname(s)
+{
+	var idx = string_search_string(s, "disqus_shortname");
+	if (idx == -1) return null;
+
+	var start = string_search_multi_char(s, "\'\"", idx);
+	if (start == -1) return null;
+	
+	var end = string_search_multi_char(s, "\'\"", start+1);
+	if (end == -1) return null;
+
+	return string_substring(s, start+1, end);
+}
+
+function @extract_shortname2(s)
+{
+	// s.src = '//' + "shortname" + '.disqus.com/embed.js';
+
+	var end = string_search_string(s, ".disqus.com/embed.js");
+	if (end == -1) return null;
+
+	var start = string_rev_search_char(s, '/', 0, end);
+	if (start == -1) return null;
+
+	var result = {""};
+	for (var i=start; i<end; i++) {
+		switch (s[i]) {
+			case 'a'..'z', 'A'..'Z', '0'..'9', '-', '_':
+				result[] = s[i];
+				break;
+		}
+	}
+	return length(result) > 0? result : null;
+}

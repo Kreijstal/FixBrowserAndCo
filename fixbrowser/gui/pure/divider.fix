@@ -1,0 +1,62 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/view";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/divider";
+import "gui/native/windows";
+import "gui/pure/common";
+
+class PureDivider: SubDivider
+{
+	constructor create(type: Integer, first: SubView, second: SubView)
+	{
+		super::create(type, first, second);
+		set_divider_size(2);
+		set_overhang_size(2);
+
+		if (type == DIVIDE_HORIZ) {
+			set_cursor(CURSOR_RESIZE_E);
+		}
+		else {
+			set_cursor(CURSOR_RESIZE_N);
+		}
+	}
+
+	override function paint_divider(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		var color = 0xFFCCCCCC;
+
+		switch (get_theme_type()) {
+			case THEME_WINDOWS_CLASSIC:
+			case THEME_WINDOWS: {
+				color = Windows::get_system_color(COLOR_BTNFACE);
+				break;
+			}
+		}
+
+		p.fill_rect(x, y, width, height, color);
+	}
+}

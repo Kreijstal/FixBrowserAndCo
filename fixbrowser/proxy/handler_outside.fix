@@ -1,0 +1,76 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/http/request";
+import "io/http/url";
+import "util/string";
+import "util/html";
+import "util/template";
+
+function handle_outside_request(stream, req)
+{
+	var target_url = url_create(string_substring(req->REQ_path, 9));
+
+	var tpl = template_create("outside_link.tpl");
+	template_set(tpl, "title", html_escape("Outside link"));
+	template_set(tpl, "url", html_escape(url_to_string(target_url)));
+	template_set(tpl, "url_link", html_escape({"/", url_to_string(target_url)}));
+
+	var links = extract_url_links(target_url);
+	if (links) {
+		template_begin(tpl, "links");
+		for (var i=0; i<length(links); i++) {
+			template_set(tpl, "url", html_escape(url_to_string(links[i])));
+			template_set(tpl, "url_link", html_escape({"/", url_to_string(links[i])}));
+			template_next_record(tpl);
+		}
+		template_end(tpl);
+	}
+
+	send_response(stream, template_process(tpl));
+}
+
+function requires_outside_handler(url)
+{
+	return extract_url_links(url) != null;
+}
+
+function @extract_url_links(url)
+{
+	var links;
+	for (var i=0; i<url_get_param_count(url); i++) {
+		var value = url_get_param_value(url, i);
+		if (!value) continue;
+		if (string_starts_with(value, "http://") || string_starts_with(value, "https://")) {
+			if (!links) links = [];
+			links[] = url_create(value);
+		}
+	}
+	return links;
+}
+
+function @send_response(stream, response)
+{
+	stream_write(stream, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n");
+	stream_write(stream, string_to_utf8(response));
+	stream_close(stream);
+}

@@ -1,0 +1,208 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/scrollbar";
+import "gui/subview/scrollview";
+import "gui/pure/scrollbar";
+import "gui/pure/scrollview";
+
+const @SCROLL_HORIZ = 0; //XXX
+
+const @SMOOTH_FACTOR = 0.6;
+
+class Scroller
+{
+	var @timer: Timer;
+	var @current: Float;
+	var @velocity: Float;
+	var @update_func;
+	var @update_data;
+	var @last_time: Integer;
+
+	constructor create(update_func, update_data)
+	{
+		this.update_func = update_func;
+		this.update_data = update_data;
+		timer = Timer::create(10, Scroller::handle_timer#1, weakref_create(this));
+	}
+
+	function apply_delta(delta: Integer): Boolean
+	{
+		current = current - float(delta);
+		if (iround(current) != 0) {
+			velocity = pow(fabs(current), SMOOTH_FACTOR);
+			if (current > 0.0) {
+				velocity = -velocity;
+			}
+			if (!timer.is_active()) {
+				last_time = Timer::get_micro_time();
+			}
+			timer.start();
+		}
+		else {
+			timer.stop();
+		}
+		return false;
+	}
+
+	function @handle_timer(): Boolean
+	{
+		this = weakref_get(this);
+		if (!this) return false;
+
+		var time = Timer::get_micro_time();
+		var delta = 0;
+		while (sub32(time, last_time) >= 10000) {
+			last_time = add32(last_time, 10000);
+
+			var prev = current;
+			current = current + velocity;
+			if (prev < 0.0 && current >= 0.0) {
+				delta -= iround(prev);
+				current = 0.0;
+				update_func(update_data, max(0, delta));
+				return false;
+			}
+			if (prev > 0.0 && current <= 0.0) {
+				delta += iround(prev);
+				current = 0.0;
+				update_func(update_data, min(delta, 0));
+				return false;
+			}
+
+			if (iround(current) != 0) {
+				velocity = pow(fabs(current), SMOOTH_FACTOR);
+				if (current > 0.0) {
+					velocity = -velocity;
+				}
+			}
+			var diff = current - prev;
+			var rounded = iround(diff);
+			current = current - (rounded - diff);
+			delta += rounded;
+		}
+
+		update_func(update_data, delta);
+		return true;
+	}
+}
+
+class SmoothScrollView: PureScrollView
+{
+	var @horiz: Scroller;
+	var @vert: Scroller;
+
+	constructor create(content: SubView)
+	{
+		super::create(content);
+		horiz = Scroller::create(SmoothScrollView::update_horiz#2, this);
+		vert = Scroller::create(SmoothScrollView::update_vert#2, this);
+	}
+
+	override function create_scrollbar(type: Integer): SubScrollBar
+	{
+		return SmoothScrollBar::create(type);
+	}
+
+	function @update_horiz(value: Integer)
+	{
+		var scrollbar = get_horizontal_scrollbar();
+		if (scrollbar) {
+			scrollbar.set_value(scrollbar.get_value() + value);
+		}
+	}
+
+	function @update_vert(value: Integer)
+	{
+		var scrollbar = get_vertical_scrollbar();
+		if (scrollbar) {
+			scrollbar.set_value(scrollbar.get_value() + value);
+		}
+	}
+	
+	override function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_WHEEL && !event.has_scroll_data()) {
+			var amount = iround(event.get_wheel_y() * 96.0);
+			if ((event.get_modifiers() & MOD_SHIFT) != 0) {
+				var scrollbar = get_horizontal_scrollbar();
+				if (scrollbar) {
+					return horiz.apply_delta(amount);
+				}
+			}
+			else {
+				var scrollbar = get_vertical_scrollbar();
+				if (scrollbar) {
+					return vert.apply_delta(amount);
+				}
+			}
+			return false;
+		}
+		return super.catch_mouse_event(event);
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN) {
+			var amount = 64;
+			var vert_scrollbar = get_vertical_scrollbar();
+			switch (event.get_key()) {
+				case KEY_UP: vert.apply_delta(-amount); return true;
+				case KEY_DOWN: vert.apply_delta(amount); return true;
+				case KEY_LEFT: horiz.apply_delta(-amount); return true;
+				case KEY_RIGHT: horiz.apply_delta(amount); return true;
+				case KEY_PAGE_UP: if (vert_scrollbar) vert.apply_delta(max(0, vert_scrollbar.get_value()-vert_scrollbar.get_page_size())-vert_scrollbar.get_value()); return true;
+				case KEY_PAGE_DOWN: if (vert_scrollbar) vert.apply_delta(min(vert_scrollbar.get_value()+vert_scrollbar.get_page_size(), vert_scrollbar.get_maximum())-vert_scrollbar.get_value()); return true;
+				case KEY_HOME: if (vert_scrollbar) vert.apply_delta(-vert_scrollbar.get_value()); return true;
+				case KEY_END: if (vert_scrollbar) vert.apply_delta((vert_scrollbar.get_maximum()-vert_scrollbar.get_value())); return true;
+			}
+		}
+		return false;
+	}
+}
+
+class @SmoothScrollBar: PureScrollBar
+{
+	constructor create(type: Integer)
+	{
+		super::create(type);
+	}
+
+	override function do_action(action: Integer)
+	{
+		var scroll_view = get_parent() as SmoothScrollView;
+		var scroller = get_type() == SCROLL_HORIZ? scroll_view.horiz : scroll_view.vert;
+
+		switch (action) {
+			case SBA_PREV: scroller.apply_delta(-get_increment()); break;
+			case SBA_NEXT: scroller.apply_delta(get_increment()); break;
+			case SBA_PAGE_PREV: scroller.apply_delta(max(0, get_value()-get_page_size())-get_value()); break;
+			case SBA_PAGE_NEXT: scroller.apply_delta(min(get_value()+get_page_size(), get_maximum())-get_value()); break;
+			case SBA_START: scroller.apply_delta(-get_value()); break;
+			case SBA_END: scroller.apply_delta(get_maximum()-get_value()); break;
+		}
+	}
+}

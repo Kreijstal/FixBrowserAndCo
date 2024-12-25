@@ -1,0 +1,2043 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixScript Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.snippet { background: #eee; border: 1px solid #ccc; padding: 4px 6px; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+		table[border='1'], table[border='1'] td, table[border='1'] th { border: 2px solid #CCC; border-collapse: collapse; }
+		td, th { padding: 4px 6px; }
+		.menu a { font-weight: bold; text-decoration: none; }
+	</style>
+</head>
+<body>
+
+<h1>FixScript Documentation</h1>
+
+<ul>
+	<li>Version: 0.9</li>
+	<li><a href="https://www.fixscript.org/">Homepage</a> (<a href="http://fixscript.advel.cz/">mirror</a>)</li>
+</ul>
+
+<p class="menu">
+<a href="index.html">Home</a> |
+<a href="docs.html">Docs</a> |
+<a href="capi.html">C API</a> |
+<a href="changelog.html">ChangeLog</a>
+</p>
+
+<h2>Documentation</h2>
+
+<ul>
+	<li><a href="#types">Types</a></li>
+	<li><a href="#objects">Objects</a></li>
+	<li><a href="#arithmetic">Arithmetic</a></li>
+	<li><a href="#syntax">Syntax</a>
+		<ul>
+			<li><a href="#literals">Literals</a></li>
+			<li><a href="#extended-operator">Extended operator</a></li>
+			<li><a href="#operator-precedence">Operator precedence</a></li>
+		</ul>
+	</li>
+	<li><a href="#constants">Predefined constants</a></li>
+	<li><a href="#functions">Functions</a>
+		<ul>
+			<li><a href="#intrinsic-functions">Intrinsic functions</a>
+				<ul>
+					<li><a href="#length-functions">Length</a></li>
+					<li><a href="#min-max-functions">Min/max/clamp</a></li>
+					<li><a href="#arith32-functions">32-bit arithmetic</a></li>
+					<li><a href="#arith64-functions">64-bit arithmetic</a></li>
+					<li><a href="#float-functions">Float functions (32-bit &amp; 64-bit)</a></li>
+					<li><a href="#value-functions">Value functions</a></li>
+				</ul>
+			</li>
+			<li><a href="#builtin-functions">Built-in functions</a>
+				<ul>
+					<li><a href="#clone-functions">Clone</a></li>
+					<li><a href="#array-functions">Array</a></li>
+					<li><a href="#string-functions">String</a></li>
+					<li><a href="#object-functions">Object</a></li>
+					<li><a href="#weakref-functions">Weak reference</a></li>
+					<li><a href="#funcref-functions">Function reference</a></li>
+					<li><a href="#hash-functions">Hash</a></li>
+					<li><a href="#error-functions">Error</a></li>
+					<li><a href="#log-functions">Log</a></li>
+					<li><a href="#heap-functions">Heap</a></li>
+					<li><a href="#perf-functions">Performance</a></li>
+					<li><a href="#serialization-functions">Serialization</a></li>
+				</ul>
+			</li>
+			<li><a href="#token-functions">Token processing functions</a></li>
+		</ul>
+	</li>
+	<li><a href="#optimizations">Optimizations</a></li>
+	<li><a href="#multithreading">Multithreading</a>
+		<ul>
+			<li><a href="#garbage-collection">Garbage collection</a></li>
+		</ul>
+	</li>
+	<li><a href="#token-processing">Token processing (macros)</a>
+		<ul>
+			<li><a href="#symbols">Symbols</a></li>
+			<li><a href="#execution-environment">Execution environment</a></li>
+			<li><a href="#communication">Communication between token processors</a>
+				<ul>
+					<li><a href="#custom-function-names">Custom function names in stack traces</a>
+					<li><a href="#change-file-names">Change file names and virtual function insertion in stack traces</a>
+				</ul>
+			</li>
+			<li><a href="#error-reporting">Error reporting</a></li>
+		</ul>
+	</li>
+	<li><a href="#serialization">Serialization format</a></li>
+	<li><a href="#advanced-topics">Advanced topics</a>
+		<ul>
+			<li><a href="#runtime-types">Runtime detection of user defined types</a></li>
+			<li><a href="#distributed-gc">Distributed garbage collection between threads</a></li>
+			<li><a href="#weak-references">Weak references</a></li>
+			<li><a href="#non-local-goto">Non-local GOTO</a></li>
+			<li><a href="#circular-imports">Circular imports</a></li>
+			<li><a href="#internal-state">Guarding internal state of objects</a></li>
+		</ul>
+	</li>
+</ul>
+
+<h2 id="types">Types</h2>
+
+<p>
+There are only nine types in the language, a 32-bit integer, a 32-bit float (without denormals),
+resizable array, string (just a different variant of an array), shared array (array of
+fixed length and element size), a hash table, function references, weak references and native handles.
+</p>
+
+
+
+<p>
+The array type is automatically compressed to use only unsigned bytes or shorts if the
+values don't exceed the ranges required for these smaller types. This allow to efficiently store
+byte buffers and Unicode strings.
+</p>
+
+<p>
+The float type reuses the mark used for array references by limiting the valid
+array references to use only 23 bits (the size of stored significand). If the integer bitwise
+representation of a (positive) float value is in this range it denotes a denormalized number.
+Since the utility of such numbers is often negative (many CPUs have slow fallback or don't
+implement them at all) and have very limited upsides, they're flushed to zero and thus provide
+ability to share floats with array references without collisions.
+</p>
+
+<p>
+The language lacks direct support for 64-bit integers and floats. However intrinsic functions
+are provided to support arithmetic with bigger numbers and 64-bit floats (doubles).
+</p>
+
+<p>
+The boolean type is using zero for the false value and any non-zero (including array references
+as these have the integer value bigger than zero) for the true value. This is used in several
+statements when testing the conditions.
+</p>
+
+
+
+<h2 id="objects">Objects</h2>
+
+<p>
+Objects are defined and used using a convention and stored in arrays. The auto-incrementing constants
+are used to define object fields as well as the size of the object. For example:
+</p>
+
+<pre class="snippet">
+<span class="keyword">const</span> <span class="symbol">{</span>
+    <span class="symbol">@</span>OBJ_field1<span class="symbol">,</span>
+    <span class="symbol">@</span>OBJ_field2<span class="symbol">,</span>
+    OBJ_foo<span class="symbol">,</span>
+    OBJ_bar<span class="symbol">,</span>
+    OBJ_SIZE
+<span class="symbol">};</span>
+</pre>
+
+<p>
+The <code>@</code> is used to mark private fields. Extending of objects is also possible (given that SIZE
+constant is not private):
+</p>
+
+<pre class="snippet">
+<span class="keyword">const</span> <span class="symbol">{</span>
+    SUBCLASS_some <span class="symbol">=</span> OBJ_SIZE<span class="symbol">,</span>
+    SUBCLASS_more_fields<span class="symbol">,</span>
+    SUBCLASS_SIZE
+<span class="symbol">};</span>
+</pre>
+
+<p>
+To create and extend instances of objects you can use the following functions:
+</p>
+
+<style>
+#selector {
+	border: 1px solid #ccc;
+	background: #ccc;
+}
+
+#selector pre {
+	background: #eee;
+	margin: 0;
+	padding: 15px 10px 5px 10px;
+}
+
+#selector label {
+	cursor: pointer;
+	display: inline-block;
+	padding: 3px 12px;
+	background: #aaa;
+}
+
+#selector label:hover {
+	background: #ccc;
+}
+
+#selector label[for='selector1']:before {
+	content: "Base syntax";
+}
+#selector label[for='selector2']:before {
+	content: "Classes syntax";
+}
+
+#selector1, #selector2 {
+	display: none;
+}
+
+#selector1:checked ~ label[for='selector1'],
+#selector2:checked ~ label[for='selector2']
+{
+	background: #fff;
+}
+
+#selector1:not(:checked) ~ #selector1-content,
+#selector2:not(:checked) ~ #selector2-content
+{
+	display: none;
+}
+
+#selector1:checked ~ p,
+#selector2:checked ~ p
+{
+	display: none;
+}
+</style>
+
+<div id="selector">
+<input type="radio" id="selector1" name="selector" checked>
+<input type="radio" id="selector2" name="selector">
+<label for="selector1"></label><label for="selector2"></label>
+
+<pre id="selector1-content">
+<span class="keyword">function</span> <span class="function">obj_create</span><span class="symbol">(</span>foo<span class="symbol">,</span> bar<span class="symbol">)</span>
+<span class="symbol">{</span>
+    <span class="keyword">var</span> obj <span class="symbol">=</span> <span class="function">object_create</span><span class="symbol">(</span>OBJ_SIZE<span class="symbol">);</span>
+    obj<span class="symbol">-&gt;</span>OBJ_foo <span class="symbol">=</span> foo<span class="symbol">;</span>
+    obj<span class="symbol">-&gt;</span>OBJ_bar <span class="symbol">=</span> bar<span class="symbol">;</span>
+    <span class="keyword">return</span> obj<span class="symbol">;</span>
+<span class="symbol">}</span>
+
+<span class="keyword">function</span> <span class="function">subclass_create</span><span class="symbol">(</span>foo<span class="symbol">,</span> bar<span class="symbol">,</span> some<span class="symbol">)</span>
+<span class="symbol">{</span>
+    <span class="keyword">var</span> subclass <span class="symbol">=</span> <span class="function">object_extend</span><span class="symbol">(</span><span class="function">obj_create</span><span class="symbol">(</span>foo<span class="symbol">,</span> bar<span class="symbol">),</span> SUBCLASS_SIZE<span class="symbol">);</span>
+    subclass<span class="symbol">-&gt;</span>OBJ_foo <span class="symbol">=</span> null<span class="symbol">;</span>
+    subclass<span class="symbol">-&gt;</span>SUBCLASS_some <span class="symbol">=</span> some<span class="symbol">;</span>
+    <span class="keyword">return</span> subclass<span class="symbol">;</span>
+<span class="symbol">}</span>
+</pre>
+
+<p>
+Alternative syntax (using token processing):
+</p>
+
+<pre id="selector2-content">
+<span class="keyword">class</span> Object
+<span class="symbol">{</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>foo<span class="symbol">:</span> Foo<span class="symbol">;</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>bar<span class="symbol">:</span> Bar<span class="symbol">;</span>
+
+    <span class="keyword">constructor</span> <span class="function">create</span><span class="symbol">(</span>foo<span class="symbol">:</span> Foo<span class="symbol">,</span> bar<span class="symbol">:</span> Bar<span class="symbol">)</span>
+    <span class="symbol">{</span>
+        <span class="keyword">this</span><span class="symbol">.</span>foo <span class="symbol">=</span> foo<span class="symbol">;</span>
+        <span class="keyword">this</span><span class="symbol">.</span>bar <span class="symbol">=</span> bar<span class="symbol">;</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+
+<span class="keyword">class</span> Subclass<span class="symbol">:</span> Object
+<span class="symbol">{</span>
+    <span class="keyword">var</span> <span class="symbol">@</span>some<span class="symbol">;</span>
+
+    <span class="keyword">constructor</span> <span class="function">create</span><span class="symbol">(</span>foo<span class="symbol">:</span> Foo<span class="symbol">,</span> bar<span class="symbol">:</span> Bar<span class="symbol">,</span> some<span class="symbol">)</span>
+    <span class="symbol">{</span>
+        <span class="keyword">super</span><span class="symbol">::</span><span class="function">create</span><span class="symbol">(</span>foo<span class="symbol">,</span> bar<span class="symbol">);</span>
+        <span class="keyword">this</span><span class="symbol">.</span>foo <span class="symbol">=</span> null<span class="symbol">;</span>
+        <span class="keyword">this</span><span class="symbol">.</span>some <span class="symbol">=</span> some<span class="symbol">;</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+</pre>
+</div>
+
+<p>
+To access fields you can use the <code>-&gt;</code> operator. Which is just a better syntax for
+array access using named constant.
+</p>
+
+<pre class="snippet">
+obj<span class="symbol">-&gt;</span>OBJ_foo <span class="symbol">=</span> 5<span class="symbol">;</span>
+obj<span class="symbol">[</span>OBJ_foo<span class="symbol">]</span> <span class="symbol">=</span> 5<span class="symbol">;</span> <span class="comment">// the same
+</pre>
+
+<h2 id="arithmetic">Arithmetic</h2>
+
+<p>
+There are standard operators for addition (<code>+</code>), subtraction (<code>-</code>), multiplication
+(<code>*</code>), division (<code>/</code>), remainder (<code>%</code>), bitwise AND (<code>&amp;</code>),
+bitwise OR (<code>|</code>), bitwise XOR (<code>^</code>), bitwise negation (<code>~</code>), boolean
+negation (<code>!</code>), signed comparison (<code>&lt;</code>, <code>&lt;=</code>, <code>&gt;=</code>,
+<code>&gt;</code>), equivalency comparison (<code>==</code>, <code>!=</code>), signed shifts
+(<code>&lt;&lt;</code>, <code>&gt;&gt;</code>), unsigned shift (<code>&gt;&gt;&gt;</code>), logical AND
+(<code>&amp;&amp;</code>) and logical OR (<code>||</code>).
+</p>
+
+<p>
+You can also combine these with an assignment with these combined operators: <code>+=</code>, <code>-=</code>,
+<code>*=</code>, <code>/=</code>, <code>%=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>,
+<code>&lt;&lt;=</code>, <code>&gt;&gt;=</code> and <code>&gt;&gt;&gt;=</code>.
+</p>
+
+
+
+<p>
+The logical AND and OR operators are short-circuiting the evaluation of the arguments.
+</p>
+
+<h2 id="syntax">Syntax</h2>
+
+<h3 id="literals">Literals</h3>
+
+<p>
+Integer literals can be specified as a decimal or a hexadecimal number. Hexadecimal numbers are
+prefixed with <code>0x</code>. You can also use character literal which simply gets the corresponding
+Unicode value as an integer. Character literal is a single character enclosed with single quotes
+(<code>'</code>), you can use several escape sequences to get all kinds of characters. You can also
+specify up to 4 characters (in LATIN1, having values 0-255) these are combined as individual bytes
+of the resulting 32-bit integer stored in little endian format.
+</p>
+
+<p>
+String literals are enclosed by double quotes (<code>"</code>). String literals are read only, to make
+them writable use string concatenation (for example: <code>{"mutable&nbsp;string"}</code>) which
+creates a new string instance.
+</p>
+
+<p>
+This is the list of escape sequences for string and character literals:
+</p>
+
+<table border="1">
+<tr valign="top">
+	<td><code>\r</code></td>
+	<td>CR (13, 0x0D)</td>
+</tr>
+<tr valign="top">
+	<td><code>\n</code></td>
+	<td>LF (10, 0x0A)</td>
+</tr>
+<tr valign="top">
+	<td><code>\t</code></td>
+	<td>TAB (9, 0x09)</td>
+</tr>
+<tr valign="top">
+	<td><code>\\</code></td>
+	<td>backslash (92, 0x5C)</td>
+</tr>
+<tr valign="top">
+	<td><code>\'</code></td>
+	<td>apostrophe (39, 0x27), not needed in string literals</td>
+</tr>
+<tr valign="top">
+	<td><code>\"</code></td>
+	<td>quotes (34, 0x22), not needed in char literals</td>
+</tr>
+<tr valign="top">
+	<td><code>\XX</code></td>
+	<td>8-bit value (each X is a hex number)</td>
+</tr>
+<tr valign="top">
+	<td><code>\uXXXX</code></td>
+	<td>16-bit Unicode code point, excluding surrogate pairs 0xD800..0xDFFF (each X is a hex number)</td>
+</tr>
+<tr valign="top">
+	<td><code>\UXXXXXX</code></td>
+	<td>21-bit Unicode code point with maximum of 0x10FFFF, excluding surrogate pairs 0xD800..0xDFFF (each X is a hex number)</td>
+</tr>
+</table>
+
+
+
+<h3 id="extended-operator">Extended operator</h3>
+
+<p>
+Extended operator is wrapped in the <code>{</code> and <code>}</code> symbols. It has five forms:
+</p>
+
+<ol>
+	<li><b>empty hash initializer</b> - when the body of the operator is empty: <code>{}</code></li>
+	<li><b>string concatenation</b> - one or more elements delimited by a comma, for example:
+		<code>{"value&nbsp;of&nbsp;PI:&nbsp;",&nbsp;3.141592654}</code>
+	</li>
+	<li><b>float operation</b> - when two elements are delimited by a float operator (<code>+</code>,<code>-</code>,<code>*</code>,<code>/</code>), for example:
+		<code>{1.0&nbsp;*&nbsp;2.0}</code>
+	</li>
+	<li><b>hash initializer</b> - when one or more sets of two elements are delimited by a colon (each set delimited by a comma), for example:
+		<code>{"key":&nbsp;"value",&nbsp;123:&nbsp;456}</code>
+	</li>
+	<li><b>statement expression</b> - allows to put statements inside expressions, for example:
+		<code>{&nbsp;var&nbsp;a&nbsp;=&nbsp;func();&nbsp;=a*a&nbsp;}</code>
+	</li>
+</ol>
+
+<p>
+The string concatenation takes the string representation of each element and concatenates them together.
+The single element form is often used to create mutable instance of the constant string. For example:
+<code>{"this&nbsp;is&nbsp;now&nbsp;a&nbsp;mutable&nbsp;string"}</code>
+</p>
+
+<h3 id="operator-precedence">Operator precedence</h3>
+
+<table border="1">
+<tr>
+	<td>unary</td>
+	<td><code>~ ! + - ++ --</code></td>
+</tr>
+<tr>
+	<td>multiplicative</td>
+	<td><code>* / %</code></td>
+</tr>
+<tr>
+	<td>additive</td>
+	<td><code>+ -</code></td>
+</tr>
+<tr>
+	<td>bitwise</td>
+	<td><code>&lt;&lt; &gt;&gt; &gt;&gt;&gt; &amp; | ^</code></td>
+</tr>
+<tr>
+	<td>comparison</td>
+	<td><code>&lt; &lt;= &gt; &gt;= == != === !==</code></td>
+</tr>
+<tr>
+	<td>logical</td>
+	<td><code>&amp;&amp; ||</code></td>
+</tr>
+<tr>
+	<td>ternary</td>
+	<td><code>?:</code></td>
+</tr>
+<tr>
+	<td>assignment</td>
+	<td><code>= += -= *= /= %= &amp;= |= ^= &lt;&lt;= &gt;&gt;= &gt;&gt;&gt;=</code></td>
+</tr>
+</table>
+
+<p>
+The operator operands are processed from the left to the right for the whole expression (including
+the assignments). The exception is for the conditional operators (ternary operator and short-circuiting
+logical operators). The operators themselves are applied according the precedence table.
+</p>
+
+<p>
+This has effect on expressions containing pre/post increments/decrements, inner assignments,
+statement expressions, function calls, etc.
+</p>
+
+<h2 id="constants">Predefined constants</h2>
+
+<p>
+There are three predefined constants <code>null</code> (0), <code>false</code>
+(0) and <code>true</code> (1) to make the intent of the code more clear.
+</p>
+
+<h2 id="functions">Functions</h2>
+
+<h3 id="intrinsic-functions">Intrinsic functions</h3>
+
+<p>
+These functions are specially handled by the interpreter, using direct bytecodes
+for better performance. The float functions can also work with doubles (and 64bit
+integers for <code>float</code> and <code>int</code> functions), having each
+parameter taking two slots with low order half first.
+</p>
+
+<h4 id="length-functions">Length</h4>
+
+<dl>
+	<dt><code>length(value)</code></dt>
+	<dd>
+		Returns the length of the given value, it returns the array length for arrays and the number
+		of elements for hash tables. Emits an error in case the value is not array or hash table.
+	</dd>
+</dl>
+
+<h4 id="min-max-functions">Min/max/clamp</h4>
+
+<dl>
+	<dt><code>min(a, b)</code></dt>
+	<dd>
+		Returns the smaller integer.
+	</dd>
+	<dt><code>max(a, b)</code></dt>
+	<dd>
+		Returns the bigger integer.
+	</dd>
+	<dt><code>clamp(x, min, max)</code></dt>
+	<dd>
+		Returns the integer clamped to given range (inclusive).
+	</dd>
+</dl>
+
+<h4 id="arith32-functions">32-bit arithmetic</h4>
+
+<dl>
+	<dt><code>abs(value)</code></dt>
+	<dd>
+		Returns the absolute integer.
+	</dd>
+	
+	<dt><code>
+		add32(a, b)<br>
+		add32(a, b, carry)<br>
+	</code></dt>
+	<dd>
+		Returns the result of 32-bit modular addition (including the carry flag when the second result is obtained).
+		Optionally can add using the carry flag from the previous addition.
+	</dd>
+	<dt><code>
+		sub32(a, b)<br>
+		sub32(a, b, borrow)<br>
+	</code></dt>
+	<dd>
+		Returns the result of 32-bit modular subtraction (including the borrow flag when the second result is obtained).
+		Optionally can subtract using the borrow flag from the previous subtraction.
+	</dd>
+	<dt><code>mul32(a, b)</code></dt>
+	<dd>
+		Returns the result of 32-bit multiplication, wrapping when overflow happens.
+	</dd>
+</dl>
+
+<h4 id="arith64-functions">64-bit arithmetic</h4>
+
+<dl>
+	<dt><code>add64(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the result of 64-bit modular addition as two result values.
+	</dd>
+	<dt><code>sub64(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the result of 64-bit modular subtraction as two result values.
+	</dd>
+	<dt><code>mul64(v1, v2)</code></dt>
+	<dd>
+		Returns the lower and upper 32 bits of the product as two result values.
+	</dd>
+	<dt><code>umul64(v1, v2)</code></dt>
+	<dd>
+		The unsigned version of the <code>mul64</code> function.
+	</dd>
+	<dt><code>mul64(v1_lo, v1_hi, v2_lo, v2_hi)</code></dt>
+	<dd>
+		Returns the lower and upper 32 bits of the product as two result values.
+	</dd>
+	<dt><code>div64(v1_lo, v1_hi, v2_lo, v2_hi)</code></dt>
+	<dd>
+		Returns the lower and upper 32 bits of the 64-bit division as two result values.
+	</dd>
+	<dt><code>udiv64(v1_lo, v1_hi, v2_lo, v2_hi)</code></dt>
+	<dd>
+		The unsigned version of the <code>div64</code> function.
+	</dd>
+	<dt><code>rem64(v1_lo, v1_hi, v2_lo, v2_hi)</code></dt>
+	<dd>
+		Returns the lower and upper 32 bits of the 64-bit remainder as two result values.
+	</dd>
+	<dt><code>urem64(v1_lo, v1_hi, v2_lo, v2_hi)</code></dt>
+	<dd>
+		The unsigned version of the <code>rem64</code> function.
+	</dd>
+</dl>
+
+<h4 id="float-functions">Float functions (32-bit &amp; 64-bit)</h4>
+
+<dl>
+	<dt><code>float(a)</code><br><code>float(lo, hi)</code></dt>
+	<dd>
+		Converts integer to float.
+	</dd>
+	<dt><code>int(a)</code><br><code>int(lo, hi)</code></dt>
+	<dd>
+		Converts float to integer.
+	</dd>
+	<dt><code>fconv(a)</code><br><code>fconv(lo, hi)</code></dt>
+	<dd>
+		Converts float to double or double to float.
+	</dd>
+	<dt><code>fadd(a_lo, a_hi, b)</code><br><code>fadd(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the result of addition of two 64-bit floating point numbers (or 32-bit float for second value).
+	</dd>
+	<dt><code>fsub(a_lo, a_hi, b)</code><br><code>fsub(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the result of subtraction of two 64-bit floating point numbers (or 32-bit float for second value).
+	</dd>
+	<dt><code>fmul(a_lo, a_hi, b)</code><br><code>fmul(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the result of multiplication of two 64-bit floating point numbers (or 32-bit float for second value).
+	</dd>
+	<dt><code>fdiv(a_lo, a_hi, b)</code><br><code>fdiv(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the result of division between of 64-bit floating point numbers (or 32-bit float for second value).
+	</dd>
+	<dt><code>fcmp_lt(a_lo, a_hi, b)</code><br><code>fcmp_lt(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns true when the first float is smaller than second.
+	</dd>
+	<dt><code>fcmp_le(a_lo, a_hi, b)</code><br><code>fcmp_le(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns true when the first float is smaller than second or equal.
+	</dd>
+	<dt><code>fcmp_gt(a_lo, a_hi, b)</code><br><code>fcmp_gt(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns true when the first float is bigger than second.
+	</dd>
+	<dt><code>fcmp_ge(a_lo, a_hi, b)</code><br><code>fcmp_ge(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns true when the first float is bigger than second or equal.
+	</dd>
+	<dt><code>fcmp_eq(a_lo, a_hi, b)</code><br><code>fcmp_eq(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns true when the first float is equal to the second.
+	</dd>
+	<dt><code>fcmp_ne(a_lo, a_hi, b)</code><br><code>fcmp_ne(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns true when the first float is not equal to the second.
+	</dd>
+	<dt><code>fabs(a)</code><br><code>fabs(lo, hi)</code></dt>
+	<dd>
+		Returns the absolute value of a float number.
+	</dd>
+	<dt><code>fmin(a, b)</code><br><code>fmin(a_lo, a_hi, b)</code><br><code>fmin(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the smaller float number.
+	</dd>
+	<dt><code>fmax(a, b)</code><br><code>fmax(a_lo, a_hi, b)</code><br><code>fmax(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns the bigger float number.
+	</dd>
+	<dt><code>fclamp(x, min, max)</code><br><code>fclamp(x_lo, x_hi, min, max)</code><br><code>fclamp(x_lo, x_hi, min_lo, min_hi, max_lo, max_hi)</code></dt>
+	<dd>
+		Returns the float clamped to given range (inclusive).
+	</dd>
+	<dt><code>floor(a)</code><br><code>floor(lo, hi)</code></dt>
+	<dd>
+		Returns rounded down float value (as float).
+	</dd>
+	<dt><code>ifloor(a)</code><br><code>ifloor(lo, hi)</code></dt>
+	<dd>
+		Returns rounded down float value (as int).
+	</dd>
+	<dt><code>ceil(a)</code><br><code>ceil(lo, hi)</code></dt>
+	<dd>
+		Returns rounded up float value (as float).
+	</dd>
+	<dt><code>iceil(a)</code><br><code>iceil(lo, hi)</code></dt>
+	<dd>
+		Returns rounded up float value (as int).
+	</dd>
+	<dt><code>round(a)</code><br><code>round(lo, hi)</code></dt>
+	<dd>
+		Returns rounded float value to the nearest integer (as float).
+	</dd>
+	<dt><code>iround(a)</code><br><code>iround(lo, hi)</code></dt>
+	<dd>
+		Returns rounded float value to the nearest integer (as int).
+	</dd>
+	<dt><code>pow(a, b)</code><br><code>pow(a_lo, a_hi, b)</code><br><code>pow(a_lo, a_hi, b_lo, b_hi)</code></dt>
+	<dd>
+		Returns float value raised to the power of <code>b</code>.
+	</dd>
+	<dt><code>sqrt(a)</code><br><code>sqrt(lo, hi)</code></dt>
+	<dd>
+		Returns the square root of the float value.
+	</dd>
+	<dt><code>cbrt(a)</code><br><code>cbrt(lo, hi)</code></dt>
+	<dd>
+		Returns the cubic root of the float value.
+	</dd>
+	<dt><code>exp(a)</code><br><code>exp(lo, hi)</code></dt>
+	<dd>
+		Returns <code><i>e</i></code> raised to the power of <code>a</code>.
+	</dd>
+	<dt><code>ln(a)</code><br><code>ln(lo, hi)</code></dt>
+	<dd>
+		Returns the natural logarithm of <code>a</code>.
+	</dd>
+	<dt><code>log2(a)</code><br><code>log2(lo, hi)</code></dt>
+	<dd>
+		Returns the base 2 logarithm of <code>a</code>.
+	</dd>
+	<dt><code>log10(a)</code><br><code>log10(lo, hi)</code></dt>
+	<dd>
+		Returns the base 10 logarithm of <code>a</code>.
+	</dd>
+	<dt><code>sin(a)</code><br><code>sin(lo, hi)</code></dt>
+	<dd>
+		Returns the sine of <code>a</code>.
+	</dd>
+	<dt><code>cos(a)</code><br><code>cos(lo, hi)</code></dt>
+	<dd>
+		Returns the cosine of <code>a</code>.
+	</dd>
+	<dt><code>asin(a)</code><br><code>asin(lo, hi)</code></dt>
+	<dd>
+		Returns the arc sine of <code>a</code>.
+	</dd>
+	<dt><code>acos(a)</code><br><code>acos(lo, hi)</code></dt>
+	<dd>
+		Returns the arc cosine of <code>a</code>.
+	</dd>
+	<dt><code>tan(a)</code><br><code>tan(lo, hi)</code></dt>
+	<dd>
+		Returns the tangent of <code>a</code>.
+	</dd>
+	<dt><code>atan(a)</code><br><code>atan(lo, hi)</code></dt>
+	<dd>
+		Returns the arc tangent of <code>a</code>.
+	</dd>
+	<dt><code>atan2(y, x)</code><br><code>atan2(y_lo, y_hi, x_lo, x_hi)</code></dt>
+	<dd>
+		Returns the arc tangent of <code>y</code> and <code>x</code> coordinates using signs to determine the quadrant of the result.
+	</dd>
+</dl>
+
+<h4 id="value-functions">Value functions</h4>
+
+<dl>
+	<dt><code>is_int(value)</code></dt>
+	<dd>
+		Returns true when the value is an integer.
+	</dd>
+	<dt><code>is_float(value)</code></dt>
+	<dd>
+		Returns true when the value is a float.
+	</dd>
+	<dt><code>is_array(value)</code></dt>
+	<dd>
+		Returns true when the value is an array or string.
+	</dd>
+	<dt><code>is_string(value)</code></dt>
+	<dd>
+		Returns true when the value is a string.
+	</dd>
+	<dt><code>is_hash(value)</code></dt>
+	<dd>
+		Returns true when the value is a hash table.
+	</dd>
+	<dt><code>is_shared(value)</code></dt>
+	<dd>
+		Returns true when the value is a shared array.
+	</dd>
+	<dt><code>is_const(value)</code></dt>
+	<dd>
+		Returns true when the value is a constant string.
+	</dd>
+	<dt><code>is_funcref(value)</code></dt>
+	<dd>
+		Returns true when the value is a function reference (either resolved or unresolved).
+	</dd>
+	<dt><code>is_weakref(value)</code></dt>
+	<dd>
+		Returns true when the value is a weak reference.
+	</dd>
+	<dt><code>is_handle(value)</code></dt>
+	<dd>
+		Returns true when the value is a native handle.
+	</dd>
+</dl>
+
+<h3 id="builtin-functions">Built-in functions</h3>
+
+<h4 id="clone-functions">Clone</h4>
+
+<dl>
+	<dt><code>clone(value)</code></dt>
+	<dd>
+		Returns the shallow duplicate of the given value. Constant strings and shared arrays are
+		always cloned by reference.
+	</dd>
+	<dt><code>clone_deep(value)</code></dt>
+	<dd>
+		Returns the deep duplicate of the given value. Constant strings and shared arrays are
+		always cloned by reference.
+	</dd>
+</dl>
+
+<h4 id="array-functions">Array</h4>
+
+<dl>
+	<dt><code>
+		array_create(length)<br>
+		array_create(length, element_size)<br>
+	</code></dt>
+	<dd>
+		Creates an array of given length and optionally initial element size (1, 2 or 4 bytes).
+	</dd>
+	<dt><code>array_create_shared(length, element_size)</code></dt>
+	<dd>
+		Creates an array of fixed length and fixed element size (1, 2 or 4 bytes). Only integers and floats (when
+		element size is 4 bytes) can be put in, no references or native handles are allowed. Upgrading array to
+		bigger element size results into an error. This type of array is suitable for sharing between different
+		heaps (possibly running in different threads). Otherwise it can be also used for fixed size buffers with
+		enforced element size or to avoid the overhead of garbage collection of the contained values.
+	</dd>
+	<dt><code>array_get_shared_count(array)</code></dt>
+	<dd>
+		Returns the number of different heaps that contains reference to given shared array.
+	</dd>
+	<dt><code>array_get_element_size(array)</code></dt>
+	<dd>
+		Returns the (current) element size of the array in bytes (1, 2 or 4 bytes).
+	</dd>
+	<dt><code>array_set_length(array, length)</code></dt>
+	<dd>
+		Sets the length of the given array.
+	</dd>
+	
+	<dt><code>array_copy(dest, dest_off, src, src_off, count)</code></dt>
+	<dd>
+		Copies content of one array into another (or the same).
+	</dd>
+	<dt><code>
+		array_fill(array, value)<br>
+		array_fill(array, off, count, value)<br>
+	</code></dt>
+	<dd>
+		Fills a portion of the array (or whole) with the given value.
+	</dd>
+	<dt><code>array_extract(array, off, count)</code></dt>
+	<dd>
+		Returns a copy of a portion of the array (string).
+	</dd>
+	<dt><code>array_insert(array, off, value)</code></dt>
+	<dd>
+		Inserts the given value into the array, pushing next elements to higher indicies and increasing the array length.
+	</dd>
+	<dt><code>
+		array_insert_array(dest, idx, src)<br>
+		array_insert_array(dest, idx, src, off, len)<br>
+	</code></dt>
+	<dd>
+		Inserts an array into another array at given position.
+	</dd>
+	<dt><code>
+		array_append(array, other)<br>
+		array_append(array, other, off, count)<br>
+	</code></dt>
+	<dd>
+		Appends an array to another array.
+	</dd>
+	<dt><code>
+		array_replace_range(dest, start, end, src)<br>
+		array_replace_range(dest, start, end, src, off, len)<br>
+	</code></dt>
+	<dd>
+		Replaces range between <code>start</code> and <code>end</code> (exclusive) with the content of given array.
+	</dd>
+	
+	<dt><code>
+		array_remove(array, off)<br>
+		array_remove(array, off, count)<br>
+	</code></dt>
+	<dd>
+		Removes a portion of the array, pushing next elements to lower indicies and decreasing the array length.
+		The count is set to 1 when omitted.
+	</dd>
+	<dt><code>array_clear(array)</code></dt>
+	<dd>
+		Clears the array by setting the length of the given array to zero.
+	</dd>
+	
+</dl>
+
+<h4 id="string-functions">String</h4>
+
+<dl>
+	<dt id="string_const"><code>
+		string_const(s)<br>
+		string_const(s, off, len)<br>
+	</code></dt>
+	<dd>
+		Returns a constant string (can't be modified) for the given string. You can specify a portion
+		of the original string or use the whole string, in such case the same string is returned
+		if it is already a constant. There is always only a single instance for each unique constant
+		string.
+	</dd>
+	<dt><code>
+		string_parse_int(s)<br>
+		string_parse_int(s, default_value)<br>
+		string_parse_int(s, off, len)<br>
+		string_parse_int(s, off, len, default_value)<br>
+	</code></dt>
+	<dd>
+		Parses string as an integer. Optionally it can return the provided default value instead
+		of an error.
+	</dd>
+	<dt><code>
+		string_parse_float(s)<br>
+		string_parse_float(s, default_value)<br>
+		string_parse_float(s, off, len)<br>
+		string_parse_float(s, off, len, default_value)<br>
+	</code></dt>
+	<dd>
+		Parses string as a float. Optionally it can return the provided default value instead
+		of an error.
+	</dd>
+	<dt><code>
+		string_parse_long(s)<br>
+		string_parse_long(s, off, len)<br>
+		string_parse_long(s, off, len, default_lo, default_hi)<br>
+	</code></dt>
+	<dd>
+		Parses string as a 64-bit integer. The result is returned as two results. Optionally
+		it can return the provided default value instead of an error. To check the error, use
+		<code>is_int</code> function to distinguish between valid value and an error.
+	</dd>
+	<dt><code>
+		string_parse_double(s)<br>
+		string_parse_double(s, off, len)<br>
+		string_parse_double(s, off, len, default_lo, default_hi)<br>
+	</code></dt>
+	<dd>
+		Parses string as a 64-bit float. The result is returned as two results. Optionally
+		it can return the provided default value instead of an error. To check the error, use
+		<code>is_int</code> function to distinguish between valid value and an error.
+	</dd>
+	<dt><code>
+		string_from_long(lo, hi)<br>
+		string_from_long(s, lo, hi)<br>
+	</code></dt>
+	<dd>
+		Returns string representation of a 64-bit integer. Optionally it can append it to an
+		existing string.
+	</dd>
+	<dt><code>
+		string_from_double(lo, hi)<br>
+		string_from_double(s, lo, hi)<br>
+	</code></dt>
+	<dd>
+		Returns string representation of a 64-bit float. Optionally it can append it to an
+		existing string.
+	</dd>
+	<dt><code>
+		string_from_utf8(arr)<br>
+		string_from_utf8(arr, off, len)<br>
+		string_from_utf8(s, arr)<br>
+		string_from_utf8(s, arr, off, len)<br>
+	</code></dt>
+	<dd>
+		Returns UTF-8 decoded string from byte array. Optionally it can append it to an existing string.
+	</dd>
+	<dt><code>
+		string_to_utf8(s)<br>
+		string_to_utf8(s, off, len)<br>
+		string_to_utf8(arr, s)<br>
+		string_to_utf8(arr, s, off, len)<br>
+	</code></dt>
+	<dd>
+		Returns UTF-8 encoded string. Optionally it can append it to an existing byte array.
+	</dd>
+</dl>
+
+<h4 id="object-functions">Object</h4>
+
+<dl>
+	<dt><code>object_create(size)</code></dt>
+	<dd>
+		Creates a new array with given size. This is practically the same as creating a new array by
+		calling <code>array_create</code> function, except that it's intent is for creating of objects.
+	</dd>
+	<dt><code>object_extend(obj, size)</code></dt>
+	<dd>
+		Sets the length of the existing array, the new length must be the same or bigger. This is almost
+		the same as <code>array_set_length</code> function, except that it's intent is for extending of objects
+		and the array is returned.
+	</dd>
+</dl>
+
+<h4 id="weakref-functions">Weak reference</h4>
+
+<dl>
+	<dt><code>
+		weakref_create(obj)<br>
+		weakref_create(obj, container)<br>
+		weakref_create(obj, container, key)<br>
+	</code></dt>
+	<dd>
+		Creates a new weak reference (or already existing instance). Optionally you can pass
+		a container (hash table or array) for automatic action to occur once the target object
+		is garbage collected. In case of hash tables either the weak reference or provided
+		key is removed. For arrays either the weak reference or provided key is appended to
+		it. Be sure to periodically empty the array to prevent memory leaks.<br>
+		Note: weak references can't reference directly other weak references (including the key).
+	</dd>
+	<dt><code>weakref_get(ref)</code></dt>
+	<dd>
+		Obtains the reference value for given weak reference.
+	</dd>
+</dl>
+
+<h4 id="funcref-functions">Function reference</h4>
+
+<dl>
+	<dt><code>funcref_call(func, params)</code></dt>
+	<dd>
+		Calls the function reference with the parameters passed in an array.
+	</dd>
+</dl>
+
+<h4 id="hash-functions">Hash</h4>
+
+<dl>
+	<dt><code>hash_get(hash, key, default_value)</code></dt>
+	<dd>
+		Returns the value for given key or the provided default value when the value is missing.
+		In case you need to check for presence of any kind of value you can use a reference to
+		a private function to get an unique default value not present in any hash.
+	</dd>
+	<dt><code>hash_entry(hash, idx)</code></dt>
+	<dd>
+		Returns both the key and the value for given index as two result values. Returns zero for both
+		the key and the value in case of an error (the only possible errors are: invalid hash reference
+		or index out of bounds).
+	</dd>
+	<dt><code>hash_contains(hash, key)</code></dt>
+	<dd>
+		Returns true when the hash table contains the key.
+	</dd>
+	<dt><code>hash_remove(hash, key)</code></dt>
+	<dd>
+		Removes the given key from the hash table. Returns the value that was present or emits
+		an error in case the key wasn't present.
+	</dd>
+	<dt><code>hash_keys(hash)</code></dt>
+	<dd>
+		Returns the keys from the hash as a new array.
+	</dd>
+	<dt><code>hash_values(hash)</code></dt>
+	<dd>
+		Returns the values from the hash as a new array.
+	</dd>
+	<dt><code>hash_pairs(hash)</code></dt>
+	<dd>
+		Returns both the keys and the values from the hash as a new array of twice the length
+		with keys and values interleaved.
+	</dd>
+	<dt><code>hash_clear(hash)</code></dt>
+	<dd>
+		Removes all entries from the hash table.
+	</dd>
+</dl>
+
+<h4 id="error-functions">Error</h4>
+
+<dl>
+	<dt><code>error(message)</code></dt>
+	<dd>
+		Returns an error description with a stack trace. It consists of an array of length 2
+		where the first element is the message and the second is an array of individual
+		stack trace entries (each being just a string like <code>"func#1 (file.fix:123)"</code>).
+		It is permitted to pass another error as a message.
+	</dd>
+</dl>
+
+<h4 id="log-functions">Log</h4>
+
+<dl>
+	<dt><code>log(value)</code></dt>
+	<dd>
+		Prints the given string (other values are converted to a string) to the debugging channel
+		provided by the application. Newlines are added automatically. The default implementation
+		prints to standard error stream.
+	</dd>
+	<dt><code>dump(value)</code></dt>
+	<dd>
+		Pretty prints the given value using the <code>log</code> function.
+	</dd>
+	<dt><code>
+		to_string(value)<br>
+		to_string(value, newlines)<br>
+	</code></dt>
+	<dd>
+		Returns the string representation of the given value. You can optionally specify if you want the
+		newlines (not used by default).
+	</dd>
+</dl>
+
+<h4 id="heap-functions">Heap</h4>
+
+<dl>
+	<dt><code>heap_collect()</code></dt>
+	<dd>
+		Collects the garbage in the heap, removing unused arrays from the memory.
+	</dd>
+	<dt><code>heap_size()</code></dt>
+	<dd>
+		Computes and returns the heap size in kilobytes. It may do nothing (and return zero)
+		depending on the implementation. It returns maximum value in case the heap is bigger
+		than that.
+	</dd>
+</dl>
+
+<h4 id="perf-functions">Performance</h4>
+
+<dl>
+	<dt><code>perf_reset()</code></dt>
+	<dd>
+		Resets the performance debugging timer.
+	</dd>
+	<dt><code>perf_log(msg)</code></dt>
+	<dd>
+		Logs the message (using the <code>log</code> function) with information about elapsed
+		time since the previous <code>perf_log</code> call and also since the performance debugging
+		timer was reset.
+	</dd>
+</dl>
+
+<h4 id="serialization-functions">Serialization</h4>
+
+<dl>
+	<dt><code>
+		serialize(value)<br>
+		serialize(buf, value)<br>
+	</code></dt>
+	<dd>
+		Serializes given value into byte array and returns it. It can optionally append the bytes to
+		an existing array. The serialization will error on native handles, function references and
+		weak references. The serialization format is fixed, suitable for long-term storage.
+	</dd>
+	<dt><code>
+		unserialize(buf)<br>
+		unserialize(buf, off, len)<br>
+	</code></dt>
+	<dd>
+		Unserializes value from given byte array. The array must contain only the serialized
+		data (no extra data or multiple serialized data).
+	</dd>
+	<dt><code>unserialize(buf, off_ref)</code></dt>
+	<dd>
+		Unserializes value from given byte array at a given offset passed as a reference (therefore
+		wrapped in an array). The offset is adjusted with the resulting position after the operation.
+	</dd>
+</dl>
+
+<h3 id="token-functions">Token processing functions</h3>
+
+<p>
+These functions are available only during token processing. They always return an error if called
+otherwise.
+</p>
+
+<dl>
+	<dt><code>script_query(name, file_name, constants, locals, functions)</code></dt>
+	<dd>
+		Retrieves information about the file name, constants (both private and public), public local
+		variables and public functions. The script is loaded if it wasn't already compiled. The file
+		name is a mutable string, the constants is a hash table where the key is the name (with
+		<code>@</code> at the beginning if private) and the value is either an integer, a float,
+		a string or in case the constant references some other constant the value is an array where
+		the elements are: the value, the referenced script name and constant name. The locals and
+		functions are just arrays of the names. All of the output parameters are optional and the
+		order of the values reflects the order in the source file (after being processed by the token
+		processors).
+	</dd>
+	<dt><code>
+		script_line(line)<br>
+		script_line(fname, tokens, src, line)<br>
+	</code></dt>
+	<dd>
+		Returns the script file name and the line in this format: "<code>script.fix(123)</code>".
+		This function is used for error reporting in token processors. It also correctly adjusts
+		the file name and line based on the <a href="#change-file-names"><code>@stack_trace_lines</code></a>
+		constant in the tokens. The tokens for currently processed script are used when not provided.
+		Providing the file name is optional.
+	</dd>
+	<dt><code>script_postprocess(func, data)</code></dt>
+	<dd>
+		Registers the provided function to be called after processing by the token processors. The
+		registered functions are called in a reverse order to allow wrapping behavior of different
+		token processors. The signature of the function is:<br>
+		<code>postprocess(data, fname, tokens, src)</code><br>
+		(the associated data for the function, the file name, the tokens and the source)
+	</dd>
+	<dt><code>
+		script_compile(src)<br>
+		script_compile(tokens, src)<br>
+	</code></dt>
+	<dd>
+		Compiles the given source code (or tokens) in the context of the token processing and returns
+		a hash table with a list of public functions that can be called (the order of the values reflects
+		the order in the source file).
+	</dd>
+	<dt><code>
+		tokens_parse(tokens, src, s, line)<br>
+		tokens_parse(tokens, src, s, off, len, line)<br>
+	</code></dt>
+	<dd>
+		Parses given string into tokens. These are appended to the tokens array and the source code
+		to the src string (UTF-8 encoded). The reference to the tokens array is returned for
+		simpler code in the case of creating a new tokens array.
+	</dd>
+	<dt><code>
+		token_parse_string(s)<br>
+		token_parse_string(s, off, len)<br>
+	</code></dt>
+	<dd>
+		Parses given string (char) literal from UTF-8 source code form.
+	</dd>
+	<dt><code>token_escape_string(s)</code></dt>
+	<dd>
+		Converts string into UTF-8 encoded source code form.
+	</dd>
+</dl>
+
+<h2 id="optimizations">Optimizations</h2>
+
+<p>
+The arrays have ability to compress element sizes to just 8-bit and 16-bit unsigned integers,
+this is to allow to work with binary data and Unicode strings efficiently. As a side-effect
+many arrays are also compressed as the numbers generally tend to be near zero.
+</p>
+
+<p>
+The compiler directly emits bytecode, skipping any intermediate forms such as AST trees.
+The forward jump bytecodes are using fixed length encoding to simplify the compiler. This
+allow to jump up to 2048 bytecodes (should suffice for most cases), however when bigger
+jump is encountered the whole single script is recompiled with long jumps.
+</p>
+
+<p>
+The integer arithmetic operators work on the raw 32-bit integer value, even when it's a
+reference or float. The result is always an integer. Similarly float operators (using
+the <a href="#extended-operator">extended operator</a>) are interpreting this 32-bit
+value as a float and always return a float. This also allows to mix integer operations
+with floats to directly work with the float bitwise representation.
+</p>
+
+<p>
+The garbage collector is non-compacting, meaning the integer values of references are
+kept the same. This can be used to create hash keys compared as references and not by
+values, simply by using arithmetic operation that don't modify the integer value to
+get the raw reference index (for example by ORing with zero). However you have to make
+sure that the original reference is still referenced somewhere. You can use
+<a href="#weak-references">weak references</a> if you can't provide this guarantee,
+at the expense of allocation of an extra object per each key.
+</p>
+
+<h2 id="multithreading">Multithreading</h2>
+
+<p>
+The general approach is to use multiple smaller heaps (one or multiple per thread) at
+natural sections of the application. Some examples:
+</p>
+
+<ul>
+	<li>server applications: each processing thread has it's own heap</li>
+	<li>GUI applications: worker threads have their own heap, you can store documents
+	in separate heaps that can be transferred as a handle between workers for example
+	to implement complex saving/loading and possibly have also a separate view
+	representation of the document in a different heap</li>
+	<li>complex processing: you can do it in a separate heap and then destroy
+	the heap once it's done to avoid inflating the main heap needlessly</li>
+</ul>
+
+<p>
+This approach makes GC pauses pretty localized and very quick making them a non-issue.
+It's best to clone data between threads/heaps to communicate. You can use shared memory
+to avoid copy of actual data with some minor adjustments needed in the code for eg.
+storing structured data.
+</p>
+
+<p>
+Basically you can use shared array to store array of objects simply by adjusting the
+syntax a bit: using <code>shared_array[obj+OBJ_field]</code> instead of the usual
+<code>obj-&gt;OBJ_field</code>. You also need to do your own pointer arithmetic,
+using <code>obj</code> as an integer offset and by adding <code>OBJ_SIZE</code> when
+you want to go to next element. You can store pointers to other objects using
+a simple offset in the shared array.
+</p>
+
+<h3 id="garbage-collection">Garbage collection</h3>
+
+<p>
+Having smaller heaps also allow to collect the garbage as needed without much downsides.
+For example you can call GC after processing a network request or doing a spike of work,
+you can avoid the need for the obnoxious try/finally blocks to reclaim native handles
+in case of an error.
+</p>
+
+<h2 id="token-processing">Token processing (macros)</h2>
+
+<p>
+The language supports arbitrary modification of the tokens before they're fed into the
+compiler. This allow to add new syntax, adjust existing one or even change it completely.
+</p>
+
+<p>
+This is achieved by using the <code>use</code> keyword which runs the specified script
+with the tokens to modify. Usage example:
+</p>
+
+<pre class="snippet">
+<span class="keyword">use</span> <span class="string">"foreach"</span><span class="symbol">;</span> <span class="comment">// at the top of the file, before any imports
+</span>
+<span class="keyword">foreach</span> <span class="symbol">(</span><span class="keyword">var</span> k<span class="symbol">,</span> v <span class="keyword">in</span> hash_table<span class="symbol">)</span> <span class="symbol">{</span>
+    <span class="symbol">...</span>
+<span class="symbol">}</span>
+</pre>
+
+<p>
+The implementation script has a single function <code>process_tokens(fname, tokens, src)</code>
+that accepts the file name, packed array of tokens (every entry taking multiple slots)
+and the original UTF-8 encoded source (whole file). The tokens start right after the string literal
+in the <code>use</code> statement. This allow to potentially pass parameters to the processing
+script.
+</p>
+
+<p>
+The token types are these (these are final, no changes will be made to them):
+</p>
+
+<pre class="snippet" style="tab-size: 4; -moz-tab-size: 4;">
+<span class="keyword">const</span> <span class="symbol">{</span>
+	<span class="symbol">@</span>TOK_IDENT<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_FUNC_REF<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_NUMBER<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_HEX_NUMBER<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_FLOAT_NUMBER<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_CHAR<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_STRING<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_UNKNOWN<span class="symbol">,</span>
+
+	<span class="symbol">@</span>KW_DO<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_IF<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_FOR<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_USE<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_VAR<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_CASE<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_ELSE<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_BREAK<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_CONST<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_WHILE<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_IMPORT<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_RETURN<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_SWITCH<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_DEFAULT<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_CONTINUE<span class="symbol">,</span>
+	<span class="symbol">@</span>KW_FUNCTION
+<span class="symbol">};</span>
+</pre>
+
+<p>
+The tokens structure has these members:
+</p>
+
+<pre class="snippet" style="tab-size: 4; -moz-tab-size: 4;">
+<span class="keyword">const</span> <span class="symbol">{</span>
+	<span class="symbol">@</span>TOK_type<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_off<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_len<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_line<span class="symbol">,</span>
+	<span class="symbol">@</span>TOK_SIZE
+<span class="symbol">};</span>
+</pre>
+
+<p>
+This is the type, offset into the source and the length of the token. It also contains
+the line number in the file for error reporting (used both at compile-time and in runtime).
+The length of the tokens is always divisible by 4 (the size of the structure). To add
+new tokens the new corresponding source code fragment can be easily appended to the
+source and referenced by the indicies.
+</p>
+
+<p>
+Supported symbols are directly represented as their ASCII value in the type. Multi character
+symbols are represented as individual bytes in little endian format (eg. <code>&gt;=</code> is
+0x3D3E) and directly maps to the multi character literals by simply using eg. <code>'&gt;='</code>
+in the source code.
+</p>
+
+<p>
+Invalid tokens are passed to the token processors with the TOK_UNKNOWN type. The least amount
+of characters to produce the same error are used. For unknown characters the maximum consecutive
+amount of such characters are used in a single TOK_UNKNOWN token. This allow to process arbitrary
+syntaxes even when they collide with the built-in syntax.
+</p>
+
+<p>
+When manipulating the tokens a special care must be taken to not desynchronize symbols stored
+in the type with the source representation defined with <code>TOK_off</code> and <code>TOK_len</code>.
+Also each token must have unique offset in the source code, some token processors use this offset
+to uniquely identify the token even when it's moved in the tokens array.
+</p>
+
+<p>
+
+Potential usages are very broad, however <b>remember that with great power comes
+great responsibility</b>, please try to follow these guidelines:
+</p>
+
+<ul>
+	<li>don't try to fully parse syntax unless necessary (just count the number of nested parenthesis etc.) to
+		allow mixing different new syntaxes without much problem</li>
+	<li>use compatible syntax (no total weirdness), or if it's very appropriate, make sure
+		that such token processor is run in the appropriate order</li>
+	<li>use it to truly improve something instead of just remaking the whole syntax just
+		because you can (adding support for well-known popular syntaxes is however a positive thing
+		as it enables more people to use the language/ecosystem)</li>
+	<li>think of the other people who will have to work with various different syntaxes
+		thrown upon them (make the syntax additions as simple as possible without much exceptions,
+		or even exceptions to the exceptions)
+</ul>
+
+<p>
+Good luck &amp; have fun on your token processing voyage! :-)
+</p>
+
+<h3 id="symbols">Symbols</h3>
+
+<table border="1">
+<tr>
+	<th>Length</th>
+	<th>Symbols</th>
+</tr>
+<tr>
+	<td>1 character</td>
+	<td><code>( ) { } [ ] , ; ~ : @ ? + - * / % &amp; | ^ = ! &lt; &gt; <span style="color: #666; border-bottom: 1px dotted #666; cursor: help" title="These symbols are unused in the base language but directly available for token processing"># $ . \ `</span></code></td>
+</tr>
+<tr>
+	<td>2 characters</td>
+	<td><code>+= ++ -= -- -&gt; *= /= %= &amp;= &amp;&amp; |= || ^= &lt;= &lt;&lt; &gt;= &gt;&gt; == != ..</code></td>
+</tr>
+<tr>
+	<td>3 characters</td>
+	<td><code>=== !== &lt;&lt;= &gt;&gt;= &gt;&gt;&gt;</code></td>
+</tr>
+<tr>
+	<td>4 characters</td>
+	<td><code>&gt;&gt;&gt;=</code></td>
+</tr>
+</table>
+
+<p>
+When you convert tokens back to a valid source code (eg. for dumping the tokens as a readable
+code) you may want to omit any unneeded whitespace. You can omit whitespace between any symbols
+that are not producing another symbol with such concatenation, these are the combinations that
+require an extra whitespace:
+</p>
+
+<table border="1">
+<tr valign="top">
+	<td>
+		<code>
+		+ +<br>
+		+ =<br>
+		+ +=<br>
+		+ ++<br>
+		+ ==<br>
+		+ ===<br>
+		- -<br>
+		- =<br>
+		- &gt;<br>
+		- -=<br>
+		- --<br>
+		</code>
+	</td>
+	<td>
+		<code>
+		- -&gt;<br>
+		- &gt;=<br>
+		- &gt;&gt;<br>
+		- ==<br>
+		- ===<br>
+		- &gt;&gt;=<br>
+		- &gt;&gt;&gt;<br>
+		- &gt;&gt;&gt;=<br>
+		* =<br>
+		* ==<br>
+		* ===<br>
+		</code>
+	</td>
+	<td>
+		<code>
+		/ =<br>
+		/ ==<br>
+		/ ===<br>
+		% =<br>
+		% ==<br>
+		% ===<br>
+		&amp; &amp;<br>
+		&amp; =<br>
+		&amp; &amp;=<br>
+		&amp; &amp;&amp;<br>
+		&amp; ==<br>
+		</code>
+	</td>
+	<td>
+		<code>
+		&amp; ===<br>
+		| |<br>
+		| =<br>
+		| |=<br>
+		| ||<br>
+		| ==<br>
+		| ===<br>
+		^ =<br>
+		^ ==<br>
+		^ ===<br>
+		= =<br>
+		</code>
+	</td>
+	<td>
+		<code>
+		= ==<br>
+		= ===<br>
+		! =<br>
+		! ==<br>
+		! ===<br>
+		&lt; =<br>
+		&lt; &lt;<br>
+		&lt; &lt;=<br>
+		&lt; &lt;&lt;<br>
+		&lt; ==<br>
+		&lt; ===<br>
+		</code>
+	</td>
+	<td>
+		<code>
+		&lt; &lt;&lt;=<br>
+		&gt; =<br>
+		&gt; &gt;<br>
+		&gt; &gt;=<br>
+		&gt; &gt;&gt;<br>
+		&gt; ==<br>
+		&gt; ===<br>
+		&gt; &gt;&gt;=<br>
+		&gt; &gt;&gt;&gt;<br>
+		&gt; &gt;&gt;&gt;=<br>
+		&lt;&lt; =<br>
+		</code>
+	</td>
+	<td>
+		<code>
+		&lt;&lt; ==<br>
+		&lt;&lt; ===<br>
+		&gt;&gt; =<br>
+		&gt;&gt; &gt;<br>
+		&gt;&gt; &gt;=<br>
+		&gt;&gt; &gt;&gt;<br>
+		&gt;&gt; ==<br>
+		&gt;&gt; ===<br>
+		&gt;&gt; &gt;&gt;=<br>
+		&gt;&gt; &gt;&gt;&gt;<br>
+		&gt;&gt; &gt;&gt;&gt;=<br>
+		</code>
+	</td>
+	<td>
+		<code>
+		== =<br>
+		== ==<br>
+		== ===<br>
+		!= =<br>
+		!= ==<br>
+		!= ===<br>
+		&gt;&gt;&gt; =<br>
+		&gt;&gt;&gt; ==<br>
+		&gt;&gt;&gt; ===<br>
+		. .<br>
+		. ..<br>
+		</code>
+	</td>
+</tr>
+</table>
+
+<h3 id="execution-environment">Execution environment</h3>
+
+<p>
+The token processors should use only built-in functions. They may use optional
+native functions provided by customized compilers, but should generally work without
+them.
+</p>
+
+<p>
+The running environment can differ, it can be either in the same heap as the other
+code (in case of the interpreter), or it can be in a separate heap with possible
+incremental compilation (various tools and compilers). When incremental compilation
+is used the heap used for token processing is serialized to disk so it can be resumed
+later. Not much is needed to support this other than to be prepared to process source
+files repeatedly.
+</p>
+
+<h3 id="communication">Communication between token processors</h3>
+
+<p>
+Sometimes you need to provide extra metadata (eg. class descriptions) so that different
+token processors (or just different versions) can work together. Usually you would
+use local variables to track such data (which has the benefit of not storing them in
+the final result in the case of static compilation) but they're limited to the particular
+version of the token processor.
+</p>
+
+<p>
+The official way to do this is to use private constants with descriptive names that
+don't clash with normal constants. These can then use different values, though string
+constants are most useful as you can put in custom micro-syntax. Or in case the data
+is complicated and generated anyway, you can just serialize data into a string,
+it can be then directly unserialized because of the nature how strings are implemented.
+</p>
+
+<p>
+Remember that this metadata is part of the API and should be therefore designed for
+backward and forward compatiblity.
+</p>
+
+<p>
+It is preferred that you provide human readable syntax for your metadata. For example:
+</p>
+
+<pre class="snippet">
+<span class="keyword">const</span> <span class="symbol">@</span>class_SomeClass <span class="symbol">=</span> <span class="string">"prefix=some_class,static=create#2:create_other#3"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>method_SomeClass_create_2 <span class="symbol">=</span> <span class="string">"(Integer, Float): SomeClass"</span><span class="symbol">;</span>
+</pre>
+
+<p>
+The language implementation already implement two of such defineable metadata to
+adjust stack traces of errors.
+</p>
+
+<h4 id="custom-function-names">Custom function names in stack traces</h4>
+
+<p>
+You can set custom function name in error stack traces. Example:
+</p>
+
+<pre class="snippet">
+<span class="keyword">const</span> <span class="symbol">@</span>function_some_func_2 <span class="symbol">=</span> <span class="string">"SomeFunc(int,float)"</span><span class="symbol">;</span>
+<span class="keyword">const</span> <span class="symbol">@</span>function_hidden_0 <span class="symbol">=</span> <span class="string">""</span><span class="symbol">;</span> <span class="comment">// removes function from the stack trace (use with caution!)
+</span>
+<span class="keyword">function</span> <span class="function">some_func</span><span class="symbol">(</span>a<span class="symbol">,</span> b<span class="symbol">)</span>
+<span class="symbol">{</span>
+    <span class="symbol">...</span>
+<span class="symbol">}</span>
+
+<span class="keyword">function</span> <span class="function">hidden</span><span class="symbol">()</span>
+<span class="symbol">{</span>
+    <span class="comment">// best used for some generated wrapper functions
+</span>    <span class="comment">// that are unlikely to cause error on their own
+</span>    <span class="comment">// and would unpleasantly obscure the stack trace
+</span><span class="symbol">}</span>
+</pre>
+
+<h4 id="change-file-names">Change file names and virtual function insertion in stack traces</h4>
+
+<p>
+You can use the <code>@stack_trace_lines</code> constant to set different file
+names for ranges of lines. You can also optionally insert virtual functions
+into the stack trace (useful for macros). The value is a serialized array into
+a string constant. The array contains multiple entries, each having 5 slots.
+The slots are: start line, end line (inclusive), file name, line number
+and optional name of inserted virtual function.
+</p>
+
+<p>
+The array is processed from the beginning to the end. The virtual functions are
+inserted to the top (therefore they appear in reverse order in the stack trace).
+The file name for last matching range without virtual function is used. This
+allows to put more broad ranges before the more concrete ranges.
+</p>
+
+<pre class="snippet">
+<span class="keyword">const</span> <span class="symbol">{</span>
+    <span class="symbol">@</span>LINE_start<span class="symbol">,</span>
+    <span class="symbol">@</span>LINE_end<span class="symbol">,</span>
+    <span class="symbol">@</span>LINE_file_name<span class="symbol">,</span>
+    <span class="symbol">@</span>LINE_line_num<span class="symbol">,</span>
+    <span class="symbol">@</span>LINE_func_name<span class="symbol">,</span>
+    <span class="symbol">@</span>LINE_SIZE
+<span class="symbol">};</span>
+
+<span class="keyword">function</span> <span class="function">process_tokens</span><span class="symbol">(</span>fname<span class="symbol">,</span> tokens<span class="symbol">,</span> src<span class="symbol">)</span>
+<span class="symbol">{</span>
+    <span class="keyword">var</span> lines <span class="symbol">=</span> <span class="symbol">[];</span>
+    <span class="symbol">...</span>
+    lines<span class="symbol">[</span>off<span class="symbol">+</span>LINE_start<span class="symbol">]</span> <span class="symbol">=</span> 1000<span class="symbol">;</span>
+    lines<span class="symbol">[</span>off<span class="symbol">+</span>LINE_end<span class="symbol">]</span> <span class="symbol">=</span> 2000<span class="symbol">;</span>
+    lines<span class="symbol">[</span>off<span class="symbol">+</span>LINE_file_name<span class="symbol">]</span> <span class="symbol">=</span> <span class="string">"some_name.fix"</span><span class="symbol">;</span>
+    lines<span class="symbol">[</span>off<span class="symbol">+</span>LINE_line_num<span class="symbol">]</span> <span class="symbol">=</span> 123<span class="symbol">;</span>
+    lines<span class="symbol">[</span>off<span class="symbol">+</span>LINE_func_name<span class="symbol">]</span> <span class="symbol">=</span> null<span class="symbol">;</span>
+    <span class="symbol">...</span>
+    <span class="function">tokens_parse</span><span class="symbol">(</span>tokens<span class="symbol">,</span> src<span class="symbol">,</span> <span class="symbol">{</span><span class="string">"const @stack_trace_lines = "</span><span class="symbol">,</span> <span class="function">token_escape_string</span><span class="symbol">(</span><span class="function">serialize</span><span class="symbol">(</span>lines<span class="symbol">)),</span> <span class="string">";"</span><span class="symbol">});</span>
+    <span class="symbol">...</span>
+<span class="symbol">}</span>
+</pre>
+
+<h3 id="error-reporting">Error reporting</h3>
+
+<p>
+Use errors with this format for reporting any syntax errors: "<code>script.fix(123): syntax error</code>".
+This is easily achieved using the built-in <code>script_line</code> function like this:
+</p>
+
+<pre class="snippet">
+<span class="keyword">return</span> 0<span class="symbol">,</span> <span class="function">error</span><span class="symbol">({</span><span class="function">script_line</span><span class="symbol">(</span>line<span class="symbol">),</span> <span class="string">": syntax error"</span><span class="symbol">});</span>
+</pre>
+
+<p>
+This makes sure to contain the proper file name (even when changed using the
+<a href="#change-file-names"><code>@stack_trace_lines</code></a> private constant).
+</p>
+
+<h2 id="serialization">Serialization format</h2>
+
+<p>
+The serialization format has fixed structure and won't be changed in the future. It is
+therefore suited for both temporary and long-term storage, as well as for exchanging
+data between different systems.
+</p>
+
+<p>
+The format is binary, all numbers are stored in little endian byte order. There is no
+header, but application specific usages may contain one. A single value is encoded, or in
+case of arrays and hashes more values will recursivelly follow. The arrays are
+encoded on their first use and assigned an internal ID starting from zero. Whenever the
+reference to the array is encountered again, only the ID is used. This allow to serialize
+complete graphs of objects. An empty value is encoded simply as an integer with the value
+of zero or by using an empty array (depending on the application).
+</p>
+
+<p>
+Each value starts with a type and a length in a single byte. The type is in the low 4 bits
+and the length is in the high 4 bits. The length is present only for arrays, strings and
+hashes (it is an error to be present on other types). This allows to put the length for up
+to 12 elements directly into the first byte. The length is read as an additional unsigned
+byte (when the length is 13), unsigned short (when the length is 14) or 32-bit integer (when
+the length is 15). The shortest representation must be used and it's an error to accept
+bigger representation of smaller length.
+</p>
+
+<p>
+The floats are stored with the denormals flushed to zero. It's an error to accept values
+that have them present. Flushing is done on the bitwise integer representation of the
+float, setting the bits 0-22 (inclusive, totalling of 23 bits) to zero in the case that
+all of the bits 23-30 (the rest, excluding the sign bit) are set to zero. Similarly, when
+deserializing, if the bitwise representation (with the sign bit masked away) is between
+1 and 0x7FFFFF (inclusive) an error must be emitted as that would be a float number in
+a denormalized form.
+</p>
+
+<p>
+The floats must have NaN (not-a-number) values normalized to a quiet NaN without any payload.
+If the exponent bits are all set (meaning it's an infinity or NaN) and the low 23 bits
+are non-zero (it's a NaN), change the low 23 bits to have only the most significant bit
+set. It's an error to accept non-normalized NaNs.
+</p>
+
+<p>
+The smallest array/string/ref/int/float form must be always used for storage (in case of an empty array/string
+the ARRAY_BYTE/STRING_BYTE type must be used). It's an error to accept bigger array/string/ref/int/float
+forms that don't have values requiring it. The hash tables must not contain duplicate keys, and it's
+an error to accept duplicate keys.
+</p>
+
+<p>
+These restrictions are to ensure having a canonical format suitable for hash keys and exchange
+between different systems and implementations as well as to minimize covert channels for
+data leakage.
+</p>
+
+<p>
+Here is a table of all types:
+</p>
+
+<table border="1">
+<tr>
+	<th>Type</th>
+	<th>ID</th>
+	<th>Description</th>
+</tr>
+<tr valign="top">
+	<td>ZERO</td>
+	<td align="right">0</td>
+	<td>zero integer value</td>
+</tr>
+<tr valign="top">
+	<td>BYTE</td>
+	<td align="right">1</td>
+	<td>8-bit unsigned integer</td>
+</tr>
+<tr valign="top">
+	<td>SHORT</td>
+	<td align="right">2</td>
+	<td>16-bit unsigned integer</td>
+</tr>
+<tr valign="top">
+	<td>INT</td>
+	<td align="right">3</td>
+	<td>32-bit signed integer</td>
+</tr>
+<tr valign="top">
+	<td>FLOAT</td>
+	<td align="right">4</td>
+	<td>32-bit float (stored with the denormals flushed to zero and having normalized NaNs)</td>
+</tr>
+<tr valign="top">
+	<td>FLOAT_ZERO</td>
+	<td align="right">5</td>
+	<td>positive zero float value</td>
+</tr>
+<tr valign="top">
+	<td>REF</td>
+	<td align="right">6</td>
+	<td>reference to previously encountered array/string/hash (as 32-bit index)</td>
+</tr>
+<tr valign="top">
+	<td>REF_SHORT</td>
+	<td align="right">7</td>
+	<td>reference to previously encountered array/string/hash (as 16-bit index)</td>
+</tr>
+<tr valign="top">
+	<td>ARRAY</td>
+	<td align="right">8</td>
+	<td>array of values</td>
+</tr>
+<tr valign="top">
+	<td>ARRAY_BYTE</td>
+	<td align="right">9</td>
+	<td>array of unsigned 8-bit integers</td>
+</tr>
+<tr valign="top">
+	<td>ARRAY_SHORT</td>
+	<td align="right">10</td>
+	<td>array of unsigned 16-bit integers</td>
+</tr>
+<tr valign="top">
+	<td>ARRAY_INT</td>
+	<td align="right">11</td>
+	<td>array of signed 32-bit integers</td>
+</tr>
+<tr valign="top">
+	<td>STRING_BYTE</td>
+	<td align="right">12</td>
+	<td>string with each character stored as an unsigned 8-bit integer</td>
+</tr>
+<tr valign="top">
+	<td>STRING_SHORT</td>
+	<td align="right">13</td>
+	<td>string with each character stored as an unsigned 16-bit integer</td>
+</tr>
+<tr valign="top">
+	<td>STRING_INT</td>
+	<td align="right">14</td>
+	<td>string with each character stored as a signed 32-bit integer</td>
+</tr>
+<tr valign="top">
+	<td>HASH</td>
+	<td align="right">15</td>
+	<td>hash table with the insertion order preserved, contains given number of pairs of key and value</td>
+</tr>
+</table>
+
+<h2 id="advanced-topics">Advanced topics</h2>
+
+<h3 id="runtime-types">Runtime detection of user defined types</h3>
+
+<p>
+Sometimes you need to identify object types at runtime. Since there are no user types
+in the language you (directly or indirectly using token processor) have to use a little
+trick. It uses the property of function references where they are uniquely identified
+even across different heaps. This allow to use them as a marker in data structures,
+even when the structures are deep cloned into another heap.
+</p>
+
+<p>
+However for ordinary cases it's better to use type member in the base class. This
+runtime detection is more suitable for cases where you pass unknown kinds of objects
+and still want to identify certain types without a doubt.
+</p>
+
+<h3 id="distributed-gc">Distributed garbage collection between threads</h3>
+
+<p>
+While you would usually use native handles to determine liveness of objects between
+different threads (heaps) you can also use the pure language constructs to achieve
+that.
+</p>
+
+<p>
+So you want to make some object available to a different heap as a reference instead
+of copying. There is a property of shared arrays that when cloned to other heap
+they retain the same reference within the heap if they were already cloned there
+before. Additionally you can check how many heaps are referencing the shared array.
+</p>
+
+<p>
+From these two features you can easily construct handles that you can pass around
+and determine global liveness. To create such handle, just create a zero-sized shared
+array and assign the internal data to it using a hash table. Then pass around the
+shared array reference. To obtain internal data just get it from the hash table.
+To determine when the reference is not used anymore in other heaps just traverse
+the hash table and check if the number of active heaps is just one. Then you know
+you can release the internal data and invalidate the handle. To make it less
+processor intensive just iterate the hash table in small batches.
+</p>
+
+<h3 id="weak-references">Weak references</h3>
+
+<p>
+Weak references are useful in various scenarios. In the basic form it simply
+allow you to make the target object garbage collected when no normal references
+are pointing to it. When this occurs the reference to target is simply cleared
+from the weak reference and you can't obtain the original object anymore.
+</p>
+
+<p>
+This is useful in cases where you register the object to receive some events
+(change listeners, timers, etc.) but the original object has become unreferenced
+in the meantime. Ordinarilly you would need to manually deregister it from
+receiving the events, which would be painful to implement when usually it's
+not needed for anything else.
+</p>
+
+<p>
+Instead in your listener you use a weak reference to the object and once
+you detect the object is not around anymore you just deregister receiving
+of the event. To avoid accumulation of many such listener proxies the
+event source object can directly implement weak listeners.
+</p>
+
+<p>
+In the more advanced form, you can set an automatic action when the
+target object disappears. You can provide a container (hash table or
+array) to remove an entry (for hash) or add an entry (for array). With
+this you can create mapping to objects (to externally add additional data
+to existing objects), implement self-clearing caches or even general
+detection of object destruction to run arbitrary code (however you need
+to check periodically for newly collected objects).
+</p>
+
+<h3 id="non-local-goto">Non-local GOTO</h3>
+
+<p>
+In some rare cases you may need to jump out of nested functions and
+continue other execution path. You can use the exception mechanism
+for that but instead of creating an error you can pass a function
+reference as a marker. You can then uniquely detect it and choose
+a different execution path. This operation is fast as no stack trace
+is required to be gathered.
+</p>
+
+<p>
+The only caveat is that you must make sure that no code between
+the throwing and catching would wrap the function reference to
+an error.
+</p>
+
+<h3 id="circular-imports">Circular imports</h3>
+
+<p>
+Sometimes you end up in a situation where two scripts are depending on each
+other. This is currently not supported in FixScript because all the possible
+solutions are quickly leading to overcomplicated and fragile mess, esp. when
+used with token processors. Maybe a solution will be found in the future,
+but seems unlikely. There are also some overcomplicated hacks possible using
+token processors but these are also limited (for example combining multiple
+complex token processors would be next to impossible).
+</p>
+
+<p>
+The solution is to simply merge such scripts into one, after all if they
+depend on each other so much they should be one unit. Still there are cases
+where putting it all together would create an unmaintable mess. This is possible
+to solve using a token processor that simply includes the content of the other
+script, making it a single unit yet separated in different files.
+</p>
+
+<p>
+Other times there is some dependency but it is minimal. For such cases it's
+better to workaround the problem by dynamic calling of functions or creating
+a third script file with common stuff.
+</p>
+
+<h3 id="internal-state">Guarding internal state of objects</h3>
+
+<p>
+An important property of objects is to encapsulate the internal state from the
+outside. Often you need to store strings or other mutable objects. But simply
+storing the reference would expose the internal state to outside manipulation.
+Therefore you need to guard it by making a copy and store it internally. And
+then when returning the data back to the user you need to create another copy
+so the internal state is fully guarded.
+</p>
+
+<p>
+While this works it is clearly quite inefficient. The issue is mostly with
+strings as usually with other kinds of objects storing it by reference is
+the intended usage.
+</p>
+
+<p>
+It is therefore recommended to use the <a href="#string_const">string_const</a>
+function to store a constant variant of the provided string. The function returns
+the same string when it's already a constant and it also maintains a set of
+existing constant strings so there is never more than one instance of the same
+constant string in the heap.
+</p>
+
+<p>
+This way there is just one or no copy (when it was already constant) when storing
+and there is no need to do anything when returning it to the user.
+</p>
+
+<p>
+However for objects intended to work with serialization there is another complication.
+Once deserialized the strings are no longer constant. You would either need to
+make all strings constant by recursivelly traversing the whole data structure, or
+you can make it more efficient to just convert it in the getter before returning
+it to the user.
+</p>
+
+<p>
+The getter needs to call the <a href="#string_const">string_const</a> function and
+store the result into the object before returning it to the user. At first it will
+convert it, but only for these strings that are actually obtained, and if obtained
+more times it will just return the same constant string.
+</p>
+
+</body>
+</html>

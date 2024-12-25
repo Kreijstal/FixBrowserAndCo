@@ -1,0 +1,25 @@
+import "util/common";
+import "site/com/di/disqus.com/dispatch";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "cbsistatic.com")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	var disqus_container = element_query(document, "div[id^='disqusContainer-'] > div");
+	if (disqus_container) {
+		var url = element_get_attr(disqus_container, "data-url");
+		var title = element_get_attr(disqus_container, "data-title");
+		embed_disqus(request, document, disqus_container, "zdnet-1", url, title);
+		
+		var elem = element_query(document, "div[id^='comments-']");
+		element_remove_class(elem, "collapsed");
+		elem = element_get_prev_tag(elem);
+		if (elem) {
+			element_remove(elem);
+		}
+	}
+}

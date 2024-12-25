@@ -1,0 +1,17 @@
+import "util/common";
+
+function adjust_document(request, document)
+{
+	rewrite_links(document, rewrite_link#3, null);
+}
+
+function @rewrite_link(elem, value, data)
+{
+	var url = url_create(value);
+	var domain = url_get_host(url);
+	if (domain == "davityle.github.io") {
+		url_set_host(url, "tyler-davis.com");
+		return url_to_string(url);
+	}
+	return value;
+}

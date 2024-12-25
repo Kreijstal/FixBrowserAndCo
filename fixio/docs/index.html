@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<ul>
+	<li>Version: 0.8</li>
+	<li><a href="https://www.fixscript.org/">Homepage</a> (<a href="http://fixscript.advel.cz/">mirror</a>)</li>
+	<li><a href="changelog.html">ChangeLog</a></li>
+</ul>
+
+<p>
+This library allows you to interface with native input/output facilities.
+</p>
+
+<p>
+<b>Features:</b>
+<ul>
+	<li>currently supported systems: Windows, Linux, Mac OS X, Haiku, WebAssembly</li>
+	<li>both synchronous and asynchronous API (callback based)</li>
+ 	<li>GZIP compression/decompression</li>
+ 	<li>TCP/IP network connections</li>
+ 	<li>access to SQLite and PostgreSQL databases</li>
+ 	<li>console based user interfaces</li>
+ 	<li>advanced prompt implementation with history, autocompletion and searching</li>
+ 	<li>allows integration with foreign event loop</li>
+	<li>licensed under ZLIB license (no attribution required in binary builds)</li>
+</ul>
+</p>
+
+<h2>Synchronous I/O classes</h2>
+
+<ul>
+<li><a href="path.html">Path</a> - path to file or directory</li>
+<li><a href="stream.html">Stream</a> - synchronous stream
+	<ul>
+		<li><a href="array_stream.html">ArrayStream</a> - stream backed by arrays</li>
+		<li><a href="buffered_stream.html">BufferedStream</a> - adds buffering to another stream</li>
+		<li><a href="zstream.html">ZStream</a> - inflate/deflate compression stream
+			<ul>
+				<li><a href="gzip_stream.html">GZipStream</a> - GZip compression stream</li>
+			</ul>
+		</li>
+		<li><a href="file.html">File</a> - opened file</li>
+		<li><a href="tcp_connection.html">TCPConnection</a> - TCP connection</li>
+		<li><a href="process_stream.html">ProcessStream</a> - process stream</li>
+	</ul>
+</li>
+<li><a href="tcp_server.html">TCPServer</a> - TCP server</li>
+<li><a href="web_socket.html">WebSocket</a> - WebSocket</li>
+<li><a href="process.html">Process</a> - process</li>
+<li><a href="zip_reader.html">ZipReader</a> - ZIP reader</li>
+</ul>
+
+<h2>Asynchronous I/O classes</h2>
+
+<ul>
+<li><a href="async_stream.html">AsyncStream</a> - asynchronous stream
+	<ul>
+		<li><a href="async_tcp_connection.html">AsyncTCPConnection</a> - asynchronous TCP connection</li>
+	</ul>
+</li>
+<li><a href="async_tcp_server.html">AsyncTCPServer</a> - asynchronous TCP server</li>
+</ul>
+
+<h2>Atomic I/O classes</h2>
+
+<ul>
+<li><a href="atomic_file.html">AtomicFile</a> - allows atomic updates of files using transactions</li>
+<li><a href="transaction.html"><code>transaction</code></a> - transaction statement allows easy usage of transactions</li>
+</ul>
+
+<h2>SQL classes</h2>
+
+<ul>
+<li><a href="sql_connection.html">SQLConnection</a> - connection to a SQL database
+	<ul>
+		<li><a href="sqlite_database.html">SQLiteDatabase</a> - SQLite database</li>
+		<li><a href="postgresql_connection.html">PostgreSQLConnection</a> - connection to PostgreSQL server</li>
+	</ul>
+</li>
+<li><a href="result_set.html">ResultSet</a> - access to query results
+	<ul>
+		<li><a href="sqlite_result_set.html">SQLiteResultSet</a> - SQLite result set</li>
+	</ul>
+</li>
+<li><a href="param_string.html">ParamString</a> - parametrized SQL string</li>
+<li><a href="sql_token_processor.html"><code>SQL token processor</code></a> - SQL token processor allows easy usage of SQL parameters</li>
+</ul>
+
+<h2>Console user interface</h2>
+
+<ul>
+<li><a href="console.html">Console</a> - advanced access to the console</li>
+<li><a href="console_event.html">ConsoleEvent</a> - console event</li>
+<li><a href="prompt_handler.html">PromptHandler</a> - provides dynamic functionality in console prompts</li>
+<li><a href="screen_buffer.html">ScreenBuffer</a> - off-screen text buffer with attributes</li>
+</ul>
+
+<h2>Time classes</h2>
+
+<ul>
+<li><a href="clock.html">Clock</a> - access to the current time</li>
+<li><a href="monotonic.html">Monotonic</a> - access to the monotonic time</li>
+</ul>
+
+<h2>Global functions</h2>
+
+<ul>
+<li><a href="global_console.html">Console input/output</a></li>
+<li><a href="global_async.html">Asynchronous I/O</a></li>
+<li><a href="global_compression.html">Compression</a></li>
+<li><a href="global_checksum.html">Checksum</a></li>
+<li><a href="global_shared.html">Shared arrays</a></li>
+<li><a href="global_serialization.html">Serialization</a></li>
+<li><a href="global_charset.html">Charset conversion</a></li>
+</ul>
+
+<p>
+<a href="capi.html">C API</a>
+</p>
+
+</body>
+</html>

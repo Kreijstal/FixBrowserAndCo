@@ -1,0 +1,72 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+
+class MemoryPipeStream: Stream
+{
+	var @in_buf: Byte[];
+	var @out_buf: Byte[];
+	
+	static function create_pair(): Stream[]
+	{
+		var in_buf = [0];
+		var out_buf = [0];
+
+		var stream1 = new MemoryPipeStream: Stream::create();
+		stream1.in_buf = in_buf;
+		stream1.out_buf = out_buf;
+
+		var stream2 = new MemoryPipeStream: Stream::create();
+		stream2.in_buf = out_buf;
+		stream2.out_buf = in_buf;
+
+		return [stream1, stream2];
+	}
+	
+	override function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (in_buf[0] as Boolean && in_buf.length == 1) {
+			return -1;
+		}
+		var amount = min(in_buf.length-1, len);
+		Array::copy(buf, off, in_buf, 1, amount);
+		Array::copy(in_buf, 1, in_buf, 1+amount, in_buf.length-amount-1);
+		in_buf.set_length(in_buf.length-amount);
+		return amount;
+	}
+
+	override function write_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (out_buf[0] as Boolean) {
+			throw error("stream already closed");
+		}
+		out_buf.append(buf, off, len);
+		return len;
+	}
+
+	override function close()
+	{
+		out_buf[0] = 1;
+	}
+}

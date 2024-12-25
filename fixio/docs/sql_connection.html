@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>use "io/sql";</code>
+</p>
+
+<h2>SQLConnection class</h2>
+
+<p>
+Provides a connection to a SQL database. It is highly recommended to use the
+<a href="sql_token_processor.html">SQL token processor</a>.
+</p>
+
+<p>
+Subclasses:
+<a href="sqlite_database.html">SQLiteDatabase</a>,
+<a href="postgresql_connection.html">PostgreSQLConnection</a>
+</p>
+
+<h3 id="constants">Constants</h3>
+
+<dl>
+	<dt><code>
+		<b>SQL_TYPE_UNKNOWN</b><br>
+		<b>SQL_TYPE_INTEGER</b><br>
+		<b>SQL_TYPE_LONG</b><br>
+		<b>SQL_TYPE_FLOAT</b><br>
+		<b>SQL_TYPE_DOUBLE</b><br>
+		<b>SQL_TYPE_STRING</b><br>
+		<b>SQL_TYPE_BINARY</b><br>
+	</code></dt>
+	<dd>
+		SQL types.
+	</dd>
+</dl>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): SQLConnection</code></dt>
+	<dd>
+		Creates a new instance of SQLConnection class (for implementations only).
+		Use the subclasses to connect to a particular type of SQL database.
+	</dd>
+	<dt><code>function <b>close</b>()</code></dt>
+	<dd>
+		Closes the SQL connection.
+	</dd>
+</dl>
+
+<h3 id="transaction">Transaction functions</h3>
+
+<dl>
+	<dt><code>function <b>begin</b>()</code></dt>
+	<dd>
+		Begins a new transaction. Nested transactions work, but depending on the
+		implementation only the topmost may have an effect.
+	</dd>
+	<dt><code>function <b>commit</b>()</code></dt>
+	<dd>
+		Commits the transaction, making the changes permanent.
+	</dd>
+	<dt><code>function <b>rollback</b>()</code></dt>
+	<dd>
+		Rollbacks the transaction, clearing any changes made in the transaction.<br>
+		Note: there may be side effects such as gaps in the auto-incremented columns or sequences.
+	</dd>
+	<dt><code>function <b>in_transaction</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when there is an active transaction.
+	</dd>
+</dl>
+
+<h3 id="query">Query functions</h3>
+
+<dl>
+	<dt><code>
+		function <b>query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): <a href="result_set.html">ResultSet</a><br>
+		function <b>update</b>(query: String or <a href="param_string.html">ParamString</a>, ...)<br>
+	</code></dt>
+	<dd>
+		Performs the specified SQL query or update command. The functions use the
+		<a href="sql_token_processor.html">SQL token processor</a> to provide an ability
+		to pass parameters to the query. Only the supported types are accepted:
+		<code>Integer</code>, <a href="util/long.html"><code>Long</code></a>, <code>Float</code>,
+		<a href="util/double.html"><code>Double</code></a>, <code>String</code> and <code>Byte[]</code>.
+	</dd>
+	<dt><code>
+		function <b>int_query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): Integer<br>
+		function <b>long_query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): <a href="util/long.html">Long</a><br>
+		function <b>float_query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): Float<br>
+		function <b>double_query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): <a href="util/double.html">Double</a><br>
+		function <b>string_query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): String<br>
+		function <b>binary_query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): Byte[]<br>
+	</code></dt>
+	<dd>
+		Variants of the query for obtaining just a single result of given type.
+	</dd>
+	<dt><code>
+		function <b>row_query</b>(query: String or <a href="param_string.html">ParamString</a>, ...): <a href="result_set.html">ResultSet</a><br>
+	</code></dt>
+	<dd>
+		A variant of the query that returns a single row (must be present).
+	</dd>
+	<dt><code>
+		function <b>last_insert_id</b>(): <a href="util/long.html">Long</a>
+	</code></dt>
+	<dd>
+		Returns the last used value of an auto-incremented column.
+	</dd>
+</dl>
+
+<h3 id="interface">SQLConnection interface</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): SQLConnection<br>
+		virtual function <b>close</b>()<br>
+		virtual function <b>begin</b>()<br>
+		virtual function <b>commit</b>()<br>
+		virtual function <b>rollback</b>()<br>
+		virtual function <b>in_transaction</b>(): Boolean<br>
+		virtual function <b>query</b>(query: String, sig: String, params: Dynamic[]): <a href="result_set.html">ResultSet</a><br>
+		virtual function <b>update</b>(query: String, sig: String, params: Dynamic[])<br>
+		virtual function <b>last_insert_id</b>(): <a href="util/long.html">Long</a><br>
+	</code></dt>
+	<dd>
+		The parameters in queries are internally passed with a signature string. Each letter
+		represents a single parameter of given type:<br>
+		<code>i</code> - integer<br>
+		<code>l</code> - long<br>
+		<code>f</code> - float<br>
+		<code>d</code> - double<br>
+		<code>s</code> - string<br>
+		<code>b</code> - binary<br>
+	</dd>
+</dl>
+
+</body>
+</html>

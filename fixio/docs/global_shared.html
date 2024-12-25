@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>Extension methods</h2>
+
+<h3>Shared arrays</h3>
+
+<p>
+<code>import "io/shared";</code>
+</p>
+
+<dl>
+	<dt><code>
+		function <b>Array::get_view</b>(elem_size: Integer): Value[]<br>
+		function <b>Array::get_view</b>(off: Integer, len: Integer): Value[]<br>
+		function <b>Array::get_view</b>(off: Integer, len: Integer, elem_size: Integer): Value[]<br>
+	</code></dt>
+	<dd>
+		Creates a new shared array as a view into subset of given shared array. The offset
+		and length are given as indicies in the original shared array. Optionally you can
+		change the element size (non-aligned access is not permitted).<br><br>
+		<b>Note:</b> When changing the element size the endianess of the CPU is exposed.
+		This library supports little endian platforms only. Big endian platforms (if any)
+		will be either unsupported or the little endianess will be emulated. This has been
+		decided based on two factors: big endian CPUs are (outside of niches) a thing of the
+		past and the little endian is more natural with regard to addressing. This restriction
+		allows to use memory views for file formats and generally results into one thing less
+		to worry about.
+	</dd>
+</dl>
+
+</body>
+</html>

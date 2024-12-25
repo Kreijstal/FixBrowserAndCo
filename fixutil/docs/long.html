@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/long";</code>
+</p>
+
+<h2>Long class</h2>
+
+<p>
+This class allows to work easilly with 64-bit signed integers.
+</p>
+
+<p>
+Supported operators:
+<code>+</code>,
+<code>-</code>,
+<code>*</code>,
+<code>/</code>,
+<code>%</code>,
+<code>&amp;</code>,
+<code>|</code>,
+<code>^</code>,
+<code>&lt;&lt;</code>,
+<code>&gt;&gt;</code>,
+<code>&gt;&gt;&gt;</code>,
+<code>&lt;</code>,
+<code>&gt;</code>,
+<code>&lt;=</code>,
+<code>&gt;=</code>,
+<code>==</code>,
+<code>!=</code>,
+<code>+=</code>,
+<code>-=</code>,
+<code>*=</code>,
+<code>/=</code>,
+<code>%=</code>,
+<code>&amp;=</code>,
+<code>|=</code>,
+<code>^=</code>,
+<code>&lt;&lt;=</code>,
+<code>&gt;&gt;=</code>,
+<code>&gt;&gt;&gt;=</code>
+with Long and Integer types.<br>
+A short variant of the constructors is available: <code>Long(...)</code>
+</p>
+
+<ul>
+	<li><a href="#members">Members</a></li>
+	<li><a href="#init">Initialization</a></li>
+	<li><a href="#operations">Operations</a></li>
+	<li><a href="#properties">Properties</a></li>
+</ul>
+
+<h3 id="members">Members</h3>
+
+<dl>
+	<dt><code>
+		var lo: Integer;<br>
+		var hi: Integer;<br>
+	</code></dt>
+	<dd>
+		The low and high order part of the 64-bit integer.
+	</dd>
+</dl>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(): Long<br>
+		static function <b>create</b>(value: Integer): Long<br>
+		static function <b>create</b>(lo: Integer, hi: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Creates a new long with given value (or zero).
+	</dd>
+	<dt><code>static function <b>from_string</b>(s: String): Long</code></dt>
+	<dd>
+		Creates a new long from string representation, throwing an error on improper format.
+	</dd>
+</dl>
+
+<h3 id="operations">Operations</h3>
+
+<dl>
+	<dt><code>
+		function <b>set</b>(other: Long): Long<br>
+		function <b>set_int</b>(value: Integer): Long<br>
+		function <b>set_string</b>(s: String): Long<br>
+		function <b>set_raw</b>(lo: Integer, hi: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Sets the value. Returns itself.
+	</dd>
+	<dt><code>function <b>dup</b>(): Long</code></dt>
+	<dd>
+		Creates a new long with the same value.
+	</dd>
+	<dt><code>
+		function <b>add</b>(other: Long): Long<br>
+		function <b>add_int</b>(value: Integer): Long<br>
+		function <b>add_mod</b>(other: Long): Long<br>
+		function <b>add_mod_int</b>(value: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Adds another value into this. Returns itself. The <code>mod</code> variant is using modular
+		arithmetic instead of throwing an error on overflow.
+	</dd>
+	<dt><code>
+		function <b>sub</b>(other: Long): Long<br>
+		function <b>sub_int</b>(value: Integer): Long<br>
+		function <b>sub_mod</b>(other: Long): Long<br>
+		function <b>sub_mod_int</b>(value: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Subtracts another value from this. Returns itself. The <code>mod</code> variant is using modular
+		arithmetic instead of throwing an error on overflow.
+	</dd>
+	<dt><code>
+		function <b>mul</b>(other: Long): Long<br>
+		function <b>mul_int</b>(value: Integer): Long<br>
+		function <b>mul_mod</b>(other: Long): Long<br>
+		function <b>mul_mod_int</b>(value: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Multiplies another value with this. Returns itself. The <code>mod</code> variant is using modular
+		arithmetic instead of throwing an error on overflow.
+	</dd>
+	<dt><code>
+		function <b>div</b>(other: Long): Long<br>
+		function <b>div_int</b>(value: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Divides by another value and uses the result. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>rem</b>(other: Long): Long<br>
+		function <b>rem_int</b>(value: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Divides by another value and uses the remainder. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>and</b>(other: Long): Long<br>
+		function <b>and</b>(lo: Integer, hi: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Applies AND logic operation. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>or</b>(other: Long): Long<br>
+		function <b>or</b>(lo: Integer, hi: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Applies OR logic operation. Returns itself.
+	</dd>
+	<dt><code>
+		function <b>xor</b>(other: Long): Long<br>
+		function <b>xor</b>(lo: Integer, hi: Integer): Long<br>
+	</code></dt>
+	<dd>
+		Applies XOR logic operation. Returns itself.
+	</dd>
+	<dt><code>function <b>not</b>(): Long</code></dt>
+	<dd>
+		Inverts the bits. Returns itself.
+	</dd>
+	<dt><code>function <b>shl</b>(amount: Integer): Long</code></dt>
+	<dd>
+		Shifts the bits left (towards high order part). Only the low 6 bits are used from amount.
+	</dd>
+	<dt><code>function <b>shr</b>(amount: Integer): Long</code></dt>
+	<dd>
+		Shifts the bits right (towards low order part), replicating the highest bit (arithmetic shift).
+		Only the low 6 bits are used from amount.
+	</dd>
+	<dt><code>function <b>ushr</b>(amount: Integer): Long</code></dt>
+	<dd>
+		Shifts the bits right (towards low order part), using zeros for the highest bits (logical/unsigned shift).
+		Only the low 6 bits are used from amount.
+	</dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl>
+	<dt><code>function <b>is_zero</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the value is zero.
+	</dd>
+	<dt><code>
+		function <b>cmp</b>(other: Long): Integer<br>
+		function <b>cmp_int</b>(value: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Compares the value with another integer. Returns negative result (when the value is smaller),
+		zero (when the values are same) or positive result (when the value is bigger).
+	</dd>
+	<dt><code>function <b>to_int</b>(): Integer</code></dt>
+	<dd>
+		Returns the value as 32-bit integer, throwing an error in case it can't fit.
+	</dd>
+	<dt><code>function <b>to_unsigned_int</b>(): Integer</code></dt>
+	<dd>
+		Returns the value as 32-bit unsigned integer, throwing an error in case it can't fit.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the string representation of the value.
+	</dd>
+</dl>
+
+</body>
+</html>

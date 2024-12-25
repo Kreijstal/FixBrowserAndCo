@@ -1,0 +1,312 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/rect";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/subview/text_field";
+import "util/string";
+import "cellsplit/master_protocol";
+import "cellsplit/gui/panel";
+import "cellsplit/gui/text_field";
+import "cellsplit/gui/button";
+import "cellsplit/gui/label";
+
+class ModerationPanel: Panel
+{
+	var @reason_panel: ReasonPanel;
+
+	constructor create(parent: SubView, x: Integer, y: Integer, account: String, nick: String, permissions: Integer, moderation_interface: ModerationInterface)
+	{
+		super::create(null);
+		var scale = parent.get_scale();
+		var parent_rect = parent.get_local_rect();
+		var height = 175 - 2*25;
+		if ((permissions & PERMISSION_KICK) != 0) height += 25;
+		if ((permissions & PERMISSION_BAN) != 0) height += 25;
+		var rect = Rect(x, y, iround(140*scale), iround(height*scale));
+		if (rect.x2 > parent_rect.x2) {
+			rect.translate(-rect.get_width(), 0);
+		}
+		if (rect.y2 > parent_rect.y2) {
+			rect.translate(0, -rect.get_height());
+		}
+		set_rect(rect);
+		set_content(ContentView::create(this, account, nick, permissions, moderation_interface));
+		set_moveable(false);
+		parent.add(this);
+	}
+
+	function hide()
+	{
+		if (reason_panel) {
+			reason_panel.hide();
+			reason_panel = null;
+		}
+		remove_self();
+	}
+
+	function contains(x: Integer, y: Integer): Boolean
+	{
+		if (reason_panel) {
+			return true;
+		}
+		return get_rect().contains(x, y);
+	}
+}
+
+class ModerationInterface
+{
+	constructor create()
+	{
+	}
+
+	virtual function report_player(account: String, nick: String, reason: String);
+	virtual function kick_player(account: String, ban: Boolean, reason: String);
+}
+
+class @ContentView: SubView
+{
+	var @panel: ModerationPanel;
+	var @account: String;
+	var @nick: String;
+	var @permissions: Integer;
+	var @moderation_interface: ModerationInterface;
+	var @nick_field: GameTextField;
+	var @account_label: GameLabel;
+	var @account_field: GameTextField;
+	var @report_button: GameButton;
+	var @kick_button: GameButton;
+	var @ban_button: GameButton;
+	var @close_button: GameButton;
+
+	constructor create(panel: ModerationPanel, account: String, nick: String, permissions: Integer, moderation_interface: ModerationInterface)
+	{
+		this.panel = panel;
+		this.account = account;
+		this.nick = nick;
+		this.permissions = permissions;
+		this.moderation_interface = moderation_interface;
+
+		nick_field = GameTextField::create();
+		nick_field.set_read_only(true);
+		nick_field.set_font_size(12.0);
+		nick_field.set_color(0xFF444444);
+		nick_field.set_text(nick);
+		add(nick_field);
+
+		account_label = GameLabel::create("Account:");
+		account_label.set_font_size(12.0);
+		add(account_label);
+
+		account_field = GameTextField::create();
+		account_field.set_read_only(true);
+		account_field.set_font_size(12.0);
+		account_field.set_color(0xFF444444);
+		account_field.set_text(account);
+		add(account_field);
+
+		report_button = GameButton::create("Report player");
+		report_button.set_font_size(12.0);
+		report_button.set_click_action(ContentView::report_player#1, this);
+		add(report_button);
+
+		if ((permissions & PERMISSION_KICK) != 0) {
+			kick_button = GameButton::create("Kick");
+			kick_button.set_font_size(12.0);
+			kick_button.set_click_action(ContentView::kick_player#1, this);
+			add(kick_button);
+		}
+
+		if ((permissions & PERMISSION_BAN) != 0) {
+			ban_button = GameButton::create("Ban");
+			ban_button.set_font_size(12.0);
+			ban_button.set_click_action(ContentView::ban_player#1, this);
+			add(ban_button);
+		}
+
+		close_button = GameButton::create("Close");
+		close_button.set_font_size(12.0);
+		close_button.set_click_action(ModerationPanel::hide#1, panel);
+		add(close_button);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		var y = 0;
+		nick_field.set_rect(0, y, get_width(), iround(20*scale)); y += iround(25*scale);
+		account_label.set_rect(0, y, iround(50*scale), iround(20*scale));
+		account_field.set_rect(iround(55*scale), y, get_width() - iround(55*scale), iround(20*scale)); y += iround(25*scale);
+		report_button.set_rect(0, y, get_width(), iround(20*scale)); y += iround(25*scale);
+		if (kick_button) {
+			kick_button.set_rect(0, y, get_width(), iround(20*scale)); y += iround(25*scale);
+		}
+		if (ban_button) {
+			ban_button.set_rect(0, y, get_width(), iround(20*scale)); y += iround(25*scale);
+		}
+		y += iround(10*scale);
+		close_button.set_rect(0, y, get_width(), iround(20*scale)); y += iround(25*scale);
+	}
+
+	function @show_reason_panel(reason_func, reason_data)
+	{
+		if ((permissions & PERMISSION_NO_REASON) != 0) {
+			panel.hide();
+			reason_func(reason_data, null);
+			return;
+		}
+		
+		panel.set_rect(panel.get_x(), panel.get_y(), 0, 0);
+		if (panel.reason_panel) {
+			panel.reason_panel.hide();
+		}
+		panel.reason_panel = ReasonPanel::create(get_parent().get_parent(), panel, reason_func, reason_data);
+	}
+
+	function @report_player()
+	{
+		show_reason_panel(ContentView::do_report_player#2, this);
+	}
+
+	function @kick_player()
+	{
+		show_reason_panel(ContentView::do_kick_player#2, this);
+	}
+
+	function @ban_player()
+	{
+		show_reason_panel(ContentView::do_ban_player#2, this);
+	}
+
+	function @do_report_player(reason: String)
+	{
+		moderation_interface.report_player(account, nick, reason);
+	}
+
+	function @do_kick_player(reason: String)
+	{
+		moderation_interface.kick_player(account, false, reason);
+	}
+
+	function @do_ban_player(reason: String)
+	{
+		moderation_interface.kick_player(account, true, reason);
+	}
+}
+
+class @ReasonPanel: Panel
+{
+	var @moderation_panel: ModerationPanel;
+	var @reason_func;
+	var @reason_data;
+	
+	constructor create(parent: SubView, moderation_panel: ModerationPanel, reason_func, reason_data)
+	{
+		super::create("Enter reason:");
+		this.moderation_panel = moderation_panel;
+		this.reason_func = reason_func;
+		this.reason_data = reason_data;
+		var scale = parent.get_scale();
+		var width = iround(600*scale);
+		var height = iround(105*scale);
+		set_rect((parent.get_width() - width) / 2, (parent.get_height() - height) / 2, width, height);
+		set_content(ReasonContentView::create());
+		set_moveable(false);
+		parent.add(this);
+		focus();
+	}
+
+	function hide()
+	{
+		var text_field = (get_child(0) as ReasonContentView).text_field;
+		text_field.focus();
+		text_field.unfocus();
+		remove_self();
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		if (event.get_type() == EVENT_FOCUS_GAINED) {
+			(get_child(0) as ReasonContentView).text_field.focus();
+		}
+	}
+}
+
+class @ReasonContentView: SubView
+{
+	var @text_field: GameTextField;
+	var @submit_button: GameButton;
+	var @close_button: GameButton;
+
+	constructor create()
+	{
+		text_field = GameTextField::create();
+		add(text_field);
+
+		submit_button = GameButton::create("Submit");
+		submit_button.set_click_action(ReasonContentView::submit#1, this);
+		add(submit_button);
+
+		close_button = GameButton::create("Close");
+		close_button.set_click_action(ReasonContentView::close#1, this);
+		add(close_button);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		var y = 0;
+		text_field.set_rect(0, 0, get_width(), iround(30*scale)); y += iround(40*scale);
+
+		var width = iround(150*scale);
+		var x = (get_width() - width) / 2;
+		submit_button.set_rect(x, y, iround(80*scale), iround(30*scale)); x += iround(90*scale);
+		close_button.set_rect(x, y, iround(60*scale), iround(30*scale));
+	}
+
+	function @submit()
+	{
+		var reason = text_field.get_text().trim();
+		if (reason.length > 0) {
+			var panel = get_parent() as ReasonPanel;
+			(panel.reason_func)(panel.reason_data, reason); //XXX
+			close();
+		}
+	}
+
+	function @close()
+	{
+		(get_parent() as ReasonPanel).moderation_panel.hide();
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_ENTER) {
+			submit();
+			return true;
+		}
+		return false;
+	}
+}

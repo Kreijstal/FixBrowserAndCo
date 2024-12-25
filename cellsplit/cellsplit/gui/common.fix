@@ -1,0 +1,128 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "io/file";
+import "io/gzip";
+import "image/font";
+import "gui/subview";
+
+const DEFAULT_FONT_SIZE = 18.0;
+
+var @light_font: Font;
+var @normal_font: Font;
+var @bold_font: Font;
+
+var @scaled_fonts: ScaledFont[Float];
+
+class MeasureView
+{
+	constructor create()
+	{
+	}
+
+	virtual function as_view(): SubView;
+	virtual function get_preferred_width(scale: Float): Integer;
+	virtual function get_preferred_height(scale: Float): Integer;
+}
+
+macro implement_MeasureView(type)
+{
+	class @type#MeasureView: MeasureView
+	{
+		var @view: type;
+
+		constructor create(view: type)
+		{
+			this.view = view;
+		}
+
+		override function as_view(): SubView
+		{
+			return view;
+		}
+
+		override function get_preferred_width(scale: Float): Integer
+		{
+			return view.get_preferred_width(scale);
+		}
+
+		override function get_preferred_height(scale: Float): Integer
+		{
+			return view.get_preferred_height(scale);
+		}
+	}
+}
+
+function get_light_font(): Font
+{
+	if (!light_font) {
+		light_font = Font::load(gzip_uncompress(get_resource("fonts/Ubuntu-R.ttf.gz")));
+	}
+	return light_font;
+}
+
+function get_normal_font(): Font
+{
+	if (!normal_font) {
+		normal_font = Font::load(gzip_uncompress(get_resource("fonts/Ubuntu-M.ttf.gz")));
+	}
+	return normal_font;
+}
+
+function get_bold_font(): Font
+{
+	if (!bold_font) {
+		bold_font = Font::load(gzip_uncompress(get_resource("fonts/Ubuntu-B.ttf.gz")));
+	}
+	return bold_font;
+}
+
+function get_normal_font(size: Float): ScaledFont
+{
+	if (!scaled_fonts) {
+		scaled_fonts = {};
+	}
+	var font = scaled_fonts.get(size, null);
+	if (!font) {
+		font = ScaledFont::create(get_normal_font(), size, 0.5);
+		if (scaled_fonts.contains(font.get_size())) {
+			font = scaled_fonts[font.get_size()];
+		}
+		else {
+			scaled_fonts[font.get_size()] = font;
+		}
+		scaled_fonts[size] = font;
+	}
+	return font;
+}
+
+function get_top_view(view: SubView): SubView
+{
+	for (;;) {
+		var parent = view.get_parent();
+		if (!parent) break;
+		view = parent;
+	}
+	return view;
+}

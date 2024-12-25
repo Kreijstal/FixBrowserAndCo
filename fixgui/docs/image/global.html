@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixImage Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixImage Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "image/image";</code>
+</p>
+
+<h2>Global functions</h2>
+
+<h3>RGB color conversion</h3>
+
+<dl>
+	<dt><code>function <b>rgb</b>(value: Integer): Integer</code></dt>
+	<dd>
+		Returns the color with opaque alpha.
+	</dd>
+	<dt><code>function <b>argb</b>(value: Integer): Integer</code></dt>
+	<dd>
+		Returns the color in the premultiplied format.
+	</dd>
+</dl>
+
+<h3>HSV color representation</h3>
+
+<dl>
+	<dt><code>function <b>hsv_to_rgb</b>(hue: Float, saturation: Float, value: Float): Integer</code></dt>
+	<dd>
+		Converts color from HSV representation to RGB (with opaque alpha). The hue is in the range 0 to 360
+		and saturation and value in 0 to 1.
+	</dd>
+	<dt><code>
+		function <b>rgb_to_hsv</b>(rgb: Integer): Float[]<br>
+		function <b>rgb_to_hsv</b>(rgb: Integer, out: Float[]): Float[]<br>
+	</code></dt>
+	<dd>
+		Converts color from RGB representation to HSV, optionally you can provide a buffer to store
+		the values into.
+	</dd>
+</dl>
+
+<h3>HSL color representation</h3>
+
+<dl>
+	<dt><code>function <b>hsl_to_rgb</b>(hue: Float, saturation: Float, lightness: Float): Integer</code></dt>
+	<dd>
+		Converts color from HSL representation to RGB (with opaque alpha). The hue is in the range 0-360
+		and saturation and lightness in 0 to 1.
+	</dd>
+	<dt><code>
+		function <b>rgb_to_hsl</b>(rgb: Integer): Float[]<br>
+		function <b>rgb_to_hsl</b>(rgb: Integer, out: Float[]): Float[]<br>
+	</code></dt>
+	<dd>
+		Converts color from RGB representation to HSL, optionally you can provide a buffer to store
+		the values into.
+	</dd>
+</dl>
+
+</body>
+</html>

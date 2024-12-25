@@ -1,0 +1,493 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "cellsplit/util/opengl_extern";
+use "native/extern";
+use "classes";
+
+import "native/native";
+import "gui/view";
+import "gui/native/windows";
+import "image/image";
+
+const {
+	@PFD_DOUBLEBUFFER   = 0x00000001,
+	@PFD_DRAW_TO_WINDOW = 0x00000004,
+	@PFD_SUPPORT_OPENGL = 0x00000020
+};
+
+const {
+	@PFD_TYPE_RGBA = 0
+};
+
+const {
+	@PFD_MAIN_PLANE = 0
+};
+
+const {
+	GL_DEPTH_BUFFER_BIT   = 0x00000100,
+	GL_STENCIL_BUFFER_BIT = 0x00000400,
+	GL_COLOR_BUFFER_BIT   = 0x00004000
+};
+
+const {
+	GL_SCISSOR_TEST = 0x0C11,
+	GL_BLEND		= 0x0BE2
+};
+
+const {
+	GL_FRAGMENT_SHADER = 0x8B30,
+	GL_VERTEX_SHADER   = 0x8B31
+};
+
+const {
+	GL_COMPILE_STATUS  = 0x8B81,
+	GL_LINK_STATUS     = 0x8B82,
+	GL_INFO_LOG_LENGTH = 0x8B84
+};
+
+const {
+	GL_ARRAY_BUFFER         = 0x8892,
+	GL_ELEMENT_ARRAY_BUFFER = 0x8893
+};
+
+const {
+	GL_STREAM_DRAW  = 0x88E0,
+	GL_STREAM_READ  = 0x88E1,
+	GL_STREAM_COPY  = 0x88E2,
+	GL_STATIC_DRAW  = 0x88E4,
+	GL_STATIC_READ  = 0x88E5,
+	GL_STATIC_COPY  = 0x88E6,
+	GL_DYNAMIC_DRAW = 0x88E8,
+	GL_DYNAMIC_READ = 0x88E9,
+	GL_DYNAMIC_COPY = 0x88EA
+};
+
+const {
+	GL_BYTE           = 0x1400,
+	GL_UNSIGNED_BYTE  = 0x1401,
+	GL_SHORT          = 0x1402,
+	GL_UNSIGNED_SHORT = 0x1403,
+	GL_INT            = 0x1404,
+	GL_UNSIGNED_INT   = 0x1405,
+	GL_FLOAT          = 0x1406
+};
+
+const {
+	GL_POINTS         = 0x0000,
+	GL_LINES          = 0x0001,
+	GL_LINE_LOOP      = 0x0002,
+	GL_LINE_STRIP     = 0x0003,
+	GL_TRIANGLES      = 0x0004,
+	GL_TRIANGLE_STRIP = 0x0005,
+	GL_TRIANGLE_FAN   = 0x0006,
+	GL_QUADS          = 0x0007,
+	GL_QUAD_STRIP     = 0x0008,
+	GL_POLYGON        = 0x0009
+};
+
+const {
+	GL_TEXTURE0 = 0x84C0,
+	GL_TEXTURE1 = 0x84C1
+};
+
+const {
+	GL_TEXTURE_1D        = 0x0DE0,
+	GL_TEXTURE_2D        = 0x0DE1,
+	GL_TEXTURE_3D        = 0x806F,
+	GL_TEXTURE_RECTANGLE = 0x84F5,
+	GL_TEXTURE_CUBE_MAP  = 0x8513
+};
+
+const {
+	GL_TEXTURE_BASE_LEVEL = 0x813C,
+	GL_TEXTURE_MAX_LEVEL  = 0x813D,
+	GL_TEXTURE_MAG_FILTER = 0x2800,
+	GL_TEXTURE_MIN_FILTER = 0x2801,
+	GL_TEXTURE_WRAP_S     = 0x2802,
+	GL_TEXTURE_WRAP_T     = 0x2803,
+	GL_TEXTURE_WRAP_R     = 0x8072
+};
+
+const {
+	GL_NEAREST                = 0x2600,
+	GL_LINEAR                 = 0x2601,
+	GL_NEAREST_MIPMAP_NEAREST = 0x2700,
+	GL_LINEAR_MIPMAP_NEAREST  = 0x2701,
+	GL_NEAREST_MIPMAP_LINEAR  = 0x2702,
+	GL_LINEAR_MIPMAP_LINEAR   = 0x2703
+};
+
+const {
+	GL_REPEAT        = 0x2901,
+	GL_CLAMP_TO_EDGE = 0x812F 
+};
+
+const {
+	GL_RGB8  = 0x8051,
+	GL_RGBA8 = 0x8058
+};
+
+const {
+	GL_RGB  = 0x1907,
+	GL_RGBA = 0x1908,
+	GL_BGR  = 0x80E0,
+	GL_BGRA = 0x80E1
+};
+
+const {
+	GL_ZERO                = 0,
+	GL_ONE                 = 1,
+	GL_SRC_COLOR           = 0x0300,
+	GL_ONE_MINUS_SRC_COLOR = 0x0301,
+	GL_SRC_ALPHA           = 0x0302,
+	GL_ONE_MINUS_SRC_ALPHA = 0x0303,
+	GL_DST_ALPHA           = 0x0304,
+	GL_ONE_MINUS_DST_ALPHA = 0x0305,
+	GL_DST_COLOR           = 0x0306,
+	GL_ONE_MINUS_DST_COLOR = 0x0307,
+	GL_SRC_ALPHA_SATURATE  = 0x0308
+};
+
+const {
+	GL_UNPACK_SWAP_BYTES  = 0x0CF0,
+	GL_UNPACK_LSB_FIRST   = 0x0CF1,
+	GL_UNPACK_ROW_LENGTH  = 0x0CF2,
+	GL_UNPACK_SKIP_ROWS   = 0x0CF3,
+	GL_UNPACK_SKIP_PIXELS = 0x0CF4,
+	GL_UNPACK_ALIGNMENT   = 0x0CF5,
+	GL_PACK_SWAP_BYTES    = 0x0D00,
+	GL_PACK_LSB_FIRST     = 0x0D01,
+	GL_PACK_ROW_LENGTH    = 0x0D02,
+	GL_PACK_SKIP_ROWS     = 0x0D03,
+	GL_PACK_SKIP_PIXELS   = 0x0D04,
+	GL_PACK_ALIGNMENT     = 0x0D05
+};
+
+extern "C" {
+	typedef void *HWND;
+	typedef void *HDC;
+	typedef void *HGLRC;
+	typedef void *PROC;
+	typedef uint8_t BYTE;
+	typedef uint16_t WORD;
+	typedef uint32_t DWORD;
+	typedef int BOOL;
+	typedef const char *LPCSTR;
+
+	typedef int GLint;
+	typedef uint32_t GLuint;
+	typedef int GLsizei;
+	typedef uint32_t GLbitfield;
+	typedef float GLclampf;
+	typedef uint32_t GLenum;
+	typedef char GLchar;
+	typedef void *GLsizeiptr;
+	typedef void *GLintptr;
+	typedef void *GLvoid;
+	typedef uint8_t GLboolean;
+	typedef float GLfloat;
+
+	typedef struct {
+		WORD  nSize;
+		WORD  nVersion;
+		DWORD dwFlags;
+		BYTE  iPixelType;
+		BYTE  cColorBits;
+		BYTE  cRedBits;
+		BYTE  cRedShift;
+		BYTE  cGreenBits;
+		BYTE  cGreenShift;
+		BYTE  cBlueBits;
+		BYTE  cBlueShift;
+		BYTE  cAlphaBits;
+		BYTE  cAlphaShift;
+		BYTE  cAccumBits;
+		BYTE  cAccumRedBits;
+		BYTE  cAccumGreenBits;
+		BYTE  cAccumBlueBits;
+		BYTE  cAccumAlphaBits;
+		BYTE  cDepthBits;
+		BYTE  cStencilBits;
+		BYTE  cAuxBuffers;
+		BYTE  iLayerType;
+		BYTE  bReserved;
+		DWORD dwLayerMask;
+		DWORD dwVisibleMask;
+		DWORD dwDamageMask;
+	} PIXELFORMATDESCRIPTOR;
+
+	bind("user32");
+	HDC STDCALL GetDC(HWND hWnd);
+
+	bind("gdi32");
+	int STDCALL ChoosePixelFormat(HDC hdc, const PIXELFORMATDESCRIPTOR *ppfd);
+	BOOL STDCALL SetPixelFormat(HDC hdc, int format, const PIXELFORMATDESCRIPTOR *ppfd);
+	BOOL STDCALL SwapBuffers(HDC hdc);
+
+	bind("opengl32");
+	HGLRC STDCALL wglCreateContext(HDC hdc);
+	BOOL STDCALL wglMakeCurrent(HDC hdc, HGLRC hglrc);
+	PROC STDCALL wglGetProcAddress(LPCSTR name);
+	void STDCALL glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
+	void STDCALL glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
+	void STDCALL glClear(GLbitfield mask);
+	void STDCALL glClearColor(GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha);
+	void STDCALL glEnable(GLenum cap);
+	void STDCALL glDisable(GLenum cap);
+	void STDCALL glFinish();
+	void STDCALL glDrawArrays(GLenum mode, GLint first, GLsizei count);
+	void STDCALL glDrawElements(GLenum mode, GLsizei count, GLenum type, const GLvoid *indices);
+	void STDCALL glGenTextures(GLsizei n, GLuint *textures);
+	void STDCALL glDeleteTextures(GLsizei n, const GLuint *textures);
+	void STDCALL glBindTexture(GLenum target, GLuint texture);
+	void STDCALL glTexParameterf(GLenum target, GLenum pname, GLfloat param);
+	void STDCALL glTexParameteri(GLenum target, GLenum pname, GLint param);
+	void STDCALL glTexImage1D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLint border, GLenum format, GLenum type, const GLvoid *pixels);
+	void STDCALL glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid *pixels);
+	void STDCALL glTexSubImage1D(GLenum target, GLint level, GLint xoffset, GLsizei width, GLenum format, GLenum type, const GLvoid *pixels);
+	void STDCALL glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid *pixels);
+	void STDCALL glBlendFunc(GLenum sfactor, GLenum dfactor);
+	void STDCALL glPixelStorei(GLenum pname, GLint param);
+}
+
+extern "OpenGL" {
+	BOOL wglSwapIntervalEXT(int interval) [optional];
+
+	void glActiveTexture(GLenum texture);
+
+	GLuint glCreateShader(GLenum type);
+	void glShaderSource(GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length);
+	void glCompileShader(GLuint shader);
+	void glGetShaderiv(GLuint shader, GLenum pname, GLint *params);
+	void glGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei *length, /*GLchar*/void *infoLog);
+	void glDeleteShader(GLuint shader);
+	GLuint glCreateProgram(void);
+	void glDeleteProgram(GLuint program);
+	void glAttachShader(GLuint program, GLuint shader);
+	void glLinkProgram(GLuint program);
+	void glGetProgramiv(GLuint program, GLenum pname, GLint *params);
+	void glGetProgramInfoLog(GLuint program, GLsizei bufSize, GLsizei *length, /*GLchar*/void *infoLog);
+	void glBindAttribLocation(GLuint program, GLuint index, const GLchar *name);
+	void glUseProgram(GLuint program);
+	GLint glGetUniformLocation(GLuint program, const GLchar *name);
+
+	void glGenBuffers(GLsizei n, GLuint *buffers);
+	void glDeleteBuffers(GLsizei n, const GLuint *buffers);
+	void glBindBuffer(GLenum target, GLuint buffer);
+	void glBufferData(GLenum target, GLsizeiptr size, const GLvoid *data, GLenum usage);
+	void glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid *data);
+
+	void glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const GLvoid *pointer);
+	void glEnableVertexAttribArray(GLuint index);
+	void glDisableVertexAttribArray(GLuint index);
+
+	void glUniform1f(GLint location, GLfloat v0);
+	void glUniform2f(GLint location, GLfloat v0, GLfloat v1);
+	void glUniform3f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
+	void glUniform4f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
+	void glUniform1i(GLint location, GLint v0);
+	void glUniform2i(GLint location, GLint v0, GLint v1);
+	void glUniform3i(GLint location, GLint v0, GLint v1, GLint v2);
+	void glUniform4i(GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
+}
+
+var @gl_hdc: Pointer;
+
+function init_gl(canvas: Canvas)
+{
+	Library::bind("user32");
+	Library::bind("gdi32");
+	Library::bind("opengl32");
+	
+	var hwnd = Windows::get_window_handle(canvas);
+	if (!hwnd) {
+		throw error("no HWND");
+	}
+	var hdc = GetDC(hwnd);
+	if (!hdc) {
+		throw error("no HDC");
+	}
+
+	var pfd = PIXELFORMATDESCRIPTOR::create();
+	pfd.set_nSize(PIXELFORMATDESCRIPTOR::size());
+	pfd.set_nVersion(1);
+	pfd.set_dwFlags(PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER);
+	pfd.set_iPixelType(PFD_TYPE_RGBA);
+	pfd.set_cColorBits(32);
+	pfd.set_cDepthBits(24);
+	pfd.set_cStencilBits(8);
+	pfd.set_iLayerType(PFD_MAIN_PLANE);
+
+	var pf = ChoosePixelFormat(hdc, pfd);
+	if (pf == 0) {
+		throw error("no pixel format");
+	}
+
+	if (SetPixelFormat(hdc, pf, pfd) == 0) {
+		throw error("can't set pixel format");
+	}
+
+	var ctx = wglCreateContext(hdc);
+	if (!ctx) {
+		throw error("can't create context");
+	}
+
+	if (wglMakeCurrent(hdc, ctx) == 0) {
+		throw error("can't make context current");
+	}
+
+	load_opengl_functions(); // created by preprocessor
+
+	if (nfunc_wglSwapIntervalEXT) {
+		wglSwapIntervalEXT(1);
+	}
+	gl_hdc = hdc;
+}
+
+function finish_init_gl(canvas: Canvas)
+{
+	Windows::disable_painting(canvas);
+}
+
+function swap_buffers()
+{
+	if (SwapBuffers(gl_hdc) == 0) {
+		dump(error("swap buffers"));
+	}
+	glFinish();
+}
+
+function @compile_shader(type: Integer, source: String): Integer
+{
+	var shader = glCreateShader(type);
+	if (shader == 0) {
+		throw error("can't create shader");
+	}
+
+	var source_mem = Memory::for_string_utf8(source);
+	var ptr = Memory::alloc(System::get_pointer_size());
+	ptr.set_pointer(0, source_mem);
+	glShaderSource(shader, 1, ptr, null);
+	glCompileShader(shader);
+
+	var tmp = Memory::alloc(4);
+	glGetShaderiv(shader, GL_COMPILE_STATUS, tmp);
+	var status = tmp.get_int(0) as Boolean;
+	if (!status) {
+		glGetShaderiv(shader, GL_INFO_LOG_LENGTH, tmp);
+		var info_len = tmp.get_int(0);
+		if (info_len > 0) {
+			var info_mem = Memory::alloc(info_len);
+			glGetShaderInfoLog(shader, info_len, null, info_mem);
+			var info_log = {""};
+			info_log.set_length(info_len-1);
+			info_mem.get_bytes(0, info_log);
+			if (info_log.length > 0 && info_log[info_log.length-1] == '\n') {
+				info_log.set_length(info_log.length-1);
+			}
+			log(info_log);
+		}
+		glDeleteShader(shader);
+		throw error("can't compile shader");
+	}
+	return shader;
+}
+
+function compile_program(vertex_src: String, fragment_src: String, attribs: Integer[String]): Integer
+{
+	var (vertex_shader, e1) = compile_shader(GL_VERTEX_SHADER, vertex_src);
+	if (e1) {
+		throw e1;
+	}
+	var (fragment_shader, e2) = compile_shader(GL_FRAGMENT_SHADER, fragment_src);
+	if (e2) {
+		glDeleteShader(vertex_shader);
+		throw e2;
+	}
+
+	var program = glCreateProgram();
+	if (program == 0) {
+		glDeleteShader(vertex_shader);
+		glDeleteShader(fragment_shader);
+		throw error("can't create program");
+	}
+
+	glAttachShader(program, vertex_shader);
+	glAttachShader(program, fragment_shader);
+	glDeleteShader(vertex_shader);
+	glDeleteShader(fragment_shader);
+	foreach (var name, idx in attribs) {
+		glBindAttribLocation(program, idx, name);
+	}
+	glLinkProgram(program);
+
+	var tmp = Memory::alloc(4);
+	glGetProgramiv(program, GL_LINK_STATUS, tmp);
+	var status = tmp.get_int(0) as Boolean;
+	if (!status) {
+		glGetProgramiv(program, GL_INFO_LOG_LENGTH, tmp);
+		var info_len = tmp.get_int(0);
+		if (info_len > 0) {
+			var info_mem = Memory::alloc(info_len);
+			glGetProgramInfoLog(program, info_len, null, info_mem);
+			var info_log = {""};
+			info_log.set_length(info_len-1);
+			info_mem.get_bytes(0, info_log);
+			if (info_log.length > 0 && info_log[info_log.length-1] == '\n') {
+				info_log.set_length(info_log.length-1);
+			}
+			log(info_log);
+		}
+		glDeleteProgram(program);
+		throw error("can't compile program");
+	}
+	return program;
+}
+
+function create_buffer(): Integer
+{
+	var tmp = Memory::alloc(4);
+	glGenBuffers(1, tmp);
+	var buffer = tmp.get_int(0);
+	if (buffer == 0) {
+		throw error("can't create buffer");
+	}
+	return buffer;
+}
+
+function create_texture(): Integer
+{
+	var tmp = Memory::alloc(4);
+	glGenTextures(1, tmp);
+	var texture = tmp.get_int(0);
+	if (texture == 0) {
+		throw error("can't create texture");
+	}
+	return texture;
+}
+
+function delete_texture(id: Integer)
+{
+	var tmp = Memory::alloc(4);
+	tmp.set_int(0, id);
+	glDeleteTextures(1, tmp);
+}

@@ -1,0 +1,56 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const {
+	MSG_CREATE_ACCOUNT,
+	MSG_CREATE_ACCOUNT_WEB,
+	MSG_LOGIN_ACCOUNT,
+	MSG_LIST_SERVERS,
+	MSG_CONNECT_SERVER,
+	MSG_GET_CLIENT_INFO,
+	MSG_GET_ACCOUNT_INFO,
+	MSG_REPORT_PLAYER,
+	MSG_GET_MODERATION_COOKIE,
+	MSG_MODERATION_ACTION,
+	MSG_VALIDATE_ACCOUNT
+};
+
+const {
+	MSG_SUCCESS,
+	MSG_ERROR_SERVER_FAILURE,
+	MSG_ERROR_UNSUPPORTED_VERSION,
+	MSG_ERROR_UNKNOWN_COMMAND,
+	MSG_ERROR_INVALID_REQUEST,
+	MSG_ERROR_INVALID_LOGIN,
+	MSG_ERROR_INVALID_COOKIE
+};
+
+const {
+	FEATURE_PREMIUM   = 0x01,
+	FEATURE_HIGHLIGHT = 0x02,
+	FEATURE_SKINS     = 0x04
+};
+
+const {
+	PERMISSION_KICK      = 0x01,
+	PERMISSION_BAN       = 0x02,
+	PERMISSION_NO_REASON = 0x04
+};

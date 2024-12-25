@@ -1,0 +1,58 @@
+#!/bin/bash
+set -e
+
+SRCS="sqlite3.c"
+CFLAGS="-DFIXBUILD_BINCOMPAT -Wall -Os -DFIXBUILD_BINCOMPAT -DSQLITE_THREADSAFE=2 -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_GEOPOLY -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_ENABLE_RBU -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_STMTVTAB -DSQLITE_SOUNDEX"
+
+HAIKU32_ROOT="/opt/haiku32"
+HAIKU32_HEADERS="$HAIKU32_ROOT/system/headers"
+HAIKU32_CFLAGS="-I$HAIKU32_HEADERS -I$HAIKU32_HEADERS/posix -I$HAIKU32_HEADERS/os -I$HAIKU32_HEADERS/os/support"
+HAIKU32_LIBS="-L$HAIKU32_ROOT/system/lib -B$HAIKU32_ROOT/system/lib/x86"
+
+HAIKU64_ROOT="/opt/haiku64"
+HAIKU64_HEADERS="$HAIKU64_ROOT/system/headers"
+HAIKU64_CFLAGS="-I$HAIKU64_HEADERS -I$HAIKU64_HEADERS/posix -I$HAIKU64_HEADERS/os -I$HAIKU64_HEADERS/os/support"
+HAIKU64_LIBS="-L$HAIKU64_ROOT/system/lib -B$HAIKU64_ROOT/system/lib"
+
+RPI32_PREFIX="/opt/arm-bcm2708hardfp-linux-gnueabi/bin/arm-bcm2708hardfp-linux-gnueabi"
+RPI32_CFLAGS="-march=armv6 -mfloat-abi=hard -mfpu=vfp"
+
+header ()
+{
+	echo -e "\n$1\n"
+}
+
+compile ()
+{
+	mkdir -p $1
+	for fname in $3; do
+		fname=`basename $fname .c`
+		$2 -o $1/$fname.o -c $fname.c
+	done
+}
+
+header "[ Windows 32bit ]"
+compile windows32 "i686-w64-mingw32-gcc $CFLAGS" "$SRCS"
+
+header "[ Windows 64bit ]"
+compile windows64 "x86_64-w64-mingw32-gcc $CFLAGS" "$SRCS"
+
+header "[ Linux 32bit ]"
+compile linux32 "gcc -m32 -I/usr/i686-linux-gnu/include $CFLAGS" "$SRCS"
+
+header "[ Linux 64bit ]"
+compile linux64 "gcc $CFLAGS -fno-optimize-strlen" "$SRCS"
+
+header "[ Mac OS ]"
+compile macos "/root/osxcross/target/bin/o64-clang $CFLAGS" "$SRCS"
+
+header "[ Haiku 32bit ]"
+compile haiku32 "$HAIKU32_ROOT/bin/i586-pc-haiku-gcc $CFLAGS $HAIKU32_CFLAGS" "$SRCS"
+
+header "[ Haiku 64bit ]"
+compile haiku64 "$HAIKU64_ROOT/bin/x86_64-unknown-haiku-gcc $CFLAGS $HAIKU64_CFLAGS" "$SRCS"
+
+header "[ Raspberry Pi 32bit ]"
+compile raspi32 "$RPI32_PREFIX-gcc $CFLAGS $RPI32_CFLAGS" "$SRCS"
+
+echo -e "\nAll done!"

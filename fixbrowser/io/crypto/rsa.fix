@@ -1,0 +1,115 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "math/bigint";
+
+const {
+	RSA_HASH_SHA1 = 1,
+	RSA_HASH_SHA224,
+	RSA_HASH_SHA256,
+	RSA_HASH_SHA384,
+	RSA_HASH_SHA512
+};
+
+function rsa_process(modulus, exponent, message)
+{
+	var m = bigint_bytes_BE(message);
+	var result = bigint_modpow(m, exponent, modulus);
+	return bigint_to_bytes_BE(result);
+}
+
+// EMSA-PKCS1-v1_5-ENCODE
+function rsa_signature_verify(modulus, exponent, signature, hash_id, hash_value)
+{
+	var len = length(modulus);
+	var msg = [];
+	var pos = len-1;
+	array_set_length(msg, pos);
+
+	pos -= length(hash_value);
+	array_copy(msg, pos, hash_value, 0, length(hash_value));
+
+	var id;
+	switch (hash_id) {
+		case -1: id = []; break;
+		case RSA_HASH_SHA1:   id = [0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14]; break;
+		case RSA_HASH_SHA224: id = [0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c]; break;
+		case RSA_HASH_SHA256: id = [0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20]; break;
+		case RSA_HASH_SHA384: id = [0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30]; break;
+		case RSA_HASH_SHA512: id = [0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40]; break;
+		default: return 0, error("unknown hash type");
+	}
+
+	pos -= length(id);
+	array_copy(msg, pos, id, 0, length(id));
+
+	if (pos < 10) {
+		return 0, error("encoded message too short");
+	}
+
+	msg[0] = 0x01;
+	array_fill(msg, 1, pos-2, 0xFF);
+
+	return msg == rsa_process(bigint_bytes_BE(modulus), bigint(exponent), signature);
+}
+
+// RSAES-PKCS1-V1_5-ENCRYPT
+function rsa_encrypt(modulus, exponent, plaintext)
+{
+	var len = length(modulus);
+	var msg = [];
+	var pos = len-1;
+	array_set_length(msg, pos);
+
+	pos -= length(plaintext);
+	array_copy(msg, pos, plaintext, 0, length(plaintext));
+
+	if (pos < 10) {
+		return 0, error("encoded message too short");
+	}
+
+	msg[0] = 0x02;
+	var rnd = crypto_random(pos-2);
+	for (var i=0; i<length(rnd); i++) {
+		if (rnd[i] == 0) {
+			rnd[i] = 0xFF;
+		}
+	}
+	array_copy(msg, 1, rnd, 0, pos-2);
+
+	return rsa_process(bigint_bytes_BE(modulus), bigint(exponent), msg);
+}
+
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_rsa()
+{
+	var cipher = rsa_process(bigint(3233), bigint(17), [65]);
+	assert(cipher, [2790 >>> 8, 2790 & 0xFF]);
+
+	var plaintext = rsa_process(bigint(3233), bigint(413), cipher);
+	assert(plaintext, [65]);
+}

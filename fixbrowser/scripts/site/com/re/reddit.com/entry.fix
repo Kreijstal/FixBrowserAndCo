@@ -1,0 +1,56 @@
+import "util/common";
+import "util/string";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "redditstatic.com")) return true;
+	if (domain_ends_with(dest, "redd.it")) return true;
+	if (domain_ends_with(dest, "redditmedia.com")) return true;
+	if (domain_ends_with(dest, "redditblog.com")) return true;
+	if (domain_ends_with(dest, "redditinc.com")) return true;
+	if (domain_ends_with(dest, "reddithelp.com")) return true;
+	if (domain_ends_with(dest, "redditgifts.com")) return true;
+	return false;
+}
+
+function handle_request(request)
+{
+	var domain = request_get_domain(request);
+	if (domain == "www.reddit.com" || domain == "reddit.com") {
+		request_set_redirect(request, {"https://old.reddit.com", request_get_path(request)});
+		return;
+	}
+	if (domain == "i.redd.it" || domain == "preview.redd.it") {
+		request_set_header(request, "Accept", "*/*");
+		request_set_header(request, "Referer", request_get_url(request));
+		return;
+	}
+}
+
+function adjust_document(request, document)
+{
+	var cookies = element_query(document, "span > a[href='https://www.reddit.com/help/privacypolicy']");
+	if (cookies) {
+		cookies = element_get_parent(cookies, 4);
+		if (cookies && element_get_type(cookies) == "div") {
+			element_remove(cookies);
+		}
+	}
+
+	replace_class_in_all_elements(document, "div.collapsed", "collapsed", "noncollapsed");
+	remove_all_elements(document, "a.expand");
+	remove_element(document, "iframe[src^='//www.redditmedia.com/moat/proxy']");
+
+	var images = element_query_all(document, "img[src^='https://preview.redd.it/']");
+	for (var i=0; i<length(images); i++) {
+		var src = element_get_attr(images[i], "src");
+		array_remove(src, 0, length("https://preview.redd.it/"));
+		var idx = string_search_char(src, '?');
+		if (idx >= 0) {
+			array_set_length(src, idx);
+		}
+		var url = {"https://i.redd.it/", src};
+		//element_set_attr(images[i], "src", url);
+		wrap_element(images[i], element_create("a", {"href": url}));
+	}
+}

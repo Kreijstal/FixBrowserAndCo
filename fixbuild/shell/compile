@@ -1,0 +1,233 @@
+#!/bin/bash
+set -e
+
+SRCS="fixscript.c fixio.c fixtask.c fiximage.c fixnative.c fixutil.c"
+CFLAGS="-DFIXBUILD_BINCOMPAT -Wall -O3 -I../sqlite"
+X86_CFLAGS="$CFLAGS -msse2 -mstackrealign"
+WINDOWS_LIBS="-lws2_32 -lmswsock -lwinmm"
+LINUX_LIBS="-lm -lrt -lpthread -ldl"
+MACOS_LIBS="-lm"
+HAIKU_LIBS="-lm -lnetwork"
+
+GUI_CFLAGS="-DFIXBUILD_GUI"
+GUI_WINDOWS_SRCS="fixgui.c fixgui_win32.c"
+GUI_WINDOWS_LIBS="-lgdi32 -lcomdlg32 -lshlwapi -lcomctl32 -lws2_32 -lmswsock -lwinmm -mwindows"
+GUI_LINUX_SRCS="fixgui.c fixgui_gtk.c"
+GUI_MACOS_SRCS="fixgui.c fixgui_cocoa.c"
+GUI_MACOS_LIBS="-lm -lobjc -framework Cocoa"
+GUI_HAIKU_SRCS="fixgui.c fixgui_haiku.c"
+GUI_WASM_SRCS="fixgui.c fixgui_virtual.c fixgui_virtual_wasm.c"
+
+HAIKU32_ROOT="/opt/haiku32"
+HAIKU32_HEADERS="$HAIKU32_ROOT/system/headers"
+HAIKU32_CFLAGS="-I$HAIKU32_HEADERS -I$HAIKU32_HEADERS/posix -I$HAIKU32_HEADERS/os -I$HAIKU32_HEADERS/os/support"
+HAIKU32_LIBS="-L$HAIKU32_ROOT/system/lib -B$HAIKU32_ROOT/system/lib/x86"
+
+HAIKU64_ROOT="/opt/haiku64"
+HAIKU64_HEADERS="$HAIKU64_ROOT/system/headers"
+HAIKU64_CFLAGS="-I$HAIKU64_HEADERS -I$HAIKU64_HEADERS/posix -I$HAIKU64_HEADERS/os -I$HAIKU64_HEADERS/os/support"
+HAIKU64_LIBS="-L$HAIKU64_ROOT/system/lib -B$HAIKU64_ROOT/system/lib"
+
+RPI32_PREFIX="/opt/arm-bcm2708hardfp-linux-gnueabi/bin/arm-bcm2708hardfp-linux-gnueabi"
+RPI32_CFLAGS="-march=armv6 -mfloat-abi=hard -mfpu=vfp"
+
+WASM_CFLAGS="-DWASM_EMBEDDED_DATA -Os -Iwasm-support --target=wasm32 -mcpu=mvp"
+WASM_LIBS="wasm-support.c -nostdlib -Wl,-z,stack-size=262144 -Wl,--no-entry -Wl,--export-table -Wl,--strip-all"
+
+header ()
+{
+	echo -e "\n$1\n"
+	rm -rf .build
+	mkdir .build
+}
+
+compile ()
+{
+	for fname in $2; do
+		fname=`basename $fname .c`
+		$1 -o .build/$fname.o -c $fname.c
+		if [ "$fname" = "fixio" ]; then
+			$1 -DFIXIO_SQLITE -o .build/fixio_sqlite.o -c fixio.c
+		fi
+	done
+}
+
+compile_chroot ()
+{
+	for fname in $2; do
+		fname=`basename $fname .c`
+		chroot /bookworm /bin/bash -c "cd /root/fixbuild/shell && $1 -o .build/$fname.o -c $fname.c"
+	done
+}
+
+link ()
+{
+	objs=""
+	for fname in $3; do
+		objs="$objs .build/`basename $fname .c`.o"
+	done
+	$2 $objs $4
+	if [ "$1" = "windows32" ] || [ "$1" = "windows64" ]; then
+		for fname in *.exe; do
+			mv $fname `basename $fname .exe`
+		done
+	fi
+}
+
+link_chroot ()
+{
+	objs=""
+	for fname in $3; do
+		objs="$objs .build/`basename $fname .c`.o"
+	done
+	chroot /bookworm /bin/bash -c "cd /root/fixbuild/shell && $2 $objs $4"
+}
+
+link_variants ()
+{
+	srcs="fixscript.c fixtask.c fiximage.c fixnative.c fixutil.c"
+	link $1 "$3 -o shell_$1$2" "$srcs fixio.c $4" "shell.c $5"
+	link $1 "$3 -o shell_$1_sqlite$2" "$srcs fixio_sqlite.c $4" "shell.c ../sqlite/$1/sqlite3.o $5"
+}
+
+link_variants_chroot ()
+{
+	srcs="fixscript.c fixtask.c fiximage.c fixnative.c fixutil.c"
+	link_chroot $1 "$3 -o shell_$1$2" "$srcs fixio.c $4" "shell.c $5"
+	chmod -x "shell_$1$2"
+}
+
+strip_variants ()
+{
+	$3 "shell_$1$2"
+	$3 "shell_$1_sqlite$2"
+}
+
+strip_variants_chroot ()
+{
+	chroot /bookworm /bin/bash -c "cd /root/fixbuild/shell && $3 shell_$1$2"
+}
+
+bindiff ()
+{
+	./bindiff diff $1 $2 ../bin/$2.binpatch
+	gzip -9 -n -f ../bin/$2.binpatch
+}
+
+diff_variants ()
+{
+	if [ "$1" = "windows32" ] || [ "$1" = "windows64" ]; then
+		base="shell_$1_sqlite_gui_icon"
+		bindiff $base shell_$1_gui_icon
+		bindiff $base shell_$1_sqlite_gui_icon
+	else
+		base="shell_$1_sqlite_gui"
+	fi
+	gzip -9 -n -c $base > ../bin/shell_$1.gz
+	bindiff $base shell_$1
+	bindiff $base shell_$1_gui
+	bindiff $base shell_$1_sqlite
+	bindiff $base shell_$1_sqlite_gui
+}
+
+diff_variants_wasm ()
+{
+	base="shell_$1_gui"
+	gzip -9 -n -c $base > ../bin/shell_$1.gz
+	bindiff $base shell_$1
+	bindiff $base shell_$1_gui
+}
+
+gcc -Wall -O3 -o bindiff bindiff.c -lm
+
+header "[ Windows 32bit ]"
+compile "i686-w64-mingw32-gcc $X86_CFLAGS" "$SRCS"
+compile "i686-w64-mingw32-gcc $X86_CFLAGS $GUI_CFLAGS" "$GUI_WINDOWS_SRCS"
+i686-w64-mingw32-windres windows_rc.rc .build/windows_rc.o
+i686-w64-mingw32-windres windows_icon_rc.rc .build/windows_icon_rc.o
+link_variants windows32 "" "i686-w64-mingw32-gcc" "" "$WINDOWS_LIBS"
+link_variants windows32 "_gui" "i686-w64-mingw32-gcc $GUI_CFLAGS" "$GUI_WINDOWS_SRCS" ".build/windows_rc.o $GUI_WINDOWS_LIBS"
+link_variants windows32 "_gui_icon" "i686-w64-mingw32-gcc $GUI_CFLAGS" "$GUI_WINDOWS_SRCS" ".build/windows_icon_rc.o $GUI_WINDOWS_LIBS"
+strip_variants windows32 "" "i686-w64-mingw32-strip"
+strip_variants windows32 "_gui" "i686-w64-mingw32-strip"
+strip_variants windows32 "_gui_icon" "i686-w64-mingw32-strip"
+diff_variants windows32
+
+header "[ Windows 64bit ]"
+compile "x86_64-w64-mingw32-gcc $CFLAGS" "$SRCS"
+compile "x86_64-w64-mingw32-gcc $CFLAGS $GUI_CFLAGS" "$GUI_WINDOWS_SRCS"
+x86_64-w64-mingw32-windres windows_rc.rc .build/windows_rc.o
+x86_64-w64-mingw32-windres windows_icon_rc.rc .build/windows_icon_rc.o
+link_variants windows64 "" "x86_64-w64-mingw32-gcc" "" "$WINDOWS_LIBS"
+link_variants windows64 "_gui" "x86_64-w64-mingw32-gcc $GUI_CFLAGS" "$GUI_WINDOWS_SRCS" ".build/windows_rc.o $GUI_WINDOWS_LIBS"
+link_variants windows64 "_gui_icon" "x86_64-w64-mingw32-gcc $GUI_CFLAGS" "$GUI_WINDOWS_SRCS" ".build/windows_icon_rc.o $GUI_WINDOWS_LIBS"
+strip_variants windows64 "" "x86_64-w64-mingw32-strip"
+strip_variants windows64 "_gui" "x86_64-w64-mingw32-strip"
+strip_variants windows64 "_gui_icon" "x86_64-w64-mingw32-strip"
+diff_variants windows64
+
+header "[ Linux 32bit ]"
+compile "gcc -m32 -I/usr/i686-linux-gnu/include $X86_CFLAGS" "$SRCS"
+compile "gcc -m32 -I/usr/i686-linux-gnu/include $X86_CFLAGS $GUI_CFLAGS" "$GUI_LINUX_SRCS"
+link_variants linux32 "" "gcc -m32" "" "$LINUX_LIBS"
+link_variants linux32 "_gui" "gcc -m32 $GUI_CFLAGS" "$GUI_LINUX_SRCS" "$LINUX_LIBS"
+strip_variants linux32 "" "strip"
+strip_variants linux32 "_gui" "strip"
+diff_variants linux32
+
+header "[ Linux 64bit ]"
+compile "gcc $CFLAGS -fno-optimize-strlen" "$SRCS"
+compile "gcc $CFLAGS -fno-optimize-strlen $GUI_CFLAGS" "$GUI_LINUX_SRCS"
+link_variants linux64 "" "gcc $CFLAGS -fno-optimize-strlen" "" "$LINUX_LIBS"
+link_variants linux64 "_gui" "gcc $CFLAGS -fno-optimize-strlen $GUI_CFLAGS" "$GUI_LINUX_SRCS" "$LINUX_LIBS"
+strip_variants linux64 "" "strip"
+strip_variants linux64 "_gui" "strip"
+diff_variants linux64
+
+header "[ Mac OS ]"
+compile "/root/osxcross/target/bin/o64-clang $CFLAGS" "$SRCS"
+compile "/root/osxcross/target/bin/o64-clang $CFLAGS $GUI_CFLAGS" "$GUI_MACOS_SRCS"
+link_variants macos "" "/root/osxcross/target/bin/o64-clang $CFLAGS" "" "$MACOS_LIBS"
+link_variants macos "_gui" "/root/osxcross/target/bin/o64-clang $CFLAGS $GUI_CFLAGS" "$GUI_MACOS_SRCS" "$GUI_MACOS_LIBS"
+strip_variants macos "" "/root/osxcross/target/bin/x86_64-apple-darwin10-strip"
+strip_variants macos "_gui" "/root/osxcross/target/bin/x86_64-apple-darwin10-strip"
+diff_variants macos
+
+header "[ Haiku 32bit ]"
+compile "$HAIKU32_ROOT/bin/i586-pc-haiku-gcc $X86_CFLAGS $HAIKU32_CFLAGS" "$SRCS"
+compile "$HAIKU32_ROOT/bin/i586-pc-haiku-gcc $X86_CFLAGS $HAIKU32_CFLAGS $GUI_CFLAGS" "$GUI_HAIKU_SRCS"
+link_variants haiku32 "" "$HAIKU32_ROOT/bin/i586-pc-haiku-gcc $X86_CFLAGS $HAIKU32_CFLAGS" "" "$HAIKU32_LIBS $HAIKU_LIBS"
+link_variants haiku32 "_gui" "$HAIKU32_ROOT/bin/i586-pc-haiku-gcc $X86_CFLAGS $HAIKU32_CFLAGS $GUI_CFLAGS" "$GUI_HAIKU_SRCS" "$HAIKU32_LIBS $HAIKU_LIBS"
+strip_variants haiku32 "" "$HAIKU32_ROOT/bin/i586-pc-haiku-strip"
+strip_variants haiku32 "_gui" "$HAIKU32_ROOT/bin/i586-pc-haiku-strip"
+diff_variants haiku32
+
+header "[ Haiku 64bit ]"
+compile "$HAIKU64_ROOT/bin/x86_64-unknown-haiku-gcc $CFLAGS $HAIKU64_CFLAGS" "$SRCS"
+compile "$HAIKU64_ROOT/bin/x86_64-unknown-haiku-gcc $CFLAGS $HAIKU64_CFLAGS $GUI_CFLAGS" "$GUI_HAIKU_SRCS"
+link_variants haiku64 "" "$HAIKU64_ROOT/bin/x86_64-unknown-haiku-gcc $CFLAGS $HAIKU64_CFLAGS" "" "$HAIKU64_LIBS $HAIKU_LIBS"
+link_variants haiku64 "_gui" "$HAIKU64_ROOT/bin/x86_64-unknown-haiku-gcc $CFLAGS $HAIKU64_CFLAGS $GUI_CFLAGS" "$GUI_HAIKU_SRCS" "$HAIKU64_LIBS $HAIKU_LIBS"
+strip_variants haiku64 "" "$HAIKU64_ROOT/bin/x86_64-unknown-haiku-strip"
+strip_variants haiku64 "_gui" "$HAIKU64_ROOT/bin/x86_64-unknown-haiku-strip"
+diff_variants haiku64
+
+header "[ Raspberry Pi 32bit ]"
+compile "$RPI32_PREFIX-gcc $CFLAGS $RPI32_CFLAGS" "$SRCS"
+compile "$RPI32_PREFIX-gcc $CFLAGS $RPI32_CFLAGS $GUI_CFLAGS" "$GUI_LINUX_SRCS"
+link_variants raspi32 "" "$RPI32_PREFIX-gcc $CFLAGS $RPI32_CFLAGS" "" "$LINUX_LIBS"
+link_variants raspi32 "_gui" "$RPI32_PREFIX-gcc $CFLAGS $RPI32_CFLAGS $GUI_CFLAGS" "$GUI_LINUX_SRCS" "$LINUX_LIBS"
+strip_variants raspi32 "" "$RPI32_PREFIX-strip"
+strip_variants raspi32 "_gui" "$RPI32_PREFIX-strip"
+diff_variants raspi32
+
+header "[ WebAssembly ]"
+compile_chroot "clang-14 -D__wasi__ $CFLAGS $WASM_CFLAGS" "$SRCS"
+link_variants_chroot wasm "" "clang-14 -D__wasi__ $CFLAGS $WASM_CFLAGS" "" "$WASM_LIBS"
+rm -f .build/*.o
+compile_chroot "clang-14 $CFLAGS $WASM_CFLAGS $GUI_CFLAGS -DFIXGUI_VIRTUAL" "$SRCS $GUI_WASM_SRCS"
+link_variants_chroot wasm "_gui" "clang-14 $CFLAGS $WASM_CFLAGS $GUI_CFLAGS -DFIXGUI_VIRTUAL" "$GUI_WASM_SRCS" "$WASM_LIBS"
+diff_variants_wasm wasm
+
+rm -rf .build
+
+echo -e "\nAll done!"

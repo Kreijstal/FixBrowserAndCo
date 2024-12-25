@@ -1,0 +1,285 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/text_field";
+import "gui/subview/button";
+import "util/string";
+import "cellsplit/master_protocol";
+import "cellsplit/gui/common";
+import "cellsplit/gui/label";
+import "cellsplit/gui/text_field";
+import "cellsplit/gui/button";
+import "cellsplit/gui/image";
+import "cellsplit/gui/message_box";
+import "cellsplit/util/open_browser";
+
+class PremiumView: SubView
+{
+	var @label1: GameLabel;
+	var @label2: GameLabel;
+	var @label3: GameLabel;
+	var @label4: GameLabel;
+	var @lbl_account: GameLabel;
+	var @txt_account: GameTextField;
+	var @btn_account_copy: GameButton;
+	var @lbl_amount: GameLabel;
+	var @txt_amount: GameTextField;
+	var @btn_currency: GameButton;
+	var @img_donate: GameImage;
+	var @premium: Boolean;
+	var @premium_label: GameLabel;
+
+	constructor create()
+	{
+		label1 = GameLabel::create({
+			"Premium account"
+		});
+		label2 = GameLabel::create({
+			"You can donate any amount (1\u20AC/1$ minimum) to help fund the development & moderation which ",
+			"requires an ongoing support from the moderator.\n\n",
+			"As a thank you you will get access to these perks:"
+		});
+		label3 = GameLabel::create({
+			"\BB your nick will be highlighted\n",
+			"\BB use any image as a skin of your cells"
+		});
+		label4 = GameLabel::create({
+			"(more perks will be added in the future)"
+		});
+		label1.set_font_size(26.0);
+		label2.set_font(get_light_font());
+		label2.set_font_size(13.0);
+		label3.set_font(get_bold_font());
+		label3.set_font_size(13.0);
+		label4.set_font(get_light_font());
+		label4.set_font_size(13.0);
+		add(label1);
+
+		lbl_account = GameLabel::create("Account ID:");
+		lbl_account.set_font_size(15.0);
+		txt_account = GameTextField::create();
+		txt_account.set_font_size(15.0);
+		txt_account.set_read_only(true);
+		txt_account.set_color(0xFF444444);
+		btn_account_copy = GameButton::create("Copy");
+		btn_account_copy.set_font_size(15.0);
+		btn_account_copy.set_click_action(PremiumView::copy_account_id#1, this);
+
+		lbl_amount = GameLabel::create("Donation amount:");
+		lbl_amount.set_font_size(15.0);
+		txt_amount = GameTextField::create();
+		txt_amount.set_font_size(15.0);
+		btn_currency = GameButton::create("EUR");
+		btn_currency.set_font_size(15.0);
+		btn_currency.set_click_action(PremiumView::switch_currency#1, this);
+		add(lbl_account);
+		add(txt_account);
+		add(btn_account_copy);
+
+		img_donate = GameImage::create(Image::load(get_resource("images/btn_donateCC_LG.png")));
+		img_donate.set_cursor(CURSOR_HAND);
+		img_donate.set_click_action(PremiumView::donate#1, this);
+
+		premium_label = GameLabel::create({
+			"You have a premium account, thank you for supporting the game.\n\n",
+			"To set a skin place a file named skin.png or skin.jpg alongside the game executable.\n\n",
+			"Please backup the file account.dat to prevent losing the account. You can also copy it ",
+			"to other computers or import it into the web version. Only one online game can be played ",
+			"simultaneously per account."
+		});
+		premium_label.set_font(get_light_font());
+		premium_label.set_font_size(13.0);
+		
+		set_account("", 0);
+	}
+
+	function set_account(account: String, features: Integer)
+	{
+		txt_account.set_text(account);
+
+		premium = (features & FEATURE_PREMIUM) != 0;
+
+		add_or_remove(label2, !premium);
+		add_or_remove(label3, !premium);
+		add_or_remove(label4, !premium);
+
+		add_or_remove(lbl_amount, !premium);
+		add_or_remove(txt_amount, !premium);
+		add_or_remove(btn_currency, !premium);
+
+		add_or_remove(img_donate, !premium);
+
+		add_or_remove(premium_label, premium);
+
+		set_rect(get_rect());
+	}
+
+	function @add_or_remove(view: SubView, enable: Boolean)
+	{
+		if (enable) {
+			if (!view.get_parent()) {
+				add(view);
+			}
+		}
+		else {
+			if (view.get_parent()) {
+				remove(view);
+			}
+		}
+	}
+
+	function @copy_account_id()
+	{
+		Clipboard::set_text(txt_account.get_text());
+	}
+
+	function @switch_currency()
+	{
+		if (btn_currency.get_label() == "EUR") {
+			btn_currency.set_label("USD");
+		}
+		else {
+			btn_currency.set_label("EUR");
+		}
+		txt_amount.focus();
+	}
+
+	function @validate_amount(s: String): Boolean
+	{
+		s.trim_inplace();
+		if (s.length == 0) {
+			return true;
+		}
+		s.replace_char_inplace(',', '.');
+		var idx = s.search_char('.');
+		if (idx >= 0) {
+			var value1 = s.substring(0, idx);
+			var value2 = s.substring(idx+1);
+			if (value1.length > 1 && value1[0] == '0') {
+				MessageBox::show(get_top_view(this), "Error", "Invalid amount");
+				return false;
+			}
+			if (value2.length != 2) {
+				MessageBox::show(get_top_view(this), "Error", "Invalid amount");
+				return false;
+			}
+			var (num1, e1) = String::parse_int(value1);
+			var (num2, e2) = String::parse_int(value2);
+			if (e1 != null || e2 != null || num1 < 0 || num2 < 0) {
+				MessageBox::show(get_top_view(this), "Error", "Invalid amount");
+				return false;
+			}
+			if (num1 < 1) {
+				MessageBox::show(get_top_view(this), "Error", "Must be at least 1 "+btn_currency.get_label());
+				return false;
+			}
+		}
+		else {
+			var (num, e) = String::parse_int(s);
+			if (s.length > 1 && s[0] == '0') {
+				MessageBox::show(get_top_view(this), "Error", "Invalid amount");
+				return false;
+			}
+			if (e != null || num < 0) {
+				MessageBox::show(get_top_view(this), "Error", "Invalid amount");
+				return false;
+			}
+			if (num < 1) {
+				MessageBox::show(get_top_view(this), "Error", "Must be at least 1 "+btn_currency.get_label());
+				return false;
+			}
+			s += ".00";
+		}
+		return true;
+	}
+
+	function @donate()
+	{
+		var account = txt_account.get_text();
+		var amount = txt_amount.get_text();
+
+		if (account.length == 0) {
+			MessageBox::show(get_top_view(this), "Error", "Invalid or missing account ID");
+			return;
+		}
+
+		if (!validate_amount(amount)) {
+			return;
+		}
+
+		var url = {"https://www.cellsplit.org/donate"};
+		url += "?account="+account;
+		url += "&amount="+amount;
+		url += "&currency="+btn_currency.get_label();
+		open_browser(get_top_view(this), url);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		var width = get_width()-iround(20*scale);
+		var x = iround(10*scale);
+		var y = iround(4*scale);
+		var labels: GameLabel[];
+		if (premium) {
+			labels = [label1, premium_label];
+		}
+		else {
+			labels = [label1, label2, label3, label4];
+		}
+		foreach (var label in labels) {
+			label.reflow(width);
+			var h = label.get_preferred_height(scale);
+			label.set_rect(x, y, width, h);
+			y += h;
+		}
+
+		y += iround(20*scale);
+
+		var h = iround(23*scale);
+		lbl_account.set_rect(x, y, iround(130*scale), h);
+		txt_account.set_rect(x+iround(140*scale), y, iround(100*scale), h);
+		btn_account_copy.set_rect(x+iround(250*scale), y, iround(50*scale), h);
+		y += h + iround(10*scale);
+
+		if (!premium) {
+			lbl_amount.set_rect(x, y, iround(130*scale), h);
+			txt_amount.set_rect(x+iround(140*scale), y, iround(100*scale), h);
+			btn_currency.set_rect(x+iround(250*scale), y, iround(35*scale), h);
+			y += h + iround(15*scale);
+
+			var img = img_donate.get_image();
+			img_donate.set_rect(x, y, iceil(img.get_width()*scale), iceil(img.get_height()*scale));
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		p.fill_rect(0, 0, get_width(), get_height(), argb(0xCCDDDDDD));
+		draw_children(p);
+	}
+}

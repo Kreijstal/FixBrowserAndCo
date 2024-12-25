@@ -1,0 +1,574 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/html/element";
+import "browser/css/css";
+import "browser/css/selector";
+import "util/string";
+
+const @global_element_query_2 = "(Element, String): Element";
+const @global_element_query_preparsed_3 = "(Element, Dynamic, Element[]): Void";
+const @global_element_query_all_2 = "(Element, String): Element[]";
+
+function element_query(elem, selector)
+{
+	/*
+	//selector = insert_prefix(css_parse_selector(selector));
+	selector = css_parse_selector({"* ", selector});
+	dump_selector(selector, 0);
+	return exec_selector(elem, selector);
+	*/
+
+	var result = element_query_all(elem, selector, null, 1, []);
+	if (length(result) == 0) return null;
+	return result[0];
+}
+
+function element_query_preparsed(elem, preparsed, result)
+{
+	element_query_all(elem, null, preparsed, 1, result);
+}
+
+function element_query_all(elem, selector)
+{
+	return element_query_all(elem, selector, null, 0, []);
+}
+
+function @element_query_all(elem, selector, preparsed, limit, result)
+{
+	var group = preparsed? preparsed : css_parse_selectors_group(selector);
+
+	for (var i=0; i<length(group); i++) {
+		var has_combs = has_combinators(group[i]);
+		if (limit == 1) {
+			breadth_first_query(elem, group[i], result, has_combs, limit);
+		}
+		else {
+			recursive_query(elem, group[i], result, has_combs, limit);
+		}
+	
+		if (limit > 0 && length(result) >= limit) {
+			array_set_length(result, limit);
+			break;
+		}
+	}
+
+	/*
+	if (limit != 1) {
+		var dedup = {};
+		for (var i=0; i<length(result); i++) {
+			if (hash_contains(dedup, result[i]|0)) {
+				array_remove(result, i--);
+				continue;
+			}
+			dedup{result[i]|0} = true;
+		}
+	}
+	*/
+	return result;
+}
+
+function @has_combinators(selector)
+{
+	switch (selector->SELECTOR_type) {
+		case SEL_NOT:
+			return has_combinators(selector->SELECTOR_not_selector);
+		
+		case SEL_SEQUENCE: {
+			var selectors = selector->SELECTOR_selectors;
+			for (var i=0; i<length(selectors); i++) {
+				if (has_combinators(selectors[i])) return true;
+			}
+			return false;
+		}
+
+		case COMB_DESCENDANT:
+		case COMB_CHILD:
+		case COMB_NEXT_SIBLING:
+		case COMB_SUBSEQUENT_SIBLING:
+			return true;
+	}
+
+	return false;
+}
+
+function @recursive_query(elem, selector, result, has_combs, limit)
+{
+	if (has_combs) {
+		exec_selector_all(elem, selector, result);
+	}
+	else {
+		var r = exec_selector(elem, selector);
+		if (r) {
+			result[] = r;
+		}
+	}
+
+	if (limit > 0 && length(result) >= limit) {
+		return;
+	}
+
+	for (var e = element_get_first_child_tag(elem); e; e = element_get_next_tag(e)) {
+		recursive_query(e, selector, result, has_combs, limit);
+	}
+}
+
+function @breadth_first_query(elem, selector, result, has_combs, limit)
+{
+	var queue = [];
+	for (var e = element_get_first_child_tag(elem); e; e = element_get_next_tag(e)) {
+		queue[] = e;
+	}
+
+	var start = 0;
+	while (length(queue) - start > 0) {
+		var e = queue[start++];
+		if (start == 16) {
+			array_remove(queue, 0, start);
+			start = 0;
+		}
+
+		if (has_combs) {
+			exec_selector_all(e, selector, result);
+		}
+		else {
+			var r = exec_selector(e, selector);
+			if (r) {
+				result[] = r;
+			}
+		}
+
+		if (limit > 0 && length(result) >= limit) {
+			return;
+		}
+
+		for (var e2 = element_get_first_child_tag(e); e2; e2 = element_get_next_tag(e2)) {
+			queue[] = e2;
+		}
+	}
+}
+
+function @insert_prefix(selector)
+{
+	var prev = null, orig = selector;
+	for (;;) {
+		switch (selector->SELECTOR_type) {
+			case COMB_DESCENDANT:
+			case COMB_CHILD:
+			case COMB_NEXT_SIBLING:
+			case COMB_SUBSEQUENT_SIBLING:
+				prev = selector;
+				selector = selector->SELECTOR_first;
+				continue;
+		}
+
+		var comb = selector_create_combinator(COMB_DESCENDANT, selector_create_type(null, "*"), selector);
+		if (prev) {
+			prev->SELECTOR_first = comb;
+			return orig;
+		}
+		return comb;
+	}
+}
+
+function @contains(s, match)
+{
+	var idx = 0, len = length(match), found = true;
+
+	for (var i=0; i<length(s); i++) {
+		var c = s[i];
+		switch (c) {
+			case ' ', '\t', '\n', '\r', 0x0C:
+				if (found && idx == len) {
+					return true;
+				}
+				idx = 0;
+				found = true;
+				break;
+
+			default:
+				if (idx < len) {
+					if (c != match[idx]) {
+						found = false;
+					}
+				}
+				else {
+					found = false;
+				}
+				idx++;
+				break;
+		}
+	}
+
+	if (found && idx == len) {
+		return true;
+	}
+	return false;
+}
+
+function @exec_selector(elem, selector)
+{
+	switch (selector->SELECTOR_type) {
+		case SEL_TYPE: {
+			var name = selector->SELECTOR_elem_name;
+			if (name == "*") {
+				return elem;
+			}
+			if (element_is_type(elem, name)) {
+				return elem;
+			}
+			return null;
+		}
+
+		case SEL_ID: {
+			var elem_value = element_get_attr(elem, "id");
+			if (!elem_value) return null;
+
+			var match_value = selector->SELECTOR_id_name;
+			return elem_value == match_value? elem : null;
+		}
+
+		case SEL_CLASS: {
+			var match_value = selector->SELECTOR_class_name;
+			return element_contains_class(elem, match_value);
+		}
+
+		case SEL_ATTRIB: {
+			var elem_value = element_get_attr(elem, selector->SELECTOR_attrib_name);
+			return elem_value? elem : null;
+		}
+
+		case SEL_ATTRIB_PREFIX: {
+			var elem_value = element_get_attr(elem, selector->SELECTOR_attrib_name);
+			if (!elem_value) return null;
+			
+			var match_value = selector->SELECTOR_attrib_value;
+			return string_starts_with(elem_value, match_value)? elem : null;
+		}
+
+		case SEL_ATTRIB_SUFFIX: {
+			var elem_value = element_get_attr(elem, selector->SELECTOR_attrib_name);
+			if (!elem_value) return null;
+			
+			var match_value = selector->SELECTOR_attrib_value;
+			return string_ends_with(elem_value, match_value)? elem : null;
+		}
+
+		case SEL_ATTRIB_SUBSTRING: {
+			var elem_value = element_get_attr(elem, selector->SELECTOR_attrib_name);
+			if (!elem_value) return null;
+			
+			var match_value = selector->SELECTOR_attrib_value;
+			return string_contains(elem_value, match_value)? elem : null;
+		}
+
+		case SEL_ATTRIB_EXACT: {
+			var elem_value = element_get_attr(elem, selector->SELECTOR_attrib_name);
+			if (!elem_value) return null;
+			
+			var match_value = selector->SELECTOR_attrib_value;
+			return elem_value == match_value? elem : null;
+		}
+
+		case SEL_ATTRIB_INCLUDE: {
+			var elem_value = element_get_attr(elem, selector->SELECTOR_attrib_name);
+			if (!elem_value) return null;
+			
+			var match_value = selector->SELECTOR_attrib_value;
+			return contains(elem_value, match_value)? elem : null;
+		}
+
+		case SEL_ATTRIB_DASH: {
+			var elem_value = element_get_attr(elem, selector->SELECTOR_attrib_name);
+			if (!elem_value) return null;
+			
+			var match_value = selector->SELECTOR_attrib_value;
+			if (elem_value == match_value) return elem;
+			if (length(elem_value) > length(match_value) && string_starts_with(elem_value, match_value) && elem_value[length(match_value)] == '-') {
+				return elem;
+			}
+			return null;
+		}
+
+		case SEL_PSEUDO_ELEMENT:
+			return null;
+
+		case SEL_PSEUDO_CLASS: {
+			var name = string_to_lower_case(selector->SELECTOR_pseudo_name);
+			switch (length(name)) {
+				case 4:
+					if (name == "root") {
+						var parent = element_get_parent(elem);
+						if (parent && element_is_type(parent, "#document")) {
+							return elem;
+						}
+						return null;
+					}
+					break;
+
+				case 5:
+					if (name == "empty") {
+						for (var e = element_get_first_child(elem); e; e = element_get_next(e)) {
+							if (element_is_type(e, "#comment")) {
+								continue;
+							}
+							if (element_is_type(e, "#text") && length(element_get_data(e)) == 0) {
+								continue;
+							}
+							return null;
+						}
+						return elem;
+					}
+					break;
+
+				case 10:
+					if (name == "last-child") {
+						if (!element_get_next_tag(elem)) {
+							return elem;
+						}
+						return null;
+					}
+					if (name == "only-child") {
+						if (!element_get_prev_tag(elem) && !element_get_next_tag(elem)) {
+							return elem;
+						}
+						return null;
+					}
+					break;
+
+				case 11:
+					if (name == "first-child") {
+						if (!element_get_prev_tag(elem)) {
+							return elem;
+						}
+						return null;
+					}
+					break;
+
+				case 12:
+					if (name == "last-of-type") {
+						var type = element_get_type(elem);
+						for (var e = element_get_next_tag(elem); e; e = element_get_next_tag(e)) {
+							if (element_is_type(e, type)) {
+								return null;
+							}
+						}
+						return elem;
+					}
+					if (name == "only-of-type") {
+						var type = element_get_type(elem);
+						for (var e = element_get_prev_tag(elem); e; e = element_get_prev_tag(e)) {
+							if (element_is_type(e, type)) {
+								return null;
+							}
+						}
+						for (var e = element_get_next_tag(elem); e; e = element_get_next_tag(e)) {
+							if (element_is_type(e, type)) {
+								return null;
+							}
+						}
+						return elem;
+					}
+					break;
+
+				case 13:
+					if (name == "first-of-type") {
+						var type = element_get_type(elem);
+						for (var e = element_get_prev_tag(elem); e; e = element_get_prev_tag(e)) {
+							if (element_is_type(e, type)) {
+								return null;
+							}
+						}
+						return elem;
+					}
+					break;
+			}
+			return null;
+		}
+
+		case SEL_FUNCTION_IDENT:
+		case SEL_FUNCTION_STRING:
+		case SEL_FUNCTION_ANB:
+			return null;
+
+		case SEL_NOT:
+			return exec_selector(elem, selector->SELECTOR_not_selector)? null : elem;
+		
+		case SEL_SEQUENCE: {
+			var selectors = selector->SELECTOR_selectors;
+
+			var result = exec_selector(elem, selectors[0]);
+			if (!result) return null;
+
+			for (var i=1; i<length(selectors); i++) {
+				if (exec_selector(result, selectors[i]) !== result) {
+					return null;
+				}
+			}
+			return result;
+		}
+
+		case COMB_DESCENDANT: {
+			var result = exec_selector(elem, selector->SELECTOR_first);
+			if (!result) return null;
+
+			var queue = [];
+			for (var e = element_get_first_child_tag(result); e; e = element_get_next_tag(e)) {
+				queue[] = e;
+			}
+
+			var start = 0;
+			while (length(queue) - start > 0) {
+				var e = queue[start++];
+				if (start == 16) {
+					array_remove(queue, 0, start);
+					start = 0;
+				}
+
+				result = exec_selector(e, selector->SELECTOR_second);
+				if (result) return result;
+
+				for (var e2 = element_get_first_child_tag(e); e2; e2 = element_get_next_tag(e2)) {
+					queue[] = e2;
+				}
+			}
+
+			return null;
+		}
+
+		case COMB_CHILD: {
+			var result = exec_selector(elem, selector->SELECTOR_first);
+			if (!result) return null;
+
+			for (var e = element_get_first_child_tag(result); e; e = element_get_next_tag(e)) {
+				result = exec_selector(e, selector->SELECTOR_second);
+				if (result) return result;
+			}
+			return null;
+		}
+
+		case COMB_NEXT_SIBLING: {
+			var result = exec_selector(elem, selector->SELECTOR_first);
+			if (!result) return null;
+
+			var next = element_get_next_tag(result);
+			if (!next) return null;
+
+			return exec_selector(next, selector->SELECTOR_second);
+		}
+
+		case COMB_SUBSEQUENT_SIBLING: {
+			var result = exec_selector(elem, selector->SELECTOR_first);
+			if (!result) return null;
+
+			for (var e = element_get_next_tag(result); e; e = element_get_next_tag(e)) {
+				result = exec_selector(e, selector->SELECTOR_second);
+				if (result) return result;
+			}
+			return null;
+		}
+	}
+
+	return 0, error("unknown selector operation");
+}
+
+function @exec_selector_all(elem, selector, out)
+{
+	switch (selector->SELECTOR_type) {
+		default: {
+			var result = exec_selector(elem, selector);
+			if (result) {
+				out[] = result;
+			}
+			break;
+		}
+
+		case COMB_DESCENDANT: {
+			var start = length(out);
+			exec_selector_all(elem, selector->SELECTOR_first, out);
+			var end = length(out);
+
+			for (var i=start; i<end; i++) {
+				for (var e = element_get_first_child_tag(out[i]); e; e = element_get_next_tag(e)) {
+					recurse_selector_all(e, selector->SELECTOR_second, out);
+				}
+			}
+
+			array_remove(out, start, end-start);
+			break;
+		}
+
+		case COMB_CHILD: {
+			var start = length(out);
+			exec_selector_all(elem, selector->SELECTOR_first, out);
+			var end = length(out);
+
+			for (var i=start; i<end; i++) {
+				for (var e = element_get_first_child_tag(out[i]); e; e = element_get_next_tag(e)) {
+					exec_selector_all(e, selector->SELECTOR_second, out);
+				}
+			}
+
+			array_remove(out, start, end-start);
+			break;
+		}
+
+		case COMB_NEXT_SIBLING: {
+			var start = length(out);
+			exec_selector_all(elem, selector->SELECTOR_first, out);
+			var end = length(out);
+
+			for (var i=start; i<end; i++) {
+				var next = element_get_next_tag(out[i]);
+				if (next) {
+					exec_selector_all(next, selector->SELECTOR_second, out);
+				}
+			}
+
+			array_remove(out, start, end-start);
+			break;
+		}
+
+		case COMB_SUBSEQUENT_SIBLING: {
+			var start = length(out);
+			exec_selector_all(elem, selector->SELECTOR_first, out);
+			var end = length(out);
+
+			for (var i=start; i<end; i++) {
+				for (var e = element_get_next_tag(out[i]); e; e = element_get_next_tag(e)) {
+					exec_selector_all(e, selector->SELECTOR_second, out);
+				}
+			}
+
+			array_remove(out, start, end-start);
+			break;
+		}
+	}
+}
+
+function @recurse_selector_all(elem, selector, out)
+{
+	exec_selector_all(elem, selector, out);
+
+	for (var e = element_get_first_child_tag(elem); e; e = element_get_next_tag(e)) {
+		recurse_selector_all(e, selector, out);
+	}
+}

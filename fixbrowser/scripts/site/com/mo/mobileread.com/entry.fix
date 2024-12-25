@@ -1,0 +1,18 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "mobileread.cdn.speedyrails.net")) return true;
+	if (domain_ends_with(dest, "mobileread.org")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	var show_buttons = element_query_all(document, "input[type=button][value='Show']");
+	for (var i=0; i<length(show_buttons); i++) {
+		var hidden = element_get_next_tag(show_buttons[i]);
+		element_set_attr(hidden, "style", {element_get_attr(hidden, "style"), "; display: block;"});
+		element_remove(show_buttons[i]);
+	}
+}

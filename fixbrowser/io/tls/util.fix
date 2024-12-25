@@ -1,0 +1,112 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+function append_int8(buf, value)
+{
+	buf[] = value & 0xFF;
+}
+
+function append_uint8(buf, value)
+{
+	buf[] = value & 0xFF;
+}
+
+function append_int16(buf, value)
+{
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = value & 0xFF;
+}
+
+function append_uint16(buf, value)
+{
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = value & 0xFF;
+}
+
+function append_int24(buf, value)
+{
+	buf[] = (value >>> 16) & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = value & 0xFF;
+}
+
+function append_uint24(buf, value)
+{
+	buf[] = (value >>> 16) & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = value & 0xFF;
+}
+
+function append_int32(buf, value)
+{
+	buf[] = (value >>> 24) & 0xFF;
+	buf[] = (value >>> 16) & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = value & 0xFF;
+}
+
+function append_uint32(buf, value)
+{
+	buf[] = (value >>> 24) & 0xFF;
+	buf[] = (value >>> 16) & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = value & 0xFF;
+}
+
+function append_byte_array(buf, array)
+{
+	var len1 = length(buf);
+	var len2 = length(array);
+	array_set_length(buf, len1 + len2);
+	array_copy(buf, len1, array, 0, len2);
+}
+
+function append_short_array(buf, array)
+{
+	var value;
+	for (var i=0; i<length(array); i++) {
+		value = array[i];
+		buf[] = (value >>> 8) & 0xFF;
+		buf[] = value & 0xFF;
+	}
+}
+
+function get_uint16(buf, off)
+{
+	return (buf[off++] << 8) | buf[off];
+}
+
+function get_uint24(buf, off)
+{
+	return (buf[off++] << 16) | (buf[off++] << 8) | buf[off];
+}
+
+function get_uint32(buf, off)
+{
+	return (buf[off++] << 24) | (buf[off++] << 16) | (buf[off++] << 8) | buf[off];
+}
+
+function set_uint24(buf, off, value)
+{
+	buf[off++] = (value >>> 16) & 0xFF;
+	buf[off++] = (value >>> 8) & 0xFF;
+	buf[off++] = value & 0xFF;
+}

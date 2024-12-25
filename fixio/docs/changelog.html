@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>ChangeLog</h2>
+
+<h3>Version 0.8 (2024/05/05):</h3>
+
+<ul>
+<li>Added support for SQLite and PostgreSQL</li>
+<li>Added ability to close redirected streams in Process</li>
+<li>Added conversions between strings and native charset used by OS</li>
+<li>Added ability to show prompt in console and improved print functions</li>
+<li>Added set_log_function to allow customization of logging (moved from FixBuild)</li>
+<li>Added advanced console access</li>
+<li>Added ability to obtain process ID</li>
+<li>Added CRC-32 checksum to detect corruption of rollback in AtomicFile</li>
+<li>Added support for WebAssembly</li>
+<li>Adjusted for syntax improvements in classes</li>
+<li>Changed file open modes with improved options</li>
+<li>Fixed print functions by adding missing conversion to native charset</li>
+<li>Fixed killing of processes not being implemented on Windows</li>
+</ul>
+
+<h3>Version 0.7 (2022/12/27):</h3>
+
+<ul>
+<li>Added hiding of console window when redirecting process streams on Windows</li>
+<li>Added computation of CRC-32 checksum</li>
+<li>Added support for operators in Path</li>
+<li>Fixed file synchronization on MacOS</li>
+<li>Fixed moving of empty rollback in AtomicFile</li>
+</ul>
+
+<h3>Version 0.6 (2022/03/14):</h3>
+
+<ul>
+<li>Added ability to specify new buffers when resetting ArrayStream</li>
+<li>Added serialization of keys and comparison in serialized form</li>
+<li>Added AtomicFile to allow atomic updates of files using transactions</li>
+<li>Updated for API change in fixscript_lock_array</li>
+<li>Improved array_create_view function to not require offset and length</li>
+</ul>
+
+<h3>Version 0.5 (2021/10/03):</h3>
+
+<ul>
+<li>Added is_empty function to Path</li>
+<li>Added sync function to File</li>
+<li>Added ability to get native file descriptor/handle</li>
+<li>Added ability to set length of file</li>
+<li>Added support for file locking</li>
+<li>Fixed caching of file type</li>
+<li>Fixed create_directories in Path</li>
+</ul>
+
+<h3>Version 0.4 (2021/05/12):</h3>
+
+<ul>
+<li>Added generalization of async stream interface</li>
+<li>Added print_err and println_err functions</li>
+<li>Added ability to get current time (both normal and monotonic)</li>
+<li>Added array_create_view function</li>
+<li>Added string representation of Path objects when dumping</li>
+<li>Added ability to get just file name from Path</li>
+<li>Added ability to get modification time of files</li>
+<li>Fixed accepted async TCP sockets not being put into non-blocking mode on Linux</li>
+<li>Fixed crashing due to SIGPIPE signal</li>
+</ul>
+
+<h3>Version 0.3 (2020/10/13):</h3>
+
+<ul>
+<li>Added setting of position in ArrayStream</li>
+<li>Added initial support for WebSockets</li>
+<li>Added poll() implementation for non-Linux systems</li>
+</ul>
+
+<h3>Version 0.2 (2020/04/20):</h3>
+
+<ul>
+<li>Added ability to integrate with foreign event loops</li>
+<li>Added read_line function in ArrayStream and BufferedStream</li>
+<li>Added read_null_string and write_null_string functions</li>
+<li>Added ability to run processes</li>
+<li>Added access to standard input/output/error streams</li>
+<li>Added get_position function to ArrayStream</li>
+<li>Added ZipReader</li>
+<li>Added ability to create directories and delete files/directories</li>
+<li>Renamed C functions to start with fixio prefix</li>
+<li>Fixed and improved BufferedStream</li>
+<li>Fixed permissions for created files on Linux</li>
+<li>Fixed various bugs in async I/O</li>
+<li>Fixed skip function in Stream</li>
+<li>Fixed get_parent functions in Path</li>
+</ul>
+
+<h3>Version 0.1 (2019/12/26):</h3>
+
+<ul>
+<li>Initial release</li>
+</ul>
+
+</body>
+</html>

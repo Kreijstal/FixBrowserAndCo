@@ -1,0 +1,8 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "st-hatena.com")) return true;
+	if (domain_ends_with(dest, "hatena.ne.jp")) return true;
+	return false;
+}

@@ -1,0 +1,634 @@
+/*
+ * FixScript Macros v0.4 - http://www.fixscript.org/
+ * Copyright (c) 2019-2021 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+/*----------------------------------------------------------------------------
+
+This token processor allows to define macros and paste them as tokens directly
+into the place of use. You can optionally use parameters to further customize
+the pasted tokens.
+
+There is also a support for temporary names unique to each invocation of the
+macro. Macros (including the declarations) are processed recursivelly.
+
+An extra semicolon in macro invocation is removed if the macro is either empty
+or ends with '}' or ';' (can be disabled by putting '!' after the macro name).
+Parameters can be marked with '&' to document they're output parameters, it is
+then required to use it also at the invocation.
+
+Defined macros can be also scoped, they're contained within blocks defined
+by '{' and '}' symbols. Macros can be private to a script (by using @ before
+the name).
+
+You can also define a top-level function (including from inside a macro)
+using "macro function" keywords.
+
+Example:
+
+  use "macros";
+
+  macro some_macro(a, b, c, &out)
+  {
+      var $tmp_name = a, $other = c, out;
+      var prefix_#b, b#_suffix;
+      log({"param=", $tmp_name});
+  }
+
+  some_macro("test", aaa, 1, &bbb);
+
+This is expanded to:
+
+  var _macro_tmp_1_0 = "test", _macro_tmp_1_1 = 1, bbb;
+  var prefix_aaa, aaa_suffix;
+  log({"param=", _macro_tmp_1_0});
+
+----------------------------------------------------------------------------*/
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	@MACRO_num_params,
+	@MACRO_output_mask,
+	@MACRO_tokens,
+	@MACRO_src,
+	@MACRO_table,
+	@MACRO_raw,
+	@MACRO_SIZE
+};
+
+const {
+	@FLAG_PASTE      = 0x40000000,
+	@FLAG_TMP_NAME   = 0x20000000,
+	@FLAG_VALUE_MASK = 0x1FFFFFFF
+};
+
+var @macros;
+var @temp_name_cnt;
+
+function process_tokens(fname, tokens, src)
+{
+	if (!macros) {
+		macros = {};
+	}
+	var cur_macros = {};
+	macros{fname} = cur_macros;
+
+	var level = 0;
+	var scoped = [];
+	
+	var tokens_stack = [];
+	var new_tokens = [];
+	var global_tokens = tokens;
+	var tokens_start = 0;
+	var i = 0;
+	
+	for (;;) {
+		for (; i<length(tokens); i+=TOK_SIZE) {
+			switch (tokens[i]) {
+				case '{':
+					level++;
+					continue;
+
+				case '}': {
+					var pos = length(scoped) - 3;
+					if (pos >= 0) {
+						do {
+							if (scoped[pos+0] < level) break;
+							cur_macros{scoped[pos+1]} = scoped[pos+2];
+							pos -= 3;
+						}
+						while (pos >= 0);
+						array_set_length(scoped, pos+3);
+					}
+					level--;
+					continue;
+				}
+
+				case TOK_IDENT: {
+					var off = tokens[i+TOK_off];
+					var len = tokens[i+TOK_len];
+					var first = src[off];
+					if (len == 5 && first == 'm' && src[++off] == 'a' && src[++off] == 'c' && src[++off] == 'r' && src[++off] == 'o') {
+						if (i > tokens_start) {
+							array_append(new_tokens, tokens, tokens_start, i-tokens_start);
+						}
+						var is_scoped = (level > 0);
+						i += TOK_SIZE;
+						if (tokens[i] == '@') {
+							is_scoped = true;
+						}
+						else {
+							i -= TOK_SIZE;
+						}
+						if (is_scoped) {
+							scoped[] = level;
+						}
+						i = define_macro(tokens, src, i += TOK_SIZE, cur_macros, is_scoped? scoped : null, global_tokens);
+						tokens_start = i;
+						i -= TOK_SIZE;
+						continue;
+					}
+					else if (hash_contains(cur_macros, first | (len << 8))) {
+						var value = array_extract(src, off, len);
+						var macro = hash_get(cur_macros, value, null);
+						if (macro) {
+							if (i > tokens_start) {
+								array_append(new_tokens, tokens, tokens_start, i-tokens_start);
+							}
+							var replaced_tokens = [];
+							i = replace_macro(tokens, replaced_tokens, src, macro, i);
+							tokens_stack[] = tokens;
+							tokens_stack[] = i;
+							tokens = replaced_tokens;
+							tokens_start = 0;
+							i = -TOK_SIZE;
+							continue;
+						}
+					}
+					continue;
+				}
+
+				case KW_IMPORT: {
+					i += TOK_SIZE;
+					if (tokens[i] != TOK_STRING) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": expected import name"});
+					}
+					var value = array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+					var import_fname = {""};
+					script_query(token_parse_string(value), import_fname, null, null, null);
+					var import_macros = hash_get(macros, import_fname, null);
+					if (import_macros) {
+						for (var j=0; j<length(import_macros); j++) {
+							var (k, v) = hash_entry(import_macros, j);
+							if (!hash_contains(cur_macros, k)) {
+								cur_macros{k} = v;
+							}
+						}
+					}
+					continue;
+				}
+			}
+		}
+
+		if (i > tokens_start) {
+			array_append(new_tokens, tokens, tokens_start, i-tokens_start);
+		}
+
+		var off = length(tokens_stack)-2;
+		if (off >= 0) {
+			tokens = tokens_stack[off+0];
+			i = tokens_stack[off+1];
+			array_set_length(tokens_stack, off);
+			tokens_start = i;
+			continue;
+		}
+		break;
+	}
+
+	for (var pos=length(scoped)-3; pos>=0; pos-=3) {
+		cur_macros{scoped[pos+1]} = scoped[pos+2];
+	}
+
+	array_replace_range(tokens, 0, length(tokens), new_tokens);
+}
+
+function @define_macro(tokens, src, off, cur_macros, scoped, global_tokens)
+{
+	if (tokens[off] == KW_FUNCTION) {
+		var start_off = off;
+		off += TOK_SIZE;
+		if (off >= length(tokens)) {
+			off -= TOK_SIZE;
+			return 0, error({script_line(tokens[off+TOK_line]), ": unexpected EOF"});
+		}
+		var level = 0, end = false;
+		while (off < length(tokens)) {
+			switch (tokens[off]) {
+				case '{':
+					if (level == 0) {
+						end = true;
+						break;
+					}
+					// fallthrough
+				case '(', '[':
+					level++;
+					break;
+				case '}', ')', ']':
+					level--;
+					break;
+			}
+			if (end) break;
+			off += TOK_SIZE;
+		}
+		if (off >= length(tokens)) {
+			off -= TOK_SIZE;
+			return 0, error({script_line(tokens[off+TOK_line]), ": unexpected EOF"});
+		}
+		level = 0;
+		while (off < length(tokens)) {
+			switch (tokens[off]) {
+				case '{', '(', '[':
+					level++;
+					break;
+				case '}', ')', ']':
+					level--;
+					break;
+			}
+			if (level == 0) break;
+			off += TOK_SIZE;
+		}
+		if (off >= length(tokens)) {
+			off -= TOK_SIZE;
+			return 0, error({script_line(tokens[off+TOK_line]), ": unexpected EOF"});
+		}
+		if (tokens[off] != '}') {
+			return 0, error({script_line(tokens[off+TOK_line]), ": expected '}'"});
+		}
+		var func_tokens = array_extract(tokens, start_off, off+TOK_SIZE-start_off);
+		array_append(global_tokens, func_tokens);
+		return off + TOK_SIZE;
+	}
+
+	if (tokens[off] != TOK_IDENT) {
+		return 0, error({script_line(tokens[off+TOK_line]), ": expected macro name"});
+	}
+
+	var name = array_extract(src, tokens[off+TOK_off], tokens[off+TOK_len]);
+
+	var raw = false;
+	off += TOK_SIZE;
+	if (tokens[off] == '!') {
+		raw = true;
+		off += TOK_SIZE;
+	}
+
+	var params = null;
+	var output_mask = 0;
+
+	if (tokens[off] == '(') {
+		params = {};
+
+		off += TOK_SIZE;
+		if (tokens[off] != ')') {
+			for (;;) {
+				if (tokens[off] == '&') {
+					var num = length(params);
+					if (num >= 32) {
+						return 0, error({script_line(tokens[off+TOK_line]), ": output parameter can be at most at the 32th position"});
+					}
+					output_mask |= 1 << num;
+					off += TOK_SIZE;
+				}
+				if (tokens[off] != TOK_IDENT) {
+					return 0, error({script_line(tokens[off+TOK_line]), ": expected parameter name or ')'"});
+				}
+				var param_name = array_extract(src, tokens[off+TOK_off], tokens[off+TOK_len]);
+				params{param_name} = length(params);
+
+				off += TOK_SIZE;
+				var symbol = tokens[off];
+				if (symbol == ',') {
+					off += TOK_SIZE;
+					continue;
+				}
+				if (symbol == ')') {
+					off += TOK_SIZE;
+					break;
+				}
+				return 0, error({script_line(tokens[off+TOK_line]), ": expected ',' or ')'"});
+			}
+		}
+		else {
+			off += TOK_SIZE;
+		}
+	}
+
+	if (tokens[off] != '{') {
+		return 0, error({script_line(tokens[off+TOK_line]), ": expected '{'"});
+	}
+	off += TOK_SIZE;
+
+	var level = 1;
+	var macro_tokens = [];
+	var macro_src = {""};
+	var macro_table = [];
+	var last = off;
+	var paste_flag = 0, paste_flag2 = 0;
+	var tmp_names = {};
+
+	while (off < length(tokens)) {
+		switch (tokens[off]) {
+			case '{', '(', '[':
+				level++;
+				break;
+
+			case '}', ')', ']':
+				level--;
+				break;
+
+			case '$': {
+				if (off > last) {
+					macro_table[] = -((off - last) | paste_flag2);
+					paste_flag2 = 0;
+				}
+				if ((off += TOK_SIZE) >= length(tokens) || tokens[off] != TOK_IDENT) {
+					return 0, error({script_line(tokens[off-TOK_SIZE+TOK_line]), ": expected temporary variable name"});
+				}
+				var tmp_name = array_extract(src, tokens[off+TOK_off], tokens[off+TOK_len]);
+				var num = hash_get(tmp_names, tmp_name, -1);
+				if (num < 0) {
+					num = length(tmp_names);
+					tmp_names{tmp_name} = num;
+				}
+				macro_table[] = num | FLAG_TMP_NAME;
+				off += TOK_SIZE;
+				last = off;
+				continue;
+			}
+
+			case '#':
+				if (off == 0) {
+					return 0, error({script_line(tokens[off+TOK_line]), ": macro can't start with paste operator"});
+				}
+				if (off == last) {
+					paste_flag2 = FLAG_PASTE;
+					off += TOK_SIZE;
+					last += TOK_SIZE;
+					continue;
+				}
+
+				if ((off += TOK_SIZE) >= length(tokens) || tokens[off] != TOK_IDENT) {
+					return 0, error({script_line(tokens[off-TOK_SIZE+TOK_line]), ": expected macro parameter"});
+				}
+				paste_flag = FLAG_PASTE;
+
+				// fallthrough
+
+			case TOK_IDENT: {
+				var value = array_extract(src, tokens[off+TOK_off], tokens[off+TOK_len]);
+				var param = hash_get(params, value, -1);
+				if (param >= 0) {
+					if (paste_flag) {
+						off -= TOK_SIZE;
+					}
+					if (off > last) {
+						macro_table[] = -((off - last) | paste_flag2);
+						paste_flag2 = 0;
+					}
+					if (paste_flag) {
+						off += TOK_SIZE;
+					}
+					macro_table[] = param | paste_flag;
+					paste_flag = 0;
+					off += TOK_SIZE;
+					last = off;
+					continue;
+				}
+				else if (paste_flag) {
+					return 0, error({script_line(tokens[off+TOK_line]), ": expected macro parameter"});
+				}
+				break;
+			}
+		}
+		
+		if (level == 0) break;
+
+		macro_tokens[] = tokens[off++];
+		var token_off = tokens[off++];
+		var src_pos = length(macro_src);
+		macro_tokens[] = src_pos;
+		var token_len = tokens[off++];
+		macro_tokens[] = token_len;
+		macro_tokens[] = tokens[off++];
+		array_set_length(macro_src, src_pos + token_len);
+		array_copy(macro_src, src_pos, src, token_off, token_len);
+	}
+
+	if (off > last) {
+		macro_table[] = -((off - last) | paste_flag2);
+	}
+
+	var macro = object_create(MACRO_SIZE);
+	macro->MACRO_num_params = params? length(params) : -1;
+	macro->MACRO_output_mask = output_mask;
+	macro->MACRO_tokens = macro_tokens;
+	macro->MACRO_src = macro_src;
+	macro->MACRO_table = macro_table;
+	macro->MACRO_raw = raw;
+	if (scoped) {
+		scoped[] = name;
+		scoped[] = hash_get(cur_macros, name, null);
+	}
+	cur_macros{name} = macro;
+	cur_macros{name[0] | (length(name) << 8)} = macro;
+
+	return off + TOK_SIZE;
+}
+
+function @replace_macro(tokens, new_tokens, src, macro, off)
+{
+	var start = off;
+	var line = tokens[off+TOK_line];
+
+	var params = null;
+	var output_mask = macro->MACRO_output_mask;
+	temp_name_cnt++;
+
+	if (macro->MACRO_num_params >= 0) {
+		params = [];
+
+		off += TOK_SIZE;
+		if (tokens[off] != '(') {
+			return 0, error({script_line(tokens[off+TOK_line]), ": expected '('"});
+		}
+
+		off += TOK_SIZE;
+		for (var i=0; i<macro->MACRO_num_params; i++) {
+			if (i > 0) {
+				if (tokens[off] != ',') {
+					return 0, error({script_line(tokens[off+TOK_line]), ": expected ','"});
+				}
+				off += TOK_SIZE;
+			}
+			if (i < 32 && (output_mask & (1 << i))) {
+				if (tokens[off] != '&') {
+					return 0, error({script_line(tokens[off+TOK_line]), ": expected '&' to document output parameter"});
+				}
+				off += TOK_SIZE;
+			}
+			var param_start = off;
+			off = find_param_end(tokens, src, off);
+			params[] = param_start;
+			params[] = off - param_start;
+		}
+
+		if (tokens[off] != ')') {
+			return 0, error({script_line(tokens[off+TOK_line]), ": expected ')'"});
+		}
+	}
+
+	var end = off + TOK_SIZE;
+
+	var macro_tokens = macro->MACRO_tokens;
+	var table = macro->MACRO_table;
+	var idx = 0;
+	
+	var src_off = length(src);
+	array_append(src, macro->MACRO_src);
+
+	for (var i=0; i<length(table); i++) {
+		var data = table[i];
+		if (data < 0) {
+			var len = (-data) & FLAG_VALUE_MASK;
+			if ((-data) & FLAG_PASTE) {
+				var last_pos = length(new_tokens) - TOK_SIZE;
+				var tmp_off = length(src);
+				var before_len = new_tokens[last_pos+TOK_len];
+				var paste_len = macro_tokens[idx+TOK_len];
+				var total_len = before_len + paste_len;
+				array_set_length(src, tmp_off + total_len);
+				array_copy(src, tmp_off, src, new_tokens[last_pos+TOK_off], before_len);
+				array_copy(src, tmp_off + before_len, macro->MACRO_src, macro_tokens[idx+TOK_off], paste_len);
+				new_tokens[last_pos+TOK_off] = tmp_off;
+				new_tokens[last_pos+TOK_len] = total_len;
+				idx += TOK_SIZE;
+				len -= TOK_SIZE;
+			}
+			for (var j=len/4; j; j--) {
+				new_tokens[] = macro_tokens[idx++];
+				new_tokens[] = macro_tokens[idx++] + src_off;
+				new_tokens[] = macro_tokens[idx++];
+				new_tokens[] = line;
+				idx++;
+			}
+		}
+		else {
+			if (data & FLAG_TMP_NAME) {
+				var name = {"_macro_tmp_", temp_name_cnt, "_", data & FLAG_VALUE_MASK};
+				var tmp_off = length(src);
+				array_append(src, name);
+				new_tokens[] = TOK_IDENT;
+				new_tokens[] = tmp_off;
+				new_tokens[] = length(name);
+				new_tokens[] = line;
+				continue;
+			}
+			
+			var param_num = data & FLAG_VALUE_MASK;
+			var param_off = params[param_num*2+0];
+			var param_len = params[param_num*2+1];
+
+			if (data & FLAG_PASTE) {
+				if (param_len != TOK_SIZE) {
+					return 0, error({script_line(line), ": only single tokens can be pasted"});
+				}
+				var last_pos = length(new_tokens) - TOK_SIZE;
+				var tmp_off = length(src);
+				var before_len = new_tokens[last_pos+TOK_len];
+				var paste_len = tokens[param_off+TOK_len];
+				var total_len = before_len + paste_len;
+				array_set_length(src, tmp_off + total_len);
+				array_copy(src, tmp_off, src, new_tokens[last_pos+TOK_off], before_len);
+				array_copy(src, tmp_off + before_len, src, tokens[param_off+TOK_off], paste_len);
+				new_tokens[last_pos+TOK_off] = tmp_off;
+				new_tokens[last_pos+TOK_len] = total_len;
+				continue;
+			}
+
+			array_append(new_tokens, tokens, param_off, param_len);
+		}
+	}
+
+	if (!macro->MACRO_raw) {
+		if (end < length(tokens) && tokens[end] == ';') {
+			var last_off = length(new_tokens) - TOK_SIZE;
+			if (last_off >= 0) {
+				switch (new_tokens[last_off]) {
+					case ';', '}':
+						end += TOK_SIZE;
+						break;
+				}
+			}
+			else {
+				end += TOK_SIZE;
+			}
+		}
+	}
+
+	return end;
+}
+
+function @find_param_end(tokens, src, off)
+{
+	var level = 0;
+	for (; off < length(tokens); off += TOK_SIZE) {
+		switch (tokens[off]) {
+			case '{', '(', '[':
+				level++;
+				break;
+			case '}', ']':
+				level--;
+				break;
+			case ')':
+				if (level == 0) return off;
+				level--;
+				break;
+			case ',':
+				if (level == 0) return off;
+				break;
+		}
+	}
+	off -= TOK_SIZE;
+	return 0, error({script_line(tokens[off+TOK_line]), ": unexpected EOF"});
+}

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/async";</code>
+</p>
+
+<h2>AsyncStream class</h2>
+
+<p>
+Asynchronous stream.
+</p>
+
+<p>
+Subclasses:
+<a href="async_tcp_connection.html">AsyncTCPConnection</a>
+</p>
+
+<h3 id="init">Initialization</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(): AsyncStream</code></dt>
+	<dd>
+		Creates a new instance of AsyncStream class.
+	</dd>
+</dl>
+
+<h3 id="interface">Stream interface</h3>
+
+<dl>
+	<dt><code>virtual function <b>read</b>(buf: Byte[], off: Integer, len: Integer, callback, data)</code></dt>
+	<dd>
+		Initiates reading to given buffer. Once finished the callback is called. The callback
+		must have this signature:<br>
+		<code>function <b>callback</b>(data, read: Integer)</code><br>
+		The read parameter determines how many bytes were actually read. If it's zero the stream was
+		closed. Negative value means error.
+	</dd>
+	<dt><code>virtual function <b>write</b>(buf: Byte[], off: Integer, len: Integer, callback, data)</code></dt>
+	<dd>
+		Initiates writing from given buffer. Once finished the callback is called. The callback
+		must have this signature:<br>
+		<code>function <b>callback</b>(data, written: Integer)</code><br>
+		The written parameter determines how many bytes were actually written. Negative value means error.
+	</dd>
+	<dt><code>virtual function <b>close</b>()</code></dt>
+	<dd>
+		Closes the stream.
+	</dd>
+</dl>
+
+</body>
+</html>

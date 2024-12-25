@@ -1,0 +1,444 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/subview";
+import "gui/subview/scrollbar";
+import "gui/event";
+
+const {
+	SCROLL_SHOW_AS_NEEDED,
+	SCROLL_ALWAYS_HORIZONTAL,
+	SCROLL_ALWAYS_VERTICAL,
+	SCROLL_ALWAYS_BOTH
+};
+
+const {
+	@FLAG_HORIZ_VISIBLE = 0x01,
+	@FLAG_VERT_VISIBLE  = 0x02
+};
+
+class SubScrollView: SubView
+{
+	var @marker;
+	var @area: SubView;
+	var @content: SubView;
+	var @horiz: SubScrollBar;
+	var @vert: SubScrollBar;
+	var @content_width: Integer;
+	var @content_height: Integer;
+	var @visibility: Integer;
+	var @border: Integer[];
+	var @ignore_scroll_notify: Boolean;
+
+	function @marker() {}
+
+	constructor create(content: SubView)
+	{
+		this.content = content;
+		marker = SubScrollView::marker#1;
+		border = [0, 0, 0, 0];
+		content.set_attribute(SubScrollView::marker#1, this);
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= SubScrollView::SIZE && (obj as SubScrollView).marker === SubScrollView::marker#1;
+	}
+
+	static function get_scroll_view(view: SubView): SubScrollView
+	{
+		var scroll = view.get_attribute(SubScrollView::marker#1) as SubScrollView;
+		if (scroll) {
+			scroll.get_area();
+		}
+
+		var parent = view.get_parent();
+		if (!parent) return null;
+		parent = parent.get_parent();
+		if (is_instance(parent)) {
+			return parent as SubScrollView;
+		}
+		return null;
+	}
+
+	function set_border(left: Integer, top: Integer, right: Integer, bottom: Integer)
+	{
+		border[0] = left;
+		border[1] = top;
+		border[2] = right;
+		border[3] = bottom;
+		handle_resize();
+		repaint();
+	}
+
+	function get_border(): Integer[]
+	{
+		return clone(border);
+	}
+
+	function get_area(): SubView
+	{
+		if (!area) {
+			area = create_area();
+			area.add(content);
+			add(area);
+			content.set_attribute(SubScrollView::marker#1, null);
+		}
+		return area;
+	}
+
+	function get_content(): SubView
+	{
+		return content;
+	}
+
+	function get_horizontal_scrollbar(): SubScrollBar
+	{
+		return horiz;
+	}
+
+	function get_vertical_scrollbar(): SubScrollBar
+	{
+		return vert;
+	}
+
+	function set_scrollbar_visibility(visibility: Integer)
+	{
+		this.visibility = visibility;
+		handle_resize();
+	}
+
+	function get_scrollbar_visibility(): Integer
+	{
+		return visibility;
+	}
+
+	function set_content_size(width: Integer, height: Integer)
+	{
+		get_area();
+
+		var scale = get_scale();
+		var view_width = get_width() - border[0] - border[2];
+		var view_height = get_height() - border[1] - border[3];
+
+		content_width = width;
+		content_height = height;
+
+		var show_horiz = false;
+		var show_vert = false;
+
+		if (visibility == SCROLL_ALWAYS_HORIZONTAL || visibility == SCROLL_ALWAYS_BOTH) {
+			show_horiz = true;
+		}
+		if (visibility == SCROLL_ALWAYS_VERTICAL || visibility == SCROLL_ALWAYS_BOTH) {
+			show_vert = true;
+		}
+
+		if (content_height > view_height) {
+			show_vert = true;
+			set_vert_scrollbar(true);
+			var vert_size = vert.get_default_size(scale);
+			if (content_width > view_width - vert_size) {
+				show_horiz = true;
+			}
+		}
+		else if (content_width > view_width) {
+			show_horiz = true;
+			set_horiz_scrollbar(true);
+			var horiz_size = horiz.get_default_size(scale);
+			if (content_height > view_height - horiz_size) {
+				show_vert = true;
+			}
+		}
+
+		var notify = false;
+		set_horiz_scrollbar(show_horiz);
+		set_vert_scrollbar(show_vert);
+		if (show_horiz) {
+			var vert_size = vert? vert.get_default_size(scale) : 0;
+			var page_size = max(0, view_width - vert_size);
+			horiz.set_state(-content.get_x(), max(0, content_width - page_size), page_size);
+			if (-content.get_x() > horiz.get_maximum()) {
+				content.set_rect(-horiz.get_maximum(), content.get_y(), content.get_width(), content.get_height());
+				notify = true;
+			}
+		}
+		else {
+			if (content.get_x() < 0) {
+				content.set_rect(0, content.get_y(), content.get_width(), content.get_height());
+				notify = true;
+			}
+		}
+		if (show_vert) {
+			var horiz_size = horiz? horiz.get_default_size(scale) : 0;
+			var page_size = max(0, view_height - horiz_size);
+			vert.set_state(-content.get_y(), max(0, content_height - page_size), page_size);
+			if (-content.get_y() > vert.get_maximum()) {
+				content.set_rect(content.get_x(), -vert.get_maximum(), content.get_width(), content.get_height());
+				notify = true;
+			}
+		}
+		else {
+			if (content.get_y() < 0) {
+				content.set_rect(content.get_x(), 0, content.get_width(), content.get_height());
+				notify = true;
+			}
+		}
+		layout();
+		if (notify) {
+			handle_scroll_change();
+		}
+	}
+
+	function @layout()
+	{
+		var width = get_width() - border[0] - border[2];
+		var height = get_height() - border[1] - border[3];
+		var scale = get_scale();
+
+		var horiz_size = horiz? horiz.get_default_size(scale) : 0;
+		var vert_size = vert? vert.get_default_size(scale) : 0;
+
+		if (horiz) {
+			var y1 = border[1] + max(0, height - horiz_size);
+			var y2 = border[1] + height;
+			horiz.set_rect(border[0], y1, width - vert_size, y2-y1);
+		}
+		if (vert) {
+			var x1 = border[0] + max(0, width - vert_size);
+			var x2 = border[0] + width;
+			vert.set_rect(x1, border[1], x2-x1, height - horiz_size);
+		}
+
+		area.set_rect(border[0], border[1], width - vert_size, height - horiz_size);
+		content.set_rect(content.get_x(), content.get_y(), max(content_width, width - vert_size), max(content_height, height - horiz_size));
+	}
+
+	function @handle_horiz_change()
+	{
+		if (!ignore_scroll_notify) {
+			handle_before_scroll_change();
+		}
+		var rect = content.get_rect();
+		rect.translate((-horiz.get_value()) - rect.x1, 0);
+		content.set_rect(rect);
+		if (!ignore_scroll_notify) {
+			handle_scroll_change();
+		}
+	}
+
+	function @handle_vert_change()
+	{
+		if (!ignore_scroll_notify) {
+			handle_before_scroll_change();
+		}
+		var rect = content.get_rect();
+		rect.translate(0, (-vert.get_value()) - rect.y1);
+		content.set_rect(rect);
+		if (!ignore_scroll_notify) {
+			handle_scroll_change();
+		}
+	}
+
+	function get_scroll_position(): Integer[]
+	{
+		return [-content.get_x(), -content.get_y()];
+	}
+
+	function set_scroll_position(x: Integer, y: Integer)
+	{
+		handle_before_scroll_change();
+		ignore_scroll_notify = true;
+		if (horiz) {
+			var (r, e) = horiz.set_value(x);
+			if (e) {
+				ignore_scroll_notify = false;
+				throw e;
+			}
+		}
+		if (vert) {
+			var (r, e) = vert.set_value(y);
+			if (e) {
+				ignore_scroll_notify = false;
+				throw e;
+			}
+		}
+		ignore_scroll_notify = false;
+		handle_scroll_change();
+	}
+
+	function scroll_to_visible(rect: Rect)
+	{
+		scroll_to_visible(rect.x1, rect.y1, rect.get_width(), rect.get_height());
+	}
+
+	function scroll_to_visible(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		if (width <= 0 || height <= 0) return;
+
+		var rect = area.get_local_rect();
+		if (!rect.is_valid()) return;
+		rect.translate(-content.get_x(), -content.get_y());
+
+		if (x+width > rect.x2) {
+			if (horiz) {
+				horiz.set_value(x+width-rect.get_width());
+			}
+		}
+		else if (x < rect.x1) {
+			if (horiz) {
+				horiz.set_value(x);
+			}
+		}
+
+		if (y+height > rect.y2) {
+			if (vert) {
+				vert.set_value(y+height-rect.get_height());
+			}
+		}
+		else if (y < rect.y1) {
+			if (vert) {
+				vert.set_value(y);
+			}
+		}
+	}
+
+	override function handle_resize()
+	{
+		set_content_size(content_width, content_height);
+	}
+
+	virtual function create_area(): SubView
+	{
+		return SubView::create();
+	}
+
+	virtual function create_scrollbar(type: Integer): SubScrollBar
+	{
+		return SubScrollBar::create(type);
+	}
+
+	virtual function handle_before_scroll_change()
+	{
+	}
+
+	virtual function handle_scroll_change()
+	{
+	}
+
+	function @set_horiz_scrollbar(active: Boolean)
+	{
+		if (!horiz && active) {
+			horiz = create_scrollbar(SCROLL_HORIZ);
+			horiz.set_increment(20);
+			horiz.set_change_action(SubScrollView::handle_horiz_change#1, this);
+			add(horiz);
+		}
+		else if ((horiz != null) && !active) { //XXX
+			remove(horiz);
+			horiz = null;
+		}
+	}
+
+	function @set_vert_scrollbar(active: Boolean)
+	{
+		if (!vert && active) {
+			vert = create_scrollbar(SCROLL_VERT);
+			vert.set_increment(20);
+			vert.set_change_action(SubScrollView::handle_vert_change#1, this);
+			add(vert);
+		}
+		else if ((vert != null) && !active) { //XXX
+			remove(vert);
+			vert = null;
+		}
+	}
+
+	function get_view_area(): Rect
+	{
+		return area.get_rect();
+	}
+
+	function get_view_area(horiz_scrollbar: Boolean, vert_scrollbar: Boolean): Rect
+	{
+		var scale = get_scale();
+		var horiz_size = 0;
+		var vert_size = 0;
+
+		if (horiz_scrollbar) {
+			if (horiz) {
+				horiz_size = horiz.get_default_size(scale);
+			}
+			else {
+				horiz_size = create_scrollbar(SCROLL_HORIZ).get_default_size(scale);
+			}
+		}
+		if (vert_scrollbar) {
+			if (vert) {
+				vert_size = vert.get_default_size(scale);
+			}
+			else {
+				vert_size = create_scrollbar(SCROLL_VERT).get_default_size(scale);
+			}
+		}
+
+		return Rect(border[0], border[1], get_width() - vert_size - border[0] - border[2], get_height() - horiz_size - border[1] - border[3]);
+	}
+	
+	override function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_WHEEL) {
+			var scroll_x = 0, scroll_y = 0;
+			if (event.has_scroll_data()) {
+				scroll_x = event.get_scroll_x();
+				scroll_y = event.get_scroll_y();
+			}
+			else {
+				if ((event.get_modifiers() & MOD_SHIFT) != 0) {
+					scroll_x = iround(event.get_wheel_y() * 64.0 * get_scale());
+				}
+				else {
+					scroll_x = iround(event.get_wheel_x() * 64.0 * get_scale());
+					scroll_y = iround(event.get_wheel_y() * 64.0 * get_scale());
+				}
+			}
+			if (horiz) {
+				var prev = horiz.get_value();
+				horiz.set_value(prev + scroll_x);
+				if (horiz.get_value() != prev) {
+					return true;
+				}
+			}
+			if (vert) {
+				var prev = vert.get_value();
+				vert.set_value(prev + scroll_y);
+				if (vert.get_value() != prev) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+}

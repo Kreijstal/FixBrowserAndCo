@@ -1,0 +1,1221 @@
+<html>
+<head>
+	<title></title>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<style>
+		html, body {
+			margin: 0;
+			padding: 0;
+		}
+
+		html, body {
+			background-color: #000;
+		}
+
+		#content {
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			background-color: #FFF;
+			position: relative;
+		}
+
+		body {
+			touch-action: none;
+		}
+
+		@supports(padding:max(0px)) {
+			:root {
+				--safe-left: env(safe-area-inset-left);
+				--safe-top: env(safe-area-inset-top);
+				--safe-right: env(safe-area-inset-right);
+				--safe-bottom: env(safe-area-inset-bottom);
+			}
+		}
+	</style>
+<script>
+function loadWASM() {
+	var xhr = new XMLHttpRequest();
+	xhr.open("GET", "data:application/wasm;base64,@@WASM_DATA@@");
+	xhr.responseType = "arraybuffer";
+	xhr.send();
+
+	xhr.onload = function() {
+		var memory = null;
+		var mem8 = null;
+		var mem16 = null;
+		var mem32 = null;
+		var memF32 = null;
+		var exports = null;
+		var table = null;
+		var global = {};
+		var funcs = [null];
+		var tmpBuf = new ArrayBuffer(8);
+		var tmpInt32 = new Int32Array(tmpBuf);
+		var tmpFloat64 = new Float64Array(tmpBuf);
+		var suspend_ptr = 0;
+		var suspend_ret_type = -1;
+		var cached_imageData = null;
+		var cached_pixels = 0;
+		var cached_width = 0;
+		var cached_height = 0;
+		var images = [null];
+		var layers = [];
+		var layer_ids = [null];
+		var current_ctx = null;
+		var current_off_x = 0;
+		var current_off_y = 0;
+		var current_clip_x1 = 0;
+		var current_clip_y1 = 0;
+		var current_clip_x2 = 0;
+		var current_clip_y2 = 0;
+		var textarea = null;
+		var lastClickCount = 1;
+		var actualClickCount = 1;
+		var wheelMinStepX = 0;
+		var wheelMinStepY = 0;
+
+		function malloc(size) {
+			return exports.malloc(size);
+		}
+
+		function calloc(nmemb, size) {
+			return exports.calloc(nmemb, size);
+		}
+
+		function realloc(ptr, size) {
+			return exports.realloc(ptr, size);
+		}
+
+		function free(ptr) {
+			exports.free(ptr);
+		}
+
+		function getDouble(ptr) {
+			tmpInt32[0] = mem32[ptr>>2];
+			tmpInt32[1] = mem32[(ptr+4)>>2];
+			return tmpFloat64[0];
+		}
+
+		function setDouble(ptr, value) {
+			tmpFloat64[0] = value;
+			mem32[ptr>>2] = tmpInt32[0];
+			mem32[(ptr+4)>>2] = tmpInt32[1];
+		}
+
+		function getString(ptr) {
+			var str = mem32[ptr>>2];
+			if (str == 0) {
+				return null;
+			}
+			return new TextDecoder().decode(new Uint8Array(memory.buffer, str, mem32[(ptr+4)>>2]));
+		}
+
+		function setString(ptr, value) {
+			if (!value) {
+				mem32[ptr>>2] = 0;
+				return;
+			}
+			var arr = new TextEncoder().encode(value);
+			var str = exports.malloc(arr.length);
+			if (str == 0) {
+				throw new Error("can't allocate memory");
+			}
+			mem8.set(arr, str);
+			mem32[ptr>>2] = str;
+			mem32[(ptr+4)>>2] = arr.length;
+		}
+
+		function suspend() {
+			var ptr = suspend_ptr;
+			if (ptr == 0) {
+				throw new Error("can't suspend");
+			}
+			var idx = exports.js_suspend();
+			if (idx == 0) {
+				throw new Error("can't suspend");
+			}
+			suspend_ptr = 0;
+			switch (suspend_ret_type) {
+				case 0: return function() { if (exports.js_resume(idx) == 0) throw new Error("can't resume"); };
+				case 1: return function(ret) { mem32[ptr>>2] = ret? 1:0; if (exports.js_resume(idx) == 0) throw new Error("can't resume"); };
+				case 2: return function(ret) { mem32[ptr>>2] = ret; if (exports.js_resume(idx) == 0) throw new Error("can't resume"); };
+				case 3: return function(ret) { memF32[ptr>>2] = ret; if (exports.js_resume(idx) == 0) throw new Error("can't resume"); };
+				case 4: return function(ret) { setDouble(ptr, ret); if (exports.js_resume(idx) == 0) throw new Error("can't resume"); };
+				case 5: return function(ret) { mem32[ptr>>2] = ret; if (exports.js_resume(idx) == 0) throw new Error("can't resume"); };
+				case 6: return function(ret) { setString(ptr, ret); if (exports.js_resume(idx) == 0) throw new Error("can't resume"); };
+			}
+			throw new Error("can't suspend");
+		}
+		
+		function getSafeArea(width, height) {
+			var cstyle = getComputedStyle(document.documentElement);
+			var ratio = window.devicePixelRatio;
+			function getValue(cstyle, name) {
+				var s = cstyle.getPropertyValue("--safe-"+name);
+				if (s.endsWith("px")) {
+					return Math.round(parseFloat(s.substring(0, s.length-2)) * ratio);
+				}
+				return 0;
+			}
+			var ret = [getValue(cstyle, "left"), getValue(cstyle, "top"), getValue(cstyle, "right"), getValue(cstyle, "bottom")];
+			if (width > height) {
+				ret[1] = 0;
+				ret[3] = 0;
+			}
+			else if (ret[1] == 0 && ret[3] / ratio <= 20) {
+				ret[3] = 0;
+			}
+			return ret;
+		}
+
+		var Image = function(width, height) {
+			this.canvas = document.createElement("canvas");
+			this.canvas.width = width;
+			this.canvas.height = height;
+			this.ctx = this.canvas.getContext("2d", { "alpha": true });
+			this.patterns = [null, null, null, null];
+		};
+
+		Image.prototype.getPattern = function(type) {
+			var pattern = this.patterns[type];
+			if (!pattern) {
+				var repeat;
+				switch (type) {
+					case 0: repeat = "repeat"; break;
+					case 1: repeat = "repeat-y"; break;
+					case 2: repeat = "repeat-x"; break;
+					case 3: repeat = "no-repeat"; break;
+				}
+				pattern = this.ctx.createPattern(this.canvas, repeat);
+				this.patterns[type] = pattern;
+			}
+			return pattern;
+		};
+
+		var LAYER_SCROLL_X    = 0x01;
+		var LAYER_SCROLL_Y    = 0x02;
+		var LAYER_SCROLL_XY   = 0x03;
+		var LAYER_TRANSLUCENT = 0x04;
+		var LAYER_ACCELERATED = 0x08;
+
+		var Tile = function (div, x, y, width, height, alpha) {
+			this.x = x;
+			this.y = y;
+			this.width = width;
+			this.height = height;
+			this.canvas = document.createElement("canvas");
+			this.canvas.width = width;
+			this.canvas.height = height;
+			var ratio = 1.0 / window.devicePixelRatio;
+			this.canvas.style = "position: absolute; left: "+(x*ratio)+"px; top: "+(y*ratio)+"px; width: "+(width*ratio)+"px; height: "+(height*ratio)+"px";
+			this.ctx = this.canvas.getContext("2d", { "alpha": alpha });
+			div.appendChild(this.canvas);
+			this.ctx.strokeStyle = "#F00";
+			this.ctx.lineWidth = 2;
+			this.ctx.beginPath();
+			this.ctx.moveTo(0, 0);
+			this.ctx.lineTo(width, height);
+			this.ctx.moveTo(width, 0);
+			this.ctx.lineTo(0, height);
+			this.ctx.stroke();
+			this.ctx.beginPath();
+			this.ctx.rect(0, 0, width, height);
+			this.ctx.stroke();
+		};
+
+		Tile.prototype.move = function(x, y) {
+			var ratio = 1.0 / window.devicePixelRatio;
+			this.x = x;
+			this.y = y;
+			this.canvas.style.left = (x*ratio)+"px";
+			this.canvas.style.top = (y*ratio)+"px";
+		}
+
+		Tile.prototype.resize = function(width, height) {
+			this.width = width;
+			this.height = height;
+			this.canvas.width = width;
+			this.canvas.height = height;
+			var ratio = 1.0 / window.devicePixelRatio;
+			this.canvas.style.left = (this.x*ratio)+"px";
+			this.canvas.style.top = (this.y*ratio)+"px";
+			this.canvas.style.width = (width*ratio)+"px";
+			this.canvas.style.height = (height*ratio)+"px";
+			this.ctx.strokeStyle = "#F00";
+			this.ctx.lineWidth = 2;
+			this.ctx.beginPath();
+			this.ctx.moveTo(0, 0);
+			this.ctx.lineTo(width, height);
+			this.ctx.moveTo(width, 0);
+			this.ctx.lineTo(0, height);
+			this.ctx.stroke();
+		};
+
+		var Layer = function (level, x, y, width, height, extra_horiz, extra_vert, tile_size, flags, paint_func) {
+			if ((flags & LAYER_SCROLL_XY) != 0) {
+				var ratio = window.devicePixelRatio;
+				var alt_tile_size = Math.round(tile_size / ratio);
+				for (var i=0; i<=20; i++) {
+					if (alt_tile_size-i >= 32 && (alt_tile_size-i) * ratio == Math.round((alt_tile_size-i) * ratio)) {
+						tile_size = Math.round((alt_tile_size-i) * ratio);
+						break;
+					}
+				}
+			}
+			if (width < 1) width = 1;
+			if (height < 1) height = 1;
+			if (tile_size < 1) tile_size = 1;
+			if (extra_horiz < 0) extra_horiz = 0;
+			if (extra_vert < 0) extra_vert = 0;
+			this.level = level;
+			this.x = x;
+			this.y = y;
+			this.width = width;
+			this.height = height;
+			this.extra_horiz = extra_horiz;
+			this.extra_vert = extra_vert;
+			this.tile_size = tile_size;
+			this.scroll_x = 0;
+			this.scroll_y = 0;
+			this.flags = flags;
+			this.paint_func = paint_func;
+			this.tiles = [];
+			this.tmp_array = [];
+			this.tile_x = 0;
+			this.tile_y = 0;
+			this.tile_w = 0;
+			this.tile_h = 0;
+
+			var ratio = 1.0 / window.devicePixelRatio;
+			this.div = document.createElement("div");
+			this.div.style = "position: absolute; left: "+(x*ratio)+"px; top: "+(y*ratio)+"px; width: "+(width*ratio)+"px; height: "+(height*ratio)+"px; overflow: hidden";
+
+			var alpha = (flags & LAYER_TRANSLUCENT) != 0;
+
+			if ((flags & LAYER_SCROLL_XY) == LAYER_SCROLL_XY) {
+				this.tile_w = Math.max(1, (width + extra_horiz*2 + 2*tile_size - 1) / tile_size)|0;
+				this.tile_h = Math.max(1, (height + extra_vert*2 + 2*tile_size - 1) / tile_size)|0;
+				for (var i=0; i<this.tile_h; i++) {
+					for (var j=0; j<this.tile_w; j++) {
+						this.tiles[i*this.tile_w+j] = new Tile(this.div, j*tile_size, i*tile_size, tile_size, tile_size, alpha);
+					}
+				}
+			}
+			else if ((flags & LAYER_SCROLL_X) != 0) {
+				this.tile_w = Math.max(1, (width + extra_horiz*2 + 2*tile_size - 1) / tile_size)|0;
+				this.tile_h = 1;
+				for (var i=0; i<this.tile_w; i++) {
+					this.tiles[i] = new Tile(this.div, i*tile_size, 0, tile_size, height, alpha);
+				}
+			}
+			else if ((flags & LAYER_SCROLL_Y) != 0) {
+				this.tile_w = 1;
+				this.tile_h = Math.max(1, (height + extra_vert*2 + 2*tile_size - 1) / tile_size)|0;
+				for (var i=0; i<this.tile_h; i++) {
+					this.tiles[i] = new Tile(this.div, 0, i*tile_size, width, tile_size, alpha);
+				}
+			}
+			else {
+				this.tile_w = 1;
+				this.tile_h = 1;
+				this.tiles[0] = new Tile(this.div, 0, 0, width, height, alpha);
+			}
+
+			if (paint_func) {
+				for (var i=0; i<this.tile_h; i++) {
+					for (var j=0; j<this.tile_w; j++) {
+						var tile = this.tiles[i*this.tile_w+j];
+						this.paint_func(tile.ctx, (this.tile_x+j)*tile_size, (this.tile_y+i)*tile_size, tile.width, tile.height);
+					}
+				}
+			}
+
+			var added = false;
+			for (var i=0; i<layers.length; i++) {
+				if (level < layers[i].level) {
+					var ref = layers[i].div;
+					ref.parentNode.insertBefore(this.div, ref);
+					layers.splice(i, 0, this);
+					added = true;
+					break;
+				}
+			}
+			if (!added) {
+				document.getElementById("content").appendChild(this.div);
+				layers.push(this);
+			}
+		};
+
+		Layer.prototype.destroy = function() {
+			this.div.parentNode.removeChild(this.div);
+			this.div = null;
+			this.tiles = null;
+			this.tmp_array = null;
+
+			for (var i=0; i<layers.length; i++) {
+				if (layers[i] === this) {
+					layers.splice(i, 1);
+					break;
+				}
+			}
+		};
+
+		Layer.prototype.move = function(x, y) {
+			var ratio = 1.0 / window.devicePixelRatio;
+			this.x = x;
+			this.y = y;
+			this.div.style.left = (x*ratio)+"px";
+			this.div.style.top = (y*ratio)+"px";
+		};
+
+		Layer.prototype.resize = function(width, height) {
+			if (width < 1) width = 1;
+			if (height < 1) height = 1;
+			if ((this.flags & LAYER_SCROLL_XY) == 0) {
+				this.width = width;
+				this.height = height;
+				var tile = this.tiles[0];
+				tile.resize(width, height);
+				var ratio = 1.0 / window.devicePixelRatio;
+				this.div.style.left = (this.x*ratio)+"px";
+				this.div.style.top = (this.y*ratio)+"px";
+				this.div.style.width = (width*ratio)+"px";
+				this.div.style.height = (height*ratio)+"px";
+				if (this.paint_func) {
+					this.paint_func(tile.ctx, 0, 0, tile.width, tile.height);
+				}
+				return;
+			}
+		};
+
+		Layer.prototype.set_opacity = function(opacity) {
+			this.div.style.opacity = opacity;
+		};
+
+		Layer.prototype.scroll = function(scroll_x, scroll_y) {
+			if ((this.flags & LAYER_SCROLL_X) == 0) {
+				scroll_x = 0;
+			}
+			if ((this.flags & LAYER_SCROLL_Y) == 0) {
+				scroll_y = 0;
+			}
+			if (scroll_x == this.scroll_x && scroll_y == this.scroll_y) {
+				return;
+			}
+			this.scroll_x = scroll_x;
+			this.scroll_y = scroll_y;
+			var tile_size = this.tile_size;
+			var diff_x = (this.tile_w-1) * tile_size - this.width;
+			var diff_y = (this.tile_h-1) * tile_size - this.height;
+			var tile_x = (Math.max(0, scroll_x - this.extra_horiz - diff_x*0.5) / tile_size)|0;
+			var tile_y = (Math.max(0, scroll_y - this.extra_vert - diff_y*0.5) / tile_size)|0;
+			if (tile_x + this.tile_w <= this.tile_x || tile_x >= this.tile_x + this.tile_w || tile_y + this.tile_h <= this.tile_y || tile_y >= this.tile_y + this.tile_h) {
+				if (this.paint_func) {
+					for (var i=0; i<this.tile_h; i++) {
+						for (var j=0; j<this.tile_w; j++) {
+							var tile = this.tiles[i*this.tile_w+j];
+							this.paint_func(tile.ctx, (tile_x+j)*tile_size, (tile_y+i)*tile_size, tile.width, tile.height);
+						}
+					}
+				}
+			}
+			else {
+				var inside_x1 = 0;
+				var inside_y1 = 0;
+				var inside_x2 = this.tile_w;
+				var inside_y2 = this.tile_h;
+
+				var tmp = this.tmp_array;
+				
+				var num = tile_x - this.tile_x;
+				if (num > 0) {
+					for (var i=0; i<this.tile_h; i++) {
+						for (var j=0; j<num; j++) {
+							tmp[j] = this.tiles[i*this.tile_w+j];
+						}
+						for (var j=num; j<this.tile_w; j++) {
+							this.tiles[i*this.tile_w+j-num] = this.tiles[i*this.tile_w+j];
+						}
+						for (var j=0; j<num; j++) {
+							this.tiles[i*this.tile_w+this.tile_w-num+j] = tmp[j];
+						}
+					}
+					inside_x2 -= num;
+				}
+				else if (num < 0) {
+					num = -num;
+					for (var i=0; i<this.tile_h; i++) {
+						for (var j=0; j<num; j++) {
+							tmp[j] = this.tiles[i*this.tile_w+this.tile_w-num+j];
+						}
+						for (var j=this.tile_w-1; j>=num; j--) {
+							this.tiles[i*this.tile_w+j] = this.tiles[i*this.tile_w+j-num];
+						}
+						for (var j=0; j<num; j++) {
+							this.tiles[i*this.tile_w+j] = tmp[j];
+						}
+					}
+					inside_x1 += num;
+				}
+
+				num = tile_y - this.tile_y;
+				if (num > 0) {
+					for (var i=0; i<this.tile_w; i++) {
+						for (var j=0; j<num; j++) {
+							tmp[j] = this.tiles[j*this.tile_w+i];
+						}
+						for (var j=num; j<this.tile_h; j++) {
+							this.tiles[(j-num)*this.tile_w+i] = this.tiles[j*this.tile_w+i];
+						}
+						for (var j=0; j<num; j++) {
+							this.tiles[(this.tile_h-num+j)*this.tile_w+i] = tmp[j];
+						}
+					}
+					inside_y2 -= num;
+				}
+				else if (num < 0) {
+					num = -num;
+					for (var i=0; i<this.tile_w; i++) {
+						for (var j=0; j<num; j++) {
+							tmp[j] = this.tiles[(this.tile_h-num+j)*this.tile_w+i];
+						}
+						for (var j=this.tile_h-1; j>=num; j--) {
+							this.tiles[j*this.tile_w+i] = this.tiles[(j-num)*this.tile_w+i];
+						}
+						for (var j=0; j<num; j++) {
+							this.tiles[j*this.tile_w+i] = tmp[j];
+						}
+					}
+					inside_y1 += num;
+				}
+
+				if (this.paint_func) {
+					for (var i=0; i<inside_y1; i++) {
+						for (var j=0; j<this.tile_w; j++) {
+							var tile = this.tiles[i*this.tile_w+j];
+							this.paint_func(tile.ctx, (tile_x+j)*tile_size, (tile_y+i)*tile_size, tile.width, tile.height);
+						}
+					}
+
+					for (var i=inside_y1; i<inside_y2; i++) {
+						for (var j=0; j<inside_x1; j++) {
+							var tile = this.tiles[i*this.tile_w+j];
+							this.paint_func(tile.ctx, (tile_x+j)*tile_size, (tile_y+i)*tile_size, tile.width, tile.height);
+						}
+						for (var j=inside_x2; j<this.tile_w; j++) {
+							var tile = this.tiles[i*this.tile_w+j];
+							this.paint_func(tile.ctx, (tile_x+j)*tile_size, (tile_y+i)*tile_size, tile.width, tile.height);
+						}
+					}
+
+					for (var i=inside_y2; i<this.tile_h; i++) {
+						for (var j=0; j<this.tile_w; j++) {
+							var tile = this.tiles[i*this.tile_w+j];
+							this.paint_func(tile.ctx, (tile_x+j)*tile_size, (tile_y+i)*tile_size, tile.width, tile.height);
+						}
+					}
+				}
+			}
+
+			this.tile_x = tile_x;
+			this.tile_y = tile_y;
+			for (var i=0; i<this.tile_h; i++) {
+				for (var j=0; j<this.tile_w; j++) {
+					this.tiles[i*this.tile_w+j].move((this.tile_x+j)*tile_size - scroll_x, (this.tile_y+i)*tile_size - scroll_y);
+				}
+			}
+		};
+
+		Layer.prototype.update = function(x, y, width, height, paint_func) {
+			var tile_size = this.tile_size;
+			var off_x = this.tile_x * tile_size;
+			var off_y = this.tile_y * tile_size;
+			
+			var cx1 = x - off_x;
+			var cy1 = y - off_y;
+			var cx2 = cx1 + width;
+			var cy2 = cy1 + height;
+
+			var tx1 = Math.max(0, (cx1 / tile_size)|0);
+			var ty1 = Math.max(0, (cy1 / tile_size)|0);
+			var tx2 = Math.min(((cx2 + tile_size - 1) / tile_size)|0, this.tile_w);
+			var ty2 = Math.min(((cy2 + tile_size - 1) / tile_size)|0, this.tile_h);
+
+			if ((this.flags & LAYER_SCROLL_X) == 0) {
+				tx1 = 0;
+				tx2 = 1;
+			}
+			if ((this.flags & LAYER_SCROLL_Y) == 0) {
+				ty1 = 0;
+				ty2 = 1;
+			}
+
+			for (var i=ty1; i<ty2; i++) {
+				for (var j=tx1; j<tx2; j++) {
+					var tile = this.tiles[i*this.tile_w+j];
+					var ix1 = Math.max(0, cx1 - j*tile_size);
+					var iy1 = Math.max(0, cy1 - i*tile_size);
+					var ix2 = Math.min(cx2 - j*tile_size, tile.width);
+					var iy2 = Math.min(cy2 - i*tile_size, tile.height);
+					var ctx = tile.ctx;
+					ctx.save();
+					ctx.beginPath();
+					ctx.rect(ix1, iy1, ix2-ix1, iy2-iy1);
+					ctx.clip();
+					current_off_x = -(off_x+j*tile_size);
+					current_off_y = -(off_y+i*tile_size);
+					current_clip_x1 = ix1;
+					current_clip_y1 = iy1;
+					current_clip_x2 = ix2;
+					current_clip_y2 = iy2;
+					ctx.translate(current_off_x, current_off_y);
+					paint_func(ctx, off_x+j*tile_size+ix1, off_y+i*tile_size+iy1, ix2-ix1, iy2-iy1);
+					ctx.restore();
+				}
+			}
+		};
+
+		var touchMap = [];
+
+		function createTouchID(identifier) {
+			for (var i=0; i<touchMap.length; i+=2) {
+				if (!touchMap[i]) {
+					touchMap[i] = true;
+					touchMap[i+1] = identifier;
+					return i/2;
+				}
+			}
+			var id = touchMap.length/2;
+			touchMap.push(true);
+			touchMap.push(identifier);
+			return id;
+		}
+
+		function removeTouchID(identifier) {
+			for (var i=0; i<touchMap.length; i+=2) {
+				if (touchMap[i] && touchMap[i+1] == identifier) {
+					touchMap[i] = false;
+					return i/2;
+				}
+			}
+			return -1;
+		}
+
+		function getTouchID(identifier) {
+			for (var i=0; i<touchMap.length; i+=2) {
+				if (touchMap[i] && touchMap[i+1] == identifier) {
+					return i/2;
+				}
+			}
+			return -1;
+		}
+
+		function applyPath(ctx, shape_ptr, shape_end) {
+			ctx.beginPath();
+			shape_ptr >>= 2;
+			shape_end >>= 2;
+			while (shape_ptr < shape_end) {
+				var part = mem32[shape_ptr++];
+				switch (part) {
+					case 0: {
+						var x = memF32[shape_ptr++];
+						var y = memF32[shape_ptr++];
+						ctx.moveTo(x, y);
+						break;
+					}
+					case 1: {
+						var x = memF32[shape_ptr++];
+						var y = memF32[shape_ptr++];
+						ctx.lineTo(x, y);
+						break;
+					}
+					case 2: {
+						var x1 = memF32[shape_ptr++];
+						var y1 = memF32[shape_ptr++];
+						var x2 = memF32[shape_ptr++];
+						var y2 = memF32[shape_ptr++];
+						ctx.quadraticCurveTo(x1, y1, x2, y2);
+						break;
+					}
+					case 3: {
+						var x1 = memF32[shape_ptr++];
+						var y1 = memF32[shape_ptr++];
+						var x2 = memF32[shape_ptr++];
+						var y2 = memF32[shape_ptr++];
+						var x3 = memF32[shape_ptr++];
+						var y3 = memF32[shape_ptr++];
+						ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3);
+						break;
+					}
+					case 4: {
+						ctx.closePath();
+						break;
+					}
+				}
+			}
+		}
+
+		var mobile = navigator.userAgent.match(/Android|iPhone|iPad|Mobile/i) || ((navigator.platform == "MacIntel" || (navigator.vendor && navigator.vendor.match(/Apple/i))) && navigator.maxTouchPoints > 1);
+		var hasFullscreen = "fullscreenElement" in document && "requestFullscreen" in document.body;
+		var autoFullscreen = false;
+
+		var imports = {
+			"env": {
+				"refresh_memory": function () {
+					memory = exports.memory;
+					mem8 = new Uint8Array(memory.buffer);
+					mem16 = new Uint16Array(memory.buffer);
+					mem32 = new Int32Array(memory.buffer);
+					memF32 = new Float32Array(memory.buffer);
+					cached_imageData = null;
+				},
+				"print": function (ptr) {
+					var s = [], len=0;
+					for (;;) {
+						var c = mem8[ptr++];
+						if (c == 0) break;
+						s[len++] = c;
+					}
+					console.log(String.fromCharCode.apply(null, s));
+				},
+				"get_monotonic_time": function() {
+					return performance.now();
+				},
+				"timer_start": function (interval, repeat, func, data) {
+					if (repeat) {
+						return setInterval(function() {
+							table.get(func)(data);
+						}, interval);
+					}
+					else {
+						return setTimeout(function() {
+							table.get(func)(data);
+						}, interval);
+					}
+				},
+				"timer_stop": function (id) {
+					clearTimeout(id);
+				},
+				"js_create": function (ptr, len) {
+					try {
+						var src = new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len));
+						var id = funcs.length;
+						funcs.push(eval("(function (ptr) { "+src+" })"));
+						return id;
+					}
+					catch (e) {
+						var arr = new TextEncoder().encode(e.toString());
+						var str = exports.malloc(arr.length+1);
+						if (str != 0) {
+							mem8.set(arr, str);
+							mem8[str+arr.length] = 0;
+							return -str;
+						}
+						else {
+							throw e;
+						}
+					}
+				},
+				"js_call": function (id, ptr) {
+					try {
+						funcs[id](ptr);
+					}
+					catch (e) {
+						var arr = new TextEncoder().encode(e.toString());
+						var str = exports.malloc(arr.length+1);
+						if (str != 0) {
+							mem8.set(arr, str);
+							mem8[str+arr.length] = 0;
+							return -str;
+						}
+						else {
+							throw e;
+						}
+					}
+				},
+				"set_auto_fullscreen": function(enabled) {
+					autoFullscreen = (enabled != 0);
+				},
+				"create_canvas": function(widthOut, heightOut, scaleOut, safeLeftOut, safeTopOut, safeRightOut, safeBottomOut) {
+					var parent = document.getElementById("content");
+					var width = Math.max(1, Math.max(window.innerWidth, document.documentElement.scrollWidth));
+					var height = Math.max(1, Math.max(window.innerHeight, document.documentElement.scrollHeight));
+					parent.addEventListener("touchstart", function (e) {
+						e.preventDefault();
+						if (autoFullscreen && hasFullscreen) {
+							if (!document.fullscreenElement) {
+								document.body.requestFullscreen({ "navigationUI": "hide" });
+							}
+						}
+						var time = e.timeStamp & 0xFFFFFFFF; 
+						var touches = e.changedTouches;
+						for (var i=0; i<touches.length; i++) {
+							var touch = touches[i];
+							var id = createTouchID(touch.identifier);
+							if (id == -1) continue;
+							exports.touch_start(id, Math.round(touch.pageX * window.devicePixelRatio), Math.round(touch.pageY * window.devicePixelRatio), time);
+						}
+					});
+					parent.addEventListener("touchmove", function (e) {
+						e.preventDefault();
+						var time = e.timeStamp & 0xFFFFFFFF; 
+						var touches = e.changedTouches;
+						for (var i=0; i<touches.length; i++) {
+							var touch = touches[i];
+							var id = getTouchID(touch.identifier);
+							if (id == -1) continue;
+							exports.touch_move(id, Math.round(touch.pageX * window.devicePixelRatio), Math.round(touch.pageY * window.devicePixelRatio), time);
+						}
+					});
+					parent.addEventListener("touchend", function (e) {
+						e.preventDefault();
+						var time = e.timeStamp & 0xFFFFFFFF; 
+						var touches = e.changedTouches;
+						for (var i=0; i<touches.length; i++) {
+							var touch = touches[i];
+							var id = removeTouchID(touch.identifier);
+							if (id == -1) continue;
+							exports.touch_end(id, Math.round(touch.pageX * window.devicePixelRatio), Math.round(touch.pageY * window.devicePixelRatio), 0, time);
+						}
+					});
+					parent.addEventListener("touchcancel", function (e) {
+						e.preventDefault();
+						var time = e.timeStamp & 0xFFFFFFFF; 
+						var touches = e.changedTouches;
+						for (var i=0; i<touches.length; i++) {
+							var touch = touches[i];
+							var id = removeTouchID(touch.identifier);
+							if (id == -1) continue;
+							exports.touch_end(id, Math.round(touch.pageX * window.devicePixelRatio), Math.round(touch.pageY * window.devicePixelRatio), 1, time);
+						}
+					});
+					window.addEventListener("resize", function() {
+						var width = Math.max(1, Math.max(window.innerWidth, document.documentElement.scrollWidth));
+						var height = Math.max(1, Math.max(window.innerHeight, document.documentElement.scrollHeight));
+						var ratio = window.devicePixelRatio;
+						var safeArea = getSafeArea(width, height);
+						exports.canvas_resized(Math.round(width*ratio), Math.round(height*ratio), ratio, safeArea[0], safeArea[1], safeArea[2], safeArea[3]);
+					});
+					if (!mobile) {
+						textarea = document.createElement("textarea");
+						textarea.style = "position: absolute; left: -1000px; top: -1000px; width: 100px; height: 100px; border: none";
+						function getKeyModifiers(e) {
+							var mod = 0;
+							if (e.ctrlKey) mod |= 0x01 | 0x08;
+							if (e.shiftKey) mod |= 0x02;
+							if (e.altKey) mod |= 0x04;
+							return mod;
+						}
+						function getMouseModifiers(e) {
+							var mod = getKeyModifiers(e);
+							if ((e.buttons & 1) != 0) mod |= 0x10;
+							if ((e.buttons & 2) != 0) mod |= 0x40;
+							if ((e.buttons & 4) != 0) mod |= 0x20;
+							return mod;
+						}
+						function getClickCount(e) {
+							var clickCount = Math.max(1, e.detail);
+							if (clickCount != 1) {
+								if (clickCount != lastClickCount) {
+									actualClickCount++;
+								}
+							}
+							else {
+								actualClickCount = 1;
+							}
+							lastClickCount = clickCount;
+							return actualClickCount;
+						}
+						function checkInput() {
+							var input = textarea.value;
+							if (input != "") {
+								textarea.value = "";
+								var str = exports.malloc((input.length+1)*2);
+								if (str == 0) return;
+								var ptr = str >> 1;
+								for (var i=0; i<input.length; i++) {
+									mem16[ptr++] = input.charCodeAt(i);
+								}
+								mem16[ptr] = 0;
+								exports.text_typed(str, 0);
+								exports.free(str);
+							}
+						}
+						window.addEventListener("mousemove", function (e) {
+							exports.mouse_moved(Math.round(e.pageX * window.devicePixelRatio), Math.round(e.pageY * window.devicePixelRatio), getMouseModifiers(e));
+						});
+						window.addEventListener("mousedown", function (e) {
+							e.preventDefault();
+							if (autoFullscreen && hasFullscreen) {
+								if (!document.fullscreenElement) {
+									document.body.requestFullscreen({ "navigationUI": "hide" });
+								}
+							}
+							var button = e.button;
+							if (button >= 0 && button <= 2) {
+								exports.mouse_down(Math.round(e.pageX * window.devicePixelRatio), Math.round(e.pageY * window.devicePixelRatio), button, getMouseModifiers(e), getClickCount(e));
+							}
+						});
+						window.addEventListener("mouseup", function (e) {
+							e.preventDefault();
+							var button = e.button;
+							if (button >= 0 && button <= 2) {
+								exports.mouse_up(Math.round(e.pageX * window.devicePixelRatio), Math.round(e.pageY * window.devicePixelRatio), button, getMouseModifiers(e), getClickCount(e));
+							}
+							if (textarea) {
+								textarea.focus();
+							}
+						});
+						window.addEventListener("wheel", function (e) {
+							e.preventDefault();
+							var stepX = Math.abs(e.deltaX);
+							var stepY = Math.abs(e.deltaY);
+							if (stepX > 0) {
+								wheelMinStepX = wheelMinStepX == 0? stepX : Math.min(wheelMinStepX, stepX);
+							}
+							if (stepY > 0) {
+								wheelMinStepY = wheelMinStepY == 0? stepY : Math.min(wheelMinStepY, stepY);
+							}
+							var deltaX = wheelMinStepX == 0? 0 : e.deltaX / wheelMinStepX;
+							var deltaY = wheelMinStepY == 0? 0 : e.deltaY / wheelMinStepY;
+							var scrollX = 0;
+							var scrollY = 0;
+							if (e.deltaMode == 0) {
+								var ratio = window.devicePixelRatio;
+								scrollX = Math.round(e.deltaX * ratio);
+								scrollY = Math.round(e.deltaY * ratio);
+							}
+							exports.mouse_wheel(Math.round(e.pageX * window.devicePixelRatio), Math.round(e.pageY * window.devicePixelRatio), getMouseModifiers(e), deltaX, deltaY, scrollX, scrollY);
+						}, { passive: false });
+						window.addEventListener("contextmenu", function (e) {
+							e.preventDefault();
+						});
+						textarea.addEventListener("input", function (e) {
+							checkInput();
+						});
+						textarea.addEventListener("keydown", function (e) {
+							if (exports.key_pressed(e.keyCode, e.location, getKeyModifiers(e)) != 0) {
+								e.preventDefault();
+							}
+							checkInput();
+						});
+						textarea.addEventListener("keyup", function (e) {
+							checkInput();
+							if (exports.key_released(e.keyCode, e.location, getKeyModifiers(e)) != 0) {
+								e.preventDefault();
+							}
+						});
+						parent.appendChild(textarea);
+						textarea.focus();
+					}
+					var ratio = window.devicePixelRatio;
+					var safeArea = getSafeArea(Math.round(width * ratio), Math.round(height * ratio));
+					mem32[widthOut>>2] = Math.round(width * ratio);
+					mem32[heightOut>>2] = Math.round(height * ratio);
+					mem32[safeLeftOut>>2] = safeArea[0];
+					mem32[safeTopOut>>2] = safeArea[1];
+					mem32[safeRightOut>>2] = safeArea[2];
+					mem32[safeBottomOut>>2] = safeArea[3];
+					memF32[scaleOut>>2] = ratio;
+				},
+				"layer_create": function(level, x, y, width, height, extra_horiz, extra_vert, tile_size, flags, paint_func, paint_data) {
+					var func = null;
+					if (paint_func != 0) {
+						func = function(ctx, tx, ty, tw, th) {
+							ctx.save();
+							current_ctx = ctx;
+							current_off_x = -tx;
+							current_off_y = -ty;
+							current_clip_x1 = 0;
+							current_clip_y1 = 0;
+							current_clip_x2 = tw;
+							current_clip_y2 = th;
+							ctx.translate(current_off_x, current_off_y);
+							table.get(paint_func)(tx, ty, tw, th, paint_data);
+							current_ctx = null;
+							ctx.restore();
+						};
+					}
+					var layer = new Layer(level, x, y, width, height, extra_horiz, extra_vert, tile_size, flags, func);
+					var handle = -1;
+					for (var i=1; i<layer_ids.length; i++) {
+						if (!layer_ids[i]) {
+							handle = i;
+							break;
+						}
+					}
+					if (handle == -1) {
+						handle = layer_ids.length;
+						layer_ids.push(layer);
+					}
+					else {
+						layer_ids[handle] = layer;
+					}
+					return handle;
+				},
+				"layer_destroy": function(handle) {
+					var layer = layer_ids[handle];
+					layer.destroy();
+					layer_ids[handle] = null;
+				},
+				"layer_move": function(handle, x, y) {
+					var layer = layer_ids[handle];
+					layer.move(x, y);
+				},
+				"layer_resize": function(handle, width, height) {
+					var layer = layer_ids[handle];
+					layer.resize(width, height);
+				},
+				"layer_set_opacity": function(handle, opacity) {
+					var layer = layer_ids[handle];
+					layer.set_opacity(opacity);
+				},
+				"layer_scroll": function(handle, scroll_x, scroll_y) {
+					var layer = layer_ids[handle];
+					layer.scroll(scroll_x, scroll_y);
+				},
+				"layer_update": function(handle, x, y, width, height, paint_func, paint_data) {
+					var layer = layer_ids[handle];
+					layer.update(x, y, width, height, function (ctx, tx, ty, tw, th) {
+						current_ctx = ctx;
+						table.get(paint_func)(tx, ty, tw, th, paint_data);
+						current_ctx = null;
+					});
+				},
+				"put_pixels": function(pixels, width, height, dx, dy, sx, sy, sw, sh) {
+					dx += current_off_x;
+					dy += current_off_y;
+
+					var dx1 = dx;
+					var dy1 = dy;
+					var dx2 = dx+sw;
+					var dy2 = dy+sh;
+
+					dx1 = Math.max(dx1, current_clip_x1);
+					dy1 = Math.max(dy1, current_clip_y1);
+					dx2 = Math.min(dx2, current_clip_x2);
+					dy2 = Math.min(dy2, current_clip_y2);
+
+					if (dx1 < dx2 && dy1 < dy2) {
+						var ctx = current_ctx;
+						if (!cached_imageData || cached_pixels != pixels || cached_width != width || cached_height != height) {
+							cached_imageData = new ImageData(new Uint8ClampedArray(memory.buffer, pixels, width*height*4), width, height);
+							cached_pixels = pixels;
+							cached_width = width;
+							cached_height = height;
+						}
+						sx += dx1 - dx;
+						sy += dy1 - dy;
+						ctx.putImageData(cached_imageData, dx1-sx, dy1-sy, sx, sy, dx2-dx1, dy2-dy1);
+					}
+				},
+				"clear_rect": function(x, y, width, height) {
+					var ctx = current_ctx;
+					ctx.clearRect(x, y, width, height);
+				},
+				"fill_rect": function(x, y, width, height, r, g, b, a) {
+					var ctx = current_ctx;
+					if (a < 1.0) {
+						ctx.fillStyle = "rgba("+r+","+g+","+b+","+a+")";
+					}
+					else {
+						ctx.fillStyle = "rgb("+r+","+g+","+b+")";
+					}
+					ctx.fillRect(x, y, width, height);
+				},
+				"fill_rect_image": function(x, y, width, height, handle, m00, m01, m02, m10, m11, m12, flags, smoothing, alpha) {
+					var ctx = current_ctx;
+					var img = images[handle];
+					ctx.save();
+					ctx.imageSmoothingEnabled = smoothing;
+					if (alpha < 1.0) {
+						ctx.globalAlpha = alpha;
+					}
+					ctx.fillStyle = img.getPattern(flags & 3);
+					ctx.beginPath();
+					ctx.rect(x, y, width, height);
+					ctx.setTransform(m00, m01, m10, m11, m02 + current_off_x, m12 + current_off_y);
+					ctx.fill();
+					ctx.restore();
+				},
+				"fill_shape": function(clip_x, clip_y, clip_width, clip_height, m00, m01, m02, m10, m11, m12, shape_ptr, shape_end, r, g, b, a) {
+					var ctx = current_ctx;
+					if (a < 1.0) {
+						ctx.fillStyle = "rgba("+r+","+g+","+b+","+a+")";
+					}
+					else {
+						ctx.fillStyle = "rgb("+r+","+g+","+b+")";
+					}
+					ctx.save();
+					ctx.beginPath();
+					ctx.rect(clip_x, clip_y, clip_width, clip_height);
+					ctx.clip();
+					ctx.setTransform(m00, m01, m10, m11, m02 + current_off_x, m12 + current_off_y);
+					applyPath(ctx, shape_ptr, shape_end);
+					ctx.fill();
+					ctx.restore();
+				},
+				"fill_shape_image": function(clip_x, clip_y, clip_width, clip_height, m00, m01, m02, m10, m11, m12, shape_ptr, shape_end, handle, i00, i01, i02, i10, i11, i12, flags, smoothing, alpha) {
+					var ctx = current_ctx;
+					var img = images[handle];
+					ctx.save();
+					ctx.imageSmoothingEnabled = smoothing;
+					if (alpha < 1.0) {
+						ctx.globalAlpha = alpha;
+					}
+					ctx.fillStyle = img.getPattern(flags & 3);
+					ctx.beginPath();
+					ctx.rect(clip_x, clip_y, clip_width, clip_height);
+					ctx.clip();
+					ctx.setTransform(m00, m01, m10, m11, m02 + current_off_x, m12 + current_off_y);
+					applyPath(ctx, shape_ptr, shape_end);
+					ctx.setTransform(i00, i01, i10, i11, i02 + current_off_x, i12 + current_off_y);
+					ctx.fill();
+					ctx.restore();
+				},
+				"draw_image": function(handle, dx, dy, dw, dh, sx, sy, sw, sh, smoothing, alpha) {
+					var ctx = current_ctx;
+					var img = images[handle];
+					ctx.save();
+					ctx.imageSmoothingEnabled = smoothing;
+					if (alpha < 1.0) {
+						ctx.globalAlpha = alpha;
+					}
+					ctx.drawImage(img.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
+					ctx.restore();
+				},
+				"create_image": function(width, height) {
+					var img = new Image(width, height);
+					var handle = -1;
+					for (var i=1; i<images.length; i++) {
+						if (!images[i]) {
+							handle = i;
+							break;
+						}
+					}
+					if (handle == -1) {
+						handle = images.length;
+						images.push(img);
+					}
+					else {
+						images[handle] = img;
+					}
+					return handle;
+				},
+				"destroy_image": function(handle) {
+					images[handle] = null;
+				},
+				"update_image": function(handle, x, y, width, height, pixels) {
+					var img = images[handle];
+					var imageData = new ImageData(new Uint8ClampedArray(memory.buffer, pixels, width*height*4), width, height);
+					img.ctx.putImageData(imageData, x, y, 0, 0, width, height);
+				},
+				"request_animation_frame": function(func, data) {
+					requestAnimationFrame(function(time) {
+						table.get(func)(time & 0xFFFFFFFF, data);
+					});
+				},
+				"is_mobile": function() {
+					return mobile? 1:0;
+				},
+				"get_subpixel_order": function() {
+					var canvas = document.createElement("canvas");
+					canvas.width = 32;
+					canvas.height = 32;
+					var ctx = canvas.getContext("2d", { "alpha": false });
+					ctx.fillStyle = "#FFF";
+					ctx.fillRect(0, 0, canvas.width, canvas.height);
+					ctx.fillStyle = "#000";
+					ctx.font = "bold 48px sans-serif";
+					ctx.fillText("M", 10, 32);
+					var data = ctx.getImageData(0, 0, 32, 32).data;
+					var idx = 16*32*4;
+					for (var i=0; i<32; i++) {
+						var r = data[idx++];
+						var g = data[idx++];
+						var b = data[idx++];
+						var a = data[idx++];
+						if (r != 255 || g != 255 || b != 255) {
+							if (r > b) {
+								return 1;
+							}
+							else if (r < b) {
+								return 2;
+							}
+							else {
+								return 0;
+							}
+						}
+					}
+					return 0;
+				},
+				"set_clipboard": function(str) {
+					try {
+						var s = [], len=0;
+						var ptr = str >> 1;
+						for (;;) {
+							var c = mem16[ptr++];
+							if (c == 0) break;
+							s[len++] = c;
+						}
+						textarea.value = String.fromCharCode.apply(null, s);
+						textarea.focus();
+						textarea.select();
+						var ret = document.execCommand("copy");
+						textarea.value = "";
+						return ret? 1 : 0;
+					}
+					catch (e) {
+						return 0;
+					}
+				},
+				"set_cursor": function(type) {
+					var name = null;
+					switch (type) {
+						case 0: name = "default"; break;
+						case 1: name = "default"; break;
+						case 2: name = "none"; break;
+						case 3: name = "text"; break;
+						case 4: name = "crosshair"; break;
+						case 5: name = "pointer"; break;
+						case 6: name = "move"; break;
+						case 7: name = "ns-resize"; break;
+						case 8: name = "nesw-resize"; break;
+						case 9: name = "ew-resize"; break;
+						case 10: name = "nwse-resize"; break;
+						case 11: name = "ns-resize"; break;
+						case 12: name = "nesw-resize"; break;
+						case 13: name = "ew-resize"; break;
+						case 14: name = "nwse-resize"; break;
+						case 15: name = "wait"; break;
+					}
+					if (name) {
+						var parent = document.getElementById("content");
+						parent.style.cursor = name;
+					}
+				}
+			}
+		};
+
+		WebAssembly.instantiate(xhr.response, imports).then(function (obj) {
+			var module = obj.module;
+			var instance = obj.instance;
+			exports = instance.exports;
+			table = exports.__indirect_function_table;
+			exports.main();
+		});
+	};
+}
+
+document.addEventListener("DOMContentLoaded", loadWASM);
+</script>
+</head>
+<body>
+
+<div id="content">
+</div>
+
+</body>
+</html>

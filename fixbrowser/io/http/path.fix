@@ -1,0 +1,232 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/string";
+
+// Parses and normalizes given path into individual parts.
+// 
+// A null value in the beginning denotes an absolute path, a null value
+// on the end denotes a trailing slash, no nulls allowed anywhere else.
+//
+// Single dots are removed as they are redundant, except when the path is "." or "./"
+// as that can't be stored in this representation, in such case it's "." followed
+// by a null value. This is the only special case.
+//
+// Trailing "." and ".." is always followed by a slash.
+
+function path_parse(s)
+{
+	var parts = [];
+	var count = 0;
+	var idx, off = 0;
+	var was_dot = false, trailing_dot = false;
+
+	if (length(s) == 0) return parts;
+
+	while ((idx = string_search_char(s, '/', off, length(s))) != -1) {
+		var part = off < idx? array_extract(s, off, idx-off) : null;
+		if (part != ".") {
+			parts[] = part;
+		}
+		else {
+			was_dot = true;
+		}
+		off = idx+1;
+		while (off < length(s) && s[off] == '/') {
+			off++;
+		}
+	}
+
+	if (off < length(s) || (length(parts) > 0 && parts[length(parts)-1] != null)) {
+		var part = off < length(s)? array_extract(s, off, length(s) - off) : null;
+		if (part != ".") {
+			parts[] = part;
+		}
+		else {
+			trailing_dot = true;
+			if (length(parts) == 0) {
+				was_dot = true;
+			}
+		}
+	}
+
+	if (length(parts) == 0 && was_dot) {
+		parts[] = ".";
+		parts[] = null;
+	}
+	
+	if (trailing_dot && length(parts) > 0 && parts[length(parts)-1] != null) {
+		parts[] = null;
+	}
+	
+	if (length(parts) > 0 && parts[length(parts)-1] == "..") {
+		parts[] = null;
+	}
+	
+	return parts;
+}
+
+function path_is_absolute(path)
+{
+	return (length(path) > 0 && path[0] == null);
+}
+
+function path_is_current_directory(path)
+{
+	return (length(path) == 2 && path[0] == "." && path[1] == null);
+}
+
+function path_to_string(path)
+{
+	if (length(path) == 0) {
+		return "";
+	}
+	if (length(path) == 1 && path[0] == null) {
+		return "/";
+	}
+	var s = {""};
+	for (var i=0; i<length(path); i++) {
+		var p = path[i];
+		if (i > 0) {
+			s[] = '/';
+		}
+		if (p != null) {
+			string_append(s, p);
+		}
+	}
+	return s;
+}
+
+function path_merge(path, relative, strict)
+{
+	path = clone(path);
+	if (!path_is_absolute(path)) {
+		return 0, error("path must be absolute");
+	}
+	if (length(relative) == 0) {
+		return path;
+	}
+	if (path_is_absolute(relative)) {
+		array_set_length(path, length(relative));
+		array_copy(path, 0, relative, 0, length(relative));
+		return path;
+	}
+	if (path_is_current_directory(relative)) {
+		path[length(path)-1] = null;
+		return path;
+	}
+
+	if (length(path) > 1) {
+		array_set_length(path, length(path)-1);
+	}
+	
+	for (var i=0; i<length(relative); i++) {
+		var s = relative[i];
+		
+		if (s == null) {
+			if (i != length(relative)-1) {
+				return 0, error("wrong internal representation");
+			}
+			path[] = null;
+			break;
+		}
+		else if (s == "..") {
+			if (length(path) < 2) {
+				if (strict) {
+					return 0, error("relative path leads outside of given absolute path");
+				}
+				array_set_length(path, 1);
+				path[0] = null;
+			}
+			else {
+				array_set_length(path, length(path)-1);
+			}
+		}
+		else {
+			path[] = s;
+		}
+	}
+	return path;
+}
+
+function @test_path(s, expected_path, expected_result)
+{
+	var p = path_parse(s);
+	var result = path_to_string(p);
+	if (p != expected_path || result != expected_result) {
+		log({"path='", s,  "' ", p, " -> '", result, "' ", (p != expected_path || result != expected_result)? " MISMATCH!":""});
+	}
+}
+
+function @test_merge(s1, s2, expected)
+{
+	var p1 = path_parse(s1);
+	var p2 = path_parse(s2);
+	var p = path_merge(p1, p2, false);
+	var result = path_to_string(p);
+	if (result != expected) {
+		log({"path='", s1, "' ", p1, " + path='", s2, "' ", p2, " -> '", result, "' ", p, " ", result != expected? " MISMATCH!":""});
+	}
+}
+
+function test_path()
+{
+	test_path("", [], "");
+	test_path("/", [0], "/");
+	test_path("////", [0], "/");
+	test_path("..//..", ["..", "..", 0], "../../");
+	test_path("../..//", ["..", "..", 0], "../../");
+	test_path("..", ["..", 0], "../");
+	test_path("//x", [0, "x"], "/x");
+	test_path("x//", ["x", 0], "x/");
+	test_path("./aaa", ["aaa"], "aaa");
+	test_path("aaa/././bbb", ["aaa", "bbb"], "aaa/bbb");
+	test_path("aaa/./.", ["aaa", 0], "aaa/");
+	test_path("aaa/././", ["aaa", 0], "aaa/");
+	test_path(".", [".", 0], "./");
+	test_path("./", [".", 0], "./");
+	test_path(".//", [".", 0], "./");
+	test_path("/.", [0], "/");
+	test_path("/./", [0], "/");
+	test_path("../.", ["..", 0], "../");
+	test_path(".././", ["..", 0], "../");
+	test_path("./..", ["..", 0], "../");
+	test_path("./../", ["..", 0], "../");
+	//log("---");
+	test_merge("/aaa/", "bbb", "/aaa/bbb");
+	test_merge("/aaa/ccc", "../bbb", "/bbb");
+	test_merge("/aaa/ccc", "bbb", "/aaa/bbb");
+	test_merge("/aaa/ccc", "./bbb", "/aaa/bbb");
+	test_merge("/aaa/ccc/", "../bbb", "/aaa/bbb");
+	test_merge("/aaa/ccc/", "../bbb/", "/aaa/bbb/");
+	test_merge("/aaa/ccc", "../bbb", "/bbb");
+	test_merge("/aaa/ccc/", "../../bbb", "/bbb");
+	test_merge("/aaa/ccc", "../../bbb", "/bbb");
+	test_merge("/aaa/ccc/", "..", "/aaa/");
+	test_merge("/aaa/ccc/", "../", "/aaa/");
+	test_merge("/aaa/ccc/aaa", "./", "/aaa/ccc/");
+	test_merge("/aaa/ccc/", "./", "/aaa/ccc/");
+	test_merge("/aaa/bbb", "ccc/ddd", "/aaa/ccc/ddd");
+	test_merge("/", "aaa", "/aaa");
+	test_merge("/", "aaa/", "/aaa/");
+	test_merge("/path", "", "/path");
+	test_merge("/path", " ", "/ ");
+}

@@ -1,0 +1,79 @@
+<html>
+<head>
+<script>
+function loadWASM() {
+	var xhr = new XMLHttpRequest();
+	xhr.open("GET", "wasm-test.wasm");
+	xhr.responseType = "arraybuffer";
+	xhr.send();
+
+	xhr.onload = function() {
+		var memory = null;
+		var mem8 = null;
+		var mem16 = null;
+		var mem32 = null;
+		var memF32 = null;
+		var exports = null;
+		var table = null;
+		var output = document.getElementById("output");
+
+		var imports = {
+			"env": {
+				"refresh_memory": function () {
+					memory = exports.memory;
+					mem8 = new Uint8Array(memory.buffer);
+					mem16 = new Uint16Array(memory.buffer);
+					mem32 = new Int32Array(memory.buffer);
+					memF32 = new Float32Array(memory.buffer);
+				},
+				"print": function (ptr) {
+					var s = [], len=0;
+					for (;;) {
+						var c = mem8[ptr++];
+						if (c == 0) break;
+						s[len++] = c;
+					}
+					//console.log(String.fromCharCode.apply(null, s));
+					output.value += String.fromCharCode.apply(null, s);
+					output.scrollTop = output.scrollHeight;
+				},
+				"get_monotonic_time": function() {
+					return performance.now();
+				},
+				"timer_start": function (interval, repeat, func, data) {
+					if (repeat) {
+						return setInterval(function() {
+							table.get(func)(data);
+						}, interval);
+					}
+					else {
+						return setTimeout(function() {
+							table.get(func)(data);
+						}, interval);
+					}
+				},
+				"timer_stop": function (id) {
+					clearTimeout(id);
+				}
+			}
+		};
+
+		WebAssembly.instantiate(xhr.response, imports).then(function (obj) {
+			var module = obj.module;
+			var instance = obj.instance;
+			exports = instance.exports;
+			table = exports.__indirect_function_table;
+			exports.main();
+		});
+	};
+}
+
+document.addEventListener("DOMContentLoaded", loadWASM);
+</script>
+</head>
+<body>
+
+<textarea id="output" style="width: 100%; height: 100%" readonly></textarea>
+
+</body>
+</html>

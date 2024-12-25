@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixTask Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixTask Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "task/task";</code>
+</p>
+
+<h2>Task class</h2>
+
+<p>
+Task represent a handle to a thread. Each task has own heap and allows communication between
+threads by sending messages.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>create</b>(func, params): Task<br>
+		static function <b>create</b>(script_name: String, func_name: String, params): Task<br>
+		static function <b>create</b>(script_name: String, func_name: String, params, load_scripts: Boolean): Task<br>
+	</code></dt>
+	<dd>
+		Creates a new task using the given script and function name (or just a function handle).
+		Optionally you can allow to load additional scripts dynamically (when sending messages
+		with function references to not loaded code).<br>
+		In the SDK the script name should be a constant string unless the token processing is disabled.
+		You can however specify additional main scripts when building to allow for dynamic usage.
+	</dd>
+	<dt><code>function <b>send</b>(msg)</code></dt>
+	<dd>
+		Sends message to the task.
+	</dd>
+	<dt><code>
+		function <b>receive</b>(): Dynamic<br>
+		function <b>receive_wait</b>(timeout: Integer): Dynamic<br>
+	</code></dt>
+	<dd>
+		Receieves message from the task. Optionally you can provide a timeout in milliseconds
+		(0 for no waiting, negative value for infinite waiting). In case the timeout
+		has been reached the function returns <code>null</code>.
+	</dd>
+</dl>
+
+<h3 id="parent">Communication with parent task</h3>
+
+<dl>
+	<dt><code>static function <b>send</b>(msg)</code></dt>
+	<dd>
+		Sends message to parent thread (task handle).
+	</dd>
+	<dt><code>
+		static function <b>receive</b>(): Dynamic<br>
+		static function <b>receive_wait</b>(timeout: Integer): Dynamic<br>
+	</code></dt>
+	<dd>
+		Receives a message from parent thread (task handle). Optionally you can provide
+		a timeout in milliseconds (0 for no waiting, negative value for infinite waiting).
+		In case the timeout has been reached the function returns <code>null</code>.
+	</dd>
+</dl>
+
+<h3 id="misc">Miscellaneous</h3>
+
+<dl>
+	<dt><code>static function <b>get</b>(): Task</code></dt>
+	<dd>
+		Returns the task handle for current task. Returns <code>null</code> if the current thread
+		wasn't created as a task.
+	</dd>
+	<dt><code>static function <b>sleep</b>(amount: Integer)</code></dt>
+	<dd>
+		Sleeps current thread for given amount of milliseconds.
+	</dd>
+</dl>
+
+</body>
+</html>

@@ -1,0 +1,526 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/image";
+import "image/font";
+import "image/rect";
+import "gui/view";
+import "gui/subview";
+import "gui/event";
+import "gui/font";
+import "gui/native/virtual";
+import "gui/native/web";
+import "gui/virtual/keyboard";
+
+var @screen_width: Integer;
+var @screen_height: Integer;
+var @screen_scale: Float;
+var @screen_view: SubView;
+var @content_view: ContentView;
+var @content_opacity: Integer;
+var @content_buffer: Image;
+var @console: Console;
+var @console_lines: String[];
+var @keyboard: VirtualKeyboard;
+var @fonts: Font[Dynamic];
+var @font_families: Boolean[String];
+var @bounds: Float[];
+var @last_mouse_x: Integer;
+var @last_mouse_y: Integer;
+
+class @ScreenRoot: SubViewRoot
+{
+	constructor create()
+	{
+	}
+
+	override function get_scale(): Float
+	{
+		return screen_scale;
+	}
+
+	override function focus()
+	{
+	}
+
+	override function has_focus(): Boolean
+	{
+		return false;
+	}
+
+	override function repaint(rect: Rect)
+	{
+		virtual_repaint(rect.x1, rect.y1, rect.get_width(), rect.get_height());
+	}
+
+	override function set_cursor(cursor)
+	{
+		virtual_set_cursor(screen_view.get_current_cursor(last_mouse_x, last_mouse_y));
+	}
+
+	override function show_menu(menu: Menu, x: Integer, y: Integer)
+	{
+	}
+}
+
+class @Console: SubView
+{
+	var @font: SystemFont;
+
+	constructor create()
+	{
+		font = SystemFont::create("Default", 12, FONT_NORMAL);
+		if (!console_lines) {
+			console_lines = [];
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		/*
+		if (content_view.is_fully_painted()) {
+			return;
+		}
+		*/
+
+		//p.fill_rect(0, 0, get_width(), get_height(), 0xFFFFFFFF);
+		p.clear_rect(0, 0, get_width(), get_height(), 0x00000000);
+		return;
+
+		var clip = p.get_clip_rect();
+
+		var color = 0xFF000000;
+		var x = 0;
+		var y = get_height()+14-3;
+		var max_columns = max(1, get_width()/7);
+		for (var i=console_lines.length-1; i>=0; i--) {
+			var msg = console_lines[i];
+			var rows = 1;
+			var col = 0;
+			for (var j=0; j<msg.length; j++) {
+				if (msg[j] == '\n') {
+					col = 0;
+					rows++;
+				}
+				else {
+					if (col >= max_columns) {
+						col = 0;
+						rows++;
+					}
+					col++;
+				}
+			}
+			y -= 14*rows;
+			var orig_y = y;
+			var last = 0;
+			col = 0;
+			for (var j=0; j<msg.length; j++) {
+				if (msg[j] == '\n') {
+					if (y + 8 >= clip.y1 && y - 20 < clip.y2) {
+						font.draw_string(p, x, y, msg.extract(last, j-last), color);
+					}
+					last = j+1;
+					col = 0;
+					y += 14;
+				}
+				else {
+					if (col >= max_columns) {
+						if (y + 8 >= clip.y1 && y - 20 < clip.y2) {
+							font.draw_string(p, x, y, msg.extract(last, j-last), color);
+						}
+						last = j;
+						col = 0;
+						y += 14;
+					}
+					col++;
+				}
+			}
+			if (col > 0) {
+				if (y + 8 >= clip.y1 && y - 20 < clip.y2) {
+					font.draw_string(p, x, y, msg.extract(last, msg.length-last), color);
+				}
+			}
+			y = orig_y;
+			if (y < 10) {
+				console_lines.remove(0, i);
+				break;
+			}
+		}
+	}
+}
+
+class @ContentView: SubView
+{
+	constructor create()
+	{
+		set_logical_top_view(true);
+	}
+
+	override function handle_resize()
+	{
+		if (get_child_count() > 0) {
+			get_child(0).set_rect(0, 0, get_width(), get_height());
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		if (content_opacity <= 0) return;
+		if (content_buffer) {
+			var tr = p.get_transform();
+			var rect = p.get_clip_rect();
+			var p2 = Painter::create(content_buffer);
+			p2.translate(tr.m02, tr.m12);
+			p2.clip(0, 0, rect.get_width(), rect.get_height());
+			p2.clear_rect(0, 0, rect.get_width(), rect.get_height(), 0x00000000);
+			draw_children(p2);
+			tr.reset();
+			p.fill_rect(0, 0, get_width(), get_height(), Shader {
+				blend(sample_nearest(content_buffer, tr) * $(mul32(content_opacity, 0x01010101)));
+			});
+		}
+		else {
+			draw_children(p);
+		}
+	}
+
+	function is_fully_painted(): Boolean
+	{
+		var content_width = get_width();
+		var content_height = get_height();
+
+		for (var i=0, n=get_child_count(); i<n; i++) {
+			var child = get_child(i);
+			var x = child.get_x();
+			var y = child.get_y();
+			var width = child.get_width();
+			var height = child.get_height();
+			if (x <= 0 && y <= 0 && x+width >= content_width && y+height >= content_height) {
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
+class @FontDesc
+{
+	var font: ScaledFont;
+	var size: Float;
+	var style: Integer;
+}
+
+function init()
+{
+	content_opacity = 255;
+	if (Web::is_mobile()) {
+		keyboard = DefaultKeyboard::create();
+	}
+}
+
+function window_create(title: String, width: Integer, height: Integer, flags: Integer): SubView
+{
+	log("window_create! w="+width+" h="+height);
+}
+
+function set_content_view(view: SubView)
+{
+	if (!content_view) {
+		content_view = ContentView::create();
+	}
+	content_view.remove_all();
+	content_view.add(view);
+	if (content_view.get_parent()) {
+		content_view.set_rect(content_view.get_rect());
+	}
+}
+
+function handle_resize(width: Integer, height: Integer, scale: Float)
+{
+	screen_width = width;
+	screen_height = height;
+	screen_scale = scale;
+
+	if (!screen_view) {
+		screen_view = SubView::create();
+		screen_view.set_root(ScreenRoot::create());
+
+		console = Console::create();
+		screen_view.add(console);
+
+		if (!content_view) {
+			content_view = ContentView::create();
+		}
+		screen_view.add(content_view);
+
+		if (Web::is_mobile()) {
+			screen_view.add(keyboard);
+		}
+	}
+
+	screen_view.set_rect(0, 0, screen_width, screen_height);
+	content_view.set_rect(0, 0, screen_width, screen_height);
+	if (keyboard) {
+		keyboard.set_rect(0, 0, screen_width, screen_height);
+	}
+	console.set_rect(0, 0, screen_width, screen_height);
+
+	if (content_opacity > 0 && content_opacity < 255) {
+		content_buffer = Image::create(screen_width, screen_height);
+	}
+}
+
+function handle_paint(p: Painter)
+{
+	screen_view.draw(p);
+}
+
+function handle_mouse_event(event: MouseEvent): Boolean
+{
+	//log("mouse event="+event.to_string());
+	last_mouse_x = event.get_x();
+	last_mouse_y = event.get_y();
+	var ret = screen_view.process_event(event);
+	if (event.get_type() != EVENT_MOUSE_DRAG) {
+		virtual_set_cursor(screen_view.get_current_cursor(event));
+	}
+	return ret;
+}
+
+function handle_touch_event(event: TouchEvent): Boolean
+{
+	//log("touch event="+event.to_string());
+	return screen_view.process_event(event);
+}
+
+function handle_key_event(event: KeyEvent): Boolean
+{
+	//log("key event="+event.to_string());
+	return screen_view.process_event(event);
+}
+
+function register_font(family: String, style: Integer, font: Font)
+{
+	if (!fonts) {
+		fonts = {};
+		font_families = {};
+		bounds = [0.0, 0.0, 0.0, 0.0];
+	}
+	style &= 0x03;
+	fonts[[family, style]] = font;
+	font_families[family] = true;
+	if (style == FONT_NORMAL) {
+		var key = [family, FONT_BOLD];
+		if (!fonts.contains(key)) {
+			fonts[key] = font;
+		}
+		key = [family, FONT_ITALIC];
+		if (!fonts.contains(key)) {
+			fonts[key] = font;
+		}
+		key = [family, FONT_BOLD | FONT_ITALIC];
+		if (!fonts.contains(key)) {
+			fonts[key] = font;
+		}
+	}
+}
+
+function get_font(family: String, size: Float, style: Integer): FontDesc
+{
+	style &= 0x03;
+	if (!fonts) return null;
+	var font = fonts.get([family, style], null);
+	if (!font) {
+		if (family != "Default") {
+			return get_font("Default", size, style);
+		}
+		return null;
+	}
+	return [ScaledFont::create(font, size, Web::is_mobile()? 0.0 : -1.0), size, style] as FontDesc;
+}
+
+function get_font_list(): String[]
+{
+	if (!font_families) return null;
+	return font_families.get_keys();
+}
+
+function font_get_size(desc: FontDesc): Integer
+{
+	return iround(desc.size);
+}
+
+function font_get_ascent(desc: FontDesc): Integer
+{
+	return iround(desc.font.get_ascent());
+}
+
+function font_get_descent(desc: FontDesc): Integer
+{
+	return iround(desc.font.get_descent());
+}
+
+function font_get_height(desc: FontDesc): Integer
+{
+	return iround(desc.font.get_height());
+}
+
+function font_get_string_advance(desc: FontDesc, s: String, off: Integer, len: Integer): Integer
+{
+	return iround(desc.font.get_string_advance(s, off, len));
+}
+
+function font_get_string_position(desc: FontDesc, s: String, off: Integer, len: Integer, x: Integer): Float
+{
+	return desc.font.get_string_position(s, off, len, x);
+}
+
+function font_draw_string(desc: FontDesc, p: Painter, x: Integer, y: Integer, s: String, off: Integer, len: Integer, color: Integer)
+{
+	var clip = p.get_clip_rect();
+	desc.font.get_string_bounds(bounds, s, off, len, x, y);
+	if (ifloor(bounds[0]) >= clip.x2) return;
+	if (ifloor(bounds[1]) >= clip.y2) return;
+	if (iceil(bounds[2]) < clip.x1) return;
+	if (iceil(bounds[3]) < clip.y1) return;
+
+	var subpixel = !Web::is_mobile();
+	if (subpixel) {
+		p.push();
+		p.set_subpixel_rendering(true);
+		if (Web::get_subpixel_order() == NATIVE_SUBPIXEL_BGR) {
+			p.set_subpixel_order(SUBPIXEL_BGR);
+		}
+		var r = (color >>> 16) & 0xFF;
+		var g = (color >>> 8) & 0xFF;
+		var b = color & 0xFF;
+		var luma = r*299 + g*587 + b*114;
+		p.set_blend_gamma(luma >= 128000? 1.0/0.9 : 0.9);
+	}
+
+	p.fill_shape(desc.font.get_string_shape(s, off, len, x, iround(y)), color);
+
+	if (subpixel) {
+		p.pop();
+	}
+}
+
+function set_content_opacity(opacity: Integer)
+{
+	if (opacity == content_opacity) {
+		return;
+	}
+
+	if (opacity > 0 && opacity < 255) {
+		if (content_buffer == null && screen_width > 0 && screen_height > 0) {
+			content_buffer = Image::create(screen_width, screen_height);
+		}
+	}
+	else {
+		content_buffer = null;
+	}
+
+	content_opacity = opacity;
+	if (screen_width > 0 && screen_height > 0) {
+		screen_view.repaint();
+	}
+}
+
+function set_keyboard(new_keyboard: VirtualKeyboard)
+{
+	if (screen_view) {
+		if (keyboard) {
+			screen_view.remove(keyboard);
+			if (Web::is_present()) {
+				keyboard = null;
+				heap_collect();
+			}
+		}
+	}
+
+	keyboard = new_keyboard;
+
+	if (screen_view) {
+		if (keyboard) {
+			screen_view.add(keyboard);
+			keyboard.set_rect(0, 0, screen_width, screen_height);
+		}
+	}
+}
+
+function show_keyboard()
+{
+	if (keyboard) {
+		keyboard.show();
+	}
+}
+
+function hide_keyboard()
+{
+	if (keyboard) {
+		keyboard.hide();
+	}
+}
+
+function is_keyboard_visible(): Boolean
+{
+	if (keyboard) {
+		return keyboard.is_visible();
+	}
+	return false;
+}
+
+function get_visible_screen_area(view: SubView): Rect
+{
+	var top = view;
+	var x = 0;
+	var y = 0;
+	for (;;) {
+		var parent = top.get_parent();
+		if (!parent) break;
+		x += top.get_x();
+		y += top.get_y();
+		top = parent;
+	}
+	var rect = top.get_local_rect();
+	if (keyboard) {
+		rect.intersect(keyboard.get_visible_area());
+	}
+	rect.translate(-x, -y);
+	return rect;
+}
+
+function console_log(msg)
+{
+	if (!is_string(msg)) {
+		msg = to_string(msg);
+	}
+	if (!console_lines) {
+		console_lines = [];
+	}
+	console_lines[] = msg;
+	if (console) {
+		//console.repaint();
+	}
+}

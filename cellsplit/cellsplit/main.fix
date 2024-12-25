@@ -1,0 +1,2292 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "image/shaders";
+use "unpack";
+use "classes";
+
+import "gui/view";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/subview/text_field";
+import "gui/native/windows";
+import "image/image";
+import "image/rect";
+import "image/font";
+import "io/tcp";
+import "io/stream";
+import "io/gzip";
+import "io/async"; // TODO
+import "task/task";
+import "task/global";
+import "native/native";
+import "util/long";
+import "util/string";
+import "cellsplit/script_editor";
+import "cellsplit/server_list";
+import "cellsplit/chat_panel";
+import "cellsplit/moderation_panel";
+import "cellsplit/premium_view";
+import "cellsplit/opengl_renderer";
+import "cellsplit/worker_comm";
+import "cellsplit/master_protocol";
+import "cellsplit/gui/button";
+import "cellsplit/gui/text_field";
+import "cellsplit/gui/common";
+import "cellsplit/gui/buffer_view";
+import "cellsplit/gui/debug_view";
+import "cellsplit/gui/panel";
+import "cellsplit/gui/modal_window";
+import "cellsplit/gui/progress_bar";
+import "cellsplit/gui/message_box";
+import "cellsplit/gui/label";
+import "cellsplit/gui/box";
+import "cellsplit/gui/image";
+import "cellsplit/server/packets";
+import "cellsplit/util/vector";
+import "cellsplit/util/color";
+import "cellsplit/util/connection";
+import "cellsplit/util/config";
+import "cellsplit/util/shared";
+import "cellsplit/util/random";
+import "cellsplit/util/crypto";
+import "cellsplit/util/native";
+
+const @OPENGL_RENDERING = 1;
+const @SIMULATE_RANDOM_FPS = 0;
+const @MAP_SIZE = 14142.1356; // sqrt(200000000)
+const @PI = 3.14159265;
+
+var @win: GameWindow;
+var @canvas: GameCanvas;
+var @server_worker: WorkerWrapper; // TODO
+var @master_worker: WorkerWrapper; // TODO
+var @skin_worker: WorkerWrapper; // TODO
+var @opengl_disabled: Boolean;
+var @nick_shapes: Shape[][String];
+var @server_list_handler: ServerListHandler;
+var @fps_random: Random;
+var @account_id: String;
+var @account_features: Integer;
+var @account_permissions: Integer;
+var @has_skins_cache: Boolean[String];
+var @moderation_cookie_data;
+
+class GameWindow: Window
+{
+	constructor create(title: String, width: Integer, height: Integer, flags: Integer)
+	{
+		super::create(title, width, height, flags);
+	}
+
+	override function handle_resize()
+	{
+		var rect = get_content_rect();
+		if (System::get_type() == SYSTEM_MACOS) {
+			rect.translate(-rect.x1, -rect.y1); // TODO
+		}
+		get_child(0).set_rect(rect);
+	}
+
+	override function handle_destroy()
+	{
+		config_save();
+	}
+}
+
+class GameCanvas: Canvas
+{
+	var @frames: Integer;
+	var @cur_fps: Integer;
+	var @last_fps_time: Integer;
+	var @font: Font;
+	var @mx: Integer;
+	var @my: Integer;
+	var @last_time: Integer;
+	var @subview: BufferView;
+	var @debug_view: DebugView;
+	var @client: Client;
+	var @target: Vector;
+	var @script_target: Vector;
+	var @hover_cell: Cell;
+	var @show_mass: Boolean;
+	var @marks: [Mark];
+	var @login_view: SubView;
+	var @logo_image: GameImage;
+	var @connect_button: GameButton;
+	var @local_server_button: GameButton;
+	var @controls_button: GameButton;
+	var @quit_button: GameButton;
+	var @nick_label: GameLabel;
+	var @nick_field: GameTextField;
+	var @premium_view: PremiumView;
+	var @game_menu: SubView;
+	var @game_menu_modal: ModalWindow;
+	var @back_button: GameButton;
+	var @game_controls_button: GameButton;
+	var @disconnect_button: GameButton;
+	var @controls_msgbox: MessageBox;
+	var @leaderboard: LeaderboardView;
+	var @script_panel: Panel;
+	var @script_editor: ScriptEditor;
+	var @chat_panel: ChatPanel;
+	var @chat_view: ChatView;
+	var @ignore_chat_key: Boolean;
+	var @moderation_panel: ModerationPanel;
+	var @game_rules_message: MessageBox;
+
+	var @cell_shape: Shape;
+	var @virus_shape: Shape;
+
+	var @opengl_initialized: Boolean;
+	var @opengl_renderer: OpenGLRenderer;
+
+	constructor create()
+	{
+		if (Windows::is_present()) {
+			set_active_rendering(true);
+		}
+		else {
+			Timer::run(10, GameCanvas::repaint_timer#1, this);
+		}
+		set_focusable(true);
+		font = get_normal_font();
+		last_fps_time = Timer::get_time();
+		last_time = Timer::get_time();
+		target = Vector();
+		show_mass = true;
+		marks = [];
+		subview = BufferView::create();
+		subview.set_alpha(0.85);
+		subview.assign_view(this);
+		debug_view = DebugView::create();
+		debug_view.set_rect(0, 0, 1024, 768);
+		subview.add(debug_view);
+
+		cell_shape = Shape::circle(0.0, 0.0, 1.0);
+		virus_shape = Cell::create_virus_shape();
+
+		login_view = SubView::create();
+		subview.add(login_view);
+
+		logo_image = GameImage::create(Image::load(get_resource("images/logo.png")));
+		login_view.add(logo_image);
+
+		connect_button = GameButton::create("Connect");
+		connect_button.set_click_action(GameCanvas::show_servers#1, this);
+		login_view.add(connect_button);
+
+		local_server_button = GameButton::create("Bot Test");
+		local_server_button.set_click_action(GameCanvas::start_local_server#1, this);
+		login_view.add(local_server_button);
+
+		controls_button = GameButton::create("Controls");
+		controls_button.set_click_action(GameCanvas::show_controls#1, this);
+		login_view.add(controls_button);
+
+		quit_button = GameButton::create("Quit game");
+		quit_button.set_click_action(GameCanvas::quit#1, this);
+		login_view.add(quit_button);
+
+		var nick = config_get_string("nick", "Unnamed");
+		config_set("nick", nick);
+		config_save();
+
+		nick_label = GameLabel::create("Nick:");
+		nick_label.set_font(get_light_font());
+		nick_label.set_font_size(15.0);
+		login_view.add(nick_label);
+		
+		nick_field = GameTextField::create();
+		nick_field.set_text(nick);
+		login_view.add(nick_field);
+
+		premium_view = PremiumView::create();
+		login_view.add(premium_view);
+
+		game_menu = SubView::create();
+
+		back_button = GameButton::create("Back to game");
+		back_button.set_click_action(GameCanvas::back_to_game#1, this);
+		game_menu.add(back_button);
+
+		game_controls_button = GameButton::create("Controls");
+		game_controls_button.set_click_action(GameCanvas::show_controls#1, this);
+		game_menu.add(game_controls_button);
+
+		disconnect_button = GameButton::create("Disconnect");
+		disconnect_button.set_click_action(GameCanvas::disconnect#1, this);
+		game_menu.add(disconnect_button);
+
+		leaderboard = LeaderboardView::create();
+
+		script_panel = Panel::create("Script Editor");
+		script_editor = ScriptEditor::create(ClientInterfaceImpl::create(this));
+		script_editor.set_rect(0, 0, 800, 300);
+		script_panel.set_content(script_editor);
+
+		chat_panel = ChatPanel::create(GameCanvas::chat_typed#2, this);
+		chat_view = ChatView::create();
+
+		canvas = this;
+	}
+
+	function @repaint_timer(): Boolean
+	{
+		if (System::get_type() == SYSTEM_MACOS) {
+			handle_callbacks(); // TODO
+		}
+		repaint();
+		return true;
+	}
+	
+	override function handle_resize()
+	{
+		if (!opengl_initialized && OPENGL_RENDERING != 0 && !opengl_disabled) {
+			opengl_initialized = true;
+			var (r, e) = OpenGLRenderer::create(this, subview, virus_shape);
+			if (e) {
+				dump(e);
+			}
+			else {
+				opengl_renderer = r;
+			}
+		}
+
+		var rect = get_content_rect();
+		if (System::get_type() == SYSTEM_MACOS) {
+			rect = get_rect(); // TODO
+			rect.translate(-rect.x1, -rect.y1);
+		}
+		subview.set_rect(rect);
+
+		var scale = subview.get_scale();
+		var menu_rect = Rect(0, 0, 600, 400).scale(scale);
+		menu_rect.translate((rect.get_width() - menu_rect.get_width())/2, (rect.get_height() - menu_rect.get_height())/2);
+		login_view.set_rect(menu_rect);
+
+		var y = -20;
+		logo_image.set_rect(Rect(0, y, 200, 200).scale(scale)); y += 190;
+		connect_button.set_rect(Rect(0, y, 200, 30).scale(scale)); y += 40;
+		local_server_button.set_rect(Rect(0, y, 200, 30).scale(scale)); y += 40;
+		controls_button.set_rect(Rect(0, y, 200, 30).scale(scale)); y += 40;
+		quit_button.set_rect(Rect(0, y, 200, 30).scale(scale)); y += 40;
+		nick_label.set_rect(Rect(0, y, 200, 30).scale(scale)); y += 30;
+		nick_field.set_rect(Rect(0, y, 200, 30).scale(scale)); y += 40;
+		premium_view.set_rect(Rect(250, 40, 350, 360).scale(scale));
+		
+		game_menu.set_rect(Rect(0, 0, 200, 300).scale(scale));
+		back_button.set_rect(Rect(0, 0, 200, 30).scale(scale));
+		game_controls_button.set_rect(Rect(0, 40, 200, 30).scale(scale));
+		disconnect_button.set_rect(Rect(0, 80, 200, 30).scale(scale));
+
+		script_panel.set_rect(script_panel.get_rect());
+
+		var chat_rect = Rect(0, 0, min(rect.get_width() - iround(20*scale), iround(900*scale)), iround(180*scale));
+		chat_rect.translate((rect.get_width() - chat_rect.get_width())/2, rect.get_height() - chat_rect.get_height() - iround(50*scale));
+		chat_panel.set_rect(chat_rect);
+
+		leaderboard.set_rect(rect.get_width()-iround(200*scale), iround(20*scale), iround(180*scale), iround(270*scale));
+		chat_view.set_rect(iround(20*scale), rect.get_height()-iround(240*scale), rect.get_width()-iround(40*scale), iround(220*scale));
+
+		ModalWindow::update_modals();
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		switch (event.get_type()) {
+			case EVENT_MOUSE_MOVE, EVENT_MOUSE_DRAG: {
+				mx = event.get_x();
+				my = event.get_y();
+				break;
+			}
+
+			case EVENT_MOUSE_DOWN: {
+				if (event.get_button() == MOUSE_BUTTON_RIGHT) {
+					var show = client != null;
+					if (game_menu_modal) show = false;
+					if (script_panel != null && script_panel.get_parent() != null) show = false;
+					if (show) {
+						if (hover_cell != null && hover_cell.type == CELL_PLAYER && hover_cell.account != null && hover_cell.account != account_id) {
+							if (moderation_panel) {
+								moderation_panel.hide();
+							}
+							moderation_panel = ModerationPanel::create(subview, event.get_x(), event.get_y(), hover_cell.account, hover_cell.nick, account_permissions, ModerationInterfaceImpl::create());
+							if (chat_panel.get_parent()) {
+								chat_panel.hide();
+							}
+						}
+					}
+				}
+				if (event.get_button() == MOUSE_BUTTON_LEFT) {
+					if (moderation_panel) {
+						if (!moderation_panel.contains(event.get_x(), event.get_y())) {
+							moderation_panel.hide();
+							moderation_panel = null;
+						}
+					}
+					if (script_panel) {
+						var top = subview.get_top_view(event.get_x(), event.get_y());
+						var found = false, original = true;
+						while (top) {
+							if (top === script_panel || (ModalWindow::is_instance(top) && !original)) {
+								found = true;
+								break;
+							}
+							top = top.get_parent();
+							original = false;
+						}
+						if (!found) {
+							script_panel.focus();
+							script_panel.unfocus();
+						}
+					}
+				}
+				break;
+			}
+		}
+
+		var ret = subview.process_event(event);
+		subview.set_canvas_cursor(event);
+		return ret;
+	}
+
+	function @script_panel_has_focus(): Boolean
+	{
+		var focus = subview.get_current_focus();
+		while (focus) {
+			if (focus === script_panel) {
+				return true;
+			}
+			focus = focus.get_parent();
+		}
+		return false;
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN) {
+			switch (event.get_key()) {
+				case KEY_SPACE, KEY_F:
+					if (client) {
+						if (game_menu_modal) break;
+						if (chat_panel.get_parent()) break;
+						if (moderation_panel != null && moderation_panel.get_parent() != null) break;
+						if (script_panel != null && script_panel_has_focus()) break;
+						ActionPacket::create(ACTION_SPLIT).send(client);
+					}
+					break;
+
+				case KEY_W:
+					if (client) {
+						if (game_menu_modal) break;
+						if (chat_panel.get_parent()) break;
+						if (moderation_panel != null && moderation_panel.get_parent() != null) break;
+						if (script_panel != null && script_panel_has_focus()) break;
+						ActionPacket::create(ACTION_EJECT_MASS).send(client);
+					}
+					break;
+
+				case KEY_R:
+					if (client) {
+						if (game_menu_modal) break;
+						if (chat_panel.get_parent()) break;
+						if (moderation_panel != null && moderation_panel.get_parent() != null) break;
+						if (script_panel != null && script_panel.get_parent() != null && !script_panel_has_focus()) {
+							ActionPacket::create(ACTION_INTERNAL_RESET).send(client);
+						}
+					}
+					break;
+
+				case KEY_T, KEY_ENTER:
+					if (client != null && script_panel.get_parent() == null) {
+						var show = true;
+						if (game_menu_modal) show = false;
+						if (chat_panel.get_parent()) show = false;
+						if (moderation_panel != null && moderation_panel.get_parent() != null) show = false;
+						if (script_panel != null && script_panel_has_focus()) show = false;
+						if (show) {
+							subview.add(chat_panel);
+							chat_panel.set_rect(chat_panel.get_rect());
+							chat_panel.focus();
+							ignore_chat_key = true;
+							return true;
+						}
+					}
+					break;
+
+				case KEY_ESCAPE:
+					if (client) {
+						if (script_panel != null && script_panel_has_focus()) {
+							if (subview.process_event(event)) {
+								return true;
+							}
+						}
+						if (game_menu_modal) {
+							back_to_game();
+						}
+						else if (moderation_panel != null && moderation_panel.get_parent() != null) {
+							moderation_panel.hide();
+							moderation_panel = null;
+						}
+						else if (chat_panel.get_parent()) {
+							chat_panel.hide();
+						}
+						else {
+							game_menu_modal = ModalWindow::show(subview, game_menu);
+						}
+					}
+					break;
+			}
+		}
+		if (ignore_chat_key) {
+			if (event.get_type() == EVENT_KEY_TYPED) {
+				return true;
+			}
+			if (event.get_type() == EVENT_KEY_UP && (event.get_key() == KEY_T || event.get_key() == KEY_ENTER)) {
+				ignore_chat_key = false;
+				return true;
+			}
+		}
+		return subview.process_event(event);
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		subview.process_event(event);
+		if (event.get_type() == EVENT_FOCUS_LOST) {
+			if (moderation_panel) {
+				moderation_panel.hide();
+				moderation_panel = null;
+			}
+		}
+	}
+
+	function @update()
+	{
+		if (client) {
+			var packet = InputPacket::create();
+			if (script_target) {
+				packet.x = script_target.x;
+				packet.y = script_target.y;
+			}
+			else {
+				packet.x = target.x;
+				packet.y = target.y;
+			}
+			packet.send(client);
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var time = Timer::get_time();
+		var delta_time = sub32(time, last_time);
+		if (delta_time < 0) {
+			delta_time = 0;
+			last_time = time;
+		}
+		else if (delta_time >= 40) {
+			if (delta_time < 1000) {
+				while (sub32(time, last_time) >= 40) {
+					last_time = add32(last_time, 40);
+				}
+			}
+			else {
+				last_time = time;
+			}
+		}
+
+		if (delta_time >= 20) {
+			update();
+		}
+
+		var rect = get_rect();
+		if (System::get_type() == SYSTEM_MACOS) {
+			rect = get_rect(); // TODO
+			rect.translate(-rect.x1, -rect.y1);
+		}
+		var width = max(1, rect.get_width());
+		var height = max(1, rect.get_height());
+
+		var data: Float[] = [0.0, 0.0, 0.0];
+		var avg_pos = Vector();
+		var total_size = 0.0;
+		var total_mass = 0.0;
+		if (client) {
+			if (client.cells_changed) {
+				if (client.sort_cells()) {
+					client.cells_changed = false;
+				}
+			}
+			
+			var num = 0;
+			foreach (var cell in client.cells_list) {
+				if (cell.own) {
+					if (cell.get_pos_size(delta_time, false, data)) {
+						avg_pos.add(data[0], data[1]);
+						total_size = total_size + data[2];
+						total_mass = total_mass + Cell::size_to_mass(data[2]);
+						num++;
+					}
+				}
+			}
+			if (num > 0) {
+				avg_pos /= num;
+			}
+
+			var s = {""};
+			s += "FPS: "+cur_fps+"\n";
+			s += "Position: "+iround(avg_pos.x)+", "+iround(avg_pos.y)+"\n";
+			s += "Mass: "+iround(total_mass)+"\n";
+			if (client) {
+				var cell = client.get_first_own_cell();
+				if (cell) {
+					s += "Buffered: "+cell.data.length/3+" ";
+					for (var i=cell.data.length/3; i>0; i--) {
+						s[] = '*';
+					}
+				}
+			}
+			var server_debug = Global::get("server_debug");
+			if (server_debug) {
+				s[] = '\n';
+				s[] = '\n';
+				s += server_debug;
+			}
+			debug_view.set_text(s);
+		}
+
+		var base_res = Vector(1920, 1080);
+		var ratio = fmax(width / base_res.x, height / base_res.y);
+		var scale = pow(fmin(64.0 / total_size, 1.0), 0.4) * ratio;
+		var off_x = width / 2.0 - avg_pos.x * scale;
+		var off_y = height / 2.0 - avg_pos.y * scale;
+
+		target.set(mx, my).sub(off_x, off_y).div(scale);
+
+		if (opengl_renderer) {
+			var pellets: [Pellet], pellets_len: Integer;
+			var render_cells: [RenderCell] = [];
+			if (client) {
+				pellets = client.pellets;
+				pellets_len = client.pellets_len;
+				hover_cell = null;
+				foreach (var cell in client.cells_list) {
+					if (!cell.get_pos_size(delta_time, true, data)) {
+						continue;
+					}
+					if (!hover_cell && Cell::contains(data, target)) {
+						hover_cell = cell;
+					}
+					var skin_data = client.skins.get(cell.account, null);
+					var has_images = (skin_data != null && skin_data.has_images());
+					var rcell = length(render_cells) as RenderCell;
+					render_cells[] = {
+						.type: cell.type,
+						.x: data[0] as Float,
+						.y: data[1] as Float,
+						.size: data[2] as Float,
+						.color: cell.color,
+						.color_outline: has_images? skin_data.color_outline : cell.color_outline,
+						.skin: has_images? skin_data.get_image(scale * (data[2] - 5.0)) : null
+					};
+					if (cell.nick) {
+						render_cells[rcell].text_shape1 = cell.text_shape1;
+						render_cells[rcell].text_shape2 = cell.text_shape2;
+						render_cells[rcell].text_width = cell.text_width;
+						if (show_mass && cell.own) {
+							var mass = iround(Cell::size_to_mass(data[2]));
+							//cell.update_mass_shapes(mass);
+							render_cells[rcell].mass = mass;
+							//render_cells[rcell].mass_shape1 = cell.mass_shape1;
+							//render_cells[rcell].mass_shape2 = cell.mass_shape2;
+						}
+						else {
+							render_cells[rcell].mass = -1;
+						}
+					}
+					else {
+						render_cells[rcell].mass = -1;
+					}
+				}
+			}
+			opengl_renderer.render(mx, my, width, height, total_size, scale, off_x, off_y, pellets, pellets_len, render_cells, marks);
+
+			if (SIMULATE_RANDOM_FPS != 0) {
+				if (!fps_random) {
+					fps_random = Random::create(0, 0);
+				}
+				Task::sleep(10+fps_random.next(90));
+			}
+
+			frames++;
+			if (sub32(time, last_fps_time) >= 1000) {
+				cur_fps = frames;
+				frames = 0;
+				last_fps_time = time;
+			}
+			return;
+		}
+
+		draw_grid2(p, width, height, total_size, scale, off_x, off_y);
+		//draw_grid(p, width, height, avg_pos, total_size, scale, off_x, off_y);
+
+		p.push();
+		p.translate(off_x, off_y);
+		p.scale(scale);
+		if (client) {
+			var pellets = client.pellets;
+			var pellets_len = client.pellets_len;
+			var img = p.get_image();
+			var pellet_shape = Shape::circle(0.0, 0.0, 1.0);
+			p.push();
+			var tr = p.get_transform();
+			var m00 = tr.m00;
+			var m01 = tr.m01;
+			var m02 = tr.m02;
+			var m10 = tr.m10;
+			var m11 = tr.m11;
+			var m12 = tr.m12;
+			for (var i=0 as Pellet; i<pellets_len; i++) {
+				var x = pellets[i].x;
+				var y = pellets[i].y;
+				var size = pellets[i].size;
+				tr.m02 = m02 + m00 * x + m01 * y;
+				tr.m12 = m12 + m10 * x + m11 * y;
+				tr.m00 = m00 * size;
+				tr.m01 = m01 * size;
+				tr.m10 = m10 * size;
+				tr.m11 = m11 * size;
+				p.fill_shape(pellet_shape, pellets[i].color);
+			}
+			p.pop();
+			hover_cell = null;
+			foreach (var cell in client.cells_list) {
+				if (!cell.get_pos_size(delta_time, true, data)) {
+					continue;
+				}
+				if (!hover_cell && Cell::contains(data, target)) {
+					hover_cell = cell;
+				}
+				var shape: Shape;
+				if (cell.type == CELL_VIRUS) {
+					shape = virus_shape;
+				}
+				else {
+					shape = cell_shape;
+				}
+				var skin_data = client.skins.get(cell.account, null);
+				var has_images = (skin_data != null && skin_data.has_images());
+				p.push();
+				tr.translate(data[0], data[1]);
+				p.push();
+				tr.scale(data[2] + 5.0);
+				p.fill_shape(shape, has_images? skin_data.color_outline : cell.color_outline);
+				p.pop();
+				tr.scale(data[2] - 5.0);
+				if (has_images) {
+					var image = skin_data.get_image(tr.m00);
+					var tr2 = Transform::create();
+					tr2.translate(1.0, 1.0);
+					tr2.scale(2.0 / image.get_width());
+					p.fill_shape(shape, Shader {
+						blend(sample_bilinear(image, tr2));
+					});
+				}
+				else {
+					p.fill_shape(shape, cell.color);
+				}
+				p.pop();
+
+				if (cell.nick) {
+					var text_scale = fmax(0.25*0.4, data[2]/275.0) * 2.0;
+					p.push();
+					p.translate(data[0], data[1]);
+					p.push();
+					p.scale(text_scale);
+					p.fill_shape(cell.text_shape2, 0xFF000000);
+					p.fill_shape(cell.text_shape1, 0xFFFFFFFF);
+					p.pop();
+					if (show_mass && cell.own) {
+						cell.update_mass_shapes(iround(Cell::size_to_mass(data[2])));
+						text_scale = fmax(0.25*0.50*0.90, data[2]/500.0) * 2.0;
+						p.push();
+						p.translate(0.0, fmax(18.0, data[2]/2.3));
+						p.scale(text_scale);
+						p.fill_shape(cell.mass_shape2, 0xFF000000);
+						p.fill_shape(cell.mass_shape1, 0xFFFFFFFF);
+						p.pop();
+					}
+					p.pop();
+				}
+			}
+			var marks = this.marks;
+			foreach (var i in marks) {
+				p.push();
+				p.translate(marks[i].x, marks[i].y);
+				p.scale(0.5/scale);
+				p.fill_shape(marks[i].shape_outline, 0xFFFFFFFF);
+				p.fill_shape(marks[i].shape, 0xFF000000);
+				p.pop();
+			}
+		}
+		p.pop();
+
+		subview.draw(p);
+
+		if (SIMULATE_RANDOM_FPS != 0) {
+			if (!fps_random) {
+				fps_random = Random::create(0, 0);
+			}
+			Task::sleep(10+fps_random.next(90));
+		}
+
+		frames++;
+		if (sub32(time, last_fps_time) >= 1000) {
+			cur_fps = frames;
+			frames = 0;
+			last_fps_time = time;
+		}
+	}
+
+	function @draw_grid(p: Painter, width: Integer, height: Integer, pos: Vector, pos_size: Float, scale: Float, off_x: Float, off_y: Float)
+	{
+		var size = Vector(MAP_SIZE * 0.5, MAP_SIZE * 0.5);
+		var grid_size = MAP_SIZE * 0.5 / 150;
+
+		var grid_x = floor(pos.x / grid_size) * grid_size;
+		var grid_y = floor(pos.y / grid_size) * grid_size;
+
+		while (grid_x < -size.x) {
+			grid_x = grid_x + grid_size;
+		}
+		while (grid_y < -size.y) {
+			grid_y = grid_y + grid_size;
+		}
+		while (grid_x > size.x) {
+			grid_x = grid_x - grid_size;
+		}
+		while (grid_y > size.y) {
+			grid_y = grid_y - grid_size;
+		}
+
+		var shape = Shape::create();
+
+		var min_x = fmax(0, off_x - size.x * scale);
+		var min_y = fmax(0, off_y - size.y * scale);
+		var max_x = fmin(off_x + size.x * scale, width);
+		var max_y = fmin(off_y + size.y * scale, height);
+
+		var gx = grid_x;
+		while ((off_x + gx*scale) >= -1.0) {
+			gx -= grid_size;
+			if (gx < -size.x) break;
+			var x = off_x + gx*scale;
+			add_rect(shape, x, min_y, x, max_y, 0.5);
+		}
+		gx = grid_x;
+		while ((off_x + gx*scale) <= float(width)) {
+			var x = off_x + gx*scale;
+			add_rect(shape, x, min_y, x, max_y, 0.5);
+			gx += grid_size;
+			if (gx > size.x) break;
+		}
+
+		var gy = grid_y;
+		while ((off_y + gy*scale) >= -1.0) {
+			gy -= grid_size;
+			if (gy < -size.y) break;
+			var y = off_y + gy*scale;
+			add_rect(shape, min_x, y, max_x, y, 0.5);
+		}
+		gy = grid_y;
+		while ((off_y + gy*scale) <= float(width)) {
+			var y = off_y + gy*scale;
+			add_rect(shape, min_x, y, max_x, y, 0.5);
+			gy += grid_size;
+			if (gy > size.y) break;
+		}
+
+		var alpha = 1.0 - (pos_size - 100.0)/5000.0;
+		alpha = fclamp(alpha, 0.0, 1.0) * 0.5 + 0.25;
+		p.fill_shape(shape, argb((iround(alpha*255.0) << 24) | 0xCCCCCC));
+		p.fill_shape(Shape::rect(off_x-size.x*scale, off_y-size.y*scale, size.x*2*scale, size.y*2*scale).get_outline(), 0xFF000000);
+		//p.fill_shape(Shape::circle(off_x+pos.x*scale, off_y+pos.y*scale, pos_size*scale).get_outline(), 0xFF00CC00);
+	}
+
+	static function @fract(x: Float): Float
+	{
+		return x - floor(x);
+	}
+	
+	function @draw_grid2(p: Painter, width: Integer, height: Integer, pos_size: Float, scale: Float, off_x: Float, off_y: Float)
+	{
+		var grid_size = MAP_SIZE * 0.5 / 150;
+		var times = iround(128 / (grid_size*scale));
+		var img_size = max(1, iround(times*grid_size*scale));
+		var img = Image::create(img_size, img_size);
+		var p2 = Painter::create(img);
+
+		var scaled_grid_size = grid_size*scale;
+		off_x = off_x - (width * 0.5);
+		off_y = off_y - (height * 0.5);
+		var adj_x = fract(off_x / scaled_grid_size) * scaled_grid_size;
+		var adj_y = fract(off_y / scaled_grid_size) * scaled_grid_size;
+
+		var shape = Shape::create();
+		for (var i=0; i<=times; i++) {
+			var x = adj_x + float(img_size) / times * i;
+			var y = adj_y + float(img_size) / times * i;
+			add_rect(shape, x, 0, x, img_size, 0.5);
+			add_rect(shape, 0, y, img_size, y, 0.5);
+		}
+
+		var alpha = 1.0 - (pos_size - 100.0)/5000.0;
+		alpha = fclamp(alpha, 0.0, 1.0) * 0.5 + 0.25;
+		p2.clear_rect(0, 0, img_size, img_size, 0xFFFFFFFF);
+		p2.fill_shape(shape, argb((iround(alpha*255.0) << 24) | 0xCCCCCC));
+		//img.blur(1.0);
+
+		var tr = Transform::create();
+		tr.translate(width*0.5, height*0.5);
+		p.fill_rect(0, 0, width, height, Shader {
+			replace(sample_nearest(img, tr));
+		});
+	}
+
+	function @add_rect(shape: Shape, x1: Float, y1: Float, x2: Float, y2: Float, half_width: Float)
+	{
+		shape.move_to(x1-half_width, y1-half_width);
+		shape.line_to(x2+half_width, y1-half_width);
+		shape.line_to(x2+half_width, y2+half_width);
+		shape.line_to(x1-half_width, y2+half_width);
+		shape.close_path();
+	}
+
+	function @server_callback(msg)
+	{
+		switch (msg[0]) {
+			case MSG_SERVER_STARTED:
+				Client::connect("localhost", msg[1], null, Array::create(32, 1), GameCanvas::client_connected#2, this);
+				break;
+
+			case MSG_SERVER_STOPPED:
+				canvas.server_stopped();
+				break;
+		}
+	}
+
+	function @master_callback(msg)
+	{
+		switch (msg[0]) {
+			case MSG_MASTER_ERROR: {
+				log("master error = "+msg);
+				if (msg[1] == MSG_MASTER_GET_SERVER_LIST && server_list_handler != null) { //XXX
+					server_list_handler.got_error(msg[2]);
+				}
+				break;
+			}
+
+			case MSG_MASTER_LOGGED_IN: {
+				account_id = msg[1] as String;
+				account_features = msg[2] as Integer;
+				account_permissions = msg[3] as Integer;
+				premium_view.set_account(account_id, account_features);
+				break;
+			}
+
+			case MSG_MASTER_SERVER_LIST_OBTAINED: {
+				var servers = msg[1] as ServerInfo[];
+				if (server_list_handler) {
+					server_list_handler.got_server_list(servers);
+				}
+				break;
+			}
+
+			case MSG_MASTER_COOKIE_OBTAINED:
+				if (server_list_handler) {
+					server_list_handler.got_cookie(msg[1], msg[2]);
+				}
+				break;
+
+			case MSG_MASTER_ACCOUNT_INFO_OBTAINED: {
+				var request_account_id = msg[1] as String;
+				var info = msg[2] as AccountInfo;
+				if (info) {
+					has_skins_cache[info.account_id] = (info.features & FEATURE_SKINS) != 0;
+					if (canvas.client) {
+						var skin_data = canvas.client.skins.get(info.account_id, null);
+						if (skin_data) {
+							skin_data.has_skins = has_skins_cache[info.account_id];
+						}
+					}
+				}
+				else {
+					has_skins_cache[request_account_id] = false;
+				}
+				break;
+			}
+
+			case MSG_MASTER_MODERATION_COOKIE_OBTAINED:
+				if (moderation_cookie_data) {
+					var data = moderation_cookie_data;
+					moderation_cookie_data = null;
+					ModerationInterfaceImpl::moderation_action(data, msg[1]);
+				}
+				break;
+		}
+	}
+
+	function @client_connected(client: Client)
+	{
+		this.client = client;
+		if (server_list_handler) {
+			server_list_handler.connected();
+		}
+		subview.add(leaderboard);
+		subview.add(chat_view);
+		if (script_panel.get_parent()) {
+			subview.remove(script_panel);
+			subview.add(script_panel);
+		}
+	}
+
+	function @send_skin()
+	{
+		if ((account_features & FEATURE_SKINS) != 0) {
+			skin_worker.send([MSG_SKIN_GET_OWN]);
+		}
+	}
+
+	function @skin_callback(msg)
+	{
+		switch (msg[0]) {
+			case MSG_SKIN_OWN_DATA: {
+				var images = msg[1] as Byte[][];
+				SkinSender::send(images);
+				break;
+			}
+		}
+	}
+
+	function @update_nick()
+	{
+		var nick = nick_field.get_text();
+		if (nick != config_get_string("nick", null)) {
+			config_set("nick", nick);
+			config_save();
+		}
+	}
+
+	function @show_servers()
+	{
+		update_nick();
+		if (!server_list_handler) {
+			server_list_handler = ServerListHandler::create();
+		}
+	}
+
+	function @start_local_server()
+	{
+		if (System::get_type() == SYSTEM_MACOS) {
+			MessageBox::show(canvas.subview, "Error", "Currently not available in the MacOS version.");
+			return;
+		}
+		update_nick();
+		login_view.remove_self();
+		if (!script_panel.get_parent()) {
+			var width = subview.get_width();
+			var height = subview.get_height();
+			subview.add(script_panel);
+			script_panel.set_rect(iround(width*0.1), iround(height*0.6), iround(width*0.8), iround(height*0.38));
+			script_editor.set_rect(script_editor.get_rect());
+			script_editor.set_active(true);
+		}
+		subview.focus();
+		if (!server_worker) {
+			// TODO
+			if (System::get_type() == SYSTEM_MACOS) {
+				server_worker = WorkerWrapper::create(Task::create("cellsplit/server/server", "main#1", [true]));
+			}
+			else {
+				server_worker = WorkerWrapper::create(Worker::create("cellsplit/server/server", "main#1", [true], GameCanvas::server_callback#2, this));
+			}
+		}
+	}
+
+	function @back_to_game()
+	{
+		game_menu_modal.hide();
+		game_menu_modal = null;
+
+		if (controls_msgbox) {
+			controls_msgbox.hide();
+		}
+	}
+
+	function @disconnect()
+	{
+		client.close();
+		client = null;
+		nick_shapes.clear();
+		leaderboard.remove_self();
+		if (opengl_renderer) {
+			opengl_renderer.clear_textures();
+		}
+		script_panel.remove_self();
+		script_target = null;
+		(marks as Dynamic[]).clear();
+		script_editor.set_active(false);
+		chat_panel.hide();
+		chat_view.remove_self();
+		if (moderation_panel) {
+			moderation_panel.hide();
+			moderation_panel = null;
+		}
+		if (game_rules_message) {
+			game_rules_message.hide();
+			game_rules_message = null;
+		}
+		debug_view.set_text("");
+		if (server_worker) {
+			if (game_menu_modal) {
+				game_menu_modal.set_view(null);
+			}
+			server_worker.send([MSG_SERVER_STOP]);
+		}
+		else {
+			return_to_main_menu();
+		}
+	}
+
+	function @server_stopped()
+	{
+		server_worker = null;
+		return_to_main_menu();
+	}
+
+	function @return_to_main_menu()
+	{
+		if (game_menu_modal) {
+			game_menu_modal.hide();
+			game_menu_modal = null;
+		}
+		subview.add(login_view);
+		premium_view.set_rect(premium_view.get_rect());
+	}
+
+	function @show_controls()
+	{
+		var extra1 = "";
+		var extra2 = "";
+		if (script_panel != null && script_panel.get_parent() != null) {
+			extra1 = {
+				"\n",
+				"R\n",
+				"Ctrl+R\n",
+				"Ctrl+L\n",
+				"Ctrl+Space"
+			};
+			extra2 = {
+				"\n",
+				" - reset mass (in Bot Test)\n",
+				" - restart script (in script editor)\n",
+				" - clear log (in script editor)\n",
+				" - autocomplete (in script editor)"
+			};
+		}
+		var label1 = GameLabel::create({
+			"Use mouse to point to a target position\n",
+			"for your cells to move to.\n\n",
+			"Keys:"
+		});
+		var label2 = GameLabel::create({
+			"W\n",
+			"Space or F\n",
+			"T or Enter\n",
+			"Escape\n",
+			"right click on player" + extra1
+		});
+		var label3 = GameLabel::create({
+			" - eject mass\n",
+			" - split\n",
+			" - chat\n",
+			" - game menu\n",
+			" - moderation controls" + extra2
+		});
+		var box = GameBox::create(BOX_VERT, [
+			label1.as_measure_view(),
+			GameBox::create(BOX_HORIZ, [
+				label2.as_measure_view(),
+				label3.as_measure_view()
+			]).as_measure_view()
+		]).as_measure_view();
+		controls_msgbox = MessageBox::show(canvas.subview, "Controls", box);
+	}
+
+	function @quit()
+	{
+		win.destroy();
+	}
+
+	function @chat_typed(message: String)
+	{
+		if (client) {
+			ChatPacket::create(CHAT_GLOBAL, message, 0).send(client);
+		}
+	}
+
+	function @show_chat(account_id: String, nick: String, message: String, style: Integer)
+	{
+		if (account_id.length > 0) {
+			message = nick+": "+message;
+			chat_view.add_line(message, style);
+			chat_panel.add_line(message, style);
+		}
+		else {
+			chat_view.add_line(message, style);
+			chat_panel.add_line(message, style);
+		}
+	}
+}
+
+class @ModerationInterfaceImpl: ModerationInterface
+{
+	constructor create()
+	{
+	}
+
+	override function report_player(account: String, nick: String, reason: String)
+	{
+		master_worker.send([MSG_MASTER_REPORT_PLAYER, account, nick, reason]);
+	}
+	
+	override function kick_player(account: String, ban: Boolean, reason: String)
+	{
+		moderation_cookie_data = [account, ban, reason];
+		master_worker.send([MSG_MASTER_GET_MODERATION_COOKIE]);
+	}
+
+	static function moderation_action([account: String, ban: Boolean, reason: String], cookie: Byte[])
+	{
+		var verify_stream = ArrayStream::create();
+		verify_stream.write_null_string(account);
+		verify_stream.write_ubyte(ban? 1:0);
+		verify_stream.write_null_string(reason.to_utf8());
+		KickPlayerPacket::create(account, ban, reason, hmac_sha256(cookie, verify_stream.get_output())).send(canvas.client);
+	}
+}
+
+class @SkinSender
+{
+	var @data: Byte[][];
+	var @pos1: Integer;
+	var @pos2: Integer;
+
+	constructor send(data: Byte[][])
+	{
+		this.data = data;
+		this.pos1 = data.length-1;
+		Timer::run(100, SkinSender::handle#1, this);
+	}
+
+	function @handle(): Boolean
+	{
+		var data = this.data[pos1];
+		var max_size = SkinDataPacket::get_max_size(account_id);
+		var amount = min(data.length - pos2, max_size);
+		var done = (pos2 + amount) == data.length;
+		SkinDataPacket::create(pos1, done, null, data, pos2, amount).send(canvas.client);
+		pos2 += amount;
+		if (done) {
+			pos1--;
+			pos2 = 0;
+		}
+		return pos1 >= 0;
+	}
+}
+
+class LeaderboardView: SubView
+{
+	var @font: Font;
+	var @bold_font: Font;
+	var @cached_image: Image;
+	var @cached_scale: Float;
+	var @invalidate: Boolean;
+	var @leaderboard: LeaderboardPacket;
+
+	constructor create()
+	{
+		font = get_light_font();
+		bold_font = get_bold_font();
+		invalidate = true;
+	}
+
+	function update(leaderboard: LeaderboardPacket)
+	{
+		this.leaderboard = leaderboard;
+		invalidate = true;
+		repaint();
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var scale = get_scale();
+		if (!cached_image || cached_scale != scale) {
+			cached_image = Image::create(max(1, get_width()), max(1, get_height()));
+			invalidate = true;
+		}
+		if (invalidate) {
+			var p2 = Painter::create(cached_image);
+			var subtract = 11*iround(20*scale);
+			if (leaderboard) {
+				var cnt = leaderboard.top_players.length;
+				if (leaderboard.own_place > leaderboard.top_players.length) {
+					cnt++;
+				}
+				subtract -= cnt*iround(20*scale);
+			}
+			p2.clear_rect(0, 0, cached_image.get_width(), cached_image.get_height(), 0x00000000);
+			p2.fill_shape(Shape::round_rect(0, 0, get_width(), get_height()-subtract, 10*scale, 10*scale), argb(0xCCCCCCCC));
+			p2.fill_shape(bold_font.get_string_shape("Leaderboard", (get_width()-bold_font.get_string_advance("Leaderboard")*20*scale)*0.5, 30*scale, 20*scale, 20*scale), 0xFF000000);
+			if (leaderboard) {
+				var x = iround(10*scale);
+				var y = iround(55*scale);
+				for (var i=0; i<leaderboard.top_players.length; i++) {
+					var style = leaderboard.styles[i];
+					var player_font = font;
+					if (((style >>> 24) & 1) != 0) {
+						player_font = bold_font;
+					}
+					p2.fill_shape(player_font.get_string_shape((i+1)+". "+leaderboard.top_players[i], x, y, 15*scale, 15*scale), 0xFF000000 | style);
+					y += iround(20*scale);
+				}
+				if (leaderboard.own_place > leaderboard.top_players.length) {
+					var player_font = font;
+					if ((account_features & FEATURE_HIGHLIGHT) != 0) {
+						player_font = bold_font;
+					}
+					var own_nick = leaderboard.own_nick? leaderboard.own_nick : canvas.nick_field.get_text();
+					p2.fill_shape(player_font.get_string_shape(leaderboard.own_place+". "+own_nick, x, y, 15*scale, 15*scale), 0xFF000000);
+				}
+			}
+			invalidate = false;
+		}
+		p.draw_image(0, 0, cached_image);
+	}
+}
+
+class ChatView: SubView
+{
+	var @font: Font;
+	var @bold_font: Font;
+	var @cached_image: Image;
+	var @cached_scale: Float;
+	var @invalidate: Boolean;
+	var @lines: String[];
+	var @styles: Integer[];
+	var @times: Integer[];
+
+	constructor create()
+	{
+		font = get_normal_font();
+		bold_font = get_bold_font();
+		invalidate = true;
+		lines = [];
+		styles = [];
+		times = [];
+		Timer::run(500, ChatView::clean_lines#1, this);
+	}
+
+	function add_line(text: String, style: Integer)
+	{
+		var scale = get_scale();
+		var line_font = font;
+		if (((style >>> 24) & 1) != 0) {
+			line_font = bold_font;
+		}
+		var text_size = 12*scale;
+		var text_width = iceil(line_font.get_string_advance(text) * text_size);
+		var max_width = get_width() - iround(20*scale);
+		if (text_width > max_width) {
+			while (text.length > 0) {
+				var pos = max(0, ifloor(line_font.get_string_position(text, max_width/text_size)));
+				if (pos >= text.length) {
+					real_add_line(text, style);
+					break;
+				}
+				var orig_pos = pos;
+				while (pos > 0 && text[pos] != ' ') {
+					pos--;
+				}
+				if (pos == 0) {
+					pos = orig_pos;
+					if (pos == 0) {
+						pos = 1;
+					}
+					real_add_line(text.substring(0, pos), style);
+					text = text.substring(pos);
+				}
+				else {
+					real_add_line(text.substring(0, pos), style);
+					text = text.substring(pos+1);
+				}
+			}
+			return;
+		}
+		else {
+			real_add_line(text, style);
+		}
+	}
+		
+	function @real_add_line(text: String, style: Integer)
+	{
+		lines[] = text;
+		styles[] = style;
+		times[] = add32(Timer::get_time(), 15000);
+		if (lines.length > 10) {
+			lines.remove(0);
+			styles.remove(0);
+			times.remove(0);
+		}
+		invalidate = true;
+		repaint();
+	}
+
+	function @clean_lines(): Boolean
+	{
+		if (lines.length > 0) {
+			if (canvas.game_rules_message) {
+				for (var i=0; i<times.length; i++) {
+					times[i] = add32(times[i], 500);
+				}
+			}
+			var time = Timer::get_time();
+			if (sub32(time, times[0]) >= 0) {
+				lines.remove(0);
+				styles.remove(0);
+				times.remove(0);
+				invalidate = true;
+				repaint();
+			}
+		}
+		return true;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		if (lines.length == 0) {
+			return;
+		}
+		var scale = get_scale();
+		if (!cached_image || cached_scale != scale) {
+			cached_image = Image::create(max(1, get_width()), max(1, get_height()));
+			invalidate = true;
+		}
+		if (invalidate) {
+			var p2 = Painter::create(cached_image);
+			p2.clear_rect(0, 0, cached_image.get_width(), cached_image.get_height(), 0x00000000);
+			if (lines.length > 0) {
+				p2.fill_shape(Shape::round_rect(0, 0, get_width(), lines.length*iround(20*scale)+iround(10*scale), 10*scale, 10*scale), argb(0x11000000));
+			}
+			var x = iround(10*scale);
+			var y = iround(20*scale);
+			for (var i=0; i<lines.length; i++) {
+				var style = styles[i];
+				var line_font = font;
+				if (((style >>> 24) & 1) != 0) {
+					line_font = bold_font;
+				}
+				p2.fill_shape(line_font.get_string_shape(lines[i], x, y, 12*scale, 12*scale), 0xFF000000 | style);
+				y += iround(20*scale);
+			}
+			invalidate = false;
+		}
+		p.draw_image(0, (10-lines.length)*iround(20*scale), cached_image);
+	}
+}
+
+function @create_progress_panel(title: String): Panel
+{
+	var scale = canvas.subview.get_scale();
+	var panel = Panel::create(title);
+	panel.set_moveable(false);
+	panel.set_rect(0, 0, iround(250*scale), iround(50*scale));
+	var progress = GameProgressBar::create();
+	panel.set_content(progress);
+	return panel;
+}
+
+class @ServerListHandler
+{
+	var @modal: ModalWindow;
+	var @connect_host: String;
+	var @connect_port: Integer;
+
+	constructor create()
+	{
+		modal = ModalWindow::show(canvas.subview, create_progress_panel("Obtaining server list..."));
+		
+		master_worker.send([MSG_MASTER_GET_SERVER_LIST]);
+	}
+
+	constructor connect(host: String, port: Integer)
+	{
+		modal = ModalWindow::show(canvas.subview, create_progress_panel("Connecting to the server..."));
+
+		connect_host = host;
+		connect_port = port;
+		master_worker.send([MSG_MASTER_GET_COOKIE]);
+	}
+
+	function got_error(msg: String)
+	{
+		modal.hide();
+		server_list_handler = null;
+		MessageBox::show(canvas.subview, "Can't retrieve server list", "Error: "+msg);
+	}
+
+	function got_server_list(servers: ServerInfo[])
+	{
+		modal.set_view(ServerList::create(canvas.subview, servers, ServerListHandler::server_list_closed#2, this));
+	}
+
+	function server_list_closed(server: ServerInfo)
+	{
+		if (server) {
+			modal.set_view(create_progress_panel("Connecting to the server..."));
+			connect_host = server.host;
+			connect_port = server.port;
+			master_worker.send([MSG_MASTER_GET_COOKIE]);
+		}
+		else {
+			modal.hide();
+			server_list_handler = null;
+		}
+	}
+
+	function failed_to_connect()
+	{
+		modal.hide();
+		server_list_handler = null;
+		MessageBox::show(canvas.subview, "Error", "Can't connect to "+connect_host+":"+connect_port);
+	}
+
+	function got_cookie(cookie: Byte[], session_secret: Byte[])
+	{
+		Client::connect(connect_host, connect_port, cookie, session_secret, GameCanvas::client_connected#2, canvas);
+	}
+
+	function connected()
+	{
+		modal.hide();
+		server_list_handler = null;
+		canvas.login_view.remove_self();
+	}
+}
+
+class Cell
+{
+	var id: Integer;
+	var type: Integer;
+	var @data: Float[];
+	var size: Float;
+	var color: Integer;
+	var color_outline: Integer;
+	var own: Boolean;
+	var account: String;
+	var nick: String;
+	var text_shape1: Shape;
+	var text_shape2: Shape;
+	var text_width: Float;
+	var mass: Integer;
+	var mass_shape1: Shape;
+	var mass_shape2: Shape;
+
+	function add_pos(x: Float, y: Float, size: Float)
+	{
+		if (data.length > 3*3) {
+			data.remove(3*3, data.length-3*3);
+		}
+		data[] = x;
+		data[] = y;
+		data[] = size;
+	}
+
+	static function lerp(a: Float, b: Float, delta: Float): Float
+	{
+		return a + (b - a) * delta;
+	}
+
+	function get_pos_size(delta_time: Integer, update: Boolean, out: Float[]): Float[]
+	{
+		var num_samples = data.length / 3;
+		if (num_samples >= 2) {
+			var idx1 = 0*3;
+			var idx2 = 1*3;
+			while (delta_time >= 40 && num_samples > 2) {
+				if (update) {
+					data.remove(0, 3);
+				}
+				else {
+					idx1 += 3;
+					idx2 += 3;
+				}
+				delta_time -= 40;
+				num_samples--;
+			}
+			var delta = float(min(delta_time, 40)) / 40.0;
+			out[0] = lerp(data[idx1+0], data[idx2+0], delta);
+			out[1] = lerp(data[idx1+1], data[idx2+1], delta);
+			out[2] = lerp(data[idx1+2], data[idx2+2], delta);
+			return out;
+		}
+		else if (num_samples == 1) {
+			out[0] = data[0];
+			out[1] = data[1];
+			out[2] = data[2];
+			return out;
+		}
+		return null;
+	}
+
+	function update_shapes()
+	{
+		if (nick) {
+			var shapes = nick_shapes.get(nick, null);
+			if (shapes) {
+				text_shape1 = shapes[0];
+				text_shape2 = shapes[1];
+			}
+			else {
+				var font = get_bold_font();
+				var text_size = 80.0;
+				var text_width = font.get_string_advance(nick) * text_size;
+				text_shape1 = font.get_string_shape(nick, -text_width*0.5, text_size*0.3, text_size, text_size);
+				text_shape2 = text_shape1.get_outline(7.0);
+				nick_shapes[nick] = [text_shape1, text_shape2];
+			}
+			var bounds = text_shape2.get_bounds();
+			this.text_width = bounds[2] - bounds[0];
+		}
+		else {
+			text_shape1 = null;
+			text_shape2 = null;
+		}
+	}
+
+	function update_mass_shapes(mass: Integer)
+	{
+		if (mass == this.mass) return;
+
+		var font = get_bold_font();
+		var text = {mass};
+		var text_size = 65.0;
+		var text_width = font.get_string_advance(text) * text_size;
+		mass_shape1 = font.get_string_shape(text, -text_width*0.5, text_size*0.3, text_size, text_size);
+		mass_shape2 = mass_shape1.get_outline(7.0);
+
+		this.mass = mass;
+	}
+
+	static function mass_to_size(mass: Float): Float
+	{
+		return sqrt(mass * 100.0);
+	}
+
+	static function size_to_mass(size: Float): Float
+	{
+		return size*size / 100.0;
+	}
+
+	static function create_virus_shape(): Shape
+	{
+		var shape = Shape::create();
+		for (var i=0; i<100; i++) {
+			var angle = i/100.0*PI*2.0;
+			var r = i%2 == 0? 1.05 : 1.0;
+			var x = cos(angle) * r;
+			var y = sin(angle) * r;
+			if (i == 0) {
+				shape.move_to(x, y);
+			}
+			else {
+				shape.line_to(x, y);
+			}
+		}
+		shape.close_path();
+		return shape;
+	}
+
+	static function contains(data: Float[], pos: Vector): Boolean
+	{
+		var x = pos.x - data[0];
+		var y = pos.y - data[1];
+		var size = data[2];
+		var dist = x*x + y*y;
+		return dist < size*size;
+	}
+}
+
+class SkinData
+{
+	var @images: Image[];
+	var @color_outline: Integer;
+	var @buf: Byte[];
+	var @has_skins: Boolean;
+
+	constructor create()
+	{
+		this.buf = [];
+	}
+
+	function has_images(): Boolean
+	{
+		return has_skins && images != null && images[images.length-1] != null;
+	}
+
+	function get_image(scale: Float): Image
+	{
+		var last_image: Image;
+		foreach (var image in images) {
+			if (image != null) {
+				last_image = image;
+				var adj_scale = scale * 2.0 / image.get_width();
+				if (adj_scale >= 0.5) {
+					return image;
+				}
+			}
+		}
+		return last_image;
+	}
+
+	function is_done(): Boolean
+	{
+		return images != null && images[0] != null;
+	}
+
+	function update(level: Integer, done: Boolean, data: Byte[])
+	{
+		if (!images) {
+			images = Array::create(level+1);
+		}
+		else {
+			if (images[level] != null || (level+1 < images.length && images[level+1] == null)) {
+				buf = null;
+				throw error("invalid skin image");
+			}
+		}
+		buf.append(data);
+		if (buf.length > MAX_SKIN_SIZE) {
+			buf = null;
+			throw error("invalid skin image");
+		}
+		if (done) {
+			var shared = Array::create_shared(buf.length, 1);
+			Array::copy(shared, 0, buf, 0, buf.length);
+			if (!check_image_dimensions(shared, MAX_SKIN_DIMENSION, MAX_SKIN_DIMENSION)) {
+				throw error("invalid skin image");
+			}
+			images[level] = load_image(shared);
+			if (level > 0) {
+				buf.clear();
+			}
+			else {
+				buf = null;
+			}
+			if (level == images.length-1) {
+				var image = images[level].clone();
+				var size = image.get_width();
+				image.apply_gamma(2.2);
+				while (size > 1) {
+					size = max(1, size/2);
+					var new_image = Image::create(size, size);
+					var p = Painter::create(new_image);
+					var tr = Transform::create();
+					tr.scale(float(size) / float(image.get_width()));
+					p.fill_rect(0, 0, size, size, Shader {
+						replace(sample_bilinear(image, tr, CLAMP_X|CLAMP_Y));
+					});
+					image = new_image;
+				}
+				image.apply_gamma(1.0/2.2);
+				color_outline = darken_color(image.get_pixels()[0], 0.95);
+			}
+		}
+	}
+}
+
+class Client: Connection
+{
+	var @cookie: Byte[];
+	var cells: Cell[Integer];
+	var cells_changed: Boolean;
+	var cells_list: Cell[];
+	var pellets: [Pellet];
+	var pellets_len: Integer;
+	var @reversed_sort: Boolean;
+	var @skins: SkinData[String];
+
+	static function connect(hostname: String, port: Integer, cookie: Byte[], session_secret: Byte[], callback, data)
+	{
+		AsyncTCPConnection::open(hostname, port, Client::handle_open#2, [cookie, session_secret, callback, data]);
+	}
+
+	static function @handle_open([cookie: Byte[], session_secret: Byte[], callback, data], tcp_conn: AsyncTCPConnection)
+	{
+		if (!tcp_conn) {
+			if (server_list_handler) {
+				server_list_handler.failed_to_connect();
+			}
+			throw error("can't connect");
+		}
+		
+		var conn = new Client: Connection::create(tcp_conn, 32*1024, 512*1024);
+		conn.cells = {};
+		conn.cells_list = [];
+		conn.pellets = Array::create_shared(1024, 4);
+		conn.pellets_len = 0;
+		conn.skins = {};
+		conn.set_close_callback(Client::handle_close#3, conn);
+
+		var packet = PreLoginPacket::create();
+		packet.cookie = cookie;
+		packet.send(conn);
+
+		conn.init_cipher(session_secret, false);
+
+		//conn.flush(Client::handle_flush#1, conn);
+
+		callback(data, conn);
+	}
+
+	override function receive_packet(stream: ArrayStream)
+	{
+		var packet = Packet::receive(this, stream);
+		switch (packet.get_type()) {
+			case PACKET_ERROR: {
+				var ep = packet as ErrorPacket;
+				if (ep.reason == "") {
+					var system_type = SYSTEM_TYPE_OTHER;
+					var system_flags = 0;
+					switch (System::get_type()) {
+						case SYSTEM_WINDOWS: system_type = SYSTEM_TYPE_WINDOWS; break;
+						case SYSTEM_LINUX:   system_type = SYSTEM_TYPE_LINUX; break;
+						case SYSTEM_MACOS:   system_type = SYSTEM_TYPE_MACOS; break;
+						case SYSTEM_HAIKU:   system_type = SYSTEM_TYPE_HAIKU; break;
+					}
+					var lp = LoginPacket::create(system_type, system_flags);
+					lp.nick = config_get_string("nick", "Unnamed");
+					lp.send(this);
+					canvas.send_skin();
+					break;
+				}
+				canvas.disconnect();
+				MessageBox::show(canvas.subview, "Disconnected", ep.reason);
+				break;
+			}
+
+			case PACKET_ADD_CELL: {
+				var acp = packet as AddCellPacket;
+				var cell = new Cell;
+				cell.id = acp.id;
+				cell.type = acp.type;
+				cell.data = [];
+				cell.size = acp.size;
+				cell.add_pos(acp.pos.x, acp.pos.y, acp.size);
+				cell.color = acp.color;
+				cell.color_outline = darken_color(acp.color, 0.95);
+				cell.own = acp.own;
+				cell.account = acp.account != null? acp.account.as_const() : null;
+				cell.nick = acp.nick;
+				cell.update_shapes();
+				cell.mass = -1;
+				cells[cell.id] = cell;
+				cells_list[] = cell;
+				cells_changed = true;
+				break;
+			}
+
+			case PACKET_REMOVE_CELL: {
+				var rcp = packet as RemoveCellPacket;
+				var id = rcp.id;
+				var cell = cells.get(id, null);
+				if (cell) {
+					cells.remove(id);
+					var cells_list = this.cells_list;
+					for (var i=0; i<cells_list.length; i++) {
+						if (cells_list[i].id == id) {
+							cells_list.remove(i);
+							break;
+						}
+					}
+					cells_changed = true;
+				}
+				break;
+			}
+
+			case PACKET_UPDATE_CELLS: {
+				var ucp = packet as UpdateCellsPacket;
+				var data = ucp.data;
+				foreach (var i in data) {
+					var cell = cells.get(data[i].id, null);
+					if (cell) {
+						var size = data[i].size;
+						cell.size = size;
+						cell.add_pos(data[i].x, data[i].y, size);
+						cells_changed = true;
+					}
+				}
+				break;
+			}
+
+			case PACKET_ADD_PELLETS: {
+				var app = packet as AddPelletsPacket;
+				shared_append(&pellets, &pellets_len, app.pellets);
+				break;
+			}
+
+			case PACKET_REMOVE_PELLETS: {
+				var rpp = packet as RemovePelletsPacket;
+				var pellets = this.pellets;
+				if (rpp.ids.length == 1) {
+					var id = rpp.ids[0];
+					for (var i=0 as Pellet; i<pellets_len; i++) {
+						if (pellets[i].id == id) {
+							shared_remove(&pellets, &pellets_len, i as Integer, Pellet::SIZE);
+							break;
+						}
+					}
+				}
+				else {
+					var ids: Boolean[Integer] = {};
+					foreach (var id in rpp.ids) {
+						ids[id] = true;
+					}
+					var cnt = ids.length;
+					for (var i=0 as Pellet; i<pellets_len; i++) {
+						if (ids.contains(pellets[i].id)) {
+							shared_remove(&pellets, &pellets_len, i as Integer, Pellet::SIZE);
+							if (--cnt == 0) break;
+							i--;
+							continue;
+						}
+					}
+				}
+				break;
+			}
+			
+			case PACKET_GROW_PELLET: {
+				var gpp = packet as GrowPelletPacket;
+				var id = gpp.id;
+				var pellets = this.pellets;
+				for (var i=0 as Pellet; i<pellets_len; i++) {
+					if (pellets[i].id == id) {
+						pellets[i].size = gpp.size;
+						break;
+					}
+				}
+				break;
+			}
+			
+			case PACKET_CLEAR_VIEW: {
+				pellets_len = 0;
+				break;
+			}
+
+			case PACKET_LEADERBOARD: {
+				canvas.leaderboard.update(packet as LeaderboardPacket);
+				break;
+			}
+
+			case PACKET_CHAT: {
+				var chat = packet as ChatPacket;
+				canvas.show_chat(chat.account_id, chat.nick, chat.message, chat.style);
+				break;
+			}
+
+			case PACKET_SKIN_DATA: {
+				var sdp = packet as SkinDataPacket;
+				var skin_data = skins.get(sdp.account_id, null);
+				if (!skin_data || skin_data.is_done()) {
+					skin_data = SkinData::create();
+					skin_data.has_skins = has_skins_cache.get(sdp.account_id, false);
+					skins[sdp.account_id] = skin_data;
+					if (!has_skins_cache.contains(sdp.account_id)) {
+						master_worker.send([MSG_MASTER_GET_ACCOUNT_INFO, sdp.account_id]);
+					}
+				}
+				var (r, e) = skin_data.update(sdp.level, sdp.done, sdp.data);
+				if (e) {
+					dump(e);
+					skins.remove(sdp.account_id);
+					break;
+				}
+				break;
+			}
+
+			case PACKET_SERVER_RULES: {
+				var srp = packet as ServerRulesPacket;
+				if (canvas.game_rules_message) {
+					canvas.game_rules_message.hide();
+				}
+				canvas.game_rules_message = MessageBox::show(canvas.subview, "Server rules", String::join(srp.rules, "\n"));
+				canvas.game_rules_message.set_confirm_action(Client::confirm_game_rules#1, this);
+				break;
+			}
+			
+			default:
+				throw error("received unknown packet type ("+packet.get_type()+")");
+		}
+	}
+
+	function @confirm_game_rules()
+	{
+		canvas.game_rules_message = null;
+		ServerRulesConfirmPacket::create().send(this);
+	}
+
+	function @handle_close(conn, e)
+	{
+		if (e) {
+			dump(e);
+		}
+		if (server_list_handler) {
+			server_list_handler.failed_to_connect();
+		}
+	}
+
+	function @handle_flush()
+	{
+		close();
+	}
+
+	function sort_cells(): Boolean
+	{
+		var list = this.cells_list;
+		if (list.length < 2) return true;
+		
+		var changed = false;
+		if (reversed_sort) {
+			var prev_cell = list[list.length-1];
+			for (var i=list.length-2; i>=0; i--) {
+				var cell = list[i];
+				if (prev_cell.size < cell.size) {
+					list[i+1] = cell;
+					list[i] = prev_cell;
+					changed = true;
+				}
+				else {
+					prev_cell = cell;
+				}
+			}
+		}
+		else {
+			var prev_cell = list[0];
+			for (var i=1; i<list.length; i++) {
+				var cell = list[i];
+				if (prev_cell.size > cell.size) {
+					list[i-1] = cell;
+					list[i] = prev_cell;
+					changed = true;
+				}
+				else {
+					prev_cell = cell;
+				}
+			}
+		}
+		reversed_sort = !reversed_sort;
+		return !changed;
+	}
+
+	function get_first_own_cell(): Cell
+	{
+		foreach (var id, cell in cells) {
+			if (cell.own) {
+				return cell;
+			}
+		}
+		return null;
+	}
+}
+
+class ClientInterfaceImpl: ClientInterface
+{
+	var @canvas: GameCanvas;
+	
+	constructor create(canvas: GameCanvas)
+	{
+		this.canvas = canvas;
+	}
+	
+	override function add_mark(id: Integer, x: Float, y: Float, desc: String)
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		if (!desc) {
+			desc = "";
+		}
+		if (desc.length > 128) {
+			desc = desc.extract(0, 128);
+		}
+
+		var cross_size = 10.0;
+		var shape = Shape::create();
+		shape.move_to(0.0, -cross_size);
+		shape.line_to(0.0, cross_size);
+		shape.move_to(-cross_size, 0.0);
+		shape.line_to(cross_size, 0.0);
+		shape = shape.get_outline(2.0);
+
+		var font = get_normal_font();
+		var text_size = 10.0*2.0;
+		var text_width = font.get_string_advance(desc) * text_size;
+		var text_shape = font.get_string_shape(desc, -text_width*0.5, text_size*0.3, text_size, text_size);
+
+		var tr = Transform::create();
+		tr.translate(0, cross_size*2.0);
+		shape.append(text_shape, tr);
+		shape = shared_from_array(shape, 4);
+
+		var marks = canvas.marks;
+		var shape_outline: Shape = null;
+		if (canvas.opengl_renderer) {
+			var shape_len = (shape as Dynamic[]).length;
+			foreach (var i in marks) {
+				if ((marks[i].shape as Dynamic[]).length == shape_len && marks[i].shape == shape) {
+					shape = marks[i].shape;
+					shape_outline = marks[i].shape_outline;
+					break;
+				}
+			}
+		}
+		if (!shape_outline) {
+			shape_outline = shared_from_array(shape.get_outline(4.0), 4);
+		}
+
+		marks[] = {
+			.id: id,
+			.x: x,
+			.y: y,
+			.shape: shape,
+			.shape_outline: shape_outline
+		};
+	}
+	
+	override function remove_mark(id: Integer)
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		var marks = canvas.marks;
+		foreach (var i in marks) {
+			if (marks[i].id == id) {
+				array_remove(marks, i as Integer, Mark::SIZE);
+				break;
+			}
+		}
+	}
+
+	override function set_target(x: Float, y: Float)
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		canvas.script_target = Vector(x, y);
+	}
+
+	override function clear_target()
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		canvas.script_target = null;
+	}
+
+	override function split()
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		ActionPacket::create(ACTION_SPLIT).send(canvas.client);
+	}
+
+	override function eject_mass()
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		ActionPacket::create(ACTION_EJECT_MASS).send(canvas.client);
+	}
+
+	override function reset()
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		ActionPacket::create(ACTION_INTERNAL_RESET).send(canvas.client);
+	}
+
+	override function reset(mass: Float)
+	{
+		if (canvas.script_panel == null || canvas.script_panel.get_parent() == null) {
+			return;
+		}
+		var packet = ActionPacket::create(ACTION_INTERNAL_RESET_WITH_MASS);
+		packet.mass = mass;
+		packet.send(canvas.client);
+	}
+
+	override function get_environment(): Environment
+	{
+		var env = Environment::create();
+		var client = canvas.client;
+		if (client) {
+			env.pellets = shared_from_array(client.pellets, 0, client.pellets_len, 4);
+			var cells: [EnvCell] = [];
+			foreach (var cell in client.cells_list) {
+				var data = cell.data;
+				var len = data.length;
+				if (len < 3) continue;
+				cells[] = {
+					.id: cell.id,
+					.type: cell.type,
+					.x: data[len-3],
+					.y: data[len-2],
+					.size: data[len-1],
+					.color: cell.color,
+					.name: cell.nick,
+					.own: cell.own
+				};
+			}
+			env.cells = cells;
+		}
+		else {
+			env.pellets = Array::create_shared(0, 4);
+			env.cells = [];
+		}
+		return env;
+	}
+}
+
+class @WorkerWrapper
+{
+	var @worker;
+
+	constructor create(worker: Worker or Task)
+	{
+		this.worker = worker;
+	}
+
+	function send(msg)
+	{
+		if (System::get_type() == SYSTEM_MACOS) {
+			(worker as Task).send(msg);
+		}
+		else {
+			(worker as Worker).send(msg);
+		}
+	}
+
+	function handle_callbacks(func, data)
+	{
+		if (System::get_type() == SYSTEM_MACOS) {
+			for (;;) {
+				var msg = (worker as Task).receive_wait(0);
+				if (!msg) break;
+
+				var (r, e) = func(data, msg);
+				if (e) {
+					dump(e);
+				}
+			}
+			return;
+		}
+		throw error("shouldn't happen");
+	}
+}
+
+function @handle_callbacks()
+{
+	master_worker.handle_callbacks(GameCanvas::master_callback#2, canvas);
+	skin_worker.handle_callbacks(GameCanvas::skin_callback#2, canvas);
+	async_process(0);
+}
+
+function init(args: String[])
+{
+	if (System::get_type() != SYSTEM_WINDOWS) {
+		opengl_disabled = true;
+	}
+
+	var connect_host: String;
+	var connect_port: Integer;
+
+	for (var i=0; i<args.length; i++) {
+		if (args[i] == "-sw") {
+			opengl_disabled = true;
+		}
+		else if (args[i] == "-connect" && i+1 < args.length) {
+			var parts = args[i+1].split(':');
+			if (parts.length == 2) {
+				var (port, e) = String::parse_int(parts[1]);
+				if (!e) {
+					connect_host = parts[0];
+					connect_port = port;
+				}
+			}
+		}
+	}
+
+	nick_shapes = {};
+	has_skins_cache = {};
+
+	win = GameWindow::create("CellSplit v0.2", 1024, 768, WIN_CENTER | WIN_RESIZABLE);
+	var canvas = GameCanvas::create();
+	win.set_minimum_size(640, 480);
+	win.add(canvas, Rect(0, 0, 1024, 768));
+	win.set_visible(true);
+	canvas.focus(); // TODO
+
+	// TODO
+	if (System::get_type() == SYSTEM_MACOS) {
+		master_worker = WorkerWrapper::create(Task::create("cellsplit/master", "main#0", []));
+		master_worker.send([MSG_MASTER_INIT_ACCOUNT]);
+
+		skin_worker = WorkerWrapper::create(Task::create("cellsplit/skin_worker", "main#0", []));
+		skin_worker.send([MSG_SKIN_LOAD_OWN]);
+	}
+	else {
+		master_worker = WorkerWrapper::create(Worker::create("cellsplit/master", "main#0", [], GameCanvas::master_callback#2, canvas));
+		master_worker.send([MSG_MASTER_INIT_ACCOUNT]);
+
+		skin_worker = WorkerWrapper::create(Worker::create("cellsplit/skin_worker", "main#0", [], GameCanvas::skin_callback#2, canvas));
+		skin_worker.send([MSG_SKIN_LOAD_OWN]);
+	}
+	
+	if (connect_host) {
+		server_list_handler = ServerListHandler::connect(connect_host, connect_port);
+	}
+}

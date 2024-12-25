@@ -1,0 +1,6 @@
+import "util/common";
+
+function handle_request(request)
+{
+	request_set_header(request, "Cookie", "GDPR_consent=1");
+}

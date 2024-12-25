@@ -1,0 +1,213 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/content/content_data";
+import "browser/view/content/background";
+
+var @nested_box_line_part: NestedBoxLinePart;
+
+class NestedBoxObject: InlineObject
+{
+	var @layer: NestedBoxLayer;
+	var @vertical_align: Float;
+	var @width: Size;
+	var @border_left: Integer;
+	var @border_top: Integer;
+	var @border_right: Integer;
+	var @border_bottom: Integer;
+	var @box_background: BackgroundView;
+	var @block: BlockView;
+	var @id: Integer;
+	var @cur_x: Integer;
+	var @cur_y: Integer;
+
+	constructor create(box: NestedBox, box_background: BackgroundView, blocks: Block[], mtv: ModelToView, content_data: ContentData, mirror: MirrorState)
+	{
+		super::create(null, null, null, content_data, mirror);
+		this.layer = NestedBoxLayer::create(this, blocks, mtv);
+		this.box_background = box_background;
+		vertical_align = box.vertical_align;
+		width = box.width;
+		if (box.box_background) {
+			var model = box_background.backgrounds[0];
+			border_left = model.border_left;
+			border_top = model.border_top;
+			border_right = model.border_right;
+			border_bottom = model.border_bottom;
+		}
+	}
+
+	function get_layer(): Layer
+	{
+		return layer;
+	}
+
+	function get_full_height(): Integer
+	{
+		return layer.get_height()+border_top+border_bottom;
+	}
+
+	function get_ascent(): Integer
+	{
+		var height = get_full_height();
+		var descent = int(float(height) * vertical_align);
+		return height - descent;
+	}
+
+	function add_to_line(line: LineBuilder)
+	{
+		var real_width = line.get_width();
+		if (width.is_pixels()) {
+			real_width = width.get_pixels();
+		}
+		else if (width.is_fraction()) {
+			real_width = iround(real_width * width.get_fraction());
+		}
+
+		var prev_calc_size = content_data.layout_calc_size;
+		if (width.is_auto() || prev_calc_size != null) {
+			content_data.layout_calc_size = CalcSize::create();
+			real_width = 10000;
+		}
+		var (r, e) = layer.update(real_width-border_left-border_right);
+		var calc_width = 0;
+		if (width.is_auto()) {
+			real_width = content_data.layout_calc_size.max_width + border_left + border_right;
+		}
+		else if (prev_calc_size) {
+			calc_width = content_data.layout_calc_size.max_width + border_left + border_right;
+		}
+		content_data.layout_calc_size = prev_calc_size;
+		if (e) throw e;
+
+		var height = get_full_height();
+		var descent = int(float(height) * vertical_align);
+		var ascent = height - descent;
+		var needs_newline = content_data.layout_calc_size != null && width.is_fraction() && width.get_fraction() == 1.0;
+		if (needs_newline) {
+			if (line.get_part_count() > 0) {
+				line.next_line();
+			}
+			real_width = calc_width;
+		}
+		var overdraw = layer.get_overdraw();
+		if (background) {
+			overdraw = max(overdraw, background.get_overdraw());
+		}
+		if (box_background) {
+			overdraw = max(overdraw, box_background.get_overdraw());
+		}
+		line.add_part(real_width+layer.get_right_overflow(), ascent, descent, overdraw, NestedBoxLinePart::get(), this);
+		if (needs_newline) {
+			line.next_line();
+		}
+	}
+}
+
+class NestedBoxLayer: Layer
+{
+	var @obj: NestedBoxObject;
+
+	constructor create(obj: NestedBoxObject, blocks: Block[], mtv: ModelToView)
+	{
+		super::create(blocks, mtv);
+		this.obj = obj;
+	}
+
+	override function repaint(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		obj.block.repaint_part(obj.id, x + obj.border_left, y + obj.border_top - obj.get_ascent(), width, height);
+	}
+
+	override function get_top_layer(point: Integer[]): Layer
+	{
+		if (point) {
+			point[0] += obj.cur_x + obj.border_left;
+			point[1] += obj.cur_y + obj.border_top - obj.get_ascent() + obj.block.get_y();
+		}
+		return obj.block.get_layer().get_top_layer(point);
+	}
+}
+
+class NestedBoxLinePart: InlineLinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): NestedBoxLinePart
+	{
+		var handler = nested_box_line_part;
+		if (!handler) {
+			handler = create();
+			nested_box_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+		var obj = data as NestedBoxObject;
+		obj.mirror.part_added(block, id, x, y, width, ascent, descent, overdraw, 0, 0, data);
+		obj.block = block;
+		obj.id = id;
+		obj.cur_x = x;
+		obj.cur_y = y;
+	}
+
+	override function paint_content(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, hover: Boolean, data)
+	{
+		var obj = data as NestedBoxObject;
+
+		var part_ascent = obj.get_ascent();
+		var part_height = obj.layer.get_height()+obj.border_top+obj.border_bottom;
+		y -= part_ascent;
+		width -= obj.layer.get_right_overflow();
+
+		if (obj.box_background) {
+			obj.box_background.draw(p, x, y, width, part_height, -1);
+		}
+
+		p.push();
+		p.translate(x+obj.border_left, y+obj.border_top);
+		obj.layer.draw(p);
+		p.pop();
+	}
+
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		var obj = data as NestedBoxObject;
+		var dx = obj.border_left;
+		var dy = obj.border_top - obj.get_ascent();
+		event.translate(-dx, -dy);
+		var ret = obj.layer.handle_mouse_event(event);
+		event.translate(dx, dy);
+		return ret;
+	}
+}

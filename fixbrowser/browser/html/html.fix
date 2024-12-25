@@ -1,0 +1,5727 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/charset/charset";
+import "util/string";
+import "browser/html/char_refs";
+import "browser/html/element";
+
+const {
+	// tokenizer:
+	@HTML_buf,
+	@HTML_pos,
+	@HTML_state,
+	@HTML_ret_state,
+	@HTML_temp_buf,
+	@HTML_chars_value,
+	@HTML_comment_value,
+	@HTML_doctype_name,
+	@HTML_doctype_public_ident,
+	@HTML_doctype_system_ident,
+	@HTML_doctype_force_quirks,
+	@HTML_tag_token,
+	@HTML_tag_name,
+	@HTML_tag_attrs,
+	@HTML_tag_self_closing,
+	@HTML_tag_new_attr_name,
+	@HTML_tag_new_attr_value,
+	@HTML_last_start_tag_name,
+	@HTML_token_again,
+	@HTML_charset_applied,
+	
+	// parser:
+	@HTML_insertion_mode,
+	@HTML_original_insertion_mode,
+	@HTML_template_insertion_modes_stack,
+	@HTML_open_elements_stack,
+	@HTML_head_elem,
+	@HTML_form_elem,
+	@HTML_quirks_mode,
+	@HTML_limited_quirks_mode,
+	@HTML_foster_parenting,
+	@HTML_document,
+	@HTML_scripting_flag,
+	@HTML_active_formatting_elements,
+	@HTML_frameset_ok,
+	@HTML_pending_table_chars,
+
+	@HTML_SIZE
+};
+
+const {
+	@STATE_DATA = 1,
+	@STATE_RCDATA = 2,
+	@STATE_RAWTEXT = 3,
+	@STATE_SCRIPT_DATA = 4,
+	@STATE_PLAINTEXT = 5,
+	@STATE_TAG_OPEN = 6,
+	@STATE_END_TAG_OPEN = 7,
+	@STATE_TAG_NAME = 8,
+	@STATE_RCDATA_LESS_THAN_SIGN = 9,
+	@STATE_RCDATA_END_TAG_OPEN = 10,
+	@STATE_RCDATA_END_TAG_NAME = 11,
+	@STATE_RAWTEXT_LESS_THAN_SIGN = 12,
+	@STATE_RAWTEXT_END_TAG_OPEN = 13,
+	@STATE_RAWTEXT_END_TAG_NAME = 14,
+	@STATE_SCRIPT_DATA_LESS_THAN_SIGN = 15,
+	@STATE_SCRIPT_DATA_END_TAG_OPEN = 16,
+	@STATE_SCRIPT_DATA_END_TAG_NAME = 17,
+	@STATE_SCRIPT_DATA_ESCAPE_START = 18,
+	@STATE_SCRIPT_DATA_ESCAPE_START_DASH = 19,
+	@STATE_SCRIPT_DATA_ESCAPED = 20,
+	@STATE_SCRIPT_DATA_ESCAPED_DASH = 21,
+	@STATE_SCRIPT_DATA_ESCAPED_DASH_DASH = 22,
+	@STATE_SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN = 23,
+	@STATE_SCRIPT_DATA_ESCAPED_END_TAG_OPEN = 24,
+	@STATE_SCRIPT_DATA_ESCAPED_END_TAG_NAME = 25,
+	@STATE_SCRIPT_DATA_DOUBLE_ESCAPE_START = 26,
+	@STATE_SCRIPT_DATA_DOUBLE_ESCAPED = 27, 
+	@STATE_SCRIPT_DATA_DOUBLE_ESCAPED_DASH = 28,
+	@STATE_SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH = 29,
+	@STATE_SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN = 30,
+	@STATE_SCRIPT_DATA_DOUBLE_ESCAPE_END = 31,
+	@STATE_BEFORE_ATTR_NAME = 32,
+	@STATE_ATTR_NAME = 33,
+	@STATE_AFTER_ATTR_NAME = 34,
+	@STATE_BEFORE_ATTR_VALUE = 35,
+	@STATE_ATTR_VALUE_DOUBLE = 36,
+	@STATE_ATTR_VALUE_SINGLE = 37,
+	@STATE_ATTR_VALUE_UNQUOTED = 38,
+	@STATE_AFTER_ATTR_VALUE_QUOTED = 39,
+	@STATE_SELF_CLOSING_START_TAG = 40,
+	@STATE_BOGUS_COMMENT = 41,
+	@STATE_MARKUP_DECL_OPEN = 42,
+	@STATE_COMMENT_START = 43,
+	@STATE_COMMENT_START_DASH = 44,
+	@STATE_COMMENT = 45,
+	@STATE_COMMENT_LESS_THAN_SIGN = 46,
+	@STATE_COMMENT_LESS_THAN_SIGN_BANG = 47,
+	@STATE_COMMENT_LESS_THAN_SIGN_BANG_DASH = 48,
+	@STATE_COMMENT_LESS_THAN_SIGN_BANG_DASH_DASH = 49,
+	@STATE_COMMENT_END_DASH = 50,
+	@STATE_COMMENT_END = 51,
+	@STATE_COMMENT_END_BANG = 52,
+	@STATE_DOCTYPE = 53,
+	@STATE_BEFORE_DOCTYPE_NAME = 54,
+	@STATE_DOCTYPE_NAME = 55,
+	@STATE_AFTER_DOCTYPE_NAME = 56,
+	@STATE_AFTER_DOCTYPE_PUBLIC_KEYWORD = 57,
+	@STATE_BEFORE_DOCTYPE_PUBLIC_IDENTIFIER = 58,
+	@STATE_DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE = 59,
+	@STATE_DOCTYPE_PUBLIC_IDENTIFIER_SINGLE = 60,
+	@STATE_AFTER_DOCTYPE_PUBLIC_IDENTIFIER = 61,
+	@STATE_BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM = 62,
+	@STATE_AFTER_DOCTYPE_SYSTEM_KEYWORD = 63,
+	@STATE_BEFORE_DOCTYPE_SYSTEM_IDENTIFIER = 64,
+	@STATE_DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE = 65,
+	@STATE_DOCTYPE_SYSTEM_IDENTIFIER_SINGLE = 66,
+	@STATE_AFTER_DOCTYPE_SYSTEM_IDENTIFIER = 67,
+	@STATE_BOGUS_DOCTYPE = 68,
+	@STATE_CHAR_REF = 72,
+	@STATE_NUMERIC_CHAR_REF = 73,
+	@STATE_CHAR_REF_END = 79
+};
+
+const {
+	@TOKEN_NEXT,
+	@TOKEN_EOF,
+	@TOKEN_CHARS,
+	@TOKEN_COMMENT,
+	@TOKEN_DOCTYPE,
+	@TOKEN_START_TAG,
+	@TOKEN_END_TAG
+};
+
+const {
+	@INS_INITIAL,
+	@INS_BEFORE_HTML,
+	@INS_BEFORE_HEAD,
+	@INS_IN_HEAD,
+	@INS_IN_HEAD_NOSCRIPT,
+	@INS_AFTER_HEAD,
+	@INS_IN_BODY,
+	@INS_TEXT,
+	@INS_IN_TABLE,
+	@INS_IN_TABLE_TEXT,
+	@INS_IN_CAPTION,
+	@INS_IN_COLUMN_GROUP,
+	@INS_IN_TABLE_BODY,
+	@INS_IN_ROW,
+	@INS_IN_CELL,
+	@INS_IN_SELECT,
+	@INS_IN_SELECT_IN_TABLE,
+	@INS_IN_TEMPLATE,
+	@INS_AFTER_BODY,
+	@INS_IN_FRAMESET,
+	@INS_AFTER_FRAMESET,
+	@INS_AFTER_AFTER_BODY,
+	@INS_AFTER_AFTER_FRAMESET
+};
+
+const @EOF = -1;
+const @MARKER = null;
+
+var @html_elem_types;
+var @mathml_text_integration_types;
+var @html_integration_types;
+var @foster_targets;
+var @particular_types_set;
+var @special_types;
+var @implied_end_tag_types;
+var @svg_attrs;
+var @foreign_start_tags;
+
+function @is_alphanumeric(c)
+{
+	switch (c) {
+		case 'A'..'Z':
+		case 'a'..'z':
+		case '0'..'9':
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+function @is_hexadecimal(c)
+{
+	switch (c) {
+		case '0'..'9':
+		case 'A'..'F':
+		case 'a'..'f':
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+function @next_char(html)
+{
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+	html->HTML_pos = pos+1;
+	if (pos >= length(buf)) return EOF;
+	return buf[pos];
+}
+
+function @back_char(html)
+{
+	html->HTML_pos--;
+}
+
+function @set_state(html, state)
+{
+	html->HTML_state = state;
+	return TOKEN_NEXT;
+}
+
+function @clear_temp_buf(html)
+{
+	array_set_length(html->HTML_temp_buf, 0);
+}
+
+function @append_temp_char(html, c)
+{
+	html->HTML_temp_buf[] = c;
+}
+
+function @is_attr_value_state(state)
+{
+	switch (state) {
+		case STATE_ATTR_VALUE_DOUBLE:
+		case STATE_ATTR_VALUE_SINGLE:
+		case STATE_ATTR_VALUE_UNQUOTED:
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+function @init_chars_token(html)
+{
+	html->HTML_chars_value = {""};
+}
+
+function @init_comment_token(html)
+{
+	html->HTML_comment_value = {""};
+}
+
+function @init_doctype_token(html)
+{
+	html->HTML_doctype_name = null;
+	html->HTML_doctype_public_ident = null;
+	html->HTML_doctype_system_ident = null;
+	html->HTML_doctype_force_quirks = false;
+}
+
+function @init_tag_token(html, token)
+{
+	html->HTML_tag_token = token;
+	html->HTML_tag_name = null;
+	html->HTML_tag_attrs = {};
+	html->HTML_tag_self_closing = false;
+	html->HTML_tag_new_attr_name = null;
+	html->HTML_tag_new_attr_value = null;
+}
+
+function @add_tag_attr_if_set(html)
+{
+	var name = html->HTML_tag_new_attr_name;
+	if (!name) return;
+
+	var attrs = html->HTML_tag_attrs;
+	if (!hash_contains(attrs, name)) {
+		attrs{name} = html->HTML_tag_new_attr_value;
+	}
+}
+
+function @init_tag_attr(html)
+{
+	add_tag_attr_if_set(html);
+	html->HTML_tag_new_attr_name = {""};
+	html->HTML_tag_new_attr_value = {""};
+}
+
+function @finish_tag_token(html)
+{
+	add_tag_attr_if_set(html);
+	if (html->HTML_tag_token == TOKEN_START_TAG) {
+		html->HTML_last_start_tag_name = html->HTML_tag_name;
+	}
+	return html->HTML_tag_token;
+}
+
+function @is_appropriate_end_tag_token(html)
+{
+	if (html->HTML_tag_token != TOKEN_END_TAG) return false;
+	return html->HTML_tag_name == html->HTML_last_start_tag_name;
+}
+
+function @parse_data(html)
+{
+	init_chars_token(html);
+	var chars = html->HTML_chars_value;
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+
+	for (;;) {
+		if (pos >= length(buf)) {
+			html->HTML_pos = pos;
+			return length(chars) > 0? TOKEN_CHARS : TOKEN_EOF;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case '&':
+				html->HTML_pos = pos;
+				set_state(html, STATE_CHAR_REF);
+				html->HTML_ret_state = STATE_DATA;
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case '<':
+				html->HTML_pos = pos;
+				set_state(html, STATE_TAG_OPEN);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case 0:
+			default:
+				chars[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_rcdata(html)
+{
+	init_chars_token(html);
+	var chars = html->HTML_chars_value;
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+
+	for (;;) {
+		if (pos >= length(buf)) {
+			html->HTML_pos = pos;
+			return length(chars) > 0? TOKEN_CHARS : TOKEN_EOF;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case '&':
+				html->HTML_pos = pos;
+				set_state(html, STATE_CHAR_REF);
+				html->HTML_ret_state = STATE_RCDATA;
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case '<':
+				html->HTML_pos = pos;
+				set_state(html, STATE_RCDATA_LESS_THAN_SIGN);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case 0:
+				chars[] = '\uFFFD';
+				continue;
+
+			default:
+				chars[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_rawtext(html)
+{
+	init_chars_token(html);
+	var chars = html->HTML_chars_value;
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+
+	for (;;) {
+		if (pos >= length(buf)) {
+			html->HTML_pos = pos;
+			return length(chars) > 0? TOKEN_CHARS : TOKEN_EOF;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case '<':
+				html->HTML_pos = pos;
+				set_state(html, STATE_RAWTEXT_LESS_THAN_SIGN);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case 0:
+				chars[] = '\uFFFD';
+				continue;
+
+			default:
+				chars[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_script_data(html)
+{
+	init_chars_token(html);
+	var chars = html->HTML_chars_value;
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+
+	for (;;) {
+		if (pos >= length(buf)) {
+			html->HTML_pos = pos;
+			return length(chars) > 0? TOKEN_CHARS : TOKEN_EOF;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case '<':
+				html->HTML_pos = pos;
+				set_state(html, STATE_SCRIPT_DATA_LESS_THAN_SIGN);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case 0:
+				chars[] = '\uFFFD';
+				continue;
+
+			default:
+				chars[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_plaintext(html)
+{
+	init_chars_token(html);
+	var chars = html->HTML_chars_value;
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+
+	for (;;) {
+		if (pos >= length(buf)) {
+			html->HTML_pos = pos;
+			return length(chars) > 0? TOKEN_CHARS : TOKEN_EOF;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case 0:
+				chars[] = '\uFFFD';
+				continue;
+
+			default:
+				chars[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_tag_open(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '!':
+			return set_state(html, STATE_MARKUP_DECL_OPEN);
+
+		case '/':
+			return set_state(html, STATE_END_TAG_OPEN);
+
+		case 'A'..'Z', 'a'..'z':
+			init_tag_token(html, TOKEN_START_TAG);
+			html->HTML_tag_name = {""};
+			back_char(html);
+			return set_state(html, STATE_TAG_NAME);
+
+		case '?':
+			init_comment_token(html);
+			back_char(html);
+			return set_state(html, STATE_BOGUS_COMMENT);
+
+		default:
+			html->HTML_chars_value = "<";
+			back_char(html);
+			set_state(html, STATE_DATA);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_end_tag_open(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case 'A'..'Z', 'a'..'z':
+			init_tag_token(html, TOKEN_END_TAG);
+			html->HTML_tag_name = {""};
+			back_char(html);
+			return set_state(html, STATE_TAG_NAME);
+
+		case '>':
+			return set_state(html, STATE_DATA);
+
+		case EOF:
+			html->HTML_chars_value = "</";
+			return TOKEN_CHARS;
+
+		default:
+			init_comment_token(html);
+			back_char(html);
+			return set_state(html, STATE_BOGUS_COMMENT);
+	}
+}
+
+function @parse_tag_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				return set_state(html, STATE_BEFORE_ATTR_NAME);
+
+			case '/':
+				return set_state(html, STATE_SELF_CLOSING_START_TAG);
+
+			case '>':
+				set_state(html, STATE_DATA);
+				return finish_tag_token(html);
+
+			case 'A'..'Z':
+				html->HTML_tag_name[] = c - 'A' + 'a';
+				continue;
+
+			case 0:
+				html->HTML_tag_name[] = '\uFFFD';
+				continue;
+
+			case EOF:
+				return TOKEN_EOF;
+
+			default:
+				html->HTML_tag_name[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_rcdata_less_than_sign(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '/':
+			clear_temp_buf(html);
+			return set_state(html, STATE_RCDATA_END_TAG_OPEN);
+
+		default:
+			html->HTML_chars_value = "<";
+			back_char(html);
+			set_state(html, STATE_RCDATA);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_rcdata_end_tag_open(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case 'A'..'Z', 'a'..'z':
+			init_tag_token(html, TOKEN_END_TAG);
+			html->HTML_tag_name = {""};
+			back_char(html);
+			return set_state(html, STATE_RCDATA_END_TAG_NAME);
+
+		default:
+			html->HTML_chars_value = "</";
+			back_char(html);
+			set_state(html, STATE_RCDATA);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_rcdata_end_tag_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_BEFORE_ATTR_NAME);
+				}
+				break;
+
+			case '/':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_SELF_CLOSING_START_TAG);
+				}
+				break;
+
+			case '>':
+				if (is_appropriate_end_tag_token(html)) {
+					set_state(html, STATE_DATA);
+					return finish_tag_token(html);
+				}
+				break;
+
+			case 'A'..'Z':
+				html->HTML_tag_name[] = c - 'A' + 'a';
+				append_temp_char(html, c);
+				continue;
+
+			case 'a'..'z':
+				html->HTML_tag_name[] = c;
+				append_temp_char(html, c);
+				continue;
+		}
+
+		html->HTML_chars_value = {"</"};
+		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		back_char(html);
+		set_state(html, STATE_RCDATA);
+		return TOKEN_CHARS;
+	}
+}
+
+function @parse_rawtext_less_than_sign(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '/':
+			clear_temp_buf(html);
+			return set_state(html, STATE_RAWTEXT_END_TAG_OPEN);
+
+		default:
+			html->HTML_chars_value = "<";
+			back_char(html);
+			set_state(html, STATE_RAWTEXT);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_rawtext_end_tag_open(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case 'A'..'Z', 'a'..'z':
+			init_tag_token(html, TOKEN_END_TAG);
+			html->HTML_tag_name = {""};
+			back_char(html);
+			return set_state(html, STATE_RAWTEXT_END_TAG_NAME);
+
+		default:
+			html->HTML_chars_value = "</";
+			back_char(html);
+			set_state(html, STATE_RAWTEXT);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_rawtext_end_tag_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_BEFORE_ATTR_NAME);
+				}
+				break;
+
+			case '/':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_SELF_CLOSING_START_TAG);
+				}
+				break;
+
+			case '>':
+				if (is_appropriate_end_tag_token(html)) {
+					set_state(html, STATE_DATA);
+					return finish_tag_token(html);
+				}
+				break;
+
+			case 'A'..'Z':
+				html->HTML_tag_name[] = c - 'A' + 'a';
+				append_temp_char(html, c);
+				continue;
+
+			case 'a'..'z':
+				html->HTML_tag_name[] = c;
+				append_temp_char(html, c);
+				continue;
+		}
+
+		html->HTML_chars_value = {"</"};
+		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		back_char(html);
+		set_state(html, STATE_RAWTEXT);
+		return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_less_than_sign(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '/':
+			clear_temp_buf(html);
+			return set_state(html, STATE_SCRIPT_DATA_END_TAG_OPEN);
+
+		case '!':
+			html->HTML_chars_value = "<!";
+			set_state(html, STATE_SCRIPT_DATA_ESCAPE_START);
+			return TOKEN_CHARS;
+			
+		default:
+			html->HTML_chars_value = "<";
+			back_char(html);
+			set_state(html, STATE_SCRIPT_DATA);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_end_tag_open(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case 'A'..'Z', 'a'..'z':
+			init_tag_token(html, TOKEN_END_TAG);
+			html->HTML_tag_name = {""};
+			back_char(html);
+			return set_state(html, STATE_SCRIPT_DATA_END_TAG_NAME);
+
+		default:
+			html->HTML_chars_value = "</";
+			back_char(html);
+			set_state(html, STATE_SCRIPT_DATA);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_end_tag_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_BEFORE_ATTR_NAME);
+				}
+				break;
+
+			case '/':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_SELF_CLOSING_START_TAG);
+				}
+				break;
+
+			case '>':
+				if (is_appropriate_end_tag_token(html)) {
+					set_state(html, STATE_DATA);
+					return finish_tag_token(html);
+				}
+				break;
+
+			case 'A'..'Z':
+				html->HTML_tag_name[] = c - 'A' + 'a';
+				append_temp_char(html, c);
+				continue;
+
+			case 'a'..'z':
+				html->HTML_tag_name[] = c;
+				append_temp_char(html, c);
+				continue;
+		}
+
+		html->HTML_chars_value = {"</"};
+		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		back_char(html);
+		set_state(html, STATE_SCRIPT_DATA);
+		return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_escape_start(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			html->HTML_chars_value = "-";
+			set_state(html, STATE_SCRIPT_DATA_ESCAPE_START_DASH);
+			return TOKEN_CHARS;
+			
+		default:
+			back_char(html);
+			return set_state(html, STATE_SCRIPT_DATA);
+	}
+}
+
+function @parse_script_data_escape_start_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			html->HTML_chars_value = "-";
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED_DASH_DASH);
+			return TOKEN_CHARS;
+			
+		default:
+			back_char(html);
+			return set_state(html, STATE_SCRIPT_DATA);
+	}
+}
+
+function @parse_script_data_escaped(html)
+{
+	init_chars_token(html);
+	var chars = html->HTML_chars_value;
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+
+	for (;;) {
+		if (pos >= length(buf)) {
+			html->HTML_pos = pos;
+			return length(chars) > 0? TOKEN_CHARS : TOKEN_EOF;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case '-':
+				chars[] = '-';
+				html->HTML_pos = pos;
+				set_state(html, STATE_SCRIPT_DATA_ESCAPED_DASH);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case '<':
+				html->HTML_pos = pos;
+				set_state(html, STATE_SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case 0:
+				chars[] = '\uFFFD';
+				continue;
+
+			default:
+				chars[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_script_data_escaped_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			html->HTML_chars_value = "-";
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED_DASH_DASH);
+			return TOKEN_CHARS;
+
+		case '<':
+			return set_state(html, STATE_SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN);
+
+		case 0:
+			html->HTML_chars_value = "\uFFFD";
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			return TOKEN_CHARS;
+
+		case EOF:
+			return TOKEN_EOF;
+
+		default:
+			html->HTML_chars_value = string_char(c);
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_escaped_dash_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			html->HTML_chars_value = "-";
+			return TOKEN_CHARS;
+
+		case '<':
+			return set_state(html, STATE_SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN);
+
+		case '>':
+			html->HTML_chars_value = ">";
+			set_state(html, STATE_SCRIPT_DATA);
+			return TOKEN_CHARS;
+
+		case 0:
+			html->HTML_chars_value = "\uFFFD";
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			return TOKEN_CHARS;
+
+		case EOF:
+			return TOKEN_EOF;
+			
+		default:
+			html->HTML_chars_value = string_char(c);
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_escaped_less_than_sign(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '/':
+			clear_temp_buf(html);
+			return set_state(html, STATE_SCRIPT_DATA_ESCAPED_END_TAG_OPEN);
+
+		case 'A'..'Z', 'a'..'z':
+			clear_temp_buf(html);
+			html->HTML_chars_value = "<";
+			back_char(html);
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPE_START);
+			return TOKEN_CHARS;
+
+		default:
+			html->HTML_chars_value = "<";
+			back_char(html);
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_escaped_end_tag_open(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case 'A'..'Z', 'a'..'z':
+			init_tag_token(html, TOKEN_END_TAG);
+			html->HTML_tag_name = {""};
+			back_char(html);
+			return set_state(html, STATE_SCRIPT_DATA_ESCAPED_END_TAG_NAME);
+
+		default:
+			html->HTML_chars_value = "</";
+			back_char(html);
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_escaped_end_tag_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_BEFORE_ATTR_NAME);
+				}
+				break;
+
+			case '/':
+				if (is_appropriate_end_tag_token(html)) {
+					return set_state(html, STATE_SELF_CLOSING_START_TAG);
+				}
+				break;
+
+			case '>':
+				if (is_appropriate_end_tag_token(html)) {
+					set_state(html, STATE_DATA);
+					return finish_tag_token(html);
+				}
+				break;
+
+			case 'A'..'Z':
+				html->HTML_tag_name[] = c - 'A' + 'a';
+				append_temp_char(html, c);
+				continue;
+
+			case 'a'..'z':
+				html->HTML_tag_name[] = c;
+				append_temp_char(html, c);
+				continue;
+		}
+
+		html->HTML_chars_value = {"</"};
+		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		back_char(html);
+		set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+		return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_double_escape_start(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '\t', '\n', 0x0C, ' ', '/', '>':
+			if (html->HTML_temp_buf == "script") {
+				return set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+			}
+			html->HTML_chars_value = string_char(c);
+			set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			return TOKEN_CHARS;
+
+		case 'A'..'Z':
+			append_temp_char(html, c - 'A' + 'a');
+			html->HTML_chars_value = string_char(c);
+			return TOKEN_CHARS;
+
+		case 'a'..'z':
+			append_temp_char(html, c);
+			html->HTML_chars_value = string_char(c);
+			return TOKEN_CHARS;
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+	}
+}
+
+function @parse_script_data_double_escaped(html)
+{
+	init_chars_token(html);
+	var chars = html->HTML_chars_value;
+	var buf = html->HTML_buf;
+	var pos = html->HTML_pos;
+
+	for (;;) {
+		if (pos >= length(buf)) {
+			html->HTML_pos = pos;
+			return length(chars) > 0? TOKEN_CHARS : TOKEN_EOF;
+		}
+		
+		var c = buf[pos++];
+		switch (c) {
+			case '-':
+				chars[] = '-';
+				html->HTML_pos = pos;
+				set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED_DASH);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case '<':
+				chars[] = '<';
+				html->HTML_pos = pos;
+				set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN);
+				return length(chars) > 0? TOKEN_CHARS : TOKEN_NEXT;
+
+			case 0:
+				chars[] = '\uFFFD';
+				continue;
+
+			default:
+				chars[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_script_data_double_escaped_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			html->HTML_chars_value = "-";
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH);
+			return TOKEN_CHARS;
+
+		case '<':
+			html->HTML_chars_value = "<";
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN);
+			return TOKEN_CHARS;
+
+		case 0:
+			html->HTML_chars_value = "\uFFFD";
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+			return TOKEN_CHARS;
+
+		case EOF:
+			return TOKEN_EOF;
+
+		default:
+			html->HTML_chars_value = string_char(c);
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_double_escaped_dash_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			html->HTML_chars_value = "-";
+			return TOKEN_CHARS;
+
+		case '<':
+			html->HTML_chars_value = "<";
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN);
+			return TOKEN_CHARS;
+
+		case '>':
+			html->HTML_chars_value = ">";
+			set_state(html, STATE_SCRIPT_DATA);
+			return TOKEN_CHARS;
+
+		case 0:
+			html->HTML_chars_value = "\uFFFD";
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+			return TOKEN_CHARS;
+
+		case EOF:
+			return TOKEN_EOF;
+			
+		default:
+			html->HTML_chars_value = string_char(c);
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+			return TOKEN_CHARS;
+	}
+}
+
+function @parse_script_data_double_escaped_less_than_sign(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '/':
+			html->HTML_chars_value = "/";
+			clear_temp_buf(html);
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPE_END);
+			return TOKEN_CHARS;
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+	}
+}
+
+function @parse_script_data_double_escape_end(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '\t', '\n', 0x0C, ' ', '/', '>':
+			if (html->HTML_temp_buf == "script") {
+				return set_state(html, STATE_SCRIPT_DATA_ESCAPED);
+			}
+			html->HTML_chars_value = string_char(c);
+			set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+			return TOKEN_CHARS;
+
+		case 'A'..'Z':
+			append_temp_char(html, c - 'A' + 'a');
+			html->HTML_chars_value = string_char(c);
+			return TOKEN_CHARS;
+
+		case 'a'..'z':
+			append_temp_char(html, c);
+			html->HTML_chars_value = string_char(c);
+			return TOKEN_CHARS;
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_SCRIPT_DATA_DOUBLE_ESCAPED);
+	}
+}
+
+function @parse_before_attr_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '/', '>', EOF:
+				back_char(html);
+				return set_state(html, STATE_AFTER_ATTR_NAME);
+
+			case '=':
+				init_tag_attr(html);
+				html->HTML_tag_new_attr_name[] = c;
+				return set_state(html, STATE_ATTR_NAME);
+
+			default:
+				init_tag_attr(html);
+				back_char(html);
+				return set_state(html, STATE_ATTR_NAME);
+		}
+	}
+}
+
+function @parse_attr_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ', '/', '>', EOF:
+				back_char(html);
+				return set_state(html, STATE_AFTER_ATTR_NAME);
+
+			case '=':
+				return set_state(html, STATE_BEFORE_ATTR_VALUE);
+
+			case 'A'..'Z':
+				html->HTML_tag_new_attr_name[] = c - 'A' + 'a';
+				continue;
+
+			case 0:
+				html->HTML_tag_new_attr_name[] = '\uFFFD';
+				continue;
+
+			case '"', '\'', '<':
+			default:
+				html->HTML_tag_new_attr_name[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_after_attr_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '/':
+				return set_state(html, STATE_SELF_CLOSING_START_TAG);
+
+			case '=':
+				return set_state(html, STATE_BEFORE_ATTR_VALUE);
+
+			case '>':
+				set_state(html, STATE_DATA);
+				return finish_tag_token(html);
+
+			case EOF:
+				return TOKEN_EOF;
+			
+			default:
+				init_tag_attr(html);
+				back_char(html);
+				return set_state(html, STATE_ATTR_NAME);
+		}
+	}
+}
+
+function @parse_before_attr_value(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '"':
+				return set_state(html, STATE_ATTR_VALUE_DOUBLE);
+
+			case '\'':
+				return set_state(html, STATE_ATTR_VALUE_SINGLE);
+
+			case '>':
+			default:
+				back_char(html);
+				return set_state(html, STATE_ATTR_VALUE_UNQUOTED);
+		}
+	}
+}
+
+function @parse_attr_value_double(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '"':
+				return set_state(html, STATE_AFTER_ATTR_VALUE_QUOTED);
+
+			case '&':
+				html->HTML_ret_state = STATE_ATTR_VALUE_DOUBLE;
+				return set_state(html, STATE_CHAR_REF);
+
+			case 0:
+				html->HTML_tag_new_attr_value[] = '\uFFFD';
+				continue;
+
+			case EOF:
+				return TOKEN_EOF;
+
+			default:
+				html->HTML_tag_new_attr_value[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_attr_value_single(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\'':
+				return set_state(html, STATE_AFTER_ATTR_VALUE_QUOTED);
+
+			case '&':
+				html->HTML_ret_state = STATE_ATTR_VALUE_SINGLE;
+				return set_state(html, STATE_CHAR_REF);
+
+			case 0:
+				html->HTML_tag_new_attr_value[] = '\uFFFD';
+				continue;
+
+			case EOF:
+				return TOKEN_EOF;
+
+			default:
+				html->HTML_tag_new_attr_value[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_attr_value_unquoted(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				return set_state(html, STATE_BEFORE_ATTR_NAME);
+
+			case '&':
+				html->HTML_ret_state = STATE_ATTR_VALUE_UNQUOTED;
+				return set_state(html, STATE_CHAR_REF);
+
+			case '>':
+				set_state(html, STATE_DATA);
+				return finish_tag_token(html);
+
+			case 0:
+				html->HTML_tag_new_attr_value[] = '\uFFFD';
+				continue;
+
+			case EOF:
+				return TOKEN_EOF;
+
+			case '"', '\'', '<', '=', '`':
+			default:
+				html->HTML_tag_new_attr_value[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_after_attr_value_quoted(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '\t', '\n', 0x0C, ' ':
+			return set_state(html, STATE_BEFORE_ATTR_NAME);
+
+		case '/':
+			return set_state(html, STATE_SELF_CLOSING_START_TAG);
+
+		case '>':
+			set_state(html, STATE_DATA);
+			return finish_tag_token(html);
+
+		case EOF:
+			return TOKEN_EOF;
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_BEFORE_ATTR_NAME);
+	}
+}
+
+function @parse_self_closing_start_tag(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '>':
+			html->HTML_tag_self_closing = true;
+			set_state(html, STATE_DATA);
+			return finish_tag_token(html);
+
+		case EOF:
+			return TOKEN_EOF;
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_BEFORE_ATTR_NAME);
+	}
+}
+
+function @parse_bogus_comment(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '>':
+				set_state(html, STATE_DATA);
+				return TOKEN_COMMENT;
+
+			case EOF:
+				return TOKEN_COMMENT;
+
+			case 0:
+				html->HTML_comment_value[] = '\uFFFD';
+				continue;
+
+			default:
+				html->HTML_comment_value[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_markup_decl_open(html)
+{
+	var c = next_char(html);
+	if (c == '-') {
+		var c2 = next_char(html);
+		if (c2 == '-') {
+			init_comment_token(html);
+			return set_state(html, STATE_COMMENT_START);
+		}
+		else {
+			back_char(html);
+		}
+	}
+
+	if (c == 'd' || c == 'D') {
+		var buf = html->HTML_buf;
+		var pos = html->HTML_pos;
+
+		if (pos+6 <= length(buf) && string_to_upper_case(array_extract(buf, pos-1, 7)) == "DOCTYPE") {
+			html->HTML_pos += 6;
+			return set_state(html, STATE_DOCTYPE);
+		}
+	}
+
+	// TODO: CDATA handling
+
+	back_char(html);
+	init_comment_token(html);
+	return set_state(html, STATE_BOGUS_COMMENT);
+}
+
+function @parse_comment_start(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			return set_state(html, STATE_COMMENT_START_DASH);
+
+		case '>':
+			set_state(html, STATE_DATA);
+			return TOKEN_COMMENT;
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_COMMENT);
+	}
+}
+
+function @parse_comment_start_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			return set_state(html, STATE_COMMENT_END);
+
+		case '>':
+			set_state(html, STATE_DATA);
+			return TOKEN_COMMENT;
+
+		case EOF:
+			return TOKEN_COMMENT;
+
+		default:
+			html->HTML_comment_value[] = '-';
+			back_char(html);
+			return set_state(html, STATE_COMMENT);
+	}
+}
+
+function @parse_comment(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '<':
+				html->HTML_comment_value[] = c;
+				return set_state(html, STATE_COMMENT_LESS_THAN_SIGN);
+			
+			case '-':
+				return set_state(html, STATE_COMMENT_END_DASH);
+
+			case 0:
+				html->HTML_comment_value[] = '\uFFFD';
+				continue;
+
+			case EOF:
+				return TOKEN_COMMENT;
+
+			default:
+				html->HTML_comment_value[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_comment_less_than_sign(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '!':
+				html->HTML_comment_value[] = c;
+				return set_state(html, STATE_COMMENT_LESS_THAN_SIGN_BANG);
+
+			case '<':
+				html->HTML_comment_value[] = c;
+				continue;
+
+			default:
+				back_char(html);
+				return set_state(html, STATE_COMMENT);
+		}
+	}
+}
+
+function @parse_comment_less_than_sign_bang(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			return set_state(html, STATE_COMMENT_LESS_THAN_SIGN_BANG_DASH);
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_COMMENT);
+	}
+}
+
+function @parse_comment_less_than_sign_bang_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			return set_state(html, STATE_COMMENT_LESS_THAN_SIGN_BANG_DASH_DASH);
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_COMMENT);
+	}
+}
+
+function @parse_comment_less_than_sign_bang_dash_dash(html)
+{
+	return set_state(html, STATE_COMMENT_END);
+}
+
+function @parse_comment_end_dash(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			return set_state(html, STATE_COMMENT_END);
+
+		case EOF:
+			return TOKEN_COMMENT;
+
+		default:
+			html->HTML_comment_value[] = '-';
+			back_char(html);
+			return set_state(html, STATE_COMMENT);
+	}
+}
+
+function @parse_comment_end(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '>':
+				set_state(html, STATE_DATA);
+				return TOKEN_COMMENT;
+
+			case '!':
+				return set_state(html, STATE_COMMENT_END_BANG);
+
+			case '-':
+				html->HTML_comment_value[] = '-';
+				continue;
+
+			case EOF:
+				return TOKEN_COMMENT;
+
+			default:
+				html->HTML_comment_value[] = '-';
+				html->HTML_comment_value[] = '-';
+				back_char(html);
+				return set_state(html, STATE_COMMENT);
+		}
+	}
+}
+
+function @parse_comment_end_bang(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '-':
+			html->HTML_comment_value[] = '-';
+			html->HTML_comment_value[] = '-';
+			html->HTML_comment_value[] = '!';
+			return set_state(html, STATE_COMMENT_END_DASH);
+
+		case '>':
+			set_state(html, STATE_DATA);
+			return TOKEN_COMMENT;
+
+		case EOF:
+			return TOKEN_COMMENT;
+
+		default:
+			html->HTML_comment_value[] = '-';
+			html->HTML_comment_value[] = '-';
+			html->HTML_comment_value[] = '!';
+			back_char(html);
+			return set_state(html, STATE_COMMENT);
+	}
+}
+
+function @parse_doctype(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '\t', '\n', 0x0C, ' ':
+			return set_state(html, STATE_BEFORE_DOCTYPE_NAME);
+
+		case EOF:
+			init_doctype_token(html);
+			html->HTML_doctype_force_quirks = true;
+			return TOKEN_DOCTYPE;
+
+		default:
+			back_char(html);
+			return set_state(html, STATE_BEFORE_DOCTYPE_NAME);
+	}
+}
+
+function @parse_before_doctype_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case 'A'..'Z':
+				init_doctype_token(html);
+				html->HTML_doctype_name = {""};
+				html->HTML_doctype_name[] = c - 'A' + 'a';
+				return set_state(html, STATE_DOCTYPE_NAME);
+
+			case 0:
+				init_doctype_token(html);
+				html->HTML_doctype_name = {"\uFFFD"};
+				return set_state(html, STATE_DOCTYPE_NAME);
+
+			case '>':
+				init_doctype_token(html);
+				html->HTML_doctype_force_quirks = true;
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				init_doctype_token(html);
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				init_doctype_token(html);
+				html->HTML_doctype_name = {""};
+				html->HTML_doctype_name[] = c;
+				return set_state(html, STATE_DOCTYPE_NAME);
+		}
+	}
+}
+
+function @parse_doctype_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				return set_state(html, STATE_AFTER_DOCTYPE_NAME);
+
+			case '>':
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case 'A'..'Z':
+				html->HTML_doctype_name[] = c - 'A' + 'a';
+				continue;
+
+			case 0:
+				html->HTML_doctype_name[] = '\uFFFD';
+				continue;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_name[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_after_doctype_name(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '>':
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default: {
+				var buf = html->HTML_buf;
+				var pos = html->HTML_pos;
+				if (pos+5 <= length(buf)) {
+					var s = string_to_upper_case(array_extract(buf, pos-1, 6));
+					if (s == "PUBLIC") {
+						html->HTML_pos = pos+5;
+						return set_state(html, STATE_AFTER_DOCTYPE_PUBLIC_KEYWORD);
+					}
+					if (s == "SYSTEM") {
+						html->HTML_pos = pos+5;
+						return set_state(html, STATE_AFTER_DOCTYPE_SYSTEM_KEYWORD);
+					}
+				}
+				html->HTML_doctype_force_quirks = true;
+				return set_state(html, STATE_BOGUS_DOCTYPE);
+			}
+		}
+	}
+}
+
+function @parse_after_doctype_public_keyword(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '\t', '\n', 0x0C, ' ':
+			return set_state(html, STATE_BEFORE_DOCTYPE_PUBLIC_IDENTIFIER);
+
+		case '"':
+			html->HTML_doctype_public_ident = {""};
+			return set_state(html, STATE_DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE);
+
+		case '\'':
+			html->HTML_doctype_public_ident = {""};
+			return set_state(html, STATE_DOCTYPE_PUBLIC_IDENTIFIER_SINGLE);
+
+		case '>':
+			html->HTML_doctype_force_quirks = true;
+			set_state(html, STATE_DATA);
+			return TOKEN_DOCTYPE;
+
+		case EOF:
+			html->HTML_doctype_force_quirks = true;
+			return TOKEN_DOCTYPE;
+
+		default:
+			html->HTML_doctype_force_quirks = true;
+			return set_state(html, STATE_BOGUS_DOCTYPE);
+	}
+}
+
+function @parse_before_doctype_public_identifier(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '"':
+				html->HTML_doctype_public_ident = {""};
+				return set_state(html, STATE_DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE);
+
+			case '\'':
+				html->HTML_doctype_public_ident = {""};
+				return set_state(html, STATE_DOCTYPE_PUBLIC_IDENTIFIER_SINGLE);
+
+			case '>':
+				html->HTML_doctype_force_quirks = true;
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_force_quirks = true;
+				return set_state(html, STATE_BOGUS_DOCTYPE);
+		}
+	}
+}
+
+function @parse_doctype_public_identifier_double(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '"':
+				return set_state(html, STATE_AFTER_DOCTYPE_PUBLIC_IDENTIFIER);
+
+			case 0:
+				html->HTML_doctype_public_ident[] = '\uFFFD';
+				continue;
+
+			case '>':
+				html->HTML_doctype_force_quirks = true;
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_public_ident[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_doctype_public_identifier_single(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\'':
+				return set_state(html, STATE_AFTER_DOCTYPE_PUBLIC_IDENTIFIER);
+
+			case 0:
+				html->HTML_doctype_public_ident[] = '\uFFFD';
+				continue;
+
+			case '>':
+				html->HTML_doctype_force_quirks = true;
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_public_ident[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_after_doctype_public_identifier(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '\t', '\n', 0x0C, ' ':
+			return set_state(html, STATE_BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM);
+
+		case '>':
+			set_state(html, STATE_DATA);
+			return TOKEN_DOCTYPE;
+
+		case '"':
+			html->HTML_doctype_system_ident = {""};
+			return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE);
+
+		case '\'':
+			html->HTML_doctype_system_ident = {""};
+			return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_SINGLE);
+
+		case EOF:
+			html->HTML_doctype_force_quirks = true;
+			return TOKEN_DOCTYPE;
+
+		default:
+			html->HTML_doctype_force_quirks = true;
+			return set_state(html, STATE_BOGUS_DOCTYPE);
+	}
+}
+
+function @parse_between_doctype_public_and_system(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '>':
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case '"':
+				html->HTML_doctype_system_ident = {""};
+				return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE);
+
+			case '\'':
+				html->HTML_doctype_system_ident = {""};
+				return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_SINGLE);
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_force_quirks = true;
+				return set_state(html, STATE_BOGUS_DOCTYPE);
+		}
+	}
+}
+
+function @parse_after_doctype_system_keyword(html)
+{
+	var c = next_char(html);
+	switch (c) {
+		case '\t', '\n', 0x0C, ' ':
+			return set_state(html, STATE_BEFORE_DOCTYPE_SYSTEM_IDENTIFIER);
+
+		case '"':
+			html->HTML_doctype_system_ident = {""};
+			return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE);
+
+		case '\'':
+			html->HTML_doctype_system_ident = {""};
+			return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_SINGLE);
+
+		case '>':
+			html->HTML_doctype_force_quirks = true;
+			set_state(html, STATE_DATA);
+			return TOKEN_DOCTYPE;
+
+		case EOF:
+			html->HTML_doctype_force_quirks = true;
+			return TOKEN_DOCTYPE;
+
+		default:
+			html->HTML_doctype_force_quirks = true;
+			return set_state(html, STATE_BOGUS_DOCTYPE);
+	}
+}
+
+function @parse_before_doctype_system_identifier(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '"':
+				html->HTML_doctype_system_ident = {""};
+				return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE);
+
+			case '\'':
+				html->HTML_doctype_system_ident = {""};
+				return set_state(html, STATE_DOCTYPE_SYSTEM_IDENTIFIER_SINGLE);
+
+			case '>':
+				html->HTML_doctype_force_quirks = true;
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_force_quirks = true;
+				return set_state(html, STATE_BOGUS_DOCTYPE);
+		}
+	}
+}
+
+function @parse_doctype_system_identifier_double(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '"':
+				return set_state(html, STATE_AFTER_DOCTYPE_SYSTEM_IDENTIFIER);
+
+			case 0:
+				html->HTML_doctype_system_ident[] = '\uFFFD';
+				continue;
+
+			case '>':
+				html->HTML_doctype_force_quirks = true;
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_system_ident[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_doctype_system_identifier_single(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\'':
+				return set_state(html, STATE_AFTER_DOCTYPE_SYSTEM_IDENTIFIER);
+
+			case 0:
+				html->HTML_doctype_system_ident[] = '\uFFFD';
+				continue;
+
+			case '>':
+				html->HTML_doctype_force_quirks = true;
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				html->HTML_doctype_system_ident[] = c;
+				continue;
+		}
+	}
+}
+
+function @parse_after_doctype_system_identifier(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '\t', '\n', 0x0C, ' ':
+				continue;
+
+			case '>':
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				html->HTML_doctype_force_quirks = true;
+				return TOKEN_DOCTYPE;
+
+			default:
+				return set_state(html, STATE_BOGUS_DOCTYPE);
+		}
+	}
+}
+
+function @parse_bogus_doctype(html)
+{
+	for (;;) {
+		var c = next_char(html);
+		switch (c) {
+			case '>':
+				set_state(html, STATE_DATA);
+				return TOKEN_DOCTYPE;
+
+			case EOF:
+				return TOKEN_DOCTYPE;
+
+			default:
+				continue;
+		}
+	}
+}
+
+function @parse_char_ref(html)
+{
+	clear_temp_buf(html);
+	append_temp_char(html, '&');
+
+	var c = next_char(html);
+	switch (c) {
+		case '\t','\n',0x0C,' ','<','&',EOF:
+			back_char(html);
+			return set_state(html, STATE_CHAR_REF_END);
+
+		case '#':
+			append_temp_char(html, c);
+			return set_state(html, STATE_NUMERIC_CHAR_REF);
+	}
+
+	var refs = get_char_refs();
+	var last_match;
+	var last_match_pos;
+
+	for (;;) {
+		var next_refs = hash_get(refs, c, null);
+		if (next_refs) {
+			refs = next_refs;
+			//log({"ok: ", string_char(c), " value=", hash_get(refs, "value", "(none)")});
+			if (hash_contains(refs, "value")) {
+				last_match = refs;
+				last_match_pos = html->HTML_pos;
+			}
+			append_temp_char(html, c);
+		}
+		else {
+			if (last_match) {
+				refs = last_match;
+				html->HTML_pos = last_match_pos;
+			}
+			else {
+				back_char(html);
+			}
+			var value = hash_get(refs, "value", null);
+			if (value) {
+				//log({"value='", value, "'"});
+				var temp_buf = html->HTML_temp_buf;
+				if (is_attr_value_state(html->HTML_ret_state)) {
+					var last = temp_buf[length(temp_buf)-1];
+					if (last != ';' && (c == '=' || is_alphanumeric(c))) {
+						return set_state(html, STATE_CHAR_REF_END);
+					}
+				}
+				array_set_length(temp_buf, 0);
+				string_append(temp_buf, value);
+				return set_state(html, STATE_CHAR_REF_END);
+			}
+			else {
+				return set_state(html, STATE_CHAR_REF_END);
+			}
+		}
+		c = next_char(html);
+	}
+}
+
+function @end_numeric_char_ref(html, number)
+{
+	switch (number) {
+		case 0x00: number = 0xFFFD; break; // REPLACEMENT CHARACTER
+		case 0x80: number = 0x20AC; break; // EURO SIGN
+		case 0x82: number = 0x201A; break; // SINGLE LOW-9 QUOTATION MARK
+		case 0x83: number = 0x0192; break; // LATIN SMALL LETTER F WITH HOOK
+		case 0x84: number = 0x201E; break; // DOUBLE LOW-9 QUOTATION MARK
+		case 0x85: number = 0x2026; break; // HORIZONTAL ELLIPSIS
+		case 0x86: number = 0x2020; break; // DAGGER
+		case 0x87: number = 0x2021; break; // DOUBLE DAGGER
+		case 0x88: number = 0x02C6; break; // MODIFIER LETTER CIRCUMFLEX ACCENT
+		case 0x89: number = 0x2030; break; // PER MILLE SIGN
+		case 0x8A: number = 0x0160; break; // LATIN CAPITAL LETTER S WITH CARON
+		case 0x8B: number = 0x2039; break; // SINGLE LEFT-POINTING ANGLE QUOTATION MARK
+		case 0x8C: number = 0x0152; break; // LATIN CAPITAL LIGATURE OE
+		case 0x8E: number = 0x017D; break; // LATIN CAPITAL LETTER Z WITH CARON
+		case 0x91: number = 0x2018; break; // LEFT SINGLE QUOTATION MARK
+		case 0x92: number = 0x2019; break; // RIGHT SINGLE QUOTATION MARK
+		case 0x93: number = 0x201C; break; // LEFT DOUBLE QUOTATION MARK
+		case 0x94: number = 0x201D; break; // RIGHT DOUBLE QUOTATION MARK
+		case 0x95: number = 0x2022; break; // BULLET
+		case 0x96: number = 0x2013; break; // EN DASH
+		case 0x97: number = 0x2014; break; // EM DASH
+		case 0x98: number = 0x02DC; break; // SMALL TILDE
+		case 0x99: number = 0x2122; break; // TRADE MARK SIGN
+		case 0x9A: number = 0x0161; break; // LATIN SMALL LETTER S WITH CARON
+		case 0x9B: number = 0x203A; break; // SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
+		case 0x9C: number = 0x0153; break; // LATIN SMALL LIGATURE OE
+		case 0x9E: number = 0x017E; break; // LATIN SMALL LETTER Z WITH CARON
+		case 0x9F: number = 0x0178; break; // LATIN CAPITAL LETTER Y WITH DIAERESIS
+	}
+
+	if (number >= 0xD800 && number <= 0xDFFF) number = 0xFFFD;
+	if (number > 0x10FFFF) number = 0xFFFD;
+
+	clear_temp_buf(html);
+	append_temp_char(html, number);
+	return set_state(html, STATE_CHAR_REF_END);
+}
+
+function @parse_numeric_char_ref(html)
+{
+	var number = 0;
+	var error = false;
+	
+	var c = next_char(html);
+	if (c == 'x' || c == 'X') {
+		append_temp_char(html, c);
+		c = next_char(html);
+
+		if (!is_hexadecimal(c)) {
+			back_char(html);
+			return set_state(html, STATE_CHAR_REF_END);
+		}
+
+		for (;;) {
+			switch (c) {
+				case '0'..'9': number = number * 16 + (c - '0'); break;
+				case 'A'..'F': number = number * 16 + (c - 'A' + 10); break;
+				case 'a'..'f': number = number * 16 + (c - 'a' + 10); break;
+				default:
+					if (c != ';') {
+						back_char(html);
+					}
+					return end_numeric_char_ref(html, error? 0xFFFD : number);
+			}
+			if (number > 0x10FFFF) {
+				error = true;
+				number = 0;
+			}
+			c = next_char(html);
+		}
+		return;
+	}
+
+	if (c < '0' || c > '9') {
+		back_char(html);
+		return set_state(html, STATE_CHAR_REF_END);
+	}
+
+	for (;;) {
+		if (c >= '0' && c <= '9') {
+			number = number * 10 + (c - '0');
+			if (number > 0x10FFFF) {
+				error = true;
+				number = 0;
+			}
+		}
+		else {
+			if (c != ';') {
+				back_char(html);
+			}
+			return end_numeric_char_ref(html, error? 0xFFFD : number);
+		}
+		c = next_char(html);
+	}
+}
+
+function @parse_char_ref_end(html)
+{
+	if (is_attr_value_state(html->HTML_ret_state)) {
+		string_append(html->HTML_tag_new_attr_value, html->HTML_temp_buf);
+		clear_temp_buf(html);
+		set_state(html, html->HTML_ret_state);
+		return TOKEN_NEXT;
+	}
+
+	html->HTML_chars_value = {html->HTML_temp_buf};
+	clear_temp_buf(html);
+	set_state(html, html->HTML_ret_state);
+	return TOKEN_CHARS;
+}
+
+function @next_token(html)
+{
+	var ret;
+
+	var token_again = html->HTML_token_again;
+	if (token_again) {
+		html->HTML_token_again = 0;
+		return token_again;
+	}
+
+	for (;;) {
+		//log({"state=", html->HTML_state, " pos=", html->HTML_pos, "/", length(html->HTML_buf)});
+		if (html->HTML_pos >= length(html->HTML_buf)) {
+			return TOKEN_EOF;
+		}
+
+		switch (html->HTML_state) {
+			case STATE_DATA:                                      ret = parse_data(html); break;
+			case STATE_RCDATA:                                    ret = parse_rcdata(html); break;
+			case STATE_RAWTEXT:                                   ret = parse_rawtext(html); break;
+			case STATE_SCRIPT_DATA:                               ret = parse_script_data(html); break;
+			case STATE_PLAINTEXT:                                 ret = parse_plaintext(html); break;
+			case STATE_TAG_OPEN:                                  ret = parse_tag_open(html); break;
+			case STATE_END_TAG_OPEN:                              ret = parse_end_tag_open(html); break;
+			case STATE_RCDATA_END_TAG_OPEN:                       ret = parse_rcdata_end_tag_open(html); break;
+			case STATE_RCDATA_END_TAG_NAME:                       ret = parse_rcdata_end_tag_name(html); break;
+			case STATE_RAWTEXT_LESS_THAN_SIGN:                    ret = parse_rawtext_less_than_sign(html); break;
+			case STATE_RAWTEXT_END_TAG_OPEN:                      ret = parse_rawtext_end_tag_open(html); break;
+			case STATE_RAWTEXT_END_TAG_NAME:                      ret = parse_rawtext_end_tag_name(html); break;
+			case STATE_SCRIPT_DATA_LESS_THAN_SIGN:                ret = parse_script_data_less_than_sign(html); break;
+			case STATE_SCRIPT_DATA_END_TAG_OPEN:                  ret = parse_script_data_end_tag_open(html); break;
+			case STATE_SCRIPT_DATA_END_TAG_NAME:                  ret = parse_script_data_end_tag_name(html); break;
+			case STATE_SCRIPT_DATA_ESCAPE_START:                  ret = parse_script_data_escape_start(html); break;
+			case STATE_SCRIPT_DATA_ESCAPE_START_DASH:             ret = parse_script_data_escape_start_dash(html); break;
+			case STATE_SCRIPT_DATA_ESCAPED:                       ret = parse_script_data_escaped(html); break;
+			case STATE_SCRIPT_DATA_ESCAPED_DASH:                  ret = parse_script_data_escaped_dash(html); break;
+			case STATE_SCRIPT_DATA_ESCAPED_DASH_DASH:             ret = parse_script_data_escaped_dash_dash(html); break;
+			case STATE_SCRIPT_DATA_ESCAPED_LESS_THAN_SIGN:        ret = parse_script_data_escaped_less_than_sign(html); break;
+			case STATE_SCRIPT_DATA_ESCAPED_END_TAG_OPEN:          ret = parse_script_data_escaped_end_tag_open(html); break;
+			case STATE_SCRIPT_DATA_ESCAPED_END_TAG_NAME:          ret = parse_script_data_escaped_end_tag_name(html); break;
+			case STATE_SCRIPT_DATA_DOUBLE_ESCAPE_START:           ret = parse_script_data_double_escape_start(html); break;
+			case STATE_SCRIPT_DATA_DOUBLE_ESCAPED:                ret = parse_script_data_double_escaped(html); break;
+			case STATE_SCRIPT_DATA_DOUBLE_ESCAPED_DASH:           ret = parse_script_data_double_escaped_dash(html); break;
+			case STATE_SCRIPT_DATA_DOUBLE_ESCAPED_DASH_DASH:      ret = parse_script_data_double_escaped_dash_dash(html); break;
+			case STATE_SCRIPT_DATA_DOUBLE_ESCAPED_LESS_THAN_SIGN: ret = parse_script_data_double_escaped_less_than_sign(html); break;
+			case STATE_SCRIPT_DATA_DOUBLE_ESCAPE_END:             ret = parse_script_data_double_escape_end(html); break;
+			case STATE_TAG_NAME:                                  ret = parse_tag_name(html); break;
+			case STATE_RCDATA_LESS_THAN_SIGN:                     ret = parse_rcdata_less_than_sign(html); break;
+			case STATE_BEFORE_ATTR_NAME:                          ret = parse_before_attr_name(html); break;
+			case STATE_ATTR_NAME:                                 ret = parse_attr_name(html); break;
+			case STATE_AFTER_ATTR_NAME:                           ret = parse_after_attr_name(html); break;
+			case STATE_BEFORE_ATTR_VALUE:                         ret = parse_before_attr_value(html); break;
+			case STATE_ATTR_VALUE_DOUBLE:                         ret = parse_attr_value_double(html); break;
+			case STATE_ATTR_VALUE_SINGLE:                         ret = parse_attr_value_single(html); break;
+			case STATE_ATTR_VALUE_UNQUOTED:                       ret = parse_attr_value_unquoted(html); break;
+			case STATE_AFTER_ATTR_VALUE_QUOTED:                   ret = parse_after_attr_value_quoted(html); break;
+			case STATE_SELF_CLOSING_START_TAG:                    ret = parse_self_closing_start_tag(html); break;
+			case STATE_BOGUS_COMMENT:                             ret = parse_bogus_comment(html); break;
+			case STATE_MARKUP_DECL_OPEN:                          ret = parse_markup_decl_open(html); break;
+			case STATE_COMMENT_START:                             ret = parse_comment_start(html); break;
+			case STATE_COMMENT_START_DASH:                        ret = parse_comment_start_dash(html); break;
+			case STATE_COMMENT:                                   ret = parse_comment(html); break;
+			case STATE_COMMENT_LESS_THAN_SIGN:                    ret = parse_comment_less_than_sign(html); break;
+			case STATE_COMMENT_LESS_THAN_SIGN_BANG:               ret = parse_comment_less_than_sign_bang(html); break;
+			case STATE_COMMENT_LESS_THAN_SIGN_BANG_DASH:          ret = parse_comment_less_than_sign_bang_dash(html); break;
+			case STATE_COMMENT_LESS_THAN_SIGN_BANG_DASH_DASH:     ret = parse_comment_less_than_sign_bang_dash_dash(html); break;
+			case STATE_COMMENT_END_DASH:                          ret = parse_comment_end_dash(html); break;
+			case STATE_COMMENT_END:                               ret = parse_comment_end(html); break;
+			case STATE_COMMENT_END_BANG:                          ret = parse_comment_end_bang(html); break;
+			case STATE_DOCTYPE:                                   ret = parse_doctype(html); break;
+			case STATE_BEFORE_DOCTYPE_NAME:                       ret = parse_before_doctype_name(html); break;
+			case STATE_DOCTYPE_NAME:                              ret = parse_doctype_name(html); break;
+			case STATE_AFTER_DOCTYPE_NAME:                        ret = parse_after_doctype_name(html); break;
+			case STATE_AFTER_DOCTYPE_PUBLIC_KEYWORD:              ret = parse_after_doctype_public_keyword(html); break;
+			case STATE_BEFORE_DOCTYPE_PUBLIC_IDENTIFIER:          ret = parse_before_doctype_public_identifier(html); break;
+			case STATE_DOCTYPE_PUBLIC_IDENTIFIER_DOUBLE:          ret = parse_doctype_public_identifier_double(html); break;
+			case STATE_DOCTYPE_PUBLIC_IDENTIFIER_SINGLE:          ret = parse_doctype_public_identifier_single(html); break;
+			case STATE_AFTER_DOCTYPE_PUBLIC_IDENTIFIER:           ret = parse_after_doctype_public_identifier(html); break;
+			case STATE_BETWEEN_DOCTYPE_PUBLIC_AND_SYSTEM:         ret = parse_between_doctype_public_and_system(html); break;
+			case STATE_AFTER_DOCTYPE_SYSTEM_KEYWORD:              ret = parse_after_doctype_system_keyword(html); break;
+			case STATE_BEFORE_DOCTYPE_SYSTEM_IDENTIFIER:          ret = parse_before_doctype_system_identifier(html); break;
+			case STATE_DOCTYPE_SYSTEM_IDENTIFIER_DOUBLE:          ret = parse_doctype_system_identifier_double(html); break;
+			case STATE_DOCTYPE_SYSTEM_IDENTIFIER_SINGLE:          ret = parse_doctype_system_identifier_single(html); break;
+			case STATE_AFTER_DOCTYPE_SYSTEM_IDENTIFIER:           ret = parse_after_doctype_system_identifier(html); break;
+			case STATE_BOGUS_DOCTYPE:                             ret = parse_bogus_doctype(html); break;
+			case STATE_CHAR_REF:                                  ret = parse_char_ref(html); break;
+			case STATE_NUMERIC_CHAR_REF:                          ret = parse_numeric_char_ref(html); break;
+			case STATE_CHAR_REF_END:                              ret = parse_char_ref_end(html); break;
+			default: return 0, error({"unknown state ", html->HTML_state});
+		}
+
+		if (ret != TOKEN_NEXT) {
+			return ret;
+		}
+	}
+}
+
+function @back_token(html, token)
+{
+	html->HTML_token_again = token;
+}
+
+function @dump_str(s)
+{
+	return s? {"'", s, "'"} : "(unset)";
+}
+
+function @dump_token(html, token)
+{
+	switch (token) {
+		case TOKEN_EOF:
+			log("token=EOF");
+			break;
+			
+		case TOKEN_CHARS:
+			log({"token=CHARS value=", dump_str(html->HTML_chars_value)});
+			break;
+
+		case TOKEN_COMMENT:
+			log({"token=COMMENT value=", dump_str(html->HTML_comment_value)});
+			break;
+
+		case TOKEN_DOCTYPE:
+			log({
+				"token=DOCTYPE name=", dump_str(html->HTML_doctype_name),
+				" public=", dump_str(html->HTML_doctype_public_ident),
+				" system=", dump_str(html->HTML_doctype_system_ident),
+				" force_quirks=", html->HTML_doctype_force_quirks
+			});
+			break;
+
+		case TOKEN_START_TAG:
+		case TOKEN_END_TAG: {
+			var type = token == TOKEN_START_TAG? "START_TAG" : "END_TAG";
+			log({
+				"token=", type, " name=", dump_str(html->HTML_tag_name),
+				" attrs=", html->HTML_tag_attrs,
+				" self_closing=", html->HTML_tag_self_closing
+			});
+			break;
+		}
+
+		default:
+			return 0, error({"unknown token ", token});
+	}
+}
+
+function @stack_last(stack)
+{
+	return stack[length(stack)-1];
+}
+
+function @stack_pop(stack)
+{
+	var len = length(stack);
+	var value = stack[--len];
+	array_set_length(stack, len);
+	return value;
+}
+
+function @stack_remove(stack, elem)
+{
+	for (var i=0; i<length(stack); i++) {
+		if (stack[i] === elem) {
+			array_remove(stack, i);
+			return;
+		}
+	}
+}
+
+function @reset_insertion_mode(html)
+{
+	var stack = html->HTML_open_elements_stack;
+	var node_idx = length(stack)-1;
+	var node = stack[node_idx];
+
+	for (;;) {
+		var type = element_get_type(node);
+		switch (length(type)) {
+			case 2:
+				if (type == "td" || type == "th") {
+					if (node_idx > 0) {
+						html->HTML_insertion_mode = INS_IN_CELL;
+						return;
+					}
+				}
+				if (type == "tr") {
+					html->HTML_insertion_mode = INS_IN_ROW;
+					return;
+				}
+				break;
+
+			case 4:
+				if (type == "head") {
+					if (node_idx > 0) {
+						html->HTML_insertion_mode = INS_IN_HEAD;
+						return;
+					}
+				}
+				if (type == "body") {
+					html->HTML_insertion_mode = INS_IN_BODY;
+					return;
+				}
+				if (type == "html") {
+					html->HTML_insertion_mode = html->HTML_head_elem? INS_AFTER_HEAD : INS_BEFORE_HEAD;
+					return;
+				}
+				break;
+
+			case 5:
+				if (type == "tbody" || type == "thead" || type == "tfoot") {
+					html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+					return;
+				}
+				if (type == "table") {
+					html->HTML_insertion_mode = INS_IN_TABLE;
+					return;
+				}
+				break;
+
+			case 6:
+				if (type == "select") {
+					html->HTML_insertion_mode = INS_IN_SELECT;
+					if (node_idx > 0) {
+						var ancestor_idx = node_idx;
+						var ancestor = node;
+						while (ancestor_idx > 0) {
+							ancestor = stack[--ancestor_idx];
+							var anc_type = element_get_type(ancestor);
+							if (anc_type == "template") break;
+							if (anc_type == "table") {
+								html->HTML_insertion_mode = INS_IN_SELECT_IN_TABLE;
+								break;
+							}
+						}
+					}
+					return;
+				}
+				break;
+
+			case 7:
+				if (type == "caption") {
+					html->HTML_insertion_mode = INS_IN_CAPTION;
+					return;
+				}
+				break;
+
+			case 8:
+				if (type == "colgroup") {
+					html->HTML_insertion_mode = INS_IN_COLUMN_GROUP;
+					return;
+				}
+				if (type == "template") {
+					html->HTML_insertion_mode = stack_last(html->HTML_template_insertion_modes_stack);
+					return;
+				}
+				if (type == "frameset") {
+					html->HTML_insertion_mode = INS_IN_FRAMESET;
+					return;
+				}
+				break;
+		}
+
+		if (node_idx == 0) {
+			html->HTML_insertion_mode = INS_IN_BODY;
+			return;
+		}
+
+		node = stack[--node_idx];
+	}
+}
+
+function @get_position(html, target)
+{
+	if (!target) {
+		target = stack_last(html->HTML_open_elements_stack);
+	}
+
+	if (html->HTML_foster_parenting && hash_contains(foster_targets, element_get_type(target))) {
+		var stack = html->HTML_open_elements_stack;
+		var last_template = null, last_template_idx = -1;
+		var last_table = null, last_table_idx = -1;
+		for (var i=length(stack)-1; i>=0; i--) {
+			var type = element_get_type(stack[i]);
+			if (!last_template && type == "template") {
+				last_template = stack[i];
+				last_template_idx = i;
+			}
+			if (!last_table && type == "table") {
+				last_table = stack[i];
+				last_table_idx = i;
+			}
+		}
+		if (last_template && last_template_idx > last_table_idx) {
+			// TODO: inside last template's template content, after last child
+			return [last_template, null];
+		}
+		if (!last_table) {
+			return [stack[0], null];
+		}
+		var parent = element_get_parent(last_table);
+		if (parent) {
+			return [parent, last_table];
+		}
+		var prev_element = stack[last_table_idx-1];
+		return [prev_element, null];
+	}
+
+	return [target, null];
+}
+
+function @insert_comment(html)
+{
+	insert_comment(html, html->HTML_comment_value, null);
+}
+
+function @insert_comment(html, data, position)
+{
+	if (!position) {
+		position = get_position(html, null);
+	}
+
+	var e = element_create("#comment", data);
+	element_insert_before(position[0], e, position[1]);
+}
+
+function @create_element(html)
+{
+	return element_create(html->HTML_tag_name, null, html->HTML_tag_attrs);
+}
+
+function @insert_element(html)
+{
+	return insert_element(html, null);
+}
+
+function @insert_foreign_element(html, namespace)
+{
+	// TODO
+	return insert_element(html, null);
+}
+
+function @insert_element(html, elem)
+{
+	var position = get_position(html, null);
+	if (!elem) {
+		elem = create_element(html);
+	}
+	element_insert_before(position[0], elem, position[1]);
+	html->HTML_open_elements_stack[] = elem;
+	return elem;
+}
+
+function @insert_chars(html)
+{
+	insert_chars(html, html->HTML_chars_value);
+}
+
+function @insert_chars(html, data)
+{
+	var position = get_position(html, null);
+	var parent = position[0];
+	if (element_is_type(parent, "#document")) {
+		return;
+	}
+	var next = position[1];
+	var prev = next? element_get_prev(next) : element_get_last_child(parent);
+	if (prev && element_is_type(prev, "#text")) {
+		var prev_data = element_get_data(prev);
+		string_append(prev_data, data);
+	}
+	else {
+		var elem = element_create("#text", data);
+		element_insert_before(parent, elem, next);
+	}
+}
+
+function @handle_generic_raw_text_element_parsing(html, is_rcdata)
+{
+	insert_element(html);
+	html->HTML_state = is_rcdata? STATE_RCDATA : STATE_RAWTEXT;
+	html->HTML_original_insertion_mode = html->HTML_insertion_mode;
+	html->HTML_insertion_mode = INS_TEXT;
+	return true;
+}
+
+function @clear_active_formatting_elements(html)
+{
+	var stack = html->HTML_active_formatting_elements;
+	while (length(stack) > 0) {
+		var entry = stack_pop(stack);
+		if (entry == MARKER) break;
+	}
+}
+
+function @push_active_formatting_element(html, elem)
+{
+	var stack = html->HTML_active_formatting_elements;
+	var num_found = 0;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var e = stack[i];
+		if (e == MARKER) break;
+		if (element_equals(e, elem)) {
+			num_found++;
+		}
+		if (num_found == 3) {
+			array_remove(stack, i);
+			break;
+		}
+	}
+	stack[] = elem;
+}
+
+function @reconstruct_active_formatting_elements(html)
+{
+	var stack = html->HTML_active_formatting_elements;
+	if (length(stack) == 0) return;
+
+	var elem_stack = html->HTML_open_elements_stack;
+	var entry_idx = length(stack)-1;
+	var entry = stack[entry_idx];
+	if (entry == MARKER) return;
+	for (var i=length(elem_stack)-1; i>=0; i--) {
+		if (entry === elem_stack[i]) {
+			return;
+		}
+	}
+
+	var advance = false;
+
+	for (;;) {
+		if (entry_idx == 0) break;
+
+		entry = stack[--entry_idx];
+		if (entry != MARKER) {
+			var found = false;
+			for (var i=length(elem_stack)-1; i>=0; i--) {
+				if (entry === elem_stack[i]) {
+					found = true;
+					break;
+				}
+			}
+			if (!found) continue;
+		}
+
+		advance = true;
+		break;
+	}
+
+	for (;;) {
+		if (advance) {
+			entry = stack[++entry_idx];
+			advance = false;
+		}
+
+		entry = insert_element(html, element_clone(entry));
+		stack[entry_idx] = entry;
+
+		if (entry_idx != length(stack)-1) {
+			advance = true;
+			continue;
+		}
+
+		break;
+	}
+}
+
+function @have_element_in_specific_scope(html, target_node_type, types_set)
+{
+	var stack = html->HTML_open_elements_stack;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var type = element_get_type(stack[i]);
+		if (type == target_node_type) return true;
+		if (hash_contains(types_set, type)) return false;
+	}
+	return 0, error("invalid state");
+}
+
+function @have_element_in_specific_scope_reversed(html, target_node_type, types_set)
+{
+	var stack = html->HTML_open_elements_stack;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var type = element_get_type(stack[i]);
+		if (type == target_node_type) return true;
+		if (!hash_contains(types_set, type)) return false;
+	}
+	return 0, error("invalid state");
+}
+
+function @have_particular_element_in_scope(html, elem_type)
+{
+	return have_element_in_specific_scope(html, elem_type, particular_types_set);
+}
+
+function @have_particular_element_in_button_scope(html, elem_type)
+{
+	var set = clone(particular_types_set);
+	set{"button"} = true;
+	return have_element_in_specific_scope(html, elem_type, set);
+}
+
+function @have_particular_element_in_list_scope(html, elem_type)
+{
+	var set = clone(particular_types_set);
+	set{"ol"} = true;
+	set{"ul"} = true;
+	return have_element_in_specific_scope(html, elem_type, set);
+}
+
+function @have_particular_element_in_table_scope(html, elem_type)
+{
+	var set = {};
+	set{"html"} = true;
+	set{"table"} = true;
+	set{"template"} = true;
+	return have_element_in_specific_scope(html, elem_type, set);
+}
+
+function @have_particular_element_in_select_scope(html, elem_type)
+{
+	var set = {};
+	set{"optgroup"} = true;
+	set{"option"} = true;
+	return have_element_in_specific_scope_reversed(html, elem_type, set);
+}
+
+function @close_p_element(html)
+{
+	var stack = html->HTML_open_elements_stack;
+	if (have_particular_element_in_button_scope(html, "p")) {
+		for (var i=length(stack)-1; i>=0; i--) {
+			if (element_is_type(stack[i], "p")) {
+				array_set_length(stack, i);
+				return;
+			}
+		}
+	}
+}
+
+function @generate_implied_end_tags(html)
+{
+	generate_implied_end_tags(html, null);
+}
+
+function @generate_implied_end_tags(html, except_set)
+{
+	var stack = html->HTML_open_elements_stack;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var type = element_get_type(stack[i]);
+		if (hash_contains(implied_end_tag_types, type)) {
+			if (except_set && hash_contains(except_set, type)) {
+				return;
+			}
+			array_set_length(stack, i);
+		}
+		return;
+	}
+}
+
+function @adoption_agency_algorithm(html, token)
+{
+	var stack = html->HTML_open_elements_stack;
+	var formatting_stack = html->HTML_active_formatting_elements;
+	var subject = html->HTML_tag_name;
+	var node = stack_last(stack);
+	
+	if (element_is_type(node, subject)) {
+		var found = false;
+		for (var i=0; i<length(formatting_stack); i++) {
+			if (formatting_stack[i] === node) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			stack_pop(stack);
+			return true;
+		}
+	}
+
+	for (var i=0; i<8; i++) {
+		var formatting_elem = null;
+		var formatting_elem_idx = -1;
+		for (var j=length(formatting_stack)-1; j>=0; j--) {
+			var elem = formatting_stack[j];
+			if (elem == MARKER) break;
+			if (element_is_type(elem, subject)) {
+				formatting_elem = elem;
+				formatting_elem_idx = j;
+				break;
+			}
+		}
+		if (!formatting_elem) {
+			return false;
+		}
+
+		var stack_pos = -1;
+		for (var j=0; j<length(stack); j++) {
+			if (stack[j] === formatting_elem) {
+				stack_pos = j;
+				break;
+			}
+		}
+		if (stack_pos == -1) {
+			array_remove(formatting_stack, formatting_elem_idx);
+			return true;
+		}
+		if (!have_particular_element_in_scope(html, element_get_type(formatting_elem))) {
+			return true;
+		}
+
+		var furthest_block = null;
+		var furthest_block_idx = -1;
+		for (var j=stack_pos+1; j<length(stack); j++) {
+			if (hash_contains(special_types, element_get_type(stack[j]))) {
+				furthest_block = stack[j];
+				furthest_block_idx = j;
+				break;
+			}
+		}
+		if (!furthest_block) {
+			array_set_length(stack, stack_pos);
+			array_remove(formatting_stack, formatting_elem_idx);
+			return true;
+		}
+
+		var common_ancestor = stack[stack_pos-1];
+
+		var bookmark = formatting_elem_idx;
+
+		node = furthest_block;
+		var node_idx = furthest_block_idx;
+		var last_node = node;
+
+		var inner_loop_cnt = 0;
+		for (;;) {
+			inner_loop_cnt++;
+
+			node = stack[--node_idx];
+			if (node === formatting_elem) break;
+
+			if (inner_loop_cnt > 3) {
+				for (var j=length(formatting_stack)-1; j>=0; j--) {
+					if (node === formatting_stack[j]) {
+						array_remove(formatting_stack, j);
+						break;
+					}
+				}
+			}
+
+			var node_fmt_idx = -1;
+			for (var j=length(formatting_stack)-1; j>=0; j--) {
+				if (node === formatting_stack[j]) {
+					node_fmt_idx = j;
+					break;
+				}
+			}
+			if (node_fmt_idx == -1) {
+				array_remove(stack, node_idx);
+				continue;
+			}
+
+			var elem = create_element(html);
+			formatting_stack[node_fmt_idx] = elem;
+			stack[node_idx] = elem;
+			node = elem;
+
+			if (last_node === furthest_block) {
+				bookmark = node_fmt_idx+1;
+			}
+
+			var parent = element_get_parent(last_node);
+			if (parent) {
+				element_remove_child(parent, last_node);
+			}
+			element_append_child(node, last_node);
+			
+			last_node = node;
+		}
+
+		var pos = get_position(html, common_ancestor);
+		// TODO:
+		if (element_get_parent(last_node)) {
+			element_remove_child(element_get_parent(last_node), last_node);
+		}
+		element_insert_before(pos[0], last_node, pos[1]);
+
+		var elem = element_clone(formatting_elem);
+		for (var e = element_get_first_child(furthest_block); e; e = element_get_next(e)) {
+			element_remove_child(element_get_parent(e), e);
+			element_append_child(elem, e);
+		}
+		element_append_child(furthest_block, elem);
+
+		for (var j=length(formatting_stack)-1; j>=0; j--) {
+			if (formatting_elem === formatting_stack[j]) {
+				array_remove(formatting_stack, j);
+				break;
+			}
+		}
+		// TODO:
+		array_insert(formatting_stack, min(bookmark, length(formatting_stack)), elem);
+
+		for (var j=0; j<length(stack); j++) {
+			if (formatting_elem === stack[j]) {
+				array_remove(stack, j);
+				break;
+			}
+		}
+		// TODO:
+		array_insert(stack, min(furthest_block_idx+1, length(stack)), elem);
+	}
+
+	return true;
+}
+
+function @process_initial(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			var i = 0;
+			for (; i < length(s); i++) {
+				switch (s[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+					default:
+				}
+				break;
+			}
+			if (i == length(s)) {
+				return true;
+			}
+			if (i != 0) {
+				html->HTML_chars_value = array_extract(s, i, length(s)-i);
+			}
+			html->HTML_quirks_mode = true;
+			html->HTML_insertion_mode = INS_BEFORE_HTML;
+			return false;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html, html->HTML_comment_value, [html->HTML_document, 0]);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			var public_ident = html->HTML_doctype_public_ident;
+			var system_ident = html->HTML_doctype_system_ident;
+			public_ident = public_ident? string_to_lower_case(public_ident) : "";
+			system_ident = system_ident? string_to_lower_case(public_ident) : null;
+
+			if (html->HTML_doctype_force_quirks || html->HTML_doctype_name != "html") {
+				html->HTML_quirks_mode = true;
+			}
+			else if (string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML"))) {
+				if (string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 2.0 Level 1//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 2.0 Level 2//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 2.0 Strict Level 1//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 2.0 Strict Level 2//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 2.0 Strict//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 2.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 2.1E//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 3.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 3.2 Final//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 3.2//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML 3//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Level 0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Level 1//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Level 2//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Level 3//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Strict Level 0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Strict Level 1//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Strict Level 2//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Strict Level 3//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML Strict//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//IETF//DTD HTML//")))
+				{
+					html->HTML_quirks_mode = true;
+				}
+			}
+			else if (string_starts_with(public_ident, string_to_lower_case("-//Microsoft//DTD Internet Explorer "))) {
+				if (string_starts_with(public_ident, string_to_lower_case("-//Microsoft//DTD Internet Explorer 2.0 HTML Strict//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Microsoft//DTD Internet Explorer 2.0 HTML//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Microsoft//DTD Internet Explorer 2.0 Tables//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Microsoft//DTD Internet Explorer 3.0 HTML Strict//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Microsoft//DTD Internet Explorer 3.0 HTML//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Microsoft//DTD Internet Explorer 3.0 Tables//")))
+				{
+					html->HTML_quirks_mode = true;
+				}
+			}
+			else if (string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD "))) {
+				if (string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 3 1995-03-24//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 3.2 Draft//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 3.2 Final//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 3.2//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 3.2S Draft//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 4.0 Frameset//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 4.0 Transitional//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML Experimental 19960712//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML Experimental 970421//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD W3 HTML//")))
+				{
+					html->HTML_quirks_mode = true;
+				}
+			}
+			else {
+				if (public_ident == string_to_lower_case("-//W3O//DTD W3 HTML Strict 3.0//EN//") ||
+				    public_ident == string_to_lower_case("-/W3C/DTD HTML 4.0 Transitional/EN") ||
+				    public_ident == string_to_lower_case("HTML") ||
+				    (system_ident && system_ident == "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd") ||
+				    string_starts_with(public_ident, string_to_lower_case("+//Silmaril//dtd html Pro v0r11 19970101//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//AS//DTD HTML 3.0 asWedit + extensions//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//AdvaSoft Ltd//DTD HTML 3.0 asWedit + extensions//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Metrius//DTD Metrius Presentational//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Netscape Comm. Corp.//DTD HTML//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Netscape Comm. Corp.//DTD Strict HTML//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//O'Reilly and Associates//DTD HTML 2.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//O'Reilly and Associates//DTD HTML Extended 1.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//O'Reilly and Associates//DTD HTML Extended Relaxed 1.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//SQ//DTD HTML 2.0 HoTMetaL + extensions//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//SoftQuad Software//DTD HoTMetaL PRO 6.0::19990601::extensions to HTML 4.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//SoftQuad//DTD HoTMetaL PRO 4.0::19971010::extensions to HTML 4.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Spyglass//DTD HTML 2.0 Extended//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Sun Microsystems Corp.//DTD HotJava HTML//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//Sun Microsystems Corp.//DTD HotJava Strict HTML//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3O//DTD W3 HTML 3.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//WebTechs//DTD Mozilla HTML 2.0//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//WebTechs//DTD Mozilla HTML//")) ||
+				    (!system_ident && string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 4.01 Frameset//"))) ||
+				    (!system_ident && string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 4.01 Transitional//"))))
+				{
+					html->HTML_quirks_mode = true;
+				}
+			}
+
+			if (!html->HTML_quirks_mode) {
+				if (string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD XHTML 1.0 Frameset//")) ||
+				    string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD XHTML 1.0 Transitional//")) ||
+				    (system_ident && string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 4.01 Frameset//"))) ||
+				    (system_ident && string_starts_with(public_ident, string_to_lower_case("-//W3C//DTD HTML 4.01 Transitional//"))))
+				{
+					html->HTML_limited_quirks_mode = true;
+				}
+			}
+
+			html->HTML_insertion_mode = INS_BEFORE_HTML;
+			return true;
+		}
+	}
+
+	html->HTML_quirks_mode = true;
+	html->HTML_insertion_mode = INS_BEFORE_HTML;
+	return false;
+}
+
+function @process_before_html(html, token)
+{
+	var ret = false;
+
+	switch (token) {
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html, html->HTML_comment_value, [html->HTML_document, 0]);
+			return true;
+		}
+
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			var i = 0;
+			for (; i < length(s); i++) {
+				switch (s[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+					default:
+				}
+				break;
+			}
+			if (i == length(s)) {
+				return true;
+			}
+			if (i != 0) {
+				html->HTML_chars_value = array_extract(s, i, length(s)-i);
+			}
+			break;
+		}
+
+		case TOKEN_START_TAG: {
+			if (html->HTML_tag_name == "html") {
+				ret = true;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "head" || name == "body" || name == "html" || name == "br") {
+				break;
+			}
+			return true;
+		}
+	}
+
+	var e = element_create("html");
+	element_append_child(html->HTML_document, e);
+	html->HTML_open_elements_stack[] = e;
+	html->HTML_insertion_mode = INS_BEFORE_HEAD;
+	return ret;
+}
+
+function @process_before_head(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			var i = 0;
+			for (; i < length(s); i++) {
+				switch (s[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+					default:
+				}
+				break;
+			}
+			if (i == length(s)) {
+				return true;
+			}
+			if (i != 0) {
+				html->HTML_chars_value = array_extract(s, i, length(s)-i);
+			}
+			break;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			if (html->HTML_tag_name == "html") {
+				return process_in_body(html, token);
+			}
+			if (html->HTML_tag_name == "head") {
+				html->HTML_head_elem = insert_element(html);
+				html->HTML_insertion_mode = INS_IN_HEAD;
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "head" || name == "body" || name == "html" || name == "br") {
+				break;
+			}
+			return true;
+		}
+	}
+	
+	html->HTML_head_elem = insert_element(html, element_create("head"));
+	html->HTML_insertion_mode = INS_IN_HEAD;
+	return false;
+}
+
+function @html_whitespace(c)
+{
+	switch (c) {
+		case ' ', '\t', '\n', 0xFF, '\r': return true;
+	}
+	return false;
+}
+
+function @process_in_head(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			var i = 0;
+			for (; i < length(s); i++) {
+				switch (s[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+					default:
+				}
+				break;
+			}
+			if (i == length(s)) {
+				insert_chars(html, s);
+				return true;
+			}
+			if (i != 0) {
+				insert_chars(html, array_extract(s, 0, i));
+				html->HTML_chars_value = array_extract(s, i, length(s)-i);
+			}
+			break;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "base" || name == "basefont" || name == "bgsound" || name == "link") {
+				insert_element(html);
+				stack_pop(html->HTML_open_elements_stack);
+				return true;
+			}
+			if (name == "meta") {
+				insert_element(html);
+				stack_pop(html->HTML_open_elements_stack);
+				if (html->HTML_charset_applied) return true;
+
+				var charset = hash_get(html->HTML_tag_attrs, "charset", null);
+				if (charset != null) {
+					charset_convert(charset_get(charset), html->HTML_buf, html->HTML_pos);
+					html->HTML_charset_applied = true;
+					return true;
+				}
+
+				var http_equiv = hash_get(html->HTML_tag_attrs, "http-equiv", null);
+				if (http_equiv != null && string_to_lower_case(http_equiv) == "content-type") {
+					var content = hash_get(html->HTML_tag_attrs, "content", null);
+					if (content != null) {
+						content = string_to_lower_case(content);
+						if (string_starts_with(content, "text/html;")) {
+							array_remove(content, 0, 10);
+							content = string_trim(content, html_whitespace#1);
+							if (string_starts_with(content, "charset=")) {
+								array_remove(content, 0, 8);
+								charset_convert(charset_get(content), html->HTML_buf, html->HTML_pos);
+								html->HTML_charset_applied = true;
+								return true;
+							}
+						}
+					}
+				}
+				return true;
+			}
+			if (name == "title") {
+				return handle_generic_raw_text_element_parsing(html, true);
+			}
+			if (name == "noframes" || name == "style") {
+				return handle_generic_raw_text_element_parsing(html, false);
+			}
+			if (name == "noscript") {
+				if (html->HTML_scripting_flag) {
+					return handle_generic_raw_text_element_parsing(html, false);
+				}
+				else {
+					insert_element(html);
+					html->HTML_insertion_mode = INS_IN_HEAD_NOSCRIPT;
+					return true;
+				}
+			}
+			if (name == "script") {
+				insert_element(html);
+				html->HTML_state = STATE_SCRIPT_DATA;
+				html->HTML_original_insertion_mode = html->HTML_insertion_mode;
+				html->HTML_insertion_mode = INS_TEXT;
+				return true;
+			}
+			if (name == "template") {
+				insert_element(html);
+				html->HTML_active_formatting_elements[] = MARKER;
+				html->HTML_frameset_ok = false;
+				html->HTML_insertion_mode = INS_IN_TEMPLATE;
+				html->HTML_template_insertion_modes_stack[] = INS_IN_TEMPLATE;
+				return true;
+			}
+			if (name == "head") {
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "head") {
+				stack_pop(html->HTML_open_elements_stack);
+				html->HTML_insertion_mode = INS_AFTER_HEAD;
+				return true;
+			}
+			if (name == "template") {
+				var stack = html->HTML_open_elements_stack;
+				var template_elem = null, template_elem_idx = -1;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "template")) {
+						template_elem = stack[i];
+						template_elem_idx = i;
+						break;
+					}
+				}
+				if (template_elem_idx == -1) {
+					return true;
+				}
+				array_set_length(stack, template_elem_idx);
+				clear_active_formatting_elements(html);
+				stack_pop(html->HTML_template_insertion_modes_stack);
+				reset_insertion_mode(html);
+				return true;
+			}
+			return true;
+		}
+	}
+
+	stack_pop(html->HTML_open_elements_stack);
+	html->HTML_insertion_mode = INS_AFTER_HEAD;
+	return false;
+}
+
+function @process_in_head_noscript(html, token)
+{
+	switch (token) {
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "basefont" || name == "bgsound" || name == "link" || name == "meta" || name == "noframes" || name == "style") {
+				return process_in_head(html, token);
+			}
+			if (name == "head" || name == "noscript") {
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "noscript") {
+				stack_pop(html->HTML_open_elements_stack);
+				html->HTML_insertion_mode = INS_IN_HEAD;
+				return true;
+			}
+			if (name == "br") {
+				break;
+			}
+			return true;
+		}
+
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			var i = 0;
+			for (; i < length(s); i++) {
+				switch (s[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+					default:
+				}
+				break;
+			}
+			if (i == length(s)) {
+				insert_chars(html, s);
+				return true;
+			}
+			if (i != 0) {
+				insert_chars(html, array_extract(s, 0, i));
+				html->HTML_chars_value = array_extract(s, i, length(s)-i);
+			}
+			break;
+		}
+
+		case TOKEN_COMMENT: {
+			return process_in_head(html, token);
+		}
+	}
+
+	stack_pop(html->HTML_open_elements_stack);
+	html->HTML_insertion_mode = INS_IN_HEAD;
+	return false;
+}
+
+function @process_after_head(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			var i = 0;
+			for (; i < length(s); i++) {
+				switch (s[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+					default:
+				}
+				break;
+			}
+			if (i == length(s)) {
+				insert_chars(html, s);
+				return true;
+			}
+			if (i != 0) {
+				insert_chars(html, array_extract(s, 0, i));
+				html->HTML_chars_value = array_extract(s, i, length(s)-i);
+			}
+			break;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "body") {
+				insert_element(html);
+				html->HTML_frameset_ok = false;
+				html->HTML_insertion_mode = INS_IN_BODY;
+				return true;
+			}
+			if (name == "frameset") {
+				insert_element(html);
+				html->HTML_insertion_mode = INS_IN_FRAMESET;
+				return true;
+			}
+			if (name == "base" || name == "basefont" || name == "bgsound" || name == "link" || name == "meta" || name == "noframes" || name == "script" || name == "style" || name == "template" || name == "title") {
+				var stack = html->HTML_open_elements_stack;
+				var idx = length(stack);
+				stack[] = html->HTML_head_elem;
+				var ret = process_in_head(html, token);
+				array_remove(stack, idx);
+				return ret;
+			}
+			if (name == "head") {
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "template") {
+				return process_in_head(html, token);
+			}
+			if (name == "body" || name == "html" || name == "br") {
+				break;
+			}
+			return true;
+		}
+	}
+
+	insert_element(html, element_create("body"));
+	html->HTML_insertion_mode = INS_IN_BODY;
+	return false;
+}
+
+function @any_other_end_tag(html)
+{
+	var stack = html->HTML_open_elements_stack;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var node = stack[i];
+		if (element_is_type(node, html->HTML_tag_name)) {
+			generate_implied_end_tags(html, {html->HTML_tag_name: true});
+			for (;;) {
+				var elem = stack_pop(stack);
+				if (element_is_type(elem, html->HTML_tag_name)) break;
+			}
+			return;
+		}
+		if (hash_contains(special_types, element_get_type(node))) {
+			return;
+		}
+	}
+}
+
+function @generic_raw_text_element_parsing_algorithm(html)
+{
+	insert_element(html);
+	html->HTML_state = STATE_RAWTEXT;
+	html->HTML_original_insertion_mode = html->HTML_insertion_mode;
+	html->HTML_insertion_mode = INS_TEXT;
+}
+
+function @generic_rcdata_text_element_parsing_algorithm(html)
+{
+	insert_element(html);
+	html->HTML_state = STATE_RCDATA;
+	html->HTML_original_insertion_mode = html->HTML_insertion_mode;
+	html->HTML_insertion_mode = INS_TEXT;
+}
+
+function @adjust_mathml_attributes(html)
+{
+	var value = hash_get(html->HTML_tag_attrs, "definitionurl", null);
+	if (value) {
+		hash_remove(html->HTML_tag_attrs, "definitionurl");
+		html->HTML_tag_attrs{"definitionURL"} = value;
+	}
+}
+
+function @adjust_svg_attributes(html)
+{
+	var keys = hash_keys(html->HTML_tag_attrs);
+	for (var i=0; i<length(keys); i++) {
+		var name = keys[i];
+		var replacement = hash_get(svg_attrs, name, null);
+		if (replacement) {
+			var value = html->HTML_tag_attrs{name};
+			hash_remove(html->HTML_tag_attrs, name);
+			html->HTML_tag_attrs{replacement} = value;
+		}
+	}
+}
+
+function @adjust_foreign_attributes(html)
+{
+	// TODO
+}
+
+function @process_in_body(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			var i = 0;
+			for (; i < length(s); i++) {
+				if (s[i] != 0) break;
+			}
+			if (i != 0) {
+				html->HTML_chars_value = array_extract(s, i, length(s)-i);
+				return false;
+			}
+			var frameset_ok = true;
+			for (; i < length(s); i++) {
+				switch (s[i]) {
+					case 0: break;
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+					default:
+						frameset_ok = false;
+						continue;
+				}
+				break;
+			}
+			if (!frameset_ok) html->HTML_frameset_ok = false;
+			if (i == length(s)) {
+				reconstruct_active_formatting_elements(html);
+				insert_chars(html, s);
+				return true;
+			}
+			reconstruct_active_formatting_elements(html);
+			insert_chars(html, array_extract(s, 0, i));
+			html->HTML_chars_value = array_extract(s, i, length(s)-i);
+			return false;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				var stack = html->HTML_open_elements_stack;
+				for (var i=0; i<length(stack); i++) {
+					if (element_is_type(stack[i], "template")) return true;
+				}
+				var html_elem = stack[0];
+				var attrs = html->HTML_tag_attrs;
+				for (var i=0; i<length(attrs); i++) {
+					var (k, v) = hash_entry(attrs, i);
+					element_set_attr_if_missing(html_elem, k, v);
+				}
+				return true;
+			}
+			if (name == "base" || name == "basefont" || name == "bgsound" || name == "link" || name == "meta" || name == "noframes" || name == "script" || name == "style" || name == "template" || name == "title") {
+				return process_in_head(html, token);
+			}
+			if (name == "body") {
+				var stack = html->HTML_open_elements_stack;
+				if (length(stack) == 1 || !element_is_type(stack[1], "body")) {
+					return true;
+				}
+				for (var i=0; i<length(stack); i++) {
+					if (element_is_type(stack[i], "template")) return true;
+				}
+				html->HTML_frameset_ok = false;
+				var body_elem = stack[1];
+				var attrs = html->HTML_tag_attrs;
+				for (var i=0; i<length(attrs); i++) {
+					var (k, v) = hash_entry(attrs, i);
+					element_set_attr_if_missing(body_elem, k, v);
+				}
+				return true;
+			}
+			if (name == "frameset") {
+				var stack = html->HTML_open_elements_stack;
+				if (length(stack) == 1 || !element_is_type(stack[1], "body")) {
+					return true;
+				}
+				if (!html->HTML_frameset_ok) {
+					return true;
+				}
+				var body_elem = stack[1];
+				element_remove_child(element_get_parent(body_elem), body_elem);
+				array_set_length(stack, 1);
+				insert_element(html);
+				html->HTML_insertion_mode = INS_IN_FRAMESET;
+				return true;
+			}
+			if (name == "address" || name == "article" || name == "aside" || name == "blockquote" || name == "center" ||
+			    name == "details" || name == "dialog" || name == "dir" || name == "div" || name == "dl" || name == "fieldset" ||
+			    name == "figcaption" || name == "figure" || name == "footer" || name == "header" || name == "main" ||
+			    name == "nav" || name == "ol" || name == "p" || name == "section" || name == "summary" || name == "ul")
+			{
+				close_p_element(html);
+				insert_element(html);
+				return true;
+			}
+			if (name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6") {
+				close_p_element(html);
+				var type = stack_last(html->HTML_open_elements_stack);
+				if (type == "h1" || type == "h2" || type == "h3" || type == "h4" || type == "h5" || type == "h6") {
+					stack_pop(html->HTML_open_elements_stack);
+				}
+				insert_element(html);
+				return true;
+			}
+			if (name == "pre" || name == "listing") {
+				close_p_element(html);
+				insert_element(html);
+				token = next_token(html);
+				if (token == TOKEN_CHARS) {
+					var chars = html->HTML_chars_value;
+					if (chars[0] == '\n') {
+						array_remove(chars, 0);
+					}
+					if (length(chars) > 0) {
+						back_token(html, token);
+					}
+				}
+				else {
+					back_token(html, token);
+				}
+				html->HTML_frameset_ok = false;
+				return true;
+			}
+			if (name == "form") {
+				var stack = html->HTML_open_elements_stack;
+				var template_present = false;
+				for (var i=0; i<length(stack); i++) {
+					if (element_is_type(stack[i], "template")) {
+						template_present = true;
+						break;
+					}
+				}
+				if (html->HTML_form_elem && !template_present) {
+					return true;
+				}
+				close_p_element(html);
+				var elem = insert_element(html);
+				if (!template_present) {
+					html->HTML_form_elem = elem;
+				}
+				return true;
+			}
+			if (name == "li") {
+				html->HTML_frameset_ok = false;
+				var stack = html->HTML_open_elements_stack;
+				var node_idx = length(stack);
+				var node = stack[--node_idx];
+				for (;;) {
+					var type = element_get_type(node);
+					if (type == "li") {
+						generate_implied_end_tags(html, {"li": true});
+						for (;;) {
+							var elem = stack_pop(stack);
+							if (element_is_type(elem, "li")) break;
+						}
+						break;
+					}
+					if (hash_contains(special_types, type) && type != "address" && type != "div" && type != "p") {
+						break;
+					}
+					node = stack[--node_idx];
+				}
+				close_p_element(html);
+				insert_element(html);
+				return true;
+			}
+			if (name == "dd" || name == "dt") {
+				html->HTML_frameset_ok = false;
+				var stack = html->HTML_open_elements_stack;
+				var node_idx = length(stack);
+				var node = stack[--node_idx];
+				for (;;) {
+					var type = element_get_type(node);
+					if (type == "dd") {
+						generate_implied_end_tags(html, {"dd": true});
+						for (;;) {
+							var elem = stack_pop(stack);
+							if (element_is_type(elem, "dd")) break;
+						}
+						break;
+					}
+					if (type == "dt") {
+						generate_implied_end_tags(html, {"dt": true});
+						for (;;) {
+							var elem = stack_pop(stack);
+							if (element_is_type(elem, "dt")) break;
+						}
+						break;
+					}
+					if (hash_contains(special_types, type) && type != "address" && type != "div" && type != "p") {
+						break;
+					}
+					node = stack[--node_idx];
+				}
+				close_p_element(html);
+				insert_element(html);
+				return true;
+			}
+			if (name == "plaintext") {
+				close_p_element(html);
+				insert_element(html);
+				html->HTML_state = STATE_PLAINTEXT;
+				return true;
+			}
+			if (name == "button") {
+				if (have_particular_element_in_scope(html, "button")) {
+					generate_implied_end_tags(html);
+					var stack = html->HTML_open_elements_stack;
+					for (;;) {
+						var elem = stack_pop(stack);
+						if (element_is_type(elem, "button")) break;
+					}
+				}
+				reconstruct_active_formatting_elements(html);
+				insert_element(html);
+				html->HTML_frameset_ok = false;
+				return true;
+			}
+			if (name == "a") {
+				var stack = html->HTML_open_elements_stack;
+				var formatting_stack = html->HTML_active_formatting_elements;
+				for (var i=length(formatting_stack)-1; i>=0; i--) {
+					var elem = formatting_stack[i];
+					if (elem == MARKER) break;
+					if (element_is_type(elem, "a")) {
+						if (!adoption_agency_algorithm(html, token)) {
+							any_other_end_tag(html);
+						}
+						for (var j=length(formatting_stack)-1; j>=0; j--) {
+							var elem2 = formatting_stack[j];
+							if (elem2 == MARKER) break;
+							if (elem2 === elem) {
+								array_remove(formatting_stack, j);
+								break;
+							}
+						}
+						for (var j=0; j<length(stack); j++) {
+							if (stack[j] === elem) {
+								array_remove(stack, j);
+								break;
+							}
+						}
+						break;
+					}
+				}
+				reconstruct_active_formatting_elements(html);
+				push_active_formatting_element(html, insert_element(html));
+				return true;
+			}
+			if (name == "b" || name == "big" || name == "code" || name == "em" || name == "font" || name == "i" || name == "s" || name == "small" || name == "strike" || name == "strong" || name == "tt" || name == "u") {
+				reconstruct_active_formatting_elements(html);
+				push_active_formatting_element(html, insert_element(html));
+				return true;
+			}
+			if (name == "nobr") {
+				reconstruct_active_formatting_elements(html);
+				if (have_particular_element_in_scope(html, "nobr")) {
+					if (!adoption_agency_algorithm(html, token)) {
+						any_other_end_tag(html);
+					}
+					reconstruct_active_formatting_elements(html);
+				}
+				push_active_formatting_element(html, insert_element(html));
+				return true;
+			}
+			if (name == "applet" || name == "marquee" || name == "object") {
+				var formatting_stack = html->HTML_active_formatting_elements;
+				reconstruct_active_formatting_elements(html);
+				insert_element(html);
+				formatting_stack[] = MARKER;
+				html->HTML_frameset_ok = false;
+				return true;
+			}
+			if (name == "table") {
+				if (!html->HTML_quirks_mode) {
+					if (have_particular_element_in_button_scope(html, "p")) {
+						close_p_element(html);
+					}
+				}
+				insert_element(html);
+				html->HTML_frameset_ok = false;
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return true;
+			}
+			if (name == "area" || name == "br" || name == "embed" || name == "img" || name == "wbr") {
+				var stack = html->HTML_open_elements_stack;
+				reconstruct_active_formatting_elements(html);
+				insert_element(html);
+				stack_pop(stack);
+				html->HTML_frameset_ok = false;
+				return true;
+			}
+			if (name == "input") {
+				var stack = html->HTML_open_elements_stack;
+				reconstruct_active_formatting_elements(html);
+				insert_element(html);
+				stack_pop(stack);
+				var type = hash_get(html->HTML_tag_attrs, "type", null);
+				if (!type || string_to_lower_case(type) != "hidden") {
+					html->HTML_frameset_ok = false;
+				}
+				return true;
+			}
+			if (name == "param" || name == "source" || name == "track") {
+				var stack = html->HTML_open_elements_stack;
+				insert_element(html);
+				stack_pop(stack);
+				return true;
+			}
+			if (name == "hr") {
+				var stack = html->HTML_open_elements_stack;
+				if (have_particular_element_in_button_scope(html, "p")) {
+					close_p_element(html);
+				}
+				insert_element(html);
+				stack_pop(stack);
+				html->HTML_frameset_ok = false;
+				return true;
+			}
+			if (name == "image") {
+				html->HTML_tag_name = "img";
+				return process_in_body(html, token);
+			}
+			if (name == "textarea") {
+				insert_element(html);
+				html->HTML_state = STATE_RCDATA;
+				html->HTML_original_insertion_mode = html->HTML_insertion_mode;
+				html->HTML_frameset_ok = false;
+				html->HTML_insertion_mode = INS_TEXT;
+				token = next_token(html);
+				if (token == TOKEN_CHARS) {
+					var chars = html->HTML_chars_value;
+					if (chars[0] == '\n') {
+						array_remove(chars, 0);
+					}
+					if (length(chars) > 0) {
+						back_token(html, token);
+					}
+				}
+				else {
+					back_token(html, token);
+				}
+				return true;
+			}
+			if (name == "xmp") {
+				if (have_particular_element_in_button_scope(html, "p")) {
+					close_p_element(html);
+				}
+				reconstruct_active_formatting_elements(html);
+				html->HTML_frameset_ok = false;
+				generic_raw_text_element_parsing_algorithm(html);
+				return true;
+			}
+			if (name == "iframe") {
+				html->HTML_frameset_ok = false;
+				generic_raw_text_element_parsing_algorithm(html);
+				return true;
+			}
+			if (name == "noembed" || (name == "noscript" && html->HTML_scripting_flag)) {
+				generic_raw_text_element_parsing_algorithm(html);
+				return true;
+			}
+			if (name == "select") {
+				reconstruct_active_formatting_elements(html);
+				insert_element(html);
+				html->HTML_frameset_ok = false;
+				switch (html->HTML_insertion_mode) {
+					case INS_IN_TABLE, INS_IN_CAPTION, INS_IN_TABLE_BODY, INS_IN_ROW, INS_IN_CELL:
+						html->HTML_insertion_mode = INS_IN_SELECT_IN_TABLE;
+						break;
+					default:
+						html->HTML_insertion_mode = INS_IN_SELECT;
+						break;
+				}
+				return true;
+			}
+			if (name == "optgroup" || name == "option") {
+				var stack = html->HTML_open_elements_stack;
+				var node = stack_last(stack);
+				if (element_is_type(node, "option")) {
+					stack_pop(stack);
+				}
+				reconstruct_active_formatting_elements(html);
+				insert_element(html);
+				return true;
+			}
+			if (name == "rb" || name == "rtc") {
+				if (have_particular_element_in_scope(html, "ruby")) {
+					generate_implied_end_tags(html);
+				}
+				insert_element(html);
+				return true;
+			}
+			if (name == "rp" || name == "rt") {
+				if (have_particular_element_in_scope(html, "ruby")) {
+					generate_implied_end_tags(html, {"rtc": true});
+				}
+				insert_element(html);
+				return true;
+			}
+			if (name == "math") {
+				var stack = html->HTML_open_elements_stack;
+				reconstruct_active_formatting_elements(html);
+				adjust_mathml_attributes(html);
+				adjust_foreign_attributes(html);
+				insert_foreign_element(html, "mathml");
+				if (html->HTML_tag_self_closing) {
+					stack_pop(stack);
+				}
+				return true;
+			}
+			if (name == "svg") {
+				var stack = html->HTML_open_elements_stack;
+				reconstruct_active_formatting_elements(html);
+				adjust_svg_attributes(html);
+				adjust_foreign_attributes(html);
+				insert_foreign_element(html, "svg");
+				if (html->HTML_tag_self_closing) {
+					stack_pop(stack);
+				}
+				return true;
+			}
+			if (name == "caption" || name == "col" || name == "colgroup" || name == "frame" || name == "head" || name == "tbody" || name == "td" || name == "tfoot" || name == "th" || name == "thead" || name == "tr") {
+				return true;
+			}
+
+			reconstruct_active_formatting_elements(html);
+			insert_element(html);
+			return true;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "template") {
+				return process_in_head(html, token);
+			}
+			if (name == "body") {
+				if (!have_particular_element_in_scope(html, "body")) {
+					return true;
+				}
+				html->HTML_insertion_mode = INS_AFTER_BODY;
+				return true;
+			}
+			if (name == "html") {
+				if (!have_particular_element_in_scope(html, "body")) {
+					return true;
+				}
+				html->HTML_insertion_mode = INS_AFTER_BODY;
+				return false;
+			}
+			if (name == "address" || name == "article" || name == "aside" || name == "blockquote" || name == "button" ||
+			    name == "center" || name == "details" || name == "dialog" || name == "dir" || name == "div" || name == "dl" ||
+			    name == "fieldset" || name == "figcaption" || name == "figure" || name == "footer" || name == "header" ||
+			    name == "listing" || name == "main" || name == "nav" || name == "ol" || name == "pre" || name == "section" ||
+			    name == "summary" || name == "ul")
+			{
+				if (!have_particular_element_in_scope(html, name)) {
+					return true;
+				}
+				generate_implied_end_tags(html);
+				var stack = html->HTML_open_elements_stack;
+				for (;;) {
+					var elem = stack_pop(stack);
+					if (element_is_type(elem, name)) break;
+				}
+				return true;
+			}
+			if (name == "form") {
+				var stack = html->HTML_open_elements_stack;
+				var template_present = false;
+				for (var i=0; i<length(stack); i++) {
+					if (element_is_type(stack[i], "template")) {
+						template_present = true;
+						break;
+					}
+				}
+				if (template_present) {
+					if (!have_particular_element_in_scope(html, "form")) {
+						return true;
+					}
+					generate_implied_end_tags(html);
+					for (;;) {
+						var elem = stack_pop(stack);
+						if (element_is_type(elem, "form")) break;
+					}
+				}
+				else {
+					var node = html->HTML_form_elem;
+					html->HTML_form_elem = null;
+					if (!node || !have_particular_element_in_scope(html, "form")) {
+						return true;
+					}
+					generate_implied_end_tags(html);
+					stack_remove(stack, node);
+				}
+				return true;
+			}
+			if (name == "p") {
+				if (!have_particular_element_in_scope(html, "p")) {
+					insert_element(html, element_create("p"));
+				}
+				generate_implied_end_tags(html, {"p": true});
+				var stack = html->HTML_open_elements_stack;
+				for (;;) {
+					var elem = stack_pop(stack);
+					if (element_is_type(elem, "p")) break;
+				}
+				return true;
+			}
+			if (name == "li") {
+				if (!have_particular_element_in_list_scope(html, "li")) {
+					return true;
+				}
+				generate_implied_end_tags(html, {"li": true});
+				var stack = html->HTML_open_elements_stack;
+				for (;;) {
+					var elem = stack_pop(stack);
+					if (element_is_type(elem, "li")) break;
+				}
+				return true;
+			}
+			if (name == "dd" || name == "dt") {
+				if (!have_particular_element_in_scope(html, name)) {
+					return true;
+				}
+				generate_implied_end_tags(html, {name: true});
+				var stack = html->HTML_open_elements_stack;
+				for (;;) {
+					var elem = stack_pop(stack);
+					if (element_is_type(elem, name)) break;
+				}
+				return true;
+			}
+			if (name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6") {
+				var has1 = have_particular_element_in_scope(html, "h1");
+				var has2 = have_particular_element_in_scope(html, "h2");
+				var has3 = have_particular_element_in_scope(html, "h3");
+				var has4 = have_particular_element_in_scope(html, "h4");
+				var has5 = have_particular_element_in_scope(html, "h5");
+				var has6 = have_particular_element_in_scope(html, "h6");
+				if (!has1 && !has2 && !has3 && !has4 && !has5 && !has6) {
+					return true;
+				}
+				generate_implied_end_tags(html);
+				var stack = html->HTML_open_elements_stack;
+				for (;;) {
+					var elem = stack_pop(stack);
+					var type = element_get_type(elem);
+					if (type == "h1" || type == "h2" || type == "h3" || type == "h4" || type == "h5" || type == "h6") break;
+				}
+				return true;
+			}
+			if (name == "a" || name == "b" || name == "big" || name == "code" || name == "em" || name == "font" || name == "i" || name == "nobr" || name == "s" || name == "small" || name == "strike" || name == "strong" || name == "tt" || name == "u") {
+				if (!adoption_agency_algorithm(html, token)) {
+					any_other_end_tag(html);
+				}
+				return true;
+			}
+			if (name == "applet" || name == "marquee" || name == "object") {
+				if (!have_particular_element_in_scope(html, name)) {
+					return true;
+				}
+				generate_implied_end_tags(html);
+				var stack = html->HTML_open_elements_stack;
+				for (;;) {
+					var elem = stack_pop(stack);
+					if (element_is_type(elem, name)) break;
+				}
+				clear_active_formatting_elements(html);
+				return true;
+			}
+			if (name == "br") {
+				hash_clear(html->HTML_tag_attrs);
+				return process_in_body(html, TOKEN_START_TAG);
+			}
+
+			any_other_end_tag(html);
+			return true;
+		}
+
+		case TOKEN_EOF: {
+			if (length(html->HTML_template_insertion_modes_stack) > 0) {
+				return process_in_template(html, token);
+			}
+			return true;
+		}
+	}
+
+	return true;
+}
+
+function @process_text(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			insert_chars(html);
+			return true;
+		}
+
+		case TOKEN_EOF: {
+			var stack = html->HTML_open_elements_stack;
+			stack_pop(stack);
+			html->HTML_insertion_mode = html->HTML_original_insertion_mode;
+			return false;
+		}
+
+		case TOKEN_END_TAG: {
+			var stack = html->HTML_open_elements_stack;
+			stack_pop(stack);
+			html->HTML_insertion_mode = html->HTML_original_insertion_mode;
+			return true;
+		}
+	}
+
+	return true;
+}
+
+function @clear_stack_back_to_table_context(html)
+{
+	var stack = html->HTML_open_elements_stack;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var type = element_get_type(stack[i]);
+		if (type == "table" || type == "template" || type == "html") {
+			array_set_length(stack, i+1);
+			break;
+		}
+	}
+}
+
+function @clear_stack_back_to_table_body_context(html)
+{
+	var stack = html->HTML_open_elements_stack;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var type = element_get_type(stack[i]);
+		if (type == "tbody" || type == "tfoot" || type == "thead" || type == "template" || type == "html") {
+			array_set_length(stack, i+1);
+			break;
+		}
+	}
+}
+
+function @clear_stack_back_to_table_row_context(html)
+{
+	var stack = html->HTML_open_elements_stack;
+	for (var i=length(stack)-1; i>=0; i--) {
+		var type = element_get_type(stack[i]);
+		if (type == "tr" || type == "template" || type == "html") {
+			array_set_length(stack, i+1);
+			break;
+		}
+	}
+}
+
+function @process_in_table(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var stack = html->HTML_open_elements_stack;
+			var type = element_get_type(stack_last(stack));
+			if (type == "table" || type == "tbody" || type == "tfoot" || type == "thead" || type == "tr") {
+				html->HTML_pending_table_chars = {""};
+				html->HTML_original_insertion_mode = html->HTML_insertion_mode;
+				html->HTML_insertion_mode = INS_IN_TABLE_TEXT;
+				return false;
+			}
+			break;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "caption") {
+				var formatting_stack = html->HTML_active_formatting_elements;
+				clear_stack_back_to_table_context(html);
+				formatting_stack[] = MARKER;
+				insert_element(html);
+				html->HTML_insertion_mode = INS_IN_CAPTION;
+				return true;
+			}
+			if (name == "colgroup") {
+				clear_stack_back_to_table_context(html);
+				insert_element(html);
+				html->HTML_insertion_mode = INS_IN_COLUMN_GROUP;
+				return true;
+			}
+			if (name == "col") {
+				clear_stack_back_to_table_context(html);
+				insert_element(html, element_create("colgroup"));
+				html->HTML_insertion_mode = INS_IN_COLUMN_GROUP;
+				return false;
+			}
+			if (name == "tbody" || name == "tfoot" || name == "thead") {
+				clear_stack_back_to_table_context(html);
+				insert_element(html);
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return true;
+			}
+			if (name == "td" || name == "th" || name == "tr") {
+				clear_stack_back_to_table_context(html);
+				insert_element(html, element_create("tbody"));
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return false;
+			}
+			if (name == "table") {
+				if (!have_particular_element_in_table_scope(html, "table")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "table")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				reset_insertion_mode(html);
+				return false;
+			}
+			if (name == "style" || name == "script" || name == "template") {
+				return process_in_head(html, token);
+			}
+			if (name == "input") {
+				var type = hash_get(html->HTML_tag_attrs, "type", null);
+				if (!type || string_to_lower_case(type) != "hidden") {
+					break;
+				}
+				var stack = html->HTML_open_elements_stack;
+				insert_element(html);
+				stack_pop(stack);
+				return true;
+			}
+			if (name == "form") {
+				var stack = html->HTML_open_elements_stack;
+				var has_template = false;
+				for (var i=0; i<length(stack); i++) {
+					if (element_is_type(stack[i], "template")) {
+						has_template = true;
+						break;
+					}
+				}
+				if (has_template || html->HTML_form_elem != null) {
+					return true;
+				}
+				html->HTML_form_elem = insert_element(html);
+				stack_pop(stack);
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "table") {
+				if (!have_particular_element_in_table_scope(html, "table")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "table")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				reset_insertion_mode(html);
+				return true;
+			}
+			if (name == "body" || name == "caption" || name == "col" || name == "colgroup" || name == "html" || name == "tbody" || name == "td" || name == "tfoot" || name == "th" || name == "thead" || name == "tr") {
+				return true;
+			}
+			if (name == "template") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return process_in_body(html, token);
+		}
+	}
+
+	html->HTML_foster_parenting = true;
+	var ret = process_in_body(html, token);
+	html->HTML_foster_parenting = false;
+	return ret;
+}
+
+function @process_in_table_text(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var pending_chars = html->HTML_pending_table_chars;
+			for (var i=0; i<length(chars); i++) {
+				var c = chars[i];
+				if (c != '\u0000') {
+					pending_chars[] = c;
+				}
+			}
+			return true;
+		}
+	}
+
+	var pending_chars = html->HTML_pending_table_chars;
+	var clean = true;
+	for (var i=0; i<length(pending_chars); i++) {
+		switch (pending_chars[i]) {
+			case ' ', '\t', '\n', 0x0C, '\r': continue;
+		}
+		clean = false;
+		break;
+	}
+
+	if (!clean) {
+		html->HTML_chars_value = {pending_chars};
+		html->HTML_foster_parenting = true;
+		for (;;) {
+			if (process_in_body(html, TOKEN_CHARS)) break;
+		}
+		html->HTML_foster_parenting = false;
+	}
+	else {
+		insert_chars(html, pending_chars);
+	}
+	html->HTML_insertion_mode = html->HTML_original_insertion_mode;
+	return false;
+}
+
+function @process_in_caption(html, token)
+{
+	switch (token) {
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "caption" || name == "col" || name == "colgroup" || name == "tbody" || name == "td" || name == "tfoot" || name == "th" || name == "thead" || name == "tr") {
+				if (!have_particular_element_in_table_scope(html, "caption")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				generate_implied_end_tags(html);
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "caption")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				clear_active_formatting_elements(html);
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return false;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "caption") {
+				if (!have_particular_element_in_table_scope(html, "caption")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				generate_implied_end_tags(html);
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "caption")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				clear_active_formatting_elements(html);
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return true;
+			}
+			if (name == "table") {
+				if (!have_particular_element_in_table_scope(html, "caption")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				generate_implied_end_tags(html);
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "caption")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				clear_active_formatting_elements(html);
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return false;
+			}
+			if (name == "body" || name == "col" || name == "colgroup" || name == "html" || name == "tbody" || name == "td" || name == "tfoot" || name == "th" || name == "thead" || name == "tr") {
+				return true;
+			}
+			break;
+		}
+	}
+
+	return process_in_body(html, token);
+}
+
+function @process_in_column_group(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var pos = 0;
+			for (var i=0; i<length(chars); i++) {
+				switch (chars[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': pos++; continue;
+				}
+				break;
+			}
+			if (pos > 0) {
+				insert_chars(html, array_extract(chars, 0, pos));
+				array_remove(chars, 0, pos);
+				if (length(chars) == 0) {
+					return true;
+				}
+			}
+			break;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+		
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "col") {
+				var stack = html->HTML_open_elements_stack;
+				insert_element(html);
+				stack_pop(stack);
+				return true;
+			}
+			if (name == "template") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "colgroup") {
+				var stack = html->HTML_open_elements_stack;
+				if (!element_is_type(stack_last(stack), "colgroup")) {
+					return true;
+				}
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return true;
+			}
+			if (name == "col") {
+				return true;
+			}
+			if (name == "template") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return process_in_body(html, token);
+		}
+	}
+
+	var stack = html->HTML_open_elements_stack;
+	if (!element_is_type(stack_last(stack), "colgroup")) {
+		return true;
+	}
+	stack_pop(stack);
+	html->HTML_insertion_mode = INS_IN_TABLE;
+	return false;
+}
+
+function @process_in_table_body(html, token)
+{
+	switch (token) {
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "tr") {
+				clear_stack_back_to_table_body_context(html);
+				insert_element(html);
+				html->HTML_insertion_mode = INS_IN_ROW;
+				return true;
+			}
+			if (name == "th" || name == "td") {
+				clear_stack_back_to_table_body_context(html);
+				insert_element(html, element_create("tr"));
+				html->HTML_insertion_mode = INS_IN_ROW;
+				return false;
+			}
+			if (name == "caption" || name == "col" || name == "colgroup" || name == "tbody" || name == "tfoot" || name == "thead") {
+				if (!have_particular_element_in_table_scope(html, "tbody") &&
+				    !have_particular_element_in_table_scope(html, "thead") &&
+				    !have_particular_element_in_table_scope(html, "tfoot"))
+				{
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				clear_stack_back_to_table_body_context(html);
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return false;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "tbody" || name == "tfoot" || name == "thead") {
+				if (!have_particular_element_in_table_scope(html, name)) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				clear_stack_back_to_table_body_context(html);
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return true;
+			}
+			if (name == "table") {
+				if (!have_particular_element_in_table_scope(html, "tbody") &&
+				    !have_particular_element_in_table_scope(html, "thead") &&
+				    !have_particular_element_in_table_scope(html, "tfoot"))
+				{
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				clear_stack_back_to_table_body_context(html);
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return false;
+			}
+			if (name == "body" || name == "caption" || name == "col" || name == "colgroup" || name == "html" || name == "td" || name == "th" || name == "tr") {
+				return true;
+			}
+			break;
+		}
+	}
+
+	return process_in_table(html, token);
+}
+
+function @process_in_row(html, token)
+{
+	switch (token) {
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "th" || name == "td") {
+				clear_stack_back_to_table_row_context(html);
+				insert_element(html);
+				html->HTML_insertion_mode = INS_IN_CELL;
+				html->HTML_active_formatting_elements[] = MARKER;
+				return true;
+			}
+			if (name == "caption" || name == "col" || name == "colgroup" || name == "tbody" || name == "tfoot" || name == "thead" || name == "tr") {
+				if (!have_particular_element_in_table_scope(html, "tr")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				clear_stack_back_to_table_row_context(html);
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return false;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "tr") {
+				if (!have_particular_element_in_table_scope(html, "tr")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				clear_stack_back_to_table_row_context(html);
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return true;
+			}
+			if (name == "table") {
+				if (!have_particular_element_in_table_scope(html, "tr")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				clear_stack_back_to_table_row_context(html);
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return false;
+			}
+			if (name == "tbody" || name == "tfoot" || name == "thead") {
+				if (!have_particular_element_in_table_scope(html, name)) {
+					return true;
+				}
+				if (!have_particular_element_in_table_scope(html, "tr")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				clear_stack_back_to_table_row_context(html);
+				stack_pop(stack);
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return false;
+			}
+			if (name == "body" || name == "caption" || name == "col" || name == "colgroup" || name == "html" || name == "td" || name == "th") {
+				return true;
+			}
+			break;
+		}
+	}
+
+	return process_in_table(html, token);
+}
+
+function @close_cell(html)
+{
+	var stack = html->HTML_open_elements_stack;
+	generate_implied_end_tags(html);
+	for (var i=length(stack)-1; i>=0; i--) {
+		var type = element_get_type(stack[i]);
+		if (type == "td" || type == "th") {
+			array_set_length(stack, i);
+			break;
+		}
+	}
+	clear_active_formatting_elements(html);
+	html->HTML_insertion_mode = INS_IN_ROW;
+}
+
+function @process_in_cell(html, token)
+{
+	switch (token) {
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "caption" || name == "col" || name == "colgroup" || name == "tbody" || name == "td" || name == "tfoot" || name == "th" || name == "thead" || name == "tr") {
+				if (!have_particular_element_in_table_scope(html, "td") &&
+				    !have_particular_element_in_table_scope(html, "th"))
+				{
+					return true;
+				}
+				close_cell(html);
+				return false;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "td" || name == "th") {
+				if (!have_particular_element_in_table_scope(html, name)) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				generate_implied_end_tags(html);
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], name)) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				clear_active_formatting_elements(html);
+				html->HTML_insertion_mode = INS_IN_ROW;
+				return true;
+			}
+			if (name == "body" || name == "caption" || name == "col" || name == "colgroup" || name == "html") {
+				return true;
+			}
+			if (name == "table" || name == "tbody" || name == "tfoot" || name == "thead" || name == "tr") {
+				if (!have_particular_element_in_table_scope(html, name)) {
+					return true;
+				}
+				close_cell(html);
+				return false;
+			}
+			break;
+		}
+	}
+
+	return process_in_body(html, token);
+}
+
+function @process_in_select(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var s = html->HTML_chars_value;
+			for (var i=0; i<length(s); i++) {
+				if (s[i] == '\u0000') {
+					array_remove(s, i--);
+				}
+			}
+			insert_chars(html, s);
+			return true;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "option") {
+				var stack = html->HTML_open_elements_stack;
+				if (element_is_type(stack_last(stack), "option")) {
+					stack_pop(stack);
+				}
+				insert_element(html);
+				return true;
+			}
+			if (name == "optgroup") {
+				var stack = html->HTML_open_elements_stack;
+				if (element_is_type(stack_last(stack), "option")) {
+					stack_pop(stack);
+				}
+				if (element_is_type(stack_last(stack), "optgroup")) {
+					stack_pop(stack);
+				}
+				insert_element(html);
+				return true;
+			}
+			if (name == "select") {
+				if (!have_particular_element_in_select_scope(html, "select")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "select")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				reset_insertion_mode(html);
+				return true;
+			}
+			if (name == "input" || name == "textarea") {
+				if (!have_particular_element_in_select_scope(html, "select")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "select")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				reset_insertion_mode(html);
+				return false;
+			}
+			if (name == "script" || name == "template") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "optgroup") {
+				var stack = html->HTML_open_elements_stack;
+				if (element_is_type(stack[length(stack)-1], "option") &&
+				    element_is_type(stack[length(stack)-2], "optgroup"))
+				{
+					stack_pop(stack);
+				}
+				if (element_is_type(stack_last(stack), "optgroup")) {
+					stack_pop(stack);
+				}
+				return true;
+			}
+			if (name == "option") {
+				var stack = html->HTML_open_elements_stack;
+				if (element_is_type(stack_last(stack), "option")) {
+					stack_pop(stack);
+				}
+				return true;
+			}
+			if (name == "select") {
+				if (!have_particular_element_in_select_scope(html, "select")) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "select")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				reset_insertion_mode(html);
+				return true;
+			}
+			if (name == "template") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return process_in_body(html, token);
+		}
+	}
+
+	return true;
+}
+
+function @process_in_select_in_table(html, token)
+{
+	switch (token) {
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "caption" || name == "table" || name == "tbody" || name == "tfoot" || name == "thead" || name == "tr" || name == "td" || name == "th") {
+				var stack = html->HTML_open_elements_stack;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "select")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				reset_insertion_mode(html);
+				return false;
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "caption" || name == "table" || name == "tbody" || name == "tfoot" || name == "thead" || name == "tr" || name == "td" || name == "th") {
+				if (!have_particular_element_in_table_scope(html, name)) {
+					return true;
+				}
+				var stack = html->HTML_open_elements_stack;
+				for (var i=length(stack)-1; i>=0; i--) {
+					if (element_is_type(stack[i], "select")) {
+						array_set_length(stack, i);
+						break;
+					}
+				}
+				reset_insertion_mode(html);
+				return false;
+			}
+			break;
+		}
+	}
+
+	return process_in_select(html, token);
+}
+
+function @process_in_template(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS, TOKEN_COMMENT, TOKEN_DOCTYPE: {
+			return process_in_body(html, token);
+		}
+		
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "base" || name == "basefont" || name == "bgsound" || name == "link" || name == "meta" || name == "noframes" || name == "script" || name == "style" || name == "template" || name == "title") {
+				return process_in_head(html, token);
+			}
+			if (name == "caption" || name == "colgroup" || name == "tbody" || name == "tfoot" || name == "thead") {
+				var tpl_stack = html->HTML_template_insertion_modes_stack;
+				stack_pop(tpl_stack);
+				tpl_stack[] = INS_IN_TABLE;
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return false;
+			}
+			if (name == "col") {
+				var tpl_stack = html->HTML_template_insertion_modes_stack;
+				stack_pop(tpl_stack);
+				tpl_stack[] = INS_IN_COLUMN_GROUP;
+				html->HTML_insertion_mode = INS_IN_COLUMN_GROUP;
+				return false;
+			}
+			if (name == "tr") {
+				var tpl_stack = html->HTML_template_insertion_modes_stack;
+				stack_pop(tpl_stack);
+				tpl_stack[] = INS_IN_TABLE_BODY;
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return false;
+			}
+			if (name == "td" || name == "th") {
+				var tpl_stack = html->HTML_template_insertion_modes_stack;
+				stack_pop(tpl_stack);
+				tpl_stack[] = INS_IN_ROW;
+				html->HTML_insertion_mode = INS_IN_ROW;
+				return false;
+			}
+
+			var tpl_stack = html->HTML_template_insertion_modes_stack;
+			stack_pop(tpl_stack);
+			tpl_stack[] = INS_IN_BODY;
+			html->HTML_insertion_mode = INS_IN_BODY;
+			return false;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "template") {
+				return process_in_head(html, token);
+			}
+			return true;
+		}
+
+		case TOKEN_EOF: {
+			var stack = html->HTML_open_elements_stack;
+			var found = false;
+			for (var i=length(stack)-1; i>=0; i--) {
+				if (element_is_type(stack[i], "template")) {
+					array_set_length(stack, i);
+					found = true;
+					break;
+				}
+			}
+			if (!found) {
+				return true;
+			}
+			clear_active_formatting_elements(html);
+			var tpl_stack = html->HTML_template_insertion_modes_stack;
+			stack_pop(tpl_stack);
+			reset_insertion_mode(html);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+function @process_after_body(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var other_chars = false;
+			for (var i=0; i<length(chars); i++) {
+				switch (chars[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+				}
+				other_chars = true;
+				break;
+			}
+			if (other_chars) {
+				html->HTML_insertion_mode = INS_IN_BODY;
+				return false;
+			}
+			return process_in_body(html, token);
+		}
+
+		case TOKEN_COMMENT: {
+			var stack = html->HTML_open_elements_stack;
+			insert_comment(html, html->HTML_comment_value, [stack[0], null]);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				// TODO: fragment case
+				html->HTML_insertion_mode = INS_AFTER_AFTER_BODY;
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return true;
+		}
+	}
+
+	html->HTML_insertion_mode = INS_IN_BODY;
+	return false;
+}
+
+function @process_in_frameset(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var s = {""};
+			for (var i=0; i<length(chars); i++) {
+				var c = chars[i];
+				switch (c) {
+					case '\t', '\n', 0x0C, '\r', ' ': s[] = c; continue;
+				}
+			}
+			if (length(s) > 0) {
+				insert_chars(html, s);
+			}
+			return true;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "frameset") {
+				insert_element(html);
+				return true;
+			}
+			if (name == "frame") {
+				var stack = html->HTML_open_elements_stack;
+				insert_element(html);
+				stack_pop(stack);
+				return true;
+			}
+			if (name == "noframes") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "frameset") {
+				var stack = html->HTML_open_elements_stack;
+				if (length(stack) == 1) {
+					return true;
+				}
+				stack_pop(stack);
+				// TODO: fragment case
+				if (!element_is_type(stack_last(stack), "frameset")) {
+					html->HTML_insertion_mode = INS_AFTER_FRAMESET;
+				}
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return true;
+		}
+	}
+
+	return true;
+}
+
+function @process_after_frameset(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var s = {""};
+			for (var i=0; i<length(chars); i++) {
+				var c = chars[i];
+				switch (c) {
+					case '\t', '\n', 0x0C, '\r', ' ': s[] = c; continue;
+				}
+			}
+			if (length(s) > 0) {
+				insert_chars(html, s);
+			}
+			return true;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "noframes") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_END_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				html->HTML_insertion_mode = INS_AFTER_AFTER_FRAMESET;
+				return true;
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return true;
+		}
+	}
+
+	return true;
+}
+
+function @process_after_after_body(html, token)
+{
+	switch (token) {
+		case TOKEN_COMMENT: {
+			var stack = html->HTML_open_elements_stack;
+			insert_comment(html, html->HTML_comment_value, [html->HTML_document, null]);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return process_in_body(html, token);
+		}
+
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var other_chars = false;
+			for (var i=0; i<length(chars); i++) {
+				switch (chars[i]) {
+					case '\t', '\n', 0x0C, '\r', ' ': continue;
+				}
+				other_chars = true;
+				break;
+			}
+			if (other_chars) {
+				html->HTML_insertion_mode = INS_IN_BODY;
+				return false;
+			}
+			return process_in_body(html, token);
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return true;
+		}
+	}
+
+	html->HTML_insertion_mode = INS_IN_BODY;
+	return false;
+}
+
+function @process_after_after_frameset(html, token)
+{
+	switch (token) {
+		case TOKEN_COMMENT: {
+			var stack = html->HTML_open_elements_stack;
+			insert_comment(html, html->HTML_comment_value, [html->HTML_document, null]);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return process_in_body(html, token);
+		}
+
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var s = {""};
+			for (var i=0; i<length(chars); i++) {
+				var c = chars[i];
+				switch (c) {
+					case '\t', '\n', 0x0C, '\r', ' ': s[] = c; continue;
+				}
+			}
+			if (length(s) > 0) {
+				insert_chars(html, s);
+			}
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			if (name == "html") {
+				return process_in_body(html, token);
+			}
+			if (name == "noframes") {
+				return process_in_head(html, token);
+			}
+			break;
+		}
+
+		case TOKEN_EOF: {
+			return true;
+		}
+	}
+
+	return true;
+}
+
+function @process_insertion_mode(html, token)
+{
+	var ret = false;
+	do {
+		switch (html->HTML_insertion_mode) {
+			case INS_INITIAL:              ret = process_initial(html, token); break;
+			case INS_BEFORE_HTML:          ret = process_before_html(html, token); break;
+			case INS_BEFORE_HEAD:          ret = process_before_head(html, token); break;
+			case INS_IN_HEAD:              ret = process_in_head(html, token); break;
+			case INS_IN_HEAD_NOSCRIPT:     ret = process_in_head_noscript(html, token); break;
+			case INS_AFTER_HEAD:           ret = process_after_head(html, token); break;
+			case INS_IN_BODY:              ret = process_in_body(html, token); break;
+			case INS_TEXT:                 ret = process_text(html, token); break;
+			case INS_IN_TABLE:             ret = process_in_table(html, token); break;
+			case INS_IN_TABLE_TEXT:        ret = process_in_table_text(html, token); break;
+			case INS_IN_CAPTION:           ret = process_in_caption(html, token); break;
+			case INS_IN_COLUMN_GROUP:      ret = process_in_column_group(html, token); break;
+			case INS_IN_TABLE_BODY:        ret = process_in_table_body(html, token); break;
+			case INS_IN_ROW:               ret = process_in_row(html, token); break;
+			case INS_IN_CELL:              ret = process_in_cell(html, token); break;
+			case INS_IN_SELECT:            ret = process_in_select(html, token); break;
+			case INS_IN_SELECT_IN_TABLE:   ret = process_in_select_in_table(html, token); break;
+			case INS_IN_TEMPLATE:          ret = process_in_template(html, token); break;
+			case INS_AFTER_BODY:           ret = process_after_body(html, token); break;
+			case INS_IN_FRAMESET:          ret = process_in_frameset(html, token); break;
+			case INS_AFTER_FRAMESET:       ret = process_after_frameset(html, token); break;
+			case INS_AFTER_AFTER_BODY:     ret = process_after_after_body(html, token); break;
+			case INS_AFTER_AFTER_FRAMESET: ret = process_after_after_frameset(html, token); break;
+			default:
+				return 0, error({"not implemented (insmode=", html->HTML_insertion_mode, ")"});
+		}
+	}
+	while (!ret);
+}
+
+function @process_foreign_content(html, token)
+{
+	switch (token) {
+		case TOKEN_CHARS: {
+			var chars = html->HTML_chars_value;
+			var s = {""};
+			var frameset_ok = true;
+			for (var i=0; i<length(chars); i++) {
+				var c = chars[i];
+				switch (c) {
+					case '\u0000': s[] = '\uFFFD'; continue;
+					case '\t', '\n', 0x0C, '\r', ' ': s[] = c; continue;
+					default: s[] = c; frameset_ok = false; continue;
+				}
+			}
+			if (!frameset_ok) {
+				html->HTML_frameset_ok = false;
+			}
+			if (length(s) > 0) {
+				insert_chars(html, s);
+			}
+			return true;
+		}
+
+		case TOKEN_COMMENT: {
+			insert_comment(html);
+			return true;
+		}
+
+		case TOKEN_DOCTYPE: {
+			return true;
+		}
+
+		case TOKEN_START_TAG: {
+			var name = html->HTML_tag_name;
+			var attrs = html->HTML_tag_attrs;
+			if (hash_contains(foreign_start_tags, name) ||
+			   (name == "font" && (hash_contains(attrs, "color") || hash_contains(attrs, "face") || hash_contains(attrs, "size"))))
+			{
+				// TODO: fragment case
+				var stack = html->HTML_open_elements_stack;
+				stack_pop(stack);
+				for (;;) {
+					var elem = stack_last(stack);
+					var type = element_get_type(elem);
+					if (hash_contains(mathml_text_integration_types, type)) {
+						break;
+					}
+					if (hash_contains(html_integration_types, type)) {
+						if (type == "annotation-xml") {
+							var encoding = element_get_attr(elem, "encoding");
+							if (encoding) {
+								encoding = string_to_lower_case(encoding);
+								if (encoding == "text/html" || encoding == "application/xhtml+xml") {
+									break;
+								}
+							}
+						}
+						else {
+							break;
+						}
+					}
+					if (hash_contains(html_elem_types, type)) {
+						break;
+					}
+					stack_pop(stack);
+				}
+				return false;
+			}
+			break;
+		}
+	}
+
+	//TODO:
+	return true;
+}
+
+function @html_init(buf, charset)
+{
+	if (!html_elem_types) {
+		init_html_elem_types();
+	}
+
+	var new_buf = {""};
+	for (var i=0, c, was_cr=false; i<length(buf); i++) {
+		c = buf[i];
+		switch (c) {
+			case '\r':
+				new_buf[] = '\n';
+				was_cr = true;
+				continue;
+
+			case '\n':
+				if (was_cr) continue;
+			default:
+				new_buf[] = c;
+				was_cr = false;
+				continue;
+		}
+	}
+
+	charset_convert(charset, new_buf);
+
+	var html = object_create(HTML_SIZE);
+	html->HTML_buf = new_buf;
+	html->HTML_state = STATE_DATA;
+	html->HTML_temp_buf = {""};
+
+	html->HTML_insertion_mode = INS_INITIAL;
+	html->HTML_template_insertion_modes_stack = [];
+	html->HTML_open_elements_stack = [];
+	html->HTML_document = element_create("#document");
+	html->HTML_active_formatting_elements = [];
+	html->HTML_frameset_ok = true;
+	html->HTML_charset_applied = (charset != null);
+	return html;
+}
+
+function html_parse(buf, charset)
+{
+	var html = html_init(buf, charset);
+	/*
+	var token;
+	while ((token = next_token(html)) != TOKEN_EOF) {
+		dump_token(html, token);
+	}
+	*/
+	var stack = html->HTML_open_elements_stack;
+
+	for (;;) {
+		var token = next_token(html);
+		if (token == TOKEN_EOF) {
+			process_insertion_mode(html, token);
+			break;
+		}
+
+		if (length(stack) == 0) {
+			process_insertion_mode(html, token);
+			continue;
+		}
+
+		var node = stack[length(stack)-1];
+		var type = element_get_type(node);
+		// TODO: this probably should match any unrecognized tag unless it's in a known foreign namespace
+		//if (hash_contains(html_elem_types, type)) {
+			process_insertion_mode(html, token);
+			continue;
+		//}
+
+		if (hash_contains(mathml_text_integration_types, type)) {
+			if (token == TOKEN_START_TAG && (html->HTML_tag_name != "mglyph" && html->HTML_tag_name != "malignmark")) {
+				process_insertion_mode(html, token);
+				continue;
+			}
+		}
+
+		if (type == "annotation-xml" && token == TOKEN_START_TAG && html->HTML_tag_name == "svg") {
+			process_insertion_mode(html, token);
+			continue;
+		}
+
+		if (hash_contains(html_integration_types, type)) {
+			if (type == "annotation-xml") {
+				var encoding = element_get_attr(node, "encoding");
+				if (encoding) {
+					encoding = string_to_lower_case(encoding);
+					if (encoding == "text/html" || encoding == "application/xhtml+xml") {
+						if (token == TOKEN_START_TAG || token == TOKEN_CHARS) {
+							process_insertion_mode(html, token);
+							continue;
+						}
+					}
+				}
+			}
+			else if (token == TOKEN_START_TAG || token == TOKEN_CHARS) {
+				process_insertion_mode(html, token);
+				continue;
+			}
+		}
+		
+		process_foreign_content(html, token);
+		// TODO: reprocess
+	}
+
+	return html->HTML_document;
+}
+
+function @create_set(arr)
+{
+	var set = {};
+	for (var i=0; i<length(arr); i++) {
+		set{arr[i]} = true;
+	}
+	return set;
+}
+
+function @init_html_elem_types()
+{
+	html_elem_types = create_set([
+		"a", "abbr", "address", "area", "article", "aside", "audio", "b", "base",
+		"bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption",
+		"cite", "code", "col", "colgroup", "data", "datalist", "dd", "del", "details",
+		"dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption",
+		"figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head",
+		"header", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd", "label",
+		"legend", "li", "link", "main", "map", "mark", "meta", "meter", "nav",
+		"noscript", "object", "ol", "optgroup", "option", "output", "p", "param",
+		"picture", "pre", "progress", "q", "rb", "rp", "rt", "rtc", "ruby", "s",
+		"samp", "script", "section", "select", "small", "source", "span", "strong",
+		"style", "sub", "summary", "sup", "table", "tbody", "td", "template",
+		"textarea", "tfoot", "th", "thead", "time", "title", "tr", "track", "u", "ul",
+		"var", "video", "wbr"
+	]);
+
+	mathml_text_integration_types = create_set([
+		"mi", "mo", "mn", "ms", "mtext"
+	]);
+
+	html_integration_types = create_set([
+		"annotation-xml", "foreignObject", "desc", "title"
+	]);
+
+	foster_targets = create_set([
+		"table", "tbody", "tfoot", "thead", "tr"
+	]);
+
+	particular_types_set = create_set([
+		"applet", "caption", "html", "table", "td", "th", "marquee", "object",
+		"template", "mi", "mo", "mn", "ms", "mtext", "annotation-xml", "foreignObject",
+		"desc", "title"
+	]);
+
+	special_types = create_set([
+		"address", "applet", "area", "article", "aside", "base", "basefont",
+		"bgsound", "blockquote", "body", "br", "button", "caption", "center",
+		"col", "colgroup", "dd", "details", "dir", "div", "dl", "dt", "embed",
+		"fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset",
+		"h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html",
+		"iframe", "img", "input", "li", "link", "listing", "main", "marquee",
+		"meta", "nav", "noembed", "noframes", "noscript", "object", "ol", "p",
+		"param", "plaintext", "pre", "script", "section", "select", "source",
+		"style", "summary", "table", "tbody", "td", "template", "textarea",
+		"tfoot", "th", "thead", "title", "tr", "track", "ul", "wbr", "xmp",
+		"mi", "mo", "mn", "ms", "mtext", "annotation-xml", "foreignObject",
+		"desc", "title"
+	]);
+
+	implied_end_tag_types = create_set([
+		"dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"
+	]);
+
+	svg_attrs = {};
+	svg_attrs{"attributename"} = "attributeName";
+	svg_attrs{"attributetype"} = "attributeType";
+	svg_attrs{"basefrequency"} = "baseFrequency";
+	svg_attrs{"baseprofile"} = "baseProfile";
+	svg_attrs{"calcmode"} = "calcMode";
+	svg_attrs{"clippathunits"} = "clipPathUnits";
+	svg_attrs{"diffuseconstant"} = "diffuseConstant";
+	svg_attrs{"edgemode"} = "edgeMode";
+	svg_attrs{"filterunits"} = "filterUnits";
+	svg_attrs{"glyphref"} = "glyphRef";
+	svg_attrs{"gradienttransform"} = "gradientTransform";
+	svg_attrs{"gradientunits"} = "gradientUnits";
+	svg_attrs{"kernelmatrix"} = "kernelMatrix";
+	svg_attrs{"kernelunitlength"} = "kernelUnitLength";
+	svg_attrs{"keypoints"} = "keyPoints";
+	svg_attrs{"keysplines"} = "keySplines";
+	svg_attrs{"keytimes"} = "keyTimes";
+	svg_attrs{"lengthadjust"} = "lengthAdjust";
+	svg_attrs{"limitingconeangle"} = "limitingConeAngle";
+	svg_attrs{"markerheight"} = "markerHeight";
+	svg_attrs{"markerunits"} = "markerUnits";
+	svg_attrs{"markerwidth"} = "markerWidth";
+	svg_attrs{"maskcontentunits"} = "maskContentUnits";
+	svg_attrs{"maskunits"} = "maskUnits";
+	svg_attrs{"numoctaves"} = "numOctaves";
+	svg_attrs{"pathlength"} = "pathLength";
+	svg_attrs{"patterncontentunits"} = "patternContentUnits";
+	svg_attrs{"patterntransform"} = "patternTransform";
+	svg_attrs{"patternunits"} = "patternUnits";
+	svg_attrs{"pointsatx"} = "pointsAtX";
+	svg_attrs{"pointsaty"} = "pointsAtY";
+	svg_attrs{"pointsatz"} = "pointsAtZ";
+	svg_attrs{"preservealpha"} = "preserveAlpha";
+	svg_attrs{"preserveaspectratio"} = "preserveAspectRatio";
+	svg_attrs{"primitiveunits"} = "primitiveUnits";
+	svg_attrs{"refx"} = "refX";
+	svg_attrs{"refy"} = "refY";
+	svg_attrs{"repeatcount"} = "repeatCount";
+	svg_attrs{"repeatdur"} = "repeatDur";
+	svg_attrs{"requiredextensions"} = "requiredExtensions";
+	svg_attrs{"requiredfeatures"} = "requiredFeatures";
+	svg_attrs{"specularconstant"} = "specularConstant";
+	svg_attrs{"specularexponent"} = "specularExponent";
+	svg_attrs{"spreadmethod"} = "spreadMethod";
+	svg_attrs{"startoffset"} = "startOffset";
+	svg_attrs{"stddeviation"} = "stdDeviation";
+	svg_attrs{"stitchtiles"} = "stitchTiles";
+	svg_attrs{"surfacescale"} = "surfaceScale";
+	svg_attrs{"systemlanguage"} = "systemLanguage";
+	svg_attrs{"tablevalues"} = "tableValues";
+	svg_attrs{"targetx"} = "targetX";
+	svg_attrs{"targety"} = "targetY";
+	svg_attrs{"textlength"} = "textLength";
+	svg_attrs{"viewbox"} = "viewBox";
+	svg_attrs{"viewtarget"} = "viewTarget";
+	svg_attrs{"xchannelselector"} = "xChannelSelector";
+	svg_attrs{"ychannelselector"} = "yChannelSelector";
+	svg_attrs{"zoomandpan"} = "zoomAndPan";
+
+	foreign_start_tags = create_set([
+		"b", "big", "blockquote", "body", "br", "center", "code", "dd", "div",
+		"dl", "dt", "em", "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head",
+		"hr", "i", "img", "li", "listing", "meta", "nobr", "ol", "p", "pre",
+		"ruby", "s", "small", "span", "strong", "strike", "sub", "sup", "table",
+		"tt", "u", "ul", "var"
+	]);
+}
+
+function @assert_text(input, output)
+{
+	var html = html_init(input, null);
+	var token, chars = {""};
+	while ((token = next_token(html)) != TOKEN_EOF) {
+		if (token != TOKEN_CHARS) {
+			return 0, error({"assert failed (expected character tokens only)"});
+		}
+		string_append(chars, html->HTML_chars_value);
+	}
+	if (chars != output) {
+		return 0, error({"assert failed (expected '", output, "' but got '", chars, "')"});
+	}
+}
+
+function test_html()
+{
+	test_element();
+	var document = html_parse("this is test&amp;&#65;.&#x24;ggg<!XXXXX><!-- comment -->af<!DOCTYPE html SYSTEM 'about:legacy-compat'>ter<b style=\"clear: both\">bold</b>end", null);
+	element_dump(document);
+	/*
+	assert_text("I'm &notit; I tell you", "I'm \u00ACit; I tell you");
+	assert_text("I'm &notin; I tell you", "I'm \u2209 I tell you");
+	*/
+}

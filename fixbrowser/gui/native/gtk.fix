@@ -1,0 +1,61 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "optional";
+use "classes";
+
+import "gui/view";
+
+optional "native/native";
+
+class GTK
+{
+	static function is_present(): Boolean
+	{
+		var (r, e) = @gtk_is_present();
+		if (e) return false;
+		return r;
+	}
+
+	optional "native/native"
+	{
+		static function get_widget_handle(view: View): Pointer
+		{
+			var (lo, hi) = @gtk_get_widget_handle(view);
+			if (is_int(hi)) {
+				return Pointer::create(lo, hi);
+			}
+			if (is_array(hi)) {
+				throw hi;
+			}
+			return null;
+		}
+	}
+}
+
+function @is_available(e): Boolean
+{
+	if (e) {
+		if (is_string(e)) return false;
+		throw e;
+	}
+	return true;
+}

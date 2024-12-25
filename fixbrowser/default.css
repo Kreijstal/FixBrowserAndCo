@@ -1,0 +1,38 @@
+html, body, h1, h2, h3, h4, h5, h6, p, pre, div, dl, dt, dd {
+	display: block;
+}
+
+body {
+	background-color: #fff;
+	color: #000;
+}
+
+h1 {
+	font-size: 36px;
+	font-weight: bold;
+}
+
+li {
+	/*display: list-item;*/
+	display: block;
+}
+
+pre {
+	font-family: monospace;
+	white-space: pre;
+}
+
+hr {
+	display: block;
+	height: 3px;
+	background: #888;
+	margin: 10px 0;
+}
+
+tr {
+	display: table-row;
+}
+
+td, th {
+	display: table-cell;
+}

@@ -1,0 +1,8 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	// TODO: styles not working right
+	if (domain_ends_with(dest, "cdn.ttgtmedia.com")) return true;
+	return false;
+}

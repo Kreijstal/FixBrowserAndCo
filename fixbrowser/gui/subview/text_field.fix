@@ -1,0 +1,857 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/view";
+import "gui/subview";
+import "gui/event";
+import "gui/native/windows";
+import "gui/native/cocoa";
+import "gui/native/virtual";
+
+const {
+	TFA_NONE,
+	TFA_MOVE_LEFT,
+	TFA_MOVE_RIGHT,
+	TFA_MOVE_LEFT_WORD,
+	TFA_MOVE_RIGHT_WORD,
+	TFA_MOVE_START,
+	TFA_MOVE_END,
+	TFA_DELETE,
+	TFA_DELETE_LEFT,
+	TFA_DELETE_RIGHT,
+	TFA_DELETE_LEFT_WORD,
+	TFA_DELETE_RIGHT_WORD,
+	TFA_BACKSPACE,
+	TFA_SELECT_ALL,
+	TFA_CUT,
+	TFA_COPY,
+	TFA_PASTE,
+	TFA_UNDO,
+	TFA_REDO,
+
+	TFA_ACTION_MASK      = 0x7FFFFFFF,
+	TFA_EXTEND_SELECTION = 0x80000000
+};
+
+class SubTextField: SubView
+{
+	var @text: String;
+	var @cursor: Integer;
+	var @selection: Integer;
+	var @scroll: Float;
+	var @mouse_selection: Integer;
+	var @word_cursor: Integer;
+	var @word_selection: Integer;
+	var @enabled: Boolean;
+	var @read_only: Boolean;
+	var @change_action;
+	var @change_data;
+
+	constructor create()
+	{
+		text = {""};
+		selection = -1;
+		enabled = true;
+		set_focusable(true);
+	}
+
+	function set_text(text: String)
+	{
+		this.text = {text};
+		set_cursor_position(0);
+		handle_change();
+	}
+
+	function get_text(): String
+	{
+		return {text};
+	}
+
+	function set_change_action(action, data)
+	{
+		change_action = action;
+		change_data = data;
+	}
+
+	function set_cursor_position(cursor: Integer)
+	{
+		if (cursor < 0 || cursor > text.length) return;
+		this.cursor = cursor;
+		selection = -1;
+		update_cursor();
+	}
+	
+	function get_cursor_position(): Integer
+	{
+		return cursor;
+	}
+
+	function set_enabled(enabled: Boolean)
+	{
+		this.enabled = enabled;
+		set_focusable(enabled);
+		if (!enabled) {
+			unfocus();
+		}
+	}
+
+	function is_enabled(): Boolean
+	{
+		return enabled;
+	}
+
+	function set_read_only(read_only: Boolean)
+	{
+		this.read_only = read_only;
+	}
+
+	function is_read_only(): Boolean
+	{
+		return read_only;
+	}
+	
+	function get_selection_start(): Integer
+	{
+		return selection == -1? cursor : selection < cursor? selection : cursor;
+	}
+	
+	function get_selection_end(): Integer
+	{
+		return selection == -1? cursor : selection > cursor? selection : cursor;
+	}
+
+	function has_selection(): Boolean
+	{
+		return selection != -1 && selection != cursor;
+	}
+	
+	function do_action(action: Integer): Boolean
+	{
+		var extend_selection = (action & TFA_EXTEND_SELECTION) != 0;
+		action &= TFA_ACTION_MASK;
+
+		switch (action) {
+			case TFA_MOVE_LEFT:
+				if (!enabled) return false;
+				adjust_cursor(cursor > 0? cursor-1 : cursor, extend_selection);
+				return true;
+
+			case TFA_MOVE_RIGHT:
+				if (!enabled) return false;
+				adjust_cursor(cursor < text.length? cursor+1 : cursor, extend_selection);
+				return true;
+
+			case TFA_MOVE_LEFT_WORD: {
+				if (!enabled) return false;
+				var pos = cursor;
+				while (pos > 0 && text[pos-1] == ' ') {
+					pos--;
+				}
+				while (pos > 0 && text[pos-1] != ' ') {
+					pos--;
+				}
+				adjust_cursor(pos, extend_selection);
+				return true;
+			}
+
+			case TFA_MOVE_RIGHT_WORD: {
+				if (!enabled) return false;
+				var pos = cursor;
+				while (pos < text.length && text[pos] != ' ') {
+					pos++;
+				}
+				while (pos < text.length && text[pos] == ' ') {
+					pos++;
+				}
+				adjust_cursor(pos, extend_selection);
+				return true;
+			}
+
+			case TFA_MOVE_START:
+				if (!enabled) return false;
+				adjust_cursor(0, extend_selection);
+				return true;
+
+			case TFA_MOVE_END:
+				if (!enabled) return false;
+				adjust_cursor(text.length, extend_selection);
+				return true;
+
+			case TFA_DELETE:
+				if (!enabled || read_only) return false;
+				if (!remove_selection()) {
+					if (cursor < text.length) {
+						text.remove(cursor, 1);
+						handle_change();
+					}
+				}
+				else {
+					handle_change();
+				}
+				update_cursor();
+				return true;
+	
+			case TFA_DELETE_LEFT:
+				if (!enabled || read_only) return false;
+				if (!remove_selection()) {
+					if (cursor > 0) {
+						text.remove(0, cursor);
+						cursor = 0;
+						handle_change();
+					}
+				}
+				else {
+					handle_change();
+				}
+				update_cursor();
+				return true;
+
+			case TFA_DELETE_RIGHT:
+				if (!enabled || read_only) return false;
+				if (!remove_selection()) {
+					if (cursor < text.length) {
+						text.remove(cursor, text.length-cursor);
+						handle_change();
+					}
+				}
+				else {
+					handle_change();
+				}
+				update_cursor();
+				return true;
+
+			case TFA_DELETE_LEFT_WORD:
+				if (!enabled || read_only) return false;
+				if (!remove_selection()) {
+					var pos = cursor;
+					while (pos > 0 && text[pos-1] == ' ') {
+						pos--;
+					}
+					while (pos > 0 && text[pos-1] != ' ') {
+						pos--;
+					}
+					if (cursor - pos > 0) {
+						text.remove(pos, cursor-pos);
+						cursor = pos;
+						handle_change();
+					}
+				}
+				else {
+					handle_change();
+				}
+				update_cursor();
+				return true;
+
+			case TFA_DELETE_RIGHT_WORD:
+				if (!enabled || read_only) return false;
+				if (!remove_selection()) {
+					var pos = cursor;
+					while (pos < text.length && text[pos] != ' ') {
+						pos++;
+					}
+					while (pos < text.length && text[pos] == ' ') {
+						pos++;
+					}
+					if (pos - cursor > 0) {
+						text.remove(cursor, pos-cursor);
+						handle_change();
+					}
+				}
+				else {
+					handle_change();
+				}
+				update_cursor();
+				return true;
+
+			case TFA_BACKSPACE:
+				if (!enabled || read_only) return false;
+				if (!remove_selection()) {
+					if (cursor > 0) {
+						text.remove(--cursor, 1);
+						handle_change();
+					}
+				}
+				else {
+					handle_change();
+				}
+				update_cursor();
+				return true;
+
+			case TFA_SELECT_ALL:
+				if (!enabled) return false;
+				select_all();
+				return true;
+
+			case TFA_CUT:
+			case TFA_COPY: {
+				if (!enabled) return false;
+				if (action == TFA_CUT && read_only) return false;
+				var start = get_selection_start();
+				var end = get_selection_end();
+				
+				if (start != -1 && end-start > 0) {
+					Clipboard::set_text(text.extract(start, end-start));
+					if (action == TFA_CUT) {
+						if (remove_selection()) {
+							handle_change();
+						}
+						update_cursor();
+					}
+				}
+				return true;
+			}
+
+			case TFA_PASTE: {
+				if (!enabled || read_only) return false;
+				var s = Clipboard::get_text();
+				if (s != null) {
+					for (var i=0; i<s.length; i++) {
+						if (s[i] < 32) {
+							s.remove(i--);
+							continue;
+						}
+					}
+					if (s.length > 0) {
+						remove_selection();
+						// TODO
+						text = text.extract(0, cursor) + s + text.extract(cursor, text.length-cursor);
+						cursor += s.length;
+						update_cursor();
+						handle_change();
+					}
+				}
+				return true;
+			}
+		}
+
+		return false;
+	}
+	
+	function @remove_selection(): Boolean
+	{
+		if (selection != -1 && selection != cursor) {
+			var start = get_selection_start();
+			var end = get_selection_end();
+			text.remove(start, end-start);
+			cursor = start;
+			selection = -1;
+			return true;
+		}
+		return false;
+	}
+	
+	function @adjust_cursor(newpos: Integer, extend_selection: Boolean)
+	{
+		if (extend_selection) {
+			if (selection == -1) {
+				selection = cursor;
+			}
+		}
+		else {
+			selection = -1;
+		}
+		cursor = newpos;
+		if (selection == cursor) {
+			selection = -1;
+		}
+		update_cursor();
+	}
+
+	function @update_cursor()
+	{
+		reset_cursor_blink();
+		adjust_scroll();
+	}
+	
+	function @adjust_scroll()
+	{
+		var w = get_text_advance(text, 0, cursor);
+		var tw = get_text_advance(text, 0, text.length);
+		
+		var rect = get_text_rect();
+		var max = rect.get_width();
+		var maxscroll = fmax(0, tw - float(max));
+		var focus = has_focus();
+		if (focus) {
+			if (w - scroll > float(max)) {
+				scroll = w - float(max);
+			}
+		}
+		if (scroll > maxscroll) {
+			scroll = maxscroll;
+		}
+		if (focus) {
+			if (w - scroll < 0.0) {
+				scroll = w;
+			}
+		}
+		repaint();
+	}
+	
+	function @swap_selection()
+	{
+		var tmp = selection;
+		selection = cursor;
+		cursor = tmp;
+	}
+	
+	function @select_word()
+	{
+		var first = true;
+		for (var i=min(cursor, text.length); i>=0; i--) {
+			if (!first && text[i] == ' ') break;
+			cursor = i;
+			first = false;
+		}
+		
+		selection = cursor;
+
+		for (var i=cursor; i<text.length; i++) {
+			if (text[i] == ' ') break;
+			selection = i+1;
+		}
+		
+		if (selection == cursor) {
+			selection = -1;
+		}
+		else {
+			adjust_scroll();
+			swap_selection();
+		}
+	}
+	
+	function @extend_word_selection(cur_pos: Integer)
+	{
+		cursor = min(word_cursor, word_selection);
+		selection = max(word_cursor, word_selection);
+		
+		if (cur_pos < cursor) {
+			while (cur_pos > 0 && text[cur_pos] == ' ') {
+				cur_pos--;
+			}
+			for (var i=cur_pos; i>=0; i--) {
+				if (text[i] == ' ') break;
+				cursor = i;
+			}
+		}
+		else if (cur_pos > selection) {
+			if (cur_pos == text.length) cur_pos--;
+			while ((cur_pos < text.length-1) && text[cur_pos] == ' ') { //XXX
+				cur_pos++;
+			}
+			for (var i=cur_pos; i<text.length; i++) {
+				if (text[i] == ' ') break;
+				selection = i+1;
+			}
+			swap_selection();
+		}
+		else {
+			swap_selection();
+		}
+	}
+
+	function select_all()
+	{
+		cursor = text.length;
+		selection = 0;
+		if (selection == cursor) selection = -1;
+		update_cursor();
+	}
+
+	override function handle_resize()
+	{
+		adjust_scroll();
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		var rect = get_text_rect();
+
+		if (!enabled) return false;
+
+		if (event.get_type() != EVENT_MOUSE_DRAG) {
+			var border = get_border_rect();
+			if (border.contains(event.get_x(), event.get_y())) {
+				show_text_cursor(true);
+			}
+			else {
+				show_text_cursor(false);
+				return false;
+			}
+		}
+
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT && enabled) {
+			cursor = get_text_position(event.get_x());
+			selection = -1;
+			mouse_selection = 1;
+			var click_count = ((event.get_click_count()-1) % 3)+1;
+			if (click_count == 2) {
+				select_word();
+				if (selection != -1) {
+					mouse_selection = 2;
+					word_cursor = cursor;
+					word_selection = selection;
+				}
+			}
+			else if (click_count == 3) {
+				select_all();
+				if (selection != -1) {
+					mouse_selection = 3;
+				}
+			}
+			focus();
+			update_cursor();
+			Virtual::show_keyboard();
+			return true;
+		}
+
+		if (event.get_type() == EVENT_MOUSE_DRAG && mouse_selection != 0) {
+			if (mouse_selection == 2) {
+				extend_word_selection(get_text_position(event.get_x()));
+			}
+			else if (mouse_selection == 1) {
+				if (selection == -1) selection = cursor;
+				cursor = get_text_position(event.get_x());
+				if (selection == cursor) selection = -1;
+			}
+			update_cursor();
+			return true;
+		}
+		
+		if (event.get_type() == EVENT_MOUSE_UP && event.get_button() == MOUSE_BUTTON_LEFT) {
+			mouse_selection = 0;
+			repaint();
+			return true;
+		}
+		
+		return false;
+	}
+	
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (do_action(get_key_action(event))) {
+			return true;
+		}
+		
+		if (event.get_type() == EVENT_KEY_TYPED && enabled && !read_only) {
+			var chars = event.get_chars();
+			for (var i=0; i<chars.length; i++) {
+				if (chars[i] < 32) {
+					chars[i] = ' ';
+				}
+			}
+			remove_selection();
+			text.insert(cursor, chars);
+			cursor += chars.length;
+			update_cursor();
+			handle_change();
+			return true;
+		}
+
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_ESCAPE) {
+			if (Virtual::is_keyboard_visible()) {
+				Virtual::hide_keyboard(true);
+				return true;
+			}
+		}
+		
+		return false;
+	}
+
+	function @get_text_position(x: Integer): Integer
+	{
+		var rect = get_text_rect();
+		return get_text_position(text, 0, text.length, (x - rect.x1) + scroll); //XXX
+	}
+
+	override function handle_focus_event(event: FocusEvent): Boolean
+	{
+		if (event.get_type() == EVENT_FOCUS_GAINED) {
+			reset_cursor_blink();
+			Virtual::show_keyboard();
+		}
+		else if (event.get_type() == EVENT_FOCUS_LOST) {
+			stop_cursor_blink();
+			Virtual::hide_keyboard();
+		}
+		repaint();
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		paint_background(p);
+		paint_foreground(p);
+		draw_children(p);
+	}
+
+	virtual function paint_background(p: Painter)
+	{
+		var shape = Shape::round_rect(0, 0, get_width(), get_height(), 1, 1);
+		var shape2 = Shape::round_rect(0.5, 0.5, get_width()-1.0, get_height()-1.0, 1, 1);
+		var color = 0xFFFFFFFF;
+		p.fill_shape(shape, color);
+		p.fill_shape(shape2.get_outline(1.0), 0xFF404040);
+	}
+
+	virtual function paint_foreground(p: Painter)
+	{
+		var rect = get_text_rect();
+		p.push();
+		p.clip(rect);
+		p.translate(rect.x1, rect.y1);
+		draw_text(p, -scroll, text, 0, text.length, false);
+		if (selection != -1 && enabled) {
+			var start = get_selection_start();
+			var end = get_selection_end();
+			draw_text(p, -scroll, text, start, end - start, true);
+		}
+		p.pop();
+
+		if (has_focus()) {
+			var rect2 = get_border_rect();
+			p.push();
+			p.clip(rect2);
+			p.translate(rect.x1, rect.y1);
+			draw_cursor(p, get_text_advance(text, 0, cursor) - scroll, selection != -1 && selection > cursor);
+			p.pop();
+		}
+	}
+
+	virtual function get_border_rect(): Rect
+	{
+		return Rect(2, 2, get_width()-4, get_height()-4);
+	}
+
+	virtual function get_text_rect(): Rect
+	{
+		return Rect(4, 2, get_width()-8, get_height()-4);
+	}
+
+	virtual function get_text_position(s: String, off: Integer, len: Integer, x: Float): Integer
+	{
+		return max(0, min(iround(x/7.0), len));
+	}
+
+	virtual function get_text_advance(s: String, off: Integer, len: Integer): Float
+	{
+		return len*7;
+	}
+
+	virtual function draw_text(p: Painter, x: Float, s: String, off: Integer, len: Integer, selection: Boolean)
+	{
+		var height = get_height()-4;
+		var shape = Shape::create();
+		var char = Shape::rect(0, -5, 5, 9).get_outline(1.0);
+		var tr = Transform::create();
+		x += get_text_advance(s, 0, off);
+		tr.translate(x+0.5, floor(height/2.0)+0.5);
+		for (var i=0; i<len; i++) {
+			if (s[off+i] != ' ') {
+				shape.append(char, tr);
+			}
+			tr.translate(7, 0);
+		}
+		if (selection) {
+			p.fill_rect(iround(x), height/2-7, len*7, 14, 0xFF000040);
+		}
+		p.fill_shape(shape, selection? 0xFFFFFFFF : 0xFF000000);
+	}
+
+	virtual function draw_cursor(p: Painter, x: Float, selection: Boolean)
+	{
+		var height = get_height()-4;
+		p.fill_rect(iround(x), 1, 1, height-2, selection? 0xFFFFFFFF : 0xFF000000);
+	}
+
+	virtual function reset_cursor_blink()
+	{
+	}
+
+	virtual function stop_cursor_blink()
+	{
+	}
+
+	virtual function show_text_cursor(show: Boolean)
+	{
+		set_cursor(show? CURSOR_TEXT : CURSOR_DEFAULT);
+	}
+
+	virtual function get_key_action(event: KeyEvent): Integer
+	{
+		if (event.get_type() == EVENT_KEY_DOWN) {
+			var key = event.get_key();
+			var mod = event.get_modifiers() & MOD_KEY_BUTTONS;
+			var flags = 0;
+
+			switch (key) {
+				case KEY_LEFT:
+					if ((mod & MOD_SHIFT) != 0) {
+						mod &= ~MOD_SHIFT;
+						flags |= TFA_EXTEND_SELECTION;
+					}
+					if (Cocoa::is_present()) {
+						switch (mod) {
+							case 0:        return TFA_MOVE_LEFT | flags;
+							case MOD_ALT:  return TFA_MOVE_LEFT_WORD | flags;
+							case MOD_CMD:  return TFA_MOVE_START | flags;
+							case MOD_CTRL: return TFA_MOVE_START | flags;
+						}
+					}
+					else {
+						switch (mod & ~MOD_CMD) {
+							case 0:        return TFA_MOVE_LEFT | flags;
+							case MOD_CTRL: return TFA_MOVE_LEFT_WORD | flags;
+						}
+					}
+					break;
+
+				case KEY_RIGHT:
+					if ((mod & MOD_SHIFT) != 0) {
+						mod &= ~MOD_SHIFT;
+						flags |= TFA_EXTEND_SELECTION;
+					}
+					if (Cocoa::is_present()) {
+						switch (mod) {
+							case 0:        return TFA_MOVE_RIGHT | flags;
+							case MOD_ALT:  return TFA_MOVE_RIGHT_WORD | flags;
+							case MOD_CMD:  return TFA_MOVE_END | flags;
+							case MOD_CTRL: return TFA_MOVE_END | flags;
+						}
+					}
+					else {
+						switch (mod & ~MOD_CMD) {
+							case 0:        return TFA_MOVE_RIGHT | flags;
+							case MOD_CTRL: return TFA_MOVE_RIGHT_WORD | flags;
+						}
+					}
+					break;
+
+				case KEY_UP:
+					if (Cocoa::is_present()) {
+						if ((mod & MOD_SHIFT) != 0) {
+							mod &= ~MOD_SHIFT;
+							flags |= TFA_EXTEND_SELECTION;
+						}
+						switch (mod) {
+							case MOD_ALT: return TFA_MOVE_START | flags;
+							case MOD_CMD: return TFA_MOVE_START | flags;
+						}
+					}
+					break;
+
+				case KEY_DOWN:
+					if (Cocoa::is_present()) {
+						if ((mod & MOD_SHIFT) != 0) {
+							mod &= ~MOD_SHIFT;
+							flags |= TFA_EXTEND_SELECTION;
+						}
+						switch (mod) {
+							case MOD_ALT: return TFA_MOVE_END | flags;
+							case MOD_CMD: return TFA_MOVE_END | flags;
+						}
+					}
+					break;
+
+				case KEY_HOME:
+					if (Cocoa::is_present()) break;
+					if ((mod & MOD_SHIFT) != 0) {
+						mod &= ~MOD_SHIFT;
+						flags |= TFA_EXTEND_SELECTION;
+					}
+					if (mod == 0) {
+						return TFA_MOVE_START | flags;
+					}
+					break;
+
+				case KEY_END:
+					if (Cocoa::is_present()) break;
+					if ((mod & MOD_SHIFT) != 0) {
+						mod &= ~MOD_SHIFT;
+						flags |= TFA_EXTEND_SELECTION;
+					}
+					if (mod == 0) {
+						return TFA_MOVE_END | flags;
+					}
+					break;
+
+				case KEY_DELETE:
+					if (mod == 0) {
+						return TFA_DELETE;
+					}
+					if (mod == MOD_SHIFT) {
+						if (has_selection()) {
+							return TFA_DELETE;
+						}
+						if (Windows::is_present()) {
+							return TFA_BACKSPACE;
+						}
+					}
+					if (Cocoa::is_present() && mod == MOD_ALT) {
+						return TFA_DELETE_RIGHT_WORD;
+					}
+					break;
+
+				case KEY_BACKSPACE:
+					if (mod == 0 || mod == MOD_SHIFT) {
+						return TFA_BACKSPACE;
+					}
+					if (Cocoa::is_present()) {
+						if (mod == MOD_ALT) return TFA_DELETE_LEFT_WORD;
+						if (mod == MOD_CMD) return TFA_DELETE_LEFT;
+					}
+					break;
+
+				case KEY_A:
+				case KEY_X:
+				case KEY_C:
+				case KEY_V:
+				case KEY_Z:
+				case KEY_Y:
+					if ((mod & MOD_CMD) != 0 && (mod & ~modifiers_cmd_mask()) == 0) {
+						switch (key) {
+							case KEY_A: return TFA_SELECT_ALL;
+							case KEY_X: return TFA_CUT;
+							case KEY_C: return TFA_COPY;
+							case KEY_V: return TFA_PASTE;
+							case KEY_Z: return TFA_UNDO;
+							case KEY_Y: if (!Cocoa::is_present()) return TFA_REDO; break;
+						}
+					}
+					if (Cocoa::is_present() && key == KEY_Z && mod == (MOD_SHIFT | MOD_CMD)) {
+						return TFA_REDO;
+					}
+					break;
+			}
+		}
+		return TFA_NONE;
+	}
+
+	virtual function handle_change()
+	{
+		if (change_action) {
+			change_action(change_data);
+		}
+	}
+}

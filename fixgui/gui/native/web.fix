@@ -1,0 +1,622 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/scrollbar";
+import "gui/subview/scrollview";
+import "gui/pure/scrollbar";
+
+const {
+	LAYER_SCROLL_X    = 0x01,
+	LAYER_SCROLL_Y    = 0x02,
+	LAYER_SCROLL_XY   = 0x03,
+	LAYER_TRANSLUCENT = 0x04,
+	LAYER_ACCELERATED = 0x08
+};
+
+const {
+	NATIVE_SUBPIXEL_NONE,
+	NATIVE_SUBPIXEL_RGB,
+	NATIVE_SUBPIXEL_BGR
+};
+
+var @animation_funcs: Dynamic[];
+var @is_mobile: Integer;
+var @subpixel_order: Integer;
+
+class Web
+{
+	static function is_present(): Boolean
+	{
+		var (r, e) = @web_is_present();
+		if (e) return false;
+		return r;
+	}
+
+	static function set_auto_fullscreen(enabled: Boolean)
+	{
+		var (r, e) = @web_set_auto_fullscreen(enabled);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function set_canvas_acceleration(enabled: Boolean)
+	{
+		var (r, e) = @web_set_canvas_acceleration(enabled);
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function is_painter_accelerated(p: Painter): Boolean
+	{
+		var (r, e) = @web_is_painter_accelerated(p);
+		if (!is_available(e)) {
+			return false;
+		}
+		return r;
+	}
+
+	static function flush_drawing()
+	{
+		var (r, e) = @web_flush_drawing();
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function ignore_drawing()
+	{
+		var (r, e) = @web_ignore_drawing();
+		if (!is_available(e)) {
+			return;
+		}
+	}
+
+	static function run_animation(func, data)
+	{
+		var (r, e) = @web_run_animation(func, data);
+		if (!is_available(e)) {
+			if (!animation_funcs) {
+				animation_funcs = [];
+			}
+			if (animation_funcs.length == 0) {
+				Timer::run(10, Web::animation_fallback#1, null);
+			}
+			animation_funcs[] = func;
+			animation_funcs[] = data;
+		}
+	}
+
+	static function @animation_fallback(unused): Boolean
+	{
+		var time = Timer::get_time();
+		var len = animation_funcs.length;
+		for (var i=0; i<len; ) {
+			var func = animation_funcs[i++];
+			var data = animation_funcs[i++];
+			var (r, e) = func(data, time);
+			if (e) {
+				dump(e);
+			}
+			if (!r) {
+				i -= 2;
+				len -= 2;
+				animation_funcs.remove(i, 2);
+			}
+		}
+		return animation_funcs.length > 0;
+	}
+
+	static function is_mobile(): Boolean
+	{
+		if (is_mobile != 0) {
+			return is_mobile == 1;
+		}
+		var (r, e) = @web_is_mobile();
+		if (!is_available(e)) {
+			is_mobile = -1;
+			return false;
+		}
+		is_mobile = r? 1 : -1;
+		return r;
+	}
+
+	static function get_subpixel_order(): Integer
+	{
+		if (subpixel_order != 0) {
+			return subpixel_order - 1;
+		}
+		var (r, e) = @web_get_subpixel_order();
+		if (!is_available(e)) {
+			subpixel_order = NATIVE_SUBPIXEL_NONE + 1;
+			return NATIVE_SUBPIXEL_NONE;
+		}
+		subpixel_order = r + 1;
+		return r;
+	}
+
+	static function get_safe_area(): Integer[]
+	{
+		var (r, e) = @web_get_safe_area();
+		if (!is_available(e)) {
+			return [0, 0, 0, 0];
+		}
+		return r;
+	}
+}
+
+class Layer
+{
+	static function create(level: Integer, x: Integer, y: Integer, width: Integer, height: Integer, extra_horiz: Integer, extra_vert: Integer, tile_size: Integer, flags: Integer, paint_func, paint_data): Layer
+	{
+		return @layer_create(level, x, y, width, height, extra_horiz, extra_vert, tile_size, flags, paint_func, paint_data);
+	}
+
+	function get_x(): Integer
+	{
+		return @layer_get_x(this);
+	}
+
+	function get_y(): Integer
+	{
+		return @layer_get_y(this);
+	}
+
+	function get_width(): Integer
+	{
+		return @layer_get_width(this);
+	}
+
+	function get_height(): Integer
+	{
+		return @layer_get_height(this);
+	}
+
+	function get_scroll_x(): Integer
+	{
+		return @layer_get_scroll_x(this);
+	}
+
+	function get_scroll_y(): Integer
+	{
+		return @layer_get_scroll_y(this);
+	}
+
+	function move(x: Integer, y: Integer)
+	{
+		@layer_move(this, x, y);
+	}
+
+	function resize(width: Integer, height: Integer)
+	{
+		@layer_resize(this, width, height);
+	}
+
+	function set_opacity(opacity: Float)
+	{
+		@layer_set_opacity(this, opacity);
+	}
+
+	function scroll(scroll_x: Integer, scroll_y: Integer)
+	{
+		@layer_scroll(this, scroll_x, scroll_y);
+	}
+
+	function update(x: Integer, y: Integer, width: Integer, height: Integer, paint_func, paint_data)
+	{
+		@layer_update(this, x, y, width, height, paint_func, paint_data);
+	}
+}
+
+class LayerScrollView: SubScrollView
+{
+	var @marker;
+	var @layer: Layer;
+	var @accelerated: Boolean;
+	var @touch_id: Integer;
+	var @touch_x: Integer;
+	var @touch_y: Integer;
+	var @touch_prev_x: Integer;
+	var @touch_prev_y: Integer;
+	var @touch_drag_x: Integer;
+	var @touch_drag_y: Integer;
+	var @touch_filter_x: Kalman;
+	var @touch_filter_y: Kalman;
+	var @touch_last_time: Integer;
+	var @touch_scroll_x: Integer;
+	var @touch_scroll_y: Integer;
+	var @touch_deltas: Integer[];
+	var @velocity_x: Float;
+	var @velocity_y: Float;
+	var @velocity_len: Float;
+	var @active_animation: Boolean;
+	var @last_anim_time: Integer;
+	var @scroll_x: Float;
+	var @scroll_y: Float;
+	var @applied_scroll: Integer;
+	var @background_color: Integer;
+	var @direction_locking: Boolean;
+
+	function @marker() {}
+
+	constructor create(content: SubView, accelerated: Boolean)
+	{
+		super::create(content);
+		this.accelerated = accelerated;
+		marker = LayerScrollView::marker#1;
+		touch_id = -1;
+		direction_locking = true;
+	}
+
+	static function is_instance(obj): Boolean
+	{
+		return is_array(obj) && length(obj) >= LayerScrollView::SIZE && (obj as LayerScrollView).marker === LayerScrollView::marker#1;
+	}
+
+	function set_background_color(color: Integer)
+	{
+		background_color = color;
+	}
+
+	function get_background_color(): Integer
+	{
+		return background_color;
+	}
+
+	function set_direction_locking(locking: Boolean)
+	{
+		direction_locking = locking;
+	}
+
+	function get_direction_locking(): Boolean
+	{
+		return direction_locking;
+	}
+
+	override function create_scrollbar(type: Integer): SubScrollBar
+	{
+		if (Web::is_mobile()) {
+			return LayerScrollBar::create(type);
+		}
+		return PureScrollBar::create(type);
+	}
+
+	override function create_area(): SubView
+	{
+		return LayerScrollArea::create(this);
+	}
+
+	override function handle_resize()
+	{
+		var point = [0, 0];
+		point_to_top(point);
+		if (layer == null || layer.get_x() != point[0] || layer.get_y() != point[1] || layer.get_width() != get_width() || layer.get_height() != get_height()) {
+			if (layer) {
+				layer = null;
+				heap_collect();
+			}
+			var flags = LAYER_SCROLL_XY;
+			if (accelerated) {
+				flags |= LAYER_ACCELERATED;
+			}
+			layer = Layer::create(-1000, point[0], point[1], get_width(), get_height(), 0, 0, 512, flags, LayerScrollArea::paint_content#6, get_area());
+			var pos = get_scroll_position();
+			layer.scroll(pos[0], pos[1]);
+		}
+		super.handle_resize();
+	}
+
+	override function handle_before_scroll_change()
+	{
+		var area = get_area() as LayerScrollArea;
+		area.disable_repaint = true;
+	}
+
+	override function handle_scroll_change()
+	{
+		var area = get_area() as LayerScrollArea;
+		area.disable_repaint = false;
+		if (layer) {
+			var pos = get_scroll_position();
+			layer.scroll(pos[0], pos[1]);
+		}
+	}
+
+	override function handle_repaint(rect: Rect)
+	{
+		if (Web::is_mobile()) {
+			rect.clear();
+			return;
+		}
+
+		var area = get_view_area();
+		var right_side = Rect(area.x2, 0, get_width() - area.x2, get_height());
+		var bottom_side = Rect(0, area.y2, get_width() - right_side.get_width(), get_height() - area.y2);
+		right_side.intersect(rect);
+		bottom_side.intersect(rect);
+
+		if (right_side.is_valid()) {
+			repaint_directly(right_side);
+		}
+		if (bottom_side.is_valid()) {
+			repaint_directly(bottom_side);
+		}
+		rect.clear();
+	}
+
+	function @repaint_directly(rect: Rect)
+	{
+		Web::flush_drawing();
+		rect.translate(get_x(), get_y());
+		var parent = get_parent();
+		if (parent) {
+			parent.repaint(rect);
+		}
+		else {
+			var root = get_root();
+			if (root) {
+				root.repaint(rect);
+			}
+		}
+		Web::flush_drawing();
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var area = get_view_area();
+		p.clear_rect(area, 0x00000000);
+		if (background_color != 0) {
+			p.clear_rect(area.x2, area.y2, get_width() - area.x2, get_height() - area.y2, background_color);
+		}
+		draw_children(p);
+	}
+
+	override function catch_touch_event(event: TouchEvent): Boolean
+	{
+		if (event.get_type() == EVENT_TOUCH_START && touch_id == -1) {
+			if (!get_view_area().contains(event.get_x(), event.get_y())) {
+				return false;
+			}
+			touch_id = event.get_id();
+			touch_x = event.get_x();
+			touch_y = event.get_y();
+			touch_prev_x = touch_x;
+			touch_prev_y = touch_y;
+			touch_last_time = event.get_time();
+			var pos = get_scroll_position();
+			touch_scroll_x = pos[0];
+			touch_scroll_y = pos[1];
+			active_animation = false;
+			touch_drag_x = touch_scroll_x;
+			touch_drag_y = touch_scroll_y;
+			touch_filter_x = Kalman::create(0.0);
+			touch_filter_y = Kalman::create(0.0);
+			touch_deltas = [];
+			Web::run_animation(LayerScrollView::drag#2, this);
+		}
+		else if (event.get_type() == EVENT_TOUCH_MOVE && event.get_id() == touch_id) {
+			touch_id = event.get_id();
+			var x = event.get_x() - touch_x;
+			var y = event.get_y() - touch_y;
+			touch_drag_x = touch_scroll_x - x;
+			touch_drag_y = touch_scroll_y - y;
+			if (touch_deltas.length+2 > 2*4) {
+				touch_deltas.remove(0, 2);
+			}
+			touch_deltas[] = event.get_x() - touch_prev_x;
+			touch_deltas[] = event.get_y() - touch_prev_y;
+			touch_prev_x = event.get_x();
+			touch_prev_y = event.get_y();
+		}
+		else if (event.get_type() == EVENT_TOUCH_END && event.get_id() == touch_id) {
+			touch_id = -1;
+			var max_len_sqr = 0;
+			var max_dx = 0;
+			var max_dy = 0;
+			for (var i=0; i<touch_deltas.length; ) {
+				var dx = clamp(touch_deltas[i++], -30000, 30000);
+				var dy = clamp(touch_deltas[i++], -30000, 30000);
+				var len_sqr = dx*dx + dy*dy;
+				if (len_sqr > max_len_sqr) {
+					max_len_sqr = len_sqr;
+					max_dx = dx;
+					max_dy = dy;
+				}
+			}
+			velocity_x = max_dx;
+			velocity_y = max_dy;
+			velocity_len = sqrt(max_len_sqr);
+			if (velocity_len > 5.0*get_scale()) {
+				velocity_x = velocity_x / velocity_len;
+				velocity_y = velocity_y / velocity_len;
+				if (direction_locking) {
+					if (fabs(velocity_x) > 0.9) {
+						velocity_x = velocity_x > 0.0? 1.0 : -1.0;
+						velocity_y = 0.0;
+					}
+					else if (fabs(velocity_y) > 0.9) {
+						velocity_x = 0.0;
+						velocity_y = velocity_y > 0.0? 1.0 : -1.0;
+					}
+				}
+				if (!active_animation) {
+					active_animation = true;
+					last_anim_time = 0;
+					applied_scroll = 0;
+					Web::run_animation(LayerScrollView::animate#2, this);
+				}
+				var pos = get_scroll_position();
+				scroll_x = pos[0];
+				scroll_y = pos[1];
+			}
+		}
+		return true;
+	}
+
+	function @drag(time: Integer): Boolean
+	{
+		var x = touch_scroll_x + iround(touch_filter_x.filter(touch_drag_x - touch_scroll_x, 10.0*get_scale()));
+		var y = touch_scroll_y + iround(touch_filter_y.filter(touch_drag_y - touch_scroll_y, 10.0*get_scale()));
+		Web::flush_drawing();
+		set_scroll_position(x, y);
+		Web::ignore_drawing();
+		return touch_id != -1;
+	}
+
+	function @animate(time: Integer): Boolean
+	{
+		if (!active_animation) return false;
+
+		if (velocity_len < 0.1) {
+			active_animation = false;
+			return false;
+		}
+
+		if (time == 0) time++;
+		if (last_anim_time == 0) {
+			last_anim_time = time;
+		}
+		if (sub32(time, last_anim_time) > 1000) {
+			active_animation = false;
+			return false;
+		}
+
+		Web::flush_drawing();
+		var factor = sub32(time, last_anim_time) / 20.0;
+		scroll_x = scroll_x - velocity_x * velocity_len * factor;
+		scroll_y = scroll_y - velocity_y * velocity_len * factor;
+		velocity_len = fmax(0.0, velocity_len - 0.4*get_scale()*factor);
+		last_anim_time = time;
+		set_scroll_position(iround(scroll_x), iround(scroll_y));
+		Web::ignore_drawing();
+		return true;
+	}
+}
+
+class @LayerScrollBar: SubScrollBar
+{
+	constructor create(type: Integer)
+	{
+		super::create(type);
+	}
+
+	override function get_default_size(scale: Float): Integer
+	{
+		return 0;
+	}
+}
+
+class @LayerScrollArea: SubView
+{
+	var @scroll: LayerScrollView;
+	var @dirty: Rect;
+	var @paint_scheduled: Boolean;
+	var @disable_repaint: Boolean;
+
+	constructor create(scroll: LayerScrollView)
+	{
+		this.scroll = scroll;
+		this.dirty = Rect();
+	}
+
+	override function handle_repaint(rect: Rect)
+	{
+		if (disable_repaint) {
+			rect.clear();
+			return;
+		}
+		var content = get_child(0);
+		rect.translate(-content.get_x(), -content.get_y());
+		dirty.union(rect);
+		if (!paint_scheduled) {
+			paint_scheduled = true;
+			Web::run_animation(LayerScrollArea::paint_layer#2, this);
+		}
+		rect.clear();
+	}
+
+	function @paint_layer(time: Integer): Boolean
+	{
+		paint_scheduled = false;
+		var layer = scroll.layer;
+		if (layer) {
+			layer.update(dirty.x1, dirty.y1, dirty.get_width(), dirty.get_height(), LayerScrollArea::paint_content#6, this);
+		}
+		dirty.clear();
+		return false;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+	}
+
+	function paint_content(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		var content = get_child(0);
+		content.handle_paint(p);
+	}
+}
+
+class @Kalman
+{
+	var @d: Float;
+	var @y: Float;
+
+	constructor create(value: Float)
+	{
+		d = 0.0;
+		y = value;
+	}
+
+	function set(value: Float)
+	{
+		d = 0.0;
+		y = value;
+	}
+
+	function filter(x: Float, r: Float): Float
+	{
+		var p = y + d;
+		var k = fabs(x - p);
+		k /= k + r;
+		var ny = y + k * (x - y);
+		d = ny - y;
+		y = ny;
+		return y;
+	}
+}
+
+function @is_available(e): Boolean
+{
+	if (e) {
+		if (is_string(e)) return false;
+		throw e;
+	}
+	return true;
+}

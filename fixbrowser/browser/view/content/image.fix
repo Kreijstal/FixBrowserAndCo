@@ -1,0 +1,171 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/subview";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/image";
+import "browser/view/content/content_data";
+import "browser/view/content/background";
+
+var @image_line_part: ImageLinePart;
+
+class ImageObject: InlineObject
+{
+	var @image_box: ImageBox;
+	var @width: Integer;
+	var @ascent: Integer;
+	var @descent: Integer;
+	var @block: BlockView;
+	var @id: Integer;
+	var @img: WebImage;
+
+	constructor create(image_box: ImageBox, reload: Boolean, content_data: ContentData, mirror: MirrorState)
+	{
+		super::create(null, null, image_box.hover_group, content_data, mirror);
+		this.image_box = image_box;
+		this.width = 32;
+		var height = 32;
+		this.descent = iround(height * image_box.vertical_align);
+		this.ascent = height - descent;
+
+		var desc = image_box.image;
+		if (!desc.outside) {
+			WebImage::get(desc.url, reload, ImageObject::image_loaded#2, this);
+		}
+	}
+
+	function @image_loaded(img: WebImage)
+	{
+		this.img = img;
+		if (block) {
+			//block.repaint_part(id);
+		}
+		width = img.get_width();
+		var height = img.get_height();
+		descent = iround(height * image_box.vertical_align);
+		ascent = height - descent;
+		content_data.relayout();
+	}
+
+	function add_to_line(line: LineBuilder)
+	{
+		var real_width = width;
+		/*
+		if (width.is_pixels()) {
+			real_width = width.get_pixels();
+		}
+		else if (width.is_fraction()) {
+			real_width = iround(line.get_width() * width.get_fraction());
+		}
+		*/
+		if (background) {
+			var margin_left = background.inline_margin_left;
+			var margin_right = background.inline_margin_right;
+			real_width += margin_left + margin_right;
+		}
+		line.add_part(real_width, ascent, descent, 0, ImageLinePart::get(), this);
+	}
+}
+
+class ImageLinePart: InlineLinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): ImageLinePart
+	{
+		var handler = image_line_part;
+		if (!handler) {
+			handler = create();
+			image_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function get_text_position(x: Integer, text: String, off: Integer, len: Integer, data): Float
+	{
+		var obj = data as ImageObject;
+		return fmax(0.0, fmin(float(x) / float(obj.width), 1.0));
+	}
+
+	override function part_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, data)
+	{
+		var obj = data as ImageObject;
+		obj.mirror.part_added(block, id, x, y, width, ascent, descent, overdraw, 0, 0, data);
+		obj.block = block;
+		obj.id = id;
+	}
+
+	override function paint_content(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, hover: Boolean, data)
+	{
+		var obj = data as ImageObject;
+		p.push();
+		p.translate(x, y-obj.ascent);
+		p.clip(0, 0, obj.width, obj.ascent+obj.descent);
+		var img = obj.img;
+		if (img) {
+			img.draw(p, 0, 0, 1.0);
+		}
+		else {
+			p.fill_rect(0, 0, obj.width, obj.ascent+obj.descent, 0xFF000000);
+			p.fill_rect(1, 1, obj.width-2, obj.ascent+obj.descent-2, 0xFFFFFFFF);
+		}
+		p.pop();
+	}
+	
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		var obj = data as ImageObject;
+		var content_data = obj.content_data;
+
+		event.translate(0, obj.ascent);
+		//log("image="+event.to_string());
+
+		if (obj.image_box.hover_group) {
+			content_data.handle_hover_event(event, obj.image_box.hover_group, block, id);
+		}
+		
+		if (event.get_type() == EVENT_MOUSE_DOWN) {
+			if (event.get_button() == MOUSE_BUTTON_LEFT) {
+				if (obj.image_box.hover_group) {
+					content_data.set_hover_status(null);
+					content_data.open_url(obj.image_box.hover_group.url);
+					return true;
+				}
+			}
+			if (event.get_button() == MOUSE_BUTTON_RIGHT) {
+				var link_url = obj.image_box.hover_group? obj.image_box.hover_group.url : null;
+				content_data.show_image_menu(link_url, obj.image_box.image.url, obj.img);
+				return true;
+			}
+		}
+		return false;
+	}
+}

@@ -1,0 +1,342 @@
+import "util/string";
+import "util/stream";
+
+const {
+	@MSD_request,
+	@MSD_is_same_domain_func,
+	@MSD_SIZE
+};
+
+function domain_ends_with(domain, match)
+{
+	if (domain == match) return true;
+	var len = length(match);
+	if (length(domain) < len+1) return false;
+	if (domain[length(domain)-len-1] != '.') return false;
+	return array_extract(domain, length(domain)-len, len) == match;
+}
+
+function element_remove_class(elem, class_name)
+{
+	element_replace_class(elem, class_name, null);
+}
+
+function element_replace_class(elem, class_name, replacement)
+{
+	var class_list = element_get_attr(elem, "class");
+	if (!class_list) return;
+
+	class_list = replace_class(class_list, class_name, replacement);
+	element_set_attr(elem, "class", class_list);
+}
+
+function @replace_class(class_list, value, new_value)
+{
+	var s = {""};
+	var parts = string_split(class_list, ' ');
+	for (var i=0; i<length(parts); i++) {
+		var part = parts[i];
+		if (length(part) == 0) continue;
+		if (part == value) {
+			if (!new_value) continue;
+			part = new_value;
+		}
+		if (length(s) > 0) {
+			s[] = ' ';
+		}
+		string_append(s, part);
+	}
+	return s;
+}
+
+function element_remove_all(elem)
+{
+	for (var e = element_get_first_child(elem), next; e; e = next) {
+		next = element_get_next(e);
+		element_remove(e);
+	}
+}
+
+function element_set_text(elem, text)
+{
+	element_remove_all(elem);
+	element_append_child(elem, element_create_text(text));
+}
+
+function element_set_html(elem, html)
+{
+	element_remove_all(elem);
+	element_append_html(elem, html);
+}
+
+function element_append_html(elem, html)
+{
+	var frag = element_create_fragment(html);
+	for (var e = element_get_first_child(frag), next; e; e = next) {
+		next = element_get_next(e);
+		element_remove_child(frag, e);
+		element_append_child(elem, e);
+	}
+}
+
+function @extract_text(elem, out)
+{
+	if (element_get_type(elem) == "#text") {
+		string_append(out, element_get_data(elem));
+	}
+
+	for (var e = element_get_first_child(elem); e; e = element_get_next(e)) {
+		extract_text(e, out);
+	}
+
+	return out;
+}
+
+function element_extract_text(elem)
+{
+	if (!elem) return "";
+	return extract_text(elem, {""});
+}
+
+function element_move_children(dest, src)
+{
+	for (var e = element_get_first_child(src), next; e; e = next) {
+		next = element_get_next(e);
+		element_remove(e);
+		element_append_child(dest, e);
+	}
+}
+
+function show_elem(elem)
+{
+	return show_elem_internal(elem, {""});
+}
+
+function show_elem(dest, elem)
+{
+	element_set_html(dest, show_elem(elem));
+}
+
+function @show_elem_internal(elem, out)
+{
+	string_append(out, "<table border=\"1\" width=\"100%\" style=\"margin: 5px 0\"><tr valign=\"top\">");
+	var type = element_get_type(elem);
+	string_append(out, {"<td style=\"background: #CCC\" width=\"1\">", html_escape(type), "</td>"});
+	if (type == "#text") {
+		string_append(out, {"<td style=\"background: #FFF\">", html_escape(element_get_data(elem)), "</td>"});
+	}
+	else {
+		string_append(out, {"<td style=\"background: #CC4\">"});
+		var attrs = element_get_attrs(elem);
+		for (var i=0; i<length(attrs); i++) {
+			var (k, v) = hash_entry(attrs, i);
+			string_append(out, {"<b>", html_escape(k), "</b>=", html_escape(v), " "});
+		}
+		string_append(out, {"</td>"});
+	}
+	string_append(out, "</tr><tr><td style=\"padding-left: 10px;\" colspan=\"2\">");
+	for (var e = element_get_first_child(elem); e; e = element_get_next(e)) {
+		show_elem_internal(e, out);
+	}
+	string_append(out, "</td></tr></table>");
+	return out;
+}
+
+function html_escape(s)
+{
+	var i, c, r = {""}, len = length(s);
+	for (i=0; i<len; i++) {
+		c = s[i];
+		switch (c) {
+			case '&': r[]='&'; r[]='a'; r[]='m'; r[]='p'; r[]=';'; continue;
+			case '<': r[]='&'; r[]='l'; r[]='t'; r[]=';'; continue;
+			case '>': r[]='&'; r[]='g'; r[]='t'; r[]=';'; continue;
+			case '"': r[]='&'; r[]='q'; r[]='u'; r[]='o'; r[]='t'; r[]=';'; continue;
+			case 0xA0: r[]='&'; r[]='n'; r[]='b'; r[]='s'; r[]='p'; r[]=';'; continue;
+			default: r[] = c; continue;
+		}
+	}
+	return r;
+}
+
+function http_get(url)
+{
+	return http_get(url, null, null);
+}
+
+function http_get(url, post_params)
+{
+	return http_get(url, post_params, null);
+}
+
+function http_get(url, post_params, headers)
+{
+	var http = http_open(url);
+	if (post_params) {
+		http_set_post_params(http, post_params);
+	}
+	if (headers) {
+		for (var i=0; i<length(headers); i++) {
+			var (k, v) = hash_entry(headers, i);
+			http_set_header(http, k, v);
+		}
+	}
+	http_connect(http);
+	var content = stream_read_all(http, {""});
+	stream_close(http);
+	return content;
+}
+
+function make_same_domain_link(request, url)
+{
+	request_set_same_domain_url(request, url);
+	return url;
+}
+
+function rewrite_links(document, rewrite_func, rewrite_data)
+{
+	rewrite_links(document, "html > head > link[rel='stylesheet'], a", "href", rewrite_func, rewrite_data);
+	rewrite_links(document, "img", "src", rewrite_func, rewrite_data);
+}
+
+function @rewrite_links(document, selector, attr_name, rewrite_func, rewrite_data)
+{
+	var elems = element_query_all(document, selector);
+	for (var i=0; i<length(elems); i++) {
+		var value = element_get_attr(elems[i], attr_name);
+		if (!value) continue;
+
+		var new_value = rewrite_func(elems[i], value, rewrite_data);
+		if (new_value != value) {
+			element_set_attr(elems[i], attr_name, new_value);
+		}
+	}
+}
+
+function mark_same_domain_links(request, document, is_same_domain_func)
+{
+	var msd = object_create(MSD_SIZE);
+	msd->MSD_request = request;
+	msd->MSD_is_same_domain_func = is_same_domain_func;
+	rewrite_links(document, mark_same_domain_links_func#3, msd);
+}
+
+function @mark_same_domain_links_func(elem, value, msd)
+{
+	var domain;
+	if (string_starts_with(value, "https://")) {
+		domain = string_substring(value, 8);
+	}
+	else if (string_starts_with(value, "http://")) {
+		domain = string_substring(value, 7);
+	}
+	else if (string_starts_with(value, "//")) {
+		domain = string_substring(value, 2);
+	}
+	if (domain) {
+		var idx = string_search_char(domain, '/');
+		if (idx != -1) {
+			array_set_length(domain, idx);
+			if (msd->MSD_is_same_domain_func(domain)) {
+				return make_same_domain_link(msd->MSD_request, value);
+			}
+		}
+	}
+	return value;
+}
+
+function link_get_domain(link)
+{
+	return url_get_host(url_create(link));
+}
+
+function link_get_param(link, name)
+{
+	return url_get_param(url_create(link), name);
+}
+
+function link_with_params(link, params)
+{
+	var url = url_create(link);
+	for (var i=0; i<length(params); i++) {
+		var (k, v) = hash_entry(params, i);
+		url_set_param(url, k, v);
+	}
+	return url_to_string(url);
+}
+
+function link_with_path(link, path)
+{
+	var url = url_create(link);
+	url_set_path(url, path);
+	return url_to_string(url);
+}
+
+function remove_element(document, selector)
+{
+	var elem = element_query(document, selector);
+	if (elem) {
+		element_remove(elem);
+	}
+}
+
+function remove_all_elements(document, selector)
+{
+	var elems = element_query_all(document, selector);
+	for (var i=0; i<length(elems); i++) {
+		element_remove(elems[i]);
+	}
+}
+
+function remove_class_in_element(document, selector, class)
+{
+	var elem = element_query(document, selector);
+	if (elem) {
+		element_remove_class(elem, class);
+	}
+}
+
+function remove_class_in_all_elements(document, selector, class)
+{
+	var elems = element_query_all(document, selector);
+	for (var i=0; i<length(elems); i++) {
+		element_remove_class(elems[i], class);
+	}
+}
+
+function replace_class_in_element(document, selector, class, new_class)
+{
+	var elem = element_query(document, selector);
+	if (elem) {
+		element_replace_class(elem, class, new_class);
+	}
+}
+
+function replace_class_in_all_elements(document, selector, class, new_class)
+{
+	var elems = element_query_all(document, selector);
+	for (var i=0; i<length(elems); i++) {
+		element_replace_class(elems[i], class, new_class);
+	}
+}
+
+function add_style_to_element(document, selector, added_style)
+{
+	var elem = element_query(document, selector);
+	if (elem) {
+		var style = element_get_attr(elem, "style");
+		if (style) {
+			element_set_attr(elem, "style", {style, ";", added_style});
+		}
+		else {
+			element_set_attr(elem, "style", added_style);
+		}
+	}
+}
+
+function wrap_element(inside_elem, outside_elem)
+{
+	element_insert_before(element_get_parent(inside_elem), outside_elem, inside_elem);
+	element_remove(inside_elem);
+	element_append_child(outside_elem, inside_elem);
+}

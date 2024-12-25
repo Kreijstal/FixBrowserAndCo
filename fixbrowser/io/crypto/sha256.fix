@@ -1,0 +1,211 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const {
+	@STATE_total_lo = 8,
+	@STATE_total_hi,
+	@STATE_sha224,
+	@STATE_buf,
+	@STATE_pos
+};
+
+function sha256_init()
+{
+	var buf = [];
+	array_set_length(buf, 64);
+	return [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19, 0, 0, 0, buf, 0];
+}
+
+function sha224_init()
+{
+	var buf = [];
+	array_set_length(buf, 64);
+	return [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4, 0, 0, 1, buf, 0];
+}
+
+function sha256_copy(state)
+{
+	return clone_deep(state);
+}
+
+function sha256_process(state, buf, off, len)
+{
+	var (lo, c1) = add32(state->STATE_total_lo, len << 3);
+	var (hi, c2) = add32(state->STATE_total_hi, len >>> 29, c1);
+	if (c2) return 0, error("message too long");
+	state->STATE_total_lo = lo;
+	state->STATE_total_hi = hi;
+
+	var state_buf = state->STATE_buf;
+	var pos = state->STATE_pos;
+	if (pos > 0) {
+		var num = min(64 - pos, len);
+		array_copy(state_buf, pos, buf, off, num);
+		pos += num;
+		off += num;
+		len -= num;
+		if (pos < 64) {
+			state->STATE_pos = pos;
+			return;
+		}
+		crypto_sha256(state, state_buf, 0);
+	}
+
+	while (len >= 64) {
+		crypto_sha256(state, buf, off);
+		off += 64;
+		len -= 64;
+	}
+
+	array_copy(state_buf, 0, buf, off, len);
+	state->STATE_pos = len;
+}
+
+function sha256_finish(state)
+{
+	var buf = state->STATE_buf;
+	var pos = state->STATE_pos;
+	buf[pos++] = 0x80;
+	if (pos > 56) {
+		while (pos < 64) {
+			buf[pos++] = 0;
+		}
+		crypto_sha256(state, buf, 0);
+		array_fill(buf, 0, 64, 0);
+	}
+	else {
+		while (pos < 56) {
+			buf[pos++] = 0;
+		}
+	}
+
+	var total_lo = state->STATE_total_lo;
+	var total_hi = state->STATE_total_hi;
+	buf[56] = total_hi >>> 24;
+	buf[57] = (total_hi >>> 16) & 0xFF;
+	buf[58] = (total_hi >>> 8) & 0xFF;
+	buf[59] = total_hi & 0xFF;
+	buf[60] = total_lo >>> 24;
+	buf[61] = (total_lo >>> 16) & 0xFF;
+	buf[62] = (total_lo >>> 8) & 0xFF;
+	buf[63] = total_lo & 0xFF;
+	crypto_sha256(state, buf, 0);
+
+	var h0 = state[0];
+	var h1 = state[1];
+	var h2 = state[2];
+	var h3 = state[3];
+	var h4 = state[4];
+	var h5 = state[5];
+	var h6 = state[6];
+	var h7 = state[7];
+	var hash = [
+		h0 >>> 24, (h0 >>> 16) & 0xFF, (h0 >>> 8) & 0xFF, h0 & 0xFF,
+		h1 >>> 24, (h1 >>> 16) & 0xFF, (h1 >>> 8) & 0xFF, h1 & 0xFF,
+		h2 >>> 24, (h2 >>> 16) & 0xFF, (h2 >>> 8) & 0xFF, h2 & 0xFF,
+		h3 >>> 24, (h3 >>> 16) & 0xFF, (h3 >>> 8) & 0xFF, h3 & 0xFF,
+		h4 >>> 24, (h4 >>> 16) & 0xFF, (h4 >>> 8) & 0xFF, h4 & 0xFF,
+		h5 >>> 24, (h5 >>> 16) & 0xFF, (h5 >>> 8) & 0xFF, h5 & 0xFF,
+		h6 >>> 24, (h6 >>> 16) & 0xFF, (h6 >>> 8) & 0xFF, h6 & 0xFF,
+		h7 >>> 24, (h7 >>> 16) & 0xFF, (h7 >>> 8) & 0xFF, h7 & 0xFF
+	];
+	if (state->STATE_sha224) {
+		array_set_length(hash, 28);
+	}
+	return hash;
+}
+
+function sha256(buf)
+{
+	return sha256(buf, 0, length(buf));
+}
+
+function sha256(buf, off, len)
+{
+	var state = sha256_init();
+	sha256_process(state, buf, off, len);
+	return sha256_finish(state);
+}
+
+function sha224(buf)
+{
+	return sha224(buf, 0, length(buf));
+}
+
+function sha224(buf, off, len)
+{
+	var state = sha224_init();
+	sha256_process(state, buf, off, len);
+	return sha256_finish(state);
+}
+
+function @to_hex(value)
+{
+	var hex = {""};
+	var len = length(value);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}
+
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function test_sha256()
+{
+	assert(to_hex(sha256("")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+	assert(to_hex(sha256("The quick brown fox jumps over the lazy dog")), "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592");
+	assert(to_hex(sha256("The quick brown fox jumps over the lazy cog")), "e4c4d8f3bf76b692de791a173e05321150f7a345b46484fe427f6acc7ecc81be");
+
+	var s = {"The quick brown fox jumps over the lazy dogXXXXXXXXXXX"};
+	assert(length(s), 54);
+	assert(to_hex(sha256(s)), "1cae4c8820ee51b27073d5646c67d01d57a52ed5e85164a13102ab8eb791fd6e");
+
+	s[] = 'X';
+	assert(length(s), 55);
+	assert(to_hex(sha256(s)), "c7fc6090180b031a6e65d47bc5d3b9e031e8560c49492167ad8eec69271873ba");
+
+	s[] = 'X';
+	assert(length(s), 56);
+	assert(to_hex(sha256(s)), "3ef19768b78665c271febd7d8d7726633562ec38d84c049ead7dfbb126d50863");
+
+	s[] = 'X';
+	assert(length(s), 57);
+	assert(to_hex(sha256(s)), "36709472cf4e77ecaa784541c968ae04fa95d96f270b2480082776707cb2366a");
+
+	s = "The quick brown fox jumps over the lazy dog";
+	s = {s, s, s, s};
+	s = {s, s, s, s};
+	assert(length(s), 43*16);
+	assert(to_hex(sha256(s)), "cc1231a093f8088969ea17cdbcf18cfba206ecc499cf32aea73c11bcb72a44b8");
+
+	assert(to_hex(sha224("")), "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f");
+	assert(to_hex(sha224("The quick brown fox jumps over the lazy dog")), "730e109bd7a8a32b1cb9d9a09aa2325d2430587ddbc0c38bad911525");
+}

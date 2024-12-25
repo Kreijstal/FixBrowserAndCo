@@ -1,0 +1,11 @@
+use "build";
+
+build {
+	main: "gen",
+	binary: "gen"
+};
+
+build {
+	main: "functions",
+	binary: "functions"
+};

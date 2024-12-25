@@ -1,0 +1,2875 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "browser/css/parser";
+import "browser/css/value";
+import "util/string";
+
+const @class_Property = "struct=PROP,static=create#4";
+const @field_Property_type = "Integer";
+const @field_Property_name = "String";
+const @field_Property_value = "Value";
+const @field_Property_important = "Boolean";
+const @method_Property_create_4 = "(Integer, String, Value, Boolean): Property";
+
+const {
+	PROP_ALL,
+
+	PROP_COLOR,
+
+	PROP_BACKGROUND_COLOR,
+	PROP_BACKGROUND_IMAGE,
+	PROP_BACKGROUND_REPEAT,
+	PROP_BACKGROUND_ATTACHMENT,
+	PROP_BACKGROUND_POSITION,
+	PROP_BACKGROUND_CLIP,
+	PROP_BACKGROUND_ORIGIN,
+	PROP_BACKGROUND_SIZE,
+	PROP_BACKGROUND,
+
+	PROP_BORDER_TOP_COLOR,
+	PROP_BORDER_RIGHT_COLOR,
+	PROP_BORDER_BOTTOM_COLOR,
+	PROP_BORDER_LEFT_COLOR,
+	PROP_BORDER_COLOR,
+
+	PROP_BORDER_TOP_STYLE,
+	PROP_BORDER_RIGHT_STYLE,
+	PROP_BORDER_BOTTOM_STYLE,
+	PROP_BORDER_LEFT_STYLE,
+	PROP_BORDER_STYLE,
+
+	PROP_BORDER_TOP_WIDTH,
+	PROP_BORDER_RIGHT_WIDTH,
+	PROP_BORDER_BOTTOM_WIDTH,
+	PROP_BORDER_LEFT_WIDTH,
+	PROP_BORDER_WIDTH,
+
+	PROP_BORDER_TOP,
+	PROP_BORDER_RIGHT,
+	PROP_BORDER_BOTTOM,
+	PROP_BORDER_LEFT,
+	PROP_BORDER,
+
+	PROP_BORDER_TOP_LEFT_RADIUS,
+	PROP_BORDER_TOP_RIGHT_RADIUS,
+	PROP_BORDER_BOTTOM_RIGHT_RADIUS,
+	PROP_BORDER_BOTTOM_LEFT_RADIUS,
+	PROP_BORDER_RADIUS,
+
+	PROP_BORDER_COLLAPSE,
+	PROP_BORDER_SPACING,
+
+	PROP_BOX_SHADOW,
+	PROP_TEXT_SHADOW,
+	PROP_OPACITY,
+
+	PROP_FONT_FAMILY,
+	PROP_FONT_WEIGHT,
+	PROP_FONT_STYLE,
+	PROP_FONT_SIZE,
+	PROP_FONT,
+
+	PROP_LINE_HEIGHT,
+
+	PROP_MARGIN_TOP,
+	PROP_MARGIN_RIGHT,
+	PROP_MARGIN_BOTTOM,
+	PROP_MARGIN_LEFT,
+	PROP_MARGIN,
+
+	PROP_PADDING_TOP,
+	PROP_PADDING_RIGHT,
+	PROP_PADDING_BOTTOM,
+	PROP_PADDING_LEFT,
+	PROP_PADDING,
+
+	PROP_DISPLAY,
+	PROP_POSITION,
+	PROP_TOP,
+	PROP_RIGHT,
+	PROP_BOTTOM,
+	PROP_LEFT,
+	PROP_FLOAT,
+	PROP_CLEAR,
+	PROP_Z_INDEX,
+
+	PROP_WIDTH,
+	PROP_HEIGHT,
+	PROP_MIN_WIDTH,
+	PROP_MAX_WIDTH,
+	PROP_MIN_HEIGHT,
+	PROP_MAX_HEIGHT,
+	PROP_VERTICAL_ALIGN,
+	PROP_BOX_SIZING,
+
+	PROP_TEXT_ALIGN,
+	PROP_TEXT_INDENT,
+	PROP_TEXT_DECORATION,
+	PROP_LETTER_SPACING,
+	PROP_WORD_SPACING,
+	PROP_TEXT_TRANSFORM,
+	PROP_WHITE_SPACE,
+
+	PROP_OVERFLOW,
+	PROP_OVERFLOW_X,
+	PROP_OVERFLOW_Y,
+	PROP_CLIP,
+	PROP_VISIBILITY,
+
+	PROP_LIST_STYLE_TYPE,
+	PROP_LIST_STYLE_IMAGE,
+	PROP_LIST_STYLE_POSITION,
+	PROP_LIST_STYLE,
+
+	PROP_CONTENT,
+
+	PROP_FLEX_DIRECTION,
+	PROP_FLEX_WRAP,
+	PROP_FLEX_FLOW,
+	PROP_ORDER,
+	PROP_FLEX_GROW,
+	PROP_FLEX_SHRINK,
+	PROP_FLEX_BASIS,
+	PROP_FLEX,
+	PROP_JUSTIFY_CONTENT,
+	PROP_ALIGN_ITEMS,
+	PROP_ALIGN_SELF,
+	PROP_ALIGN_CONTENT,
+
+	PROP_TAB_SIZE
+};
+
+const {
+	PROP_type,
+	PROP_name,
+	PROP_value,
+	PROP_important,
+	PROP_SIZE
+};
+
+const {
+	@DATA_name,
+	@DATA_type,
+	@DATA_handler,
+	@DATA_multiple
+};
+
+var @property_hash;
+var @property_data;
+var @colors;
+
+function property_create(type, name, value, important)
+{
+	var prop = object_create(PROP_SIZE);
+	prop->PROP_type = type;
+	prop->PROP_name = name;
+	prop->PROP_value = value;
+	prop->PROP_important = important;
+	return prop;
+}
+
+function property_to_string(prop)
+{
+	var s = {prop->PROP_name, ": ", value_to_string(prop->PROP_value)};
+	if (prop->PROP_important) {
+		string_append(s, " !important");
+	}
+	s[] = ';';
+	return s;
+}
+
+function is_property_inherited(type)
+{
+	switch (type) {
+		case PROP_COLOR:
+
+		case PROP_BORDER_COLLAPSE:
+		case PROP_BORDER_SPACING:
+
+		case PROP_TEXT_SHADOW:
+
+		case PROP_FONT_FAMILY:
+		case PROP_FONT_WEIGHT:
+		case PROP_FONT_STYLE:
+		case PROP_FONT_SIZE:
+		case PROP_FONT:
+
+		case PROP_LINE_HEIGHT:
+
+		case PROP_TEXT_ALIGN:
+		case PROP_TEXT_INDENT:
+		case PROP_LETTER_SPACING:
+		case PROP_WORD_SPACING:
+		case PROP_TEXT_TRANSFORM:
+		case PROP_WHITE_SPACE:
+
+		case PROP_VISIBILITY:
+
+		case PROP_LIST_STYLE_TYPE:
+		case PROP_LIST_STYLE_IMAGE:
+		case PROP_LIST_STYLE_POSITION:
+		case PROP_LIST_STYLE:
+
+		case PROP_TAB_SIZE:
+			return true;
+	}
+	return false;
+}
+
+function parse_properties(par)
+{
+	if (!property_hash) {
+		init_static_data();
+	}
+
+	var properties = [];
+	var unknown_props, new_unknown_props;
+	
+	rewind_buffer(par);
+	while (next_token(par) != TOKEN_EOF) {
+		if (par->TOKEN_type != COMPONENT_DECLARATION) continue;
+		var decl = par->TOKEN_value;
+		var name = string_to_lower_case(decl->DECLARATION_name);
+		var important = decl->DECLARATION_important;
+		//log({"  name=", name, " important=", important});
+		var idx = hash_get(property_hash, name, -1);
+		if (idx != -1) {
+			rewind_buffer(decl);
+			consume_whitespace(decl);
+			name = property_data[idx+DATA_name];
+			var type = property_data[idx+DATA_type];
+			var handler = property_data[idx+DATA_handler];
+			var multiple = property_data[idx+DATA_multiple];
+			var (prop, e) = parse_property(type, name, handler, multiple, important, decl);
+			//if (e) dump(e);
+			if (prop && !e) {
+				consume_whitespace(decl);
+				if (next_token(decl) == TOKEN_EOF) {
+					properties[] = prop;
+					//log({"  ", property_to_string(prop)});
+				}
+			}
+		}
+		else {
+			if (!unknown_props) {
+				unknown_props = global_get("unknown_css_properties");
+				if (!unknown_props) {
+					unknown_props = {};
+				}
+				new_unknown_props = {};
+			}
+			if (!hash_contains(unknown_props, name) && !hash_contains(new_unknown_props, name)) {
+				log({"unhandled CSS property: ", name});
+				new_unknown_props{name} = true;
+			}
+		}
+	}
+
+	if (new_unknown_props && length(new_unknown_props) > 0) {
+		var props = global_get("unknown_css_properties");
+		for (;;) {
+			var new_props = props? clone(props) : {};
+			for (var i=0; i<length(new_unknown_props); i++) {
+				var (k, v) = hash_entry(new_unknown_props, i);
+				new_props{k} = v;
+			}
+			var old_props = global_cond_swap("unknown_css_properties", props, new_props, 3600);
+			if (old_props == props) break;
+			props = old_props;
+		}
+	}
+
+	return properties;
+}
+
+function @parse_property(type, name, handler, multiple, important, par)
+{
+	var value;
+
+	if (next_token(par) == TOKEN_IDENT) {
+		var ident_name = par->TOKEN_value;
+		switch (length(ident_name)) {
+			case 5:
+				ident_name = string_to_lower_case(ident_name);
+				if (ident_name == "unset") value = value_create(VALUE_UNSET);
+				break;
+
+			case 7:
+				ident_name = string_to_lower_case(ident_name);
+				if (ident_name == "initial") value = value_create(VALUE_INITIAL);
+				if (ident_name == "inherit") value = value_create(VALUE_INHERIT);
+				break;
+		}
+	}
+
+	if (!value) {
+		back_token(par);
+		value = multiple? parse_multiple(par, handler) : handler(par);
+		if (!value) {
+			return 0, error("empty value");
+		}
+	}
+	
+	var prop = object_create(PROP_SIZE);
+	prop->PROP_type = type;
+	prop->PROP_name = name;
+	prop->PROP_value = value;
+	prop->PROP_important = important;
+	return prop;
+}
+
+function @consume_whitespace(par)
+{
+	var token = next_token(par);
+	while (token == TOKEN_WHITESPACE) {
+		token = next_token(par);
+	}
+	back_token(par);
+}
+
+function @next_is_integer(par)
+{
+	consume_whitespace(par);
+	var token = next_token(par);
+	back_token(par);
+	return (token == TOKEN_NUMBER);
+}
+
+function @consume_integer(par)
+{
+	consume_whitespace(par);
+	if (next_token(par) != TOKEN_NUMBER) {
+		return 0, error("not an integer");
+	}
+	var value = par->TOKEN_value;
+	if (value[2]) {
+		return 0, error("not an integer");
+	}
+	return value[1];
+}
+
+function @consume_float(par)
+{
+	consume_whitespace(par);
+	if (next_token(par) != TOKEN_NUMBER) {
+		return 0, error("not float");
+	}
+	return number_as_float(par->TOKEN_value);
+}
+
+function @consume_percentage(par)
+{
+	consume_whitespace(par);
+	if (next_token(par) != TOKEN_PERCENTAGE) {
+		return 0, error("not percentage");
+	}
+	return number_as_float(par->TOKEN_value);
+}
+
+function @consume_comma(par)
+{
+	consume_whitespace(par);
+	if (next_token(par) != TOKEN_COMMA) {
+		return 0, error("not a comma");
+	}
+}
+
+function @consume_eof(par)
+{
+	consume_whitespace(par);
+	if (next_token(par) != TOKEN_EOF) {
+		return 0, error("not EOF");
+	}
+}
+
+function @expect_ident(par)
+{
+	if (next_token(par) != TOKEN_IDENT) {
+		return 0, error("expected ident");
+	}
+	return string_to_lower_case(par->TOKEN_value);
+}
+
+function @parse_all(par)
+{
+	return 0, error("invalid value");
+}
+
+function @clamp(value, min_val, max_val)
+{
+	return min(max(value, min_val), max_val);
+}
+
+function @fclamp(value, min_val, max_val)
+{
+	return fmin(fmax(value, min_val), max_val);
+}
+
+function @hsl_to_rgb(h, s, l)
+{
+	var m2;
+	if ({l < 0.5}) {
+		m2 = {l * {s + 1.0}};
+	}
+	else {
+		m2 = {l + s - {l * s}};
+	}
+	var m1 = {{l * 2.0} - m2};
+	var r = hue_to_rgb(m1, m2, {h + {1.0 / 3.0}});
+	var g = hue_to_rgb(m1, m2, h);
+	var b = hue_to_rgb(m1, m2, {h - {1.0 / 3.0}});
+	r = iround({r * 255.0});
+	g = iround({g * 255.0});
+	b = iround({b * 255.0});
+	r = clamp(r, 0, 255);
+	g = clamp(g, 0, 255);
+	b = clamp(b, 0, 255);
+	return (r<<16)|(g<<8)|b;
+}
+
+function @hue_to_rgb(m1, m2, h)
+{
+	if ({h < 0.0}) h = {h + 1.0};
+	if ({h > 1.0}) h = {h - 1.0};
+	if ({{h * 6.0} < 1.0}) return {m1 + {{m2 - m1} * h * 6.0}};
+	if ({{h * 2.0} < 1.0}) return m2;
+	if ({{h * 3.0} < 2.0}) return {m1 + {{m2 - m1} * {{2.0 / 3.0} - h} * 6.0}};
+	return m1;
+}
+
+function @parse_color(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		var color = hash_get(colors, name, -1);
+		if (color != -1) {
+			return value_create_color_rgb(color);
+		}
+		if (name == "transparent") {
+			return value_create_color_rgba(0x00000000);
+		}
+		if (name == "currentcolor") {
+			return value_create_color_current();
+		}
+	}
+	if (token == TOKEN_HASH) {
+		var value = par->TOKEN_value;
+		if (length(value) == 3) {
+			value = string_parse_hex_int(value);
+			var r = (value >> 8) & 0xF;
+			var g = (value >> 4) & 0xF;
+			var b = (value >> 0) & 0xF;
+			r |= r<<4;
+			g |= g<<4;
+			b |= b<<4;
+			return value_create_color_rgb((r<<16)|(g<<8)|b);
+		}
+		if (length(value) == 6) {
+			value = string_parse_hex_int(value);
+			return value_create_color_rgb(value);
+		}
+	}
+	if (token == COMPONENT_FUNCTION) {
+		var func = par->TOKEN_value;
+		var name = string_to_lower_case(func->FUNCTION_name);
+		rewind_buffer(func);
+		if (name == "rgb" || name == "rgba") {
+			var r, g, b, a = -1;
+			if (next_is_integer(func)) {
+				r = consume_integer(func);
+				consume_comma(func);
+				g = consume_integer(func);
+				consume_comma(func);
+				b = consume_integer(func);
+			}
+			else {
+				r = consume_percentage(func);
+				consume_comma(func);
+				g = consume_percentage(func);
+				consume_comma(func);
+				b = consume_percentage(func);
+				r = iround({r * 255.0 / 100.0});
+				g = iround({g * 255.0 / 100.0});
+				b = iround({b * 255.0 / 100.0});
+			}
+			if (name == "rgba") {
+				consume_comma(func);
+				a = consume_float(func);
+				a = iround({a * 255.0});
+			}
+			consume_eof(func);
+			r = clamp(r, 0, 255);
+			g = clamp(g, 0, 255);
+			b = clamp(b, 0, 255);
+			if (a != -1) {
+				a = clamp(a, 0, 255);
+				return value_create_color_rgba((a<<24)|(r<<16)|(g<<8)|b);
+			}
+			return value_create_color_rgb((r<<16)|(g<<8)|b);
+		}
+		if (name == "hsl" || name == "hsla") {
+			var h, s, l, a = -1;
+			h = iround(consume_float(func));
+			h = (h % 360 + 360) % 360;
+			h = {float(h) / 360.0};
+			consume_comma(func);
+			s = fclamp({consume_percentage(func) / 100.0}, 0.0, 1.0);
+			consume_comma(func);
+			l = fclamp({consume_percentage(func) / 100.0}, 0.0, 1.0);
+			if (name == "hsla") {
+				consume_comma(func);
+				a = iround({consume_float(func) * 255.0});
+			}
+			consume_eof(func);
+			var rgb = hsl_to_rgb(h, s, l);
+			if (a != -1) {
+				a = clamp(a, 0, 255);
+				return value_create_color_rgba((a<<24)|rgb);
+			}
+			return value_create_color_rgb(rgb);
+		}
+	}
+	back_token(par);
+	return null;
+}
+
+function @next_is_url(par)
+{
+	if (next_token(par) == TOKEN_URL) {
+		back_token(par);
+		return true;
+	}
+	back_token(par);
+	return false;
+}
+
+function @parse_url(par)
+{
+	if (next_token(par) != TOKEN_URL) {
+		return 0, error("not URL");
+	}
+	return value_create_url(par->TOKEN_value);
+}
+
+function @next_is_image(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_URL) {
+		back_token(par);
+		return true;
+	}
+
+	if (token == COMPONENT_FUNCTION) {
+		var name = string_to_lower_case(par->TOKEN_value->FUNCTION_name);
+		if (name == "linear-gradient") {
+			back_token(par);
+			return true;
+		}
+	}
+
+	back_token(par);
+	return false;
+}
+
+function @parse_image(par)
+{
+	var token = next_token(par);
+	if (token == COMPONENT_FUNCTION) {
+		var func = par->TOKEN_value;
+		var name = string_to_lower_case(func->FUNCTION_name);
+		if (name == "linear-gradient") {
+			rewind_buffer(func);
+			consume_whitespace(func);
+
+			var angle = null;
+			
+			if (next_token(func) == TOKEN_IDENT && string_to_lower_case(func->TOKEN_value) == "to") {
+				consume_whitespace(func);
+				if (next_token(func) != TOKEN_IDENT) return 0, error("bad direction");
+				name = string_to_lower_case(func->TOKEN_value);
+				if (name == "top") {
+					consume_whitespace(func);
+					if (next_token(func) == TOKEN_IDENT) {
+						name = string_to_lower_case(func->TOKEN_value);
+						if (name == "left") {
+							angle = value_create(VALUE_TO_TOP_LEFT);
+						}
+						else if (name == "right") {
+							angle = value_create(VALUE_TO_TOP_RIGHT);
+						}
+						else {
+							return 0, error("syntax error");
+						}
+					}
+					else {
+						back_token(func);
+					}
+					if (!angle) {
+						angle = value_create(VALUE_TO_TOP);
+					}
+				}
+				else if (name == "right") {
+					consume_whitespace(func);
+					if (next_token(func) == TOKEN_IDENT) {
+						name = string_to_lower_case(func->TOKEN_value);
+						if (name == "top") {
+							angle = value_create(VALUE_TO_TOP_RIGHT);
+						}
+						else if (name == "bottom") {
+							angle = value_create(VALUE_TO_BOTTOM_RIGHT);
+						}
+						else {
+							return 0, error("syntax error");
+						}
+					}
+					else {
+						back_token(func);
+					}
+					if (!angle) {
+						angle = value_create(VALUE_TO_RIGHT);
+					}
+				}
+				else if (name == "bottom") {
+					consume_whitespace(func);
+					if (next_token(func) == TOKEN_IDENT) {
+						name = string_to_lower_case(func->TOKEN_value);
+						if (name == "left") {
+							angle = value_create(VALUE_TO_BOTTOM_LEFT);
+						}
+						else if (name == "right") {
+							angle = value_create(VALUE_TO_BOTTOM_RIGHT);
+						}
+						else {
+							return 0, error("syntax error");
+						}
+					}
+					else {
+						back_token(func);
+					}
+					if (!angle) {
+						angle = value_create(VALUE_TO_BOTTOM);
+					}
+				}
+				else if (name == "left") {
+					consume_whitespace(func);
+					if (next_token(func) == TOKEN_IDENT) {
+						name = string_to_lower_case(func->TOKEN_value);
+						if (name == "top") {
+							angle = value_create(VALUE_TO_TOP_LEFT);
+						}
+						else if (name == "bottom") {
+							angle = value_create(VALUE_TO_BOTTOM_LEFT);
+						}
+						else {
+							return 0, error("syntax error");
+						}
+					}
+					else {
+						back_token(func);
+					}
+					if (!angle) {
+						angle = value_create(VALUE_TO_LEFT);
+					}
+				}
+			}
+			else {
+				back_token(func);
+				angle = parse_angle(func);
+			}
+
+			if (angle) {
+				consume_whitespace(func);
+				if (next_token(func) != TOKEN_COMMA) {
+					return 0, error("expected comma");
+				}
+			}
+
+			if (!angle) {
+				angle = value_create(VALUE_TO_BOTTOM);
+			}
+
+			var gradient = value_create_linear_gradient(angle);
+
+			for (;;) {
+				consume_whitespace(func);
+				var color = parse_color(func);
+				if (!color) return 0, error("expected color");
+
+				var group = value_create_group();
+				value_child_add(group, color);
+
+				consume_whitespace(func);
+				if (next_is_length_percentage(func)) {
+					value_child_add(group, parse_length_percentage(func));
+				}
+
+				value_child_add(gradient, group);
+
+				consume_whitespace(func);
+				if (next_token(func) != TOKEN_COMMA) {
+					back_token(func);
+					break;
+				}
+			}
+
+			consume_whitespace(func);
+			if (next_token(func) != TOKEN_EOF) {
+				return 0, error("expected EOF");
+			}
+			return gradient;
+		}
+	}
+
+	back_token(par);
+	return parse_url(par);
+}
+
+function @next_is_length(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_NUMBER) {
+		var value = par->TOKEN_value;
+		if (value[0] == "0") {
+			back_token(par);
+			return true;
+		}
+	}
+	else if (token == TOKEN_DIMENSION) {
+		back_token(par);
+		return true;
+	}
+
+	back_token(par);
+	return false;
+}
+
+function parse_length(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_NUMBER) {
+		var value = par->TOKEN_value;
+		if (value[0] == "0") {
+			return value_create_length(0, UNIT_ZERO);
+		}
+	}
+	else if (token == TOKEN_DIMENSION) {
+		var value = number_as_float(par->TOKEN_value);
+		var unit = string_to_lower_case(par->TOKEN_unit);
+		switch (unit[0]) {
+			case 'e':
+				if (unit == "em") return value_create_length(value, UNIT_EM);
+				if (unit == "ex") return value_create_length(value, UNIT_EX);
+				break;
+
+			case 'c':
+				if (unit == "cm") return value_create_length(value, UNIT_CM);
+				if (unit == "ch") return value_create_length(value, UNIT_CH);
+				break;
+
+			case 'r':
+				if (unit == "rem") return value_create_length(value, UNIT_REM);
+				break;
+
+			case 'v':
+				if (unit == "vw") return value_create_length(value, UNIT_VW);
+				if (unit == "vh") return value_create_length(value, UNIT_VH);
+				if (unit == "vmin") return value_create_length(value, UNIT_VMIN);
+				if (unit == "vmax") return value_create_length(value, UNIT_VMAX);
+				break;
+
+			case 'm':
+				if (unit == "mm") return value_create_length(value, UNIT_MM);
+				break;
+
+			case 'q':
+				if (unit == "q") return value_create_length(value, UNIT_Q);
+				break;
+
+			case 'i':
+				if (unit == "in") return value_create_length(value, UNIT_IN);
+				break;
+
+			case 'p':
+				if (unit == "px") return value_create_length(value, UNIT_PX);
+				if (unit == "pt") return value_create_length(value, UNIT_PT);
+				if (unit == "pc") return value_create_length(value, UNIT_PC);
+				break;
+		}
+		return 0, error("invalid length unit");
+	}
+
+	return 0, error("not length");
+}
+
+function @next_is_length_percentage(par)
+{
+	if (next_token(par) == TOKEN_PERCENTAGE) {
+		back_token(par);
+		return true;
+	}
+
+	back_token(par);
+	return next_is_length(par);
+}
+
+function @parse_length_percentage(par)
+{
+	if (next_token(par) == TOKEN_PERCENTAGE) {
+		var value = number_as_float(par->TOKEN_value);
+		return value_create_length(value, UNIT_PERCENT);
+	}
+
+	back_token(par);
+	return parse_length(par);
+}
+
+function @parse_angle(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_DIMENSION) {
+		var value = number_as_float(par->TOKEN_value);
+		var unit = string_to_lower_case(par->TOKEN_unit);
+		switch (unit[0]) {
+			case 'd':
+				if (unit == "deg") return value_create_angle(value, UNIT_DEG);
+				break;
+
+			case 'g':
+				if (unit == "grad") return value_create_angle(value, UNIT_GRAD);
+				break;
+
+			case 'r':
+				if (unit == "rad") return value_create_angle(value, UNIT_RAD);
+				break;
+
+			case 't':
+				if (unit == "turn") return value_create_angle(value, UNIT_TURN);
+				break;
+		}
+	}
+
+	back_token(par);
+	return null;
+}
+
+function @parse_multiple(par, func)
+{
+	var multiple = value_create_multiple();
+
+	do {
+		consume_whitespace(par);
+		var value = func(par);
+		if (!value) return 0, error("expected value");
+		value_child_add(multiple, value);
+		consume_whitespace(par);
+	}
+	while (next_token(par) == TOKEN_COMMA);
+
+	if (par->TOKEN_type != TOKEN_EOF) {
+		return 0, error("expected EOF");
+	}
+
+	if (value_child_count(multiple) == 1) {
+		return value_child_get(multiple, 0);
+	}
+	return multiple;
+}
+
+function @next_is_background_image(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
+		back_token(par);
+		return true;
+	}
+
+	back_token(par);
+	return next_is_image(par);
+}
+
+function @parse_background_image(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
+		return value_create(VALUE_NONE);
+	}
+	else {
+		back_token(par);
+		return parse_image(par);
+	}
+}
+
+function @next_is_background_repeat(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "repeat-x" || name == "repeat-y" || name == "repeat" || name == "space" || name == "round" || name == "no-repeat") {
+			back_token(par);
+			return true;
+		}
+	}
+
+	back_token(par);
+	return false;
+}
+
+function @parse_background_repeat(par)
+{
+	var name = expect_ident(par);
+
+	if (name == "repeat-x") {
+		return value_create_group(value_create(VALUE_REPEAT), value_create(VALUE_NO_REPEAT));
+	}
+	if (name == "repeat-y") {
+		return value_create_group(value_create(VALUE_NO_REPEAT), value_create(VALUE_REPEAT));
+	}
+
+	var group = value_create_group();
+
+	for (var i=0; i<2; i++) {
+		if (name == "repeat") {
+			value_child_add(group, value_create(VALUE_REPEAT));
+		}
+		else if (name == "space") {
+			value_child_add(group, value_create(VALUE_SPACE));
+		}
+		else if (name == "round") {
+			value_child_add(group, value_create(VALUE_ROUND));
+		}
+		else if (name == "no-repeat") {
+			value_child_add(group, value_create(VALUE_NO_REPEAT));
+		}
+		else {
+			if (i == 1) {
+				back_token(par);
+				break;
+			}
+			return 0, error("unknown repeat value");
+		}
+
+		consume_whitespace(par);
+		if (next_token(par) != TOKEN_IDENT) {
+			back_token(par);
+			break;
+		}
+
+		name = string_to_lower_case(par->TOKEN_value);
+	}
+
+	if (value_child_count(group) == 1) {
+		value_child_add(group, value_child_get(group, 0));
+	}
+
+	return group;
+}
+
+function @next_is_background_attachment(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "fixed" || name == "local" || name == "scroll") {
+			back_token(par);
+			return true;
+		}
+	}
+
+	back_token(par);
+	return false;
+}
+
+function @parse_background_attachment(par)
+{
+	var name = expect_ident(par);
+
+	if (name == "fixed") {
+		return value_create(VALUE_FIXED);
+	}
+	if (name == "local") {
+		return value_create(VALUE_LOCAL);
+	}
+	if (name == "scroll") {
+		return value_create(VALUE_SCROLL);
+	}
+
+	return 0, error("unknown attachment value");
+}
+
+function @parse_background_position_value(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "left") return value_create(VALUE_LEFT);
+		if (name == "center") return value_create(VALUE_CENTER);
+		if (name == "right") return value_create(VALUE_RIGHT);
+		if (name == "top") return value_create(VALUE_TOP);
+		if (name == "bottom") return value_create(VALUE_BOTTOM);
+		back_token(par);
+		return null;
+	}
+	
+	back_token(par);
+	if (next_is_length_percentage(par)) {
+		return parse_length_percentage(par);
+	}
+	return null;
+}
+
+function @bgpos_value_is_dir(value)
+{
+	switch (value->VALUE_type) {
+		case VALUE_LEFT:
+		case VALUE_RIGHT:
+		case VALUE_TOP:
+		case VALUE_BOTTOM:
+			return true;
+	}
+	return false;
+}
+
+function @bgpos_value_is_horiz(value)
+{
+	switch (value->VALUE_type) {
+		case VALUE_LEFT:
+		case VALUE_RIGHT:
+			return true;
+	}
+	return false;
+}
+
+function @bgpos_value_is_vert(value)
+{
+	switch (value->VALUE_type) {
+		case VALUE_TOP:
+		case VALUE_BOTTOM:
+			return true;
+	}
+	return false;
+}
+
+function @next_is_background_position(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "left" || name == "center" || name == "right" || name == "top" || name == "bottom") {
+			back_token(par);
+			return true;
+		}
+	}
+	
+	back_token(par);
+	return next_is_length_percentage(par);
+}
+
+function @parse_background_position(par)
+{
+	var v1, v2, v3, v4;
+	
+	v1 = parse_background_position_value(par);
+	if (!v1) return 0, error("expected position value");
+	//log({"v1=", value_to_string(v1)});
+	
+	consume_whitespace(par);
+	v2 = parse_background_position_value(par);
+	if (v2) {
+		//log({"v2=", value_to_string(v2)});
+		consume_whitespace(par);
+		v3 = parse_background_position_value(par);
+		if (v3) {
+			//log({"v3=", value_to_string(v3)});
+			consume_whitespace(par);
+			v4 = parse_background_position_value(par);
+			//if (v4) {
+			//	log({"v4=", value_to_string(v4)});
+			//}
+		}
+	}
+
+	if (!v2) {
+		if (bgpos_value_is_vert(v1)) {
+			return value_create_group(value_create(VALUE_CENTER), v1);
+		}
+		return value_create_group(v1, value_create(VALUE_CENTER));
+	}
+
+	if (!v3) {
+		if (bgpos_value_is_vert(v1)) {
+			if (bgpos_value_is_vert(v2)) {
+				return 0, error("duplicate direction in position");
+			}
+			return value_create_group(v2, v1);
+		}
+		if (bgpos_value_is_horiz(v2)) {
+			return 0, error("duplicate direction in position");
+		}
+		return value_create_group(v1, value_create(VALUE_CENTER));
+	}
+
+	if (!v4) {
+		if (bgpos_value_is_dir(v1) && v2->VALUE_type != VALUE_LENGTH) {
+			v4 = v3;
+			v3 = v2;
+			v2 = value_create_length(0, UNIT_ZERO);
+		}
+		else {
+			v4 = value_create_length(0, UNIT_ZERO);
+		}
+	}
+
+	if (v2->VALUE_type != VALUE_LENGTH || v4->VALUE_type != VALUE_LENGTH) {
+		return 0, error("invalid position value");
+	}
+
+	if (bgpos_value_is_horiz(v1) && bgpos_value_is_vert(v3)) {
+		return value_create_group(value_create_group(v1, v2), value_create_group(v3, v4));
+	}
+
+	if (bgpos_value_is_vert(v1) && bgpos_value_is_horiz(v3)) {
+		return value_create_group(value_create_group(v3, v4), value_create_group(v1, v2));
+	}
+
+	return 0, error("invalid position value");
+}
+
+function @next_is_background_clip(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "border-box" || name == "padding-box" || name == "content-box") {
+			back_token(par);
+			return true;
+		}
+	}
+
+	back_token(par);
+	return false;
+}
+
+function @parse_background_clip(par)
+{
+	var name = expect_ident(par);
+
+	if (name == "border-box") {
+		return value_create(VALUE_BORDER_BOX);
+	}
+	if (name == "padding-box") {
+		return value_create(VALUE_PADDING_BOX);
+	}
+	if (name == "content-box") {
+		return value_create(VALUE_CONTENT_BOX);
+	}
+
+	return 0, error("unknown clip value");
+}
+
+function @parse_background_size(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "cover") {
+			return value_create(VALUE_COVER);
+		}
+		if (name == "contain") {
+			return value_create(VALUE_CONTAIN);
+		}
+
+		if (name == "auto") {
+			consume_whitespace(par);
+			token = next_token(par);
+			if (token == TOKEN_IDENT) {
+				name = string_to_lower_case(par->TOKEN_value);
+				if (name == "auto") {
+					return value_create_group(value_create(VALUE_AUTO), value_create(VALUE_AUTO));
+				}
+			}
+			back_token(par);
+			if (next_is_length_percentage(par)) {
+				return value_create_group(value_create(VALUE_AUTO), parse_length_percentage(par));
+			}
+			return value_create_group(value_create(VALUE_AUTO), value_create(VALUE_AUTO));
+		}
+	}
+
+	back_token(par);
+	var v1 = parse_length_percentage(par);
+
+	consume_whitespace(par);
+	token = next_token(par);
+	if (token == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "auto") {
+			return value_create_group(v1, value_create(VALUE_AUTO));
+		}
+	}
+	back_token(par);
+	if (next_is_length_percentage(par)) {
+		return value_create_group(v1, parse_length_percentage(par));
+	}
+	return value_create_group(v1, value_create(VALUE_AUTO));
+}
+
+function @parse_background_value(par)
+{
+	var group = value_create_group();
+
+	for (;;) {
+		consume_whitespace(par);
+
+		if (next_is_background_image(par)) {
+			value_child_add(group, parse_background_image(par));
+			continue;
+		}
+
+		if (next_is_background_position(par)) {
+			value_child_add(group, parse_background_position(par));
+			consume_whitespace(par);
+			if (next_token(par) == TOKEN_DELIM && par->TOKEN_value == '/') {
+				consume_whitespace(par);
+				value_child_add(group, parse_background_size(par));
+			}
+			back_token(par);
+			continue;
+		}
+
+		if (next_is_background_repeat(par)) {
+			value_child_add(group, parse_background_repeat(par));
+			continue;
+		}
+
+		if (next_is_background_attachment(par)) {
+			value_child_add(group, parse_background_attachment(par));
+			continue;
+		}
+
+		if (next_is_background_clip(par)) {
+			value_child_add(group, parse_background_clip(par));
+			continue;
+		}
+
+		var color = parse_color(par);
+		if (color != null) {
+			value_child_add(group, color);
+			continue;
+		}
+
+		break;
+	}
+
+	if (value_child_count(group) == 0) {
+		return 0, error("empty background layer");
+	}
+	return group;
+}
+
+function @parse_background(par)
+{
+	var multiple = parse_multiple(par, parse_background_value#1);
+
+	if (multiple->VALUE_type == VALUE_MULTIPLE) {
+		for (var i=0; i<value_child_count(multiple)-1; i++) {
+			var group = value_child_get(multiple, i);
+			for (var j=0; j<value_child_count(group); j++) {
+				if (value_is_color(value_child_get(group, j))) {
+					return 0, error("color is permitted only in final layer");
+				}
+			}
+		}
+	}
+	return multiple;
+}
+
+function @parse_border_group(par, func)
+{
+	var group = value_create_group();
+
+	for (var i=0; i<4; i++) {
+		consume_whitespace(par);
+		var value = func(par);
+		if (!value) break;
+		value_child_add(group, value);
+	}
+
+	if (value_child_count(group) == 0) {
+		return 0, error("no border values present");
+	}
+	if (value_child_count(group) == 1) {
+		value_child_add(group, value_child_get(group, 0));
+	}
+	if (value_child_count(group) == 2) {
+		value_child_add(group, value_child_get(group, 0));
+	}
+	if (value_child_count(group) == 3) {
+		value_child_add(group, value_child_get(group, 1));
+	}
+	return group;
+}
+
+function @parse_border_color(par)
+{
+	return parse_border_group(par, parse_color#1);
+}
+
+function @parse_border_style_value(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		switch (length(name)) {
+			case 4:
+				if (name == "none") return value_create(VALUE_NONE);
+				break;
+
+			case 5:
+				if (name == "solid") return value_create(VALUE_SOLID);
+				if (name == "ridge") return value_create(VALUE_RIDGE);
+				if (name == "inset") return value_create(VALUE_INSET);
+				break;
+
+			case 6:
+				if (name == "hidden") return value_create(VALUE_HIDDEN);
+				if (name == "dotted") return value_create(VALUE_DOTTED);
+				if (name == "dashed") return value_create(VALUE_DASHED);
+				if (name == "double") return value_create(VALUE_DOUBLE);
+				if (name == "groove") return value_create(VALUE_GROOVE);
+				if (name == "outset") return value_create(VALUE_OUTSET);
+				break;
+		}
+	}
+
+	back_token(par);
+	return null;
+}
+
+function @parse_border_style(par)
+{
+	return parse_border_group(par, parse_border_style_value#1);
+}
+
+function @parse_border_width_value(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "thin") return value_create(VALUE_THIN);
+		if (name == "medium") return value_create(VALUE_MEDIUM);
+		if (name == "thick") return value_create(VALUE_THICK);
+	}
+
+	back_token(par);
+	if (next_is_length(par)) {
+		return parse_length(par);
+	}
+	return null;
+}
+
+function @parse_border_width(par)
+{
+	return parse_border_group(par, parse_border_width_value#1);
+}
+
+function @parse_border(par)
+{
+	var group = value_create_group();
+
+	for (;;) {
+		consume_whitespace(par);
+
+		var value = parse_border_width_value(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		value = parse_border_style_value(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		value = parse_color(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		break;
+	}
+
+	if (value_child_count(group) == 0) {
+		return 0, error("no border values present");
+	}
+	return group;
+}
+
+function @parse_border_radius_value(par)
+{
+	var v1 = parse_length_percentage(par);
+	var v2 = v1;
+	
+	consume_whitespace(par);
+	if (next_is_length_percentage(par)) {
+		v2 = parse_length_percentage(par);
+	}
+	return value_create_group(v1, v2);
+}
+
+function @parse_border_radius_group(par, group)
+{
+	for (var i=0; i<4; i++) {
+		consume_whitespace(par);
+		if (next_is_length_percentage(par)) {
+			value_child_add(group, parse_length_percentage(par));
+		}
+		else break;
+	}
+	if (value_child_count(group) == 0) {
+		return 0, error("no values present");
+	}
+	if (value_child_count(group) == 1) {
+		value_child_add(group, value_child_get(group, 0));
+	}
+	if (value_child_count(group) == 2) {
+		value_child_add(group, value_child_get(group, 0));
+	}
+	if (value_child_count(group) == 3) {
+		value_child_add(group, value_child_get(group, 1));
+	}
+}
+
+function @parse_border_radius(par)
+{
+	var group1 = value_create_group();
+	var group2;
+
+	parse_border_radius_group(par, group1);
+
+	if (next_token(par) == TOKEN_DELIM && par->TOKEN_value == '/') {
+		group2 = value_create_group();
+		parse_border_radius_group(par, group2);
+	}
+	else {
+		back_token(par);
+		group2 = group1;
+	}
+	return value_create_slash_group(group1, group2);
+}
+
+function @parse_border_collapse(par)
+{
+	var name = expect_ident(par);
+	if (name == "collapse") return value_create(VALUE_COLLAPSE);
+	if (name == "separate") return value_create(VALUE_SEPARATE);
+	return 0, error("invalid border collapse value");
+}
+
+function @parse_border_spacing(par)
+{
+	var horiz = parse_length(par);
+	var vert = horiz;
+
+	consume_whitespace(par);
+	if (next_is_length(par)) {
+		vert = parse_length(par);
+	}
+	return value_create_group(horiz, vert);
+}
+
+function @parse_box_shadow_value(par)
+{
+	var group = value_create_group();
+
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "inset") {
+		value_child_add(group, value_create(VALUE_INSET));
+	}
+	else {
+		back_token(par);
+	}
+
+	for (var i=0; i<4; i++) {
+		consume_whitespace(par);
+		if (next_is_length(par)) {
+			value_child_add(group, parse_length(par));
+		}
+		else {
+			if (i <= 1) {
+				return 0, error("both offsets required");
+			}
+			break;
+		}
+	}
+
+	consume_whitespace(par);
+	var color = parse_color(par);
+	if (color) {
+		value_child_add(group, color);
+	}
+
+	// TODO: inset can be also last? or is the position irrelevant for all values?
+	consume_whitespace(par);
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "inset") {
+		if (value_child_get(group, 0)->VALUE_type != VALUE_INSET) {
+			value_child_insert(group, 0, value_create(VALUE_INSET));
+		}
+	}
+	else {
+		back_token(par);
+	}
+	return group;
+}
+
+function @parse_box_shadow(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "none") {
+			return value_create(VALUE_NONE);
+		}
+	}
+
+	back_token(par);
+	return parse_multiple(par, parse_box_shadow_value#1);
+}
+
+function @parse_text_shadow_value(par)
+{
+	var group = value_create_group();
+
+	for (var i=0; i<3; i++) {
+		consume_whitespace(par);
+		if (next_is_length(par)) {
+			value_child_add(group, parse_length(par));
+		}
+		else {
+			if (i <= 1) {
+				return 0, error("both offsets required");
+			}
+			break;
+		}
+	}
+
+	consume_whitespace(par);
+	var color = parse_color(par);
+	if (color) {
+		value_child_add(group, color);
+	}
+
+	return group;
+}
+
+function @parse_text_shadow(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "none") {
+			return value_create(VALUE_NONE);
+		}
+	}
+
+	back_token(par);
+	return parse_multiple(par, parse_text_shadow_value#1);
+}
+
+function @parse_opacity(par)
+{
+	var opacity = consume_float(par);
+	opacity = fclamp(opacity, 0.0, 1.0);
+	return value_create_opacity(opacity);
+}
+
+function @parse_font_family(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_STRING) {
+		return value_create_font_family_name(par->TOKEN_value);
+	}
+
+	if (token != TOKEN_IDENT) {
+		back_token(par);
+		return null;
+	}
+
+	var s = {par->TOKEN_value};
+	for (;;) {
+		consume_whitespace(par);
+		token = next_token(par);
+		if (token != TOKEN_IDENT) {
+			back_token(par);
+			break;
+		}
+		s[] = ' ';
+		string_append(s, par->TOKEN_value);
+	}
+
+	if (s == "serif" || s == "sans-serif" || s == "cursive" || s == "fantasy" || s == "monospace") {
+		return value_create_font_family_generic(s);
+	}
+	return value_create_font_family_name(s);
+}
+
+function @parse_font_weight(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "normal") return value_create_font_weight(400);
+		if (name == "bold") return value_create_font_weight(700);
+		if (name == "bolder") return value_create(VALUE_BOLDER);
+		if (name == "lighter") return value_create(VALUE_LIGHTER);
+	}
+	else if (token == TOKEN_NUMBER) {
+		var value = par->TOKEN_value;
+		if (value[0][0] != '+' && !value[2]) {
+			switch (value[1]) {
+				case 100, 200, 300, 400, 500, 600, 700, 800, 900:
+					return value_create_font_weight(value[1]);
+			}
+		}
+	}
+	back_token(par);
+	return null;
+}
+
+function @parse_font_style(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "normal") return value_create(VALUE_NORMAL);
+		if (name == "italic") return value_create(VALUE_ITALIC);
+		if (name == "oblique") return value_create(VALUE_OBLIQUE);
+	}
+	back_token(par);
+	return null;
+}
+
+function @parse_font_size(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		switch (length(name)) {
+			case 5:
+				if (name == "small") return value_create(VALUE_SMALL);
+				if (name == "large") return value_create(VALUE_LARGE);
+				break;
+
+			case 6:
+				if (name == "medium") return value_create(VALUE_MEDIUM);
+				if (name == "larger") return value_create(VALUE_LARGER);
+				break;
+
+			case 7:
+				if (name == "x-small") return value_create(VALUE_X_SMALL);
+				if (name == "x-large") return value_create(VALUE_X_LARGE);
+				if (name == "smaller") return value_create(VALUE_SMALLER);
+				break;
+
+			case 8:
+				if (name == "xx-small") return value_create(VALUE_XX_SMALL);
+				if (name == "xx-large") return value_create(VALUE_XX_LARGE);
+				break;
+		}
+	}
+
+	back_token(par);
+	if (next_is_length_percentage(par)) {
+		return parse_length_percentage(par);
+	}
+	return null;
+}
+
+function @parse_font(par)
+{
+	var group = value_create_group();
+
+	for (;;) {
+		consume_whitespace(par);
+
+		var value = parse_font_style(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		value = parse_font_weight(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		value = parse_font_size(par);
+		if (value) {
+			consume_whitespace(par);
+			if (next_token(par) == TOKEN_DELIM && par->TOKEN_value == '/') {
+				consume_whitespace(par);
+				value_child_add(group, value_create_slash_group(value, parse_line_height(par)));
+			}
+			else {
+				back_token(par);
+				value_child_add(group, value);
+			}
+			continue;
+		}
+
+		value = parse_font_family(par);
+		if (value) {
+			var multiple = value_create_multiple();
+			value_child_add(multiple, value);
+
+			for (;;) {
+				consume_whitespace(par);
+				if (next_token(par) != TOKEN_COMMA) {
+					back_token(par);
+					break;
+				}
+				
+				consume_whitespace(par);
+				value = parse_font_family(par);
+				if (!value) return 0, error("expected font family");
+				value_child_add(multiple, value);
+			}
+
+			if (value_child_count(multiple) == 1) {
+				value_child_add(group, value_child_get(multiple, 0));
+			}
+			else {
+				value_child_add(group, multiple);
+			}
+			continue;
+		}
+
+		break;
+	}
+
+	if (value_child_count(group) == 0) {
+		return 0, error("no font values present");
+	}
+	return group;
+}
+
+function @parse_line_height(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "normal") {
+		return value_create(VALUE_NORMAL);
+	}
+
+	if (token == TOKEN_NUMBER) {
+		return value_create_number(number_as_float(par->TOKEN_value));
+	}
+
+	back_token(par);
+	return parse_length_percentage(par);
+}
+
+function @parse_margin_value(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
+		return value_create(VALUE_AUTO);
+	}
+
+	back_token(par);
+	if (next_is_length_percentage(par)) {
+		return parse_length_percentage(par);
+	}
+	return null;
+}
+
+function @parse_margin(par)
+{
+	return parse_border_group(par, parse_margin_value#1);
+}
+
+function @parse_padding_value(par)
+{
+	if (next_is_length_percentage(par)) {
+		return parse_length_percentage(par);
+	}
+	return null;
+}
+
+function @parse_padding(par)
+{
+	return parse_border_group(par, parse_padding_value#1);
+}
+
+function @parse_display(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 4:
+			if (name == "none") return value_create(VALUE_NONE);
+			if (name == "flex") return value_create(VALUE_FLEX);
+			break;
+
+		case 5:
+			if (name == "block") return value_create(VALUE_BLOCK);
+			if (name == "table") return value_create(VALUE_TABLE);
+			break;
+
+		case 6:
+			if (name == "inline") return value_create(VALUE_INLINE);
+			break;
+
+		case 9:
+			if (name == "list-item") return value_create(VALUE_LIST_ITEM);
+			if (name == "table-row") return value_create(VALUE_TABLE_ROW);
+			break;
+
+		case 10:
+			if (name == "table-cell") return value_create(VALUE_TABLE_CELL);
+			break;
+
+		case 11:
+			if (name == "inline-flex") return value_create(VALUE_INLINE_FLEX);
+			break;
+
+		case 12:
+			if (name == "inline-block") return value_create(VALUE_INLINE_BLOCK);
+			if (name == "inline-table") return value_create(VALUE_INLINE_TABLE);
+			if (name == "table-column") return value_create(VALUE_TABLE_COLUMN);
+			break;
+
+		case 13:
+			if (name == "table-caption") return value_create(VALUE_TABLE_CAPTION);
+			break;
+
+		case 15:
+			if (name == "table-row-group") return value_create(VALUE_TABLE_ROW_GROUP);
+			break;
+
+		case 18:
+			if (name == "table-header-group") return value_create(VALUE_TABLE_HEADER_GROUP);
+			if (name == "table-footer-group") return value_create(VALUE_TABLE_FOOTER_GROUP);
+			if (name == "table-column-group") return value_create(VALUE_TABLE_COLUMN_GROUP);
+			break;
+	}
+	return 0, error("invalid display value");
+}
+
+function @parse_position(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 5:
+			if (name == "fixed") return value_create(VALUE_FIXED);
+			break;
+
+		case 6:
+			if (name == "static") return value_create(VALUE_STATIC);
+			break;
+
+		case 8:
+			if (name == "relative") return value_create(VALUE_RELATIVE);
+			if (name == "absolute") return value_create(VALUE_ABSOLUTE);
+			break;
+	}
+	return 0, error("invalid position value");
+}
+
+function @parse_box_offset(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
+		return value_create(VALUE_AUTO);
+	}
+
+	back_token(par);
+	return parse_length_percentage(par);
+}
+
+function @parse_float(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 4:
+			if (name == "left") return value_create(VALUE_LEFT);
+			if (name == "none") return value_create(VALUE_NONE);
+			break;
+
+		case 5:
+			if (name == "right") return value_create(VALUE_RIGHT);
+			break;
+	}
+	return 0, error("invalid float value");
+}
+
+function @parse_clear(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 4:
+			if (name == "left") return value_create(VALUE_LEFT);
+			if (name == "none") return value_create(VALUE_NONE);
+			if (name == "both") return value_create(VALUE_BOTH);
+			break;
+
+		case 5:
+			if (name == "right") return value_create(VALUE_RIGHT);
+			break;
+	}
+	return 0, error("invalid clear value");
+}
+
+function @parse_z_index(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
+		return value_create(VALUE_AUTO);
+	}
+
+	if (token != TOKEN_NUMBER || par->TOKEN_value[2]) {
+		return 0, error("expected integer or auto");
+	}
+	return value_create_integer(par->TOKEN_value[1]);
+}
+
+function @parse_width_height(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
+		return value_create(VALUE_AUTO);
+	}
+
+	back_token(par);
+	return parse_length_percentage(par);
+}
+
+function @parse_max_width_height(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
+		return value_create(VALUE_NONE);
+	}
+
+	back_token(par);
+	return parse_length_percentage(par);
+}
+
+function @parse_vertical_align(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		switch (length(name)) {
+			case 3:
+				if (name == "sub") return value_create(VALUE_SUB);
+				if (name == "top") return value_create(VALUE_TOP);
+				break;
+
+			case 5:
+				if (name == "super") return value_create(VALUE_SUPER);
+				break;
+
+			case 6:
+				if (name == "middle") return value_create(VALUE_MIDDLE);
+				if (name == "bottom") return value_create(VALUE_BOTTOM);
+				break;
+
+			case 8:
+				if (name == "baseline") return value_create(VALUE_BASELINE);
+				if (name == "text-top") return value_create(VALUE_TEXT_TOP);
+				break;
+
+			case 11:
+				if (name == "text-bottom") return value_create(VALUE_TEXT_BOTTOM);
+				break;
+		}
+	}
+
+	back_token(par);
+	return parse_length_percentage(par);
+}
+
+function @parse_box_sizing(par)
+{
+	var name = expect_ident(par);
+	if (name == "content-box") return value_create(VALUE_CONTENT_BOX);
+	if (name == "border-box") return value_create(VALUE_BORDER_BOX);
+	return 0, error("invalid box sizing value");
+}
+
+function @parse_text_align(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 4:
+			if (name == "left") return value_create(VALUE_LEFT);
+			break;
+
+		case 5:
+			if (name == "right") return value_create(VALUE_RIGHT);
+			break;
+
+		case 6:
+			if (name == "center") return value_create(VALUE_CENTER);
+			break;
+
+		case 7:
+			if (name == "justify") return value_create(VALUE_JUSTIFY);
+			break;
+	}
+	return 0, error("invalid text align value");
+}
+
+function @parse_text_decoration(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 4:
+			if (name == "none") return value_create(VALUE_NONE);
+			break;
+
+		case 5:
+			if (name == "blink") return value_create(VALUE_BLINK);
+			break;
+
+		case 8:
+			if (name == "overline") return value_create(VALUE_OVERLINE);
+			break;
+
+		case 9:
+			if (name == "underline") return value_create(VALUE_UNDERLINE);
+			break;
+
+		case 12:
+			if (name == "line-through") return value_create(VALUE_LINE_THROUGH);
+			break;
+	}
+	return 0, error("invalid text decoration value");
+}
+
+function @parse_letter_word_spacing(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "normal") {
+		return value_create(VALUE_NORMAL);
+	}
+
+	back_token(par);
+	return parse_length(par);
+}
+
+function @parse_text_transform(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 4:
+			if (name == "none") return value_create(VALUE_NONE);
+			break;
+
+		case 9:
+			if (name == "uppercase") return value_create(VALUE_UPPERCASE);
+			if (name == "lowercase") return value_create(VALUE_LOWERCASE);
+			break;
+
+		case 10:
+			if (name == "capitalize") return value_create(VALUE_CAPITALIZE);
+			break;
+	}
+	return 0, error("invalid text transform value");
+}
+
+function @parse_white_space(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 3:
+			if (name == "pre") return value_create(VALUE_PRE);
+			break;
+
+		case 6:
+			if (name == "normal") return value_create(VALUE_NORMAL);
+			if (name == "nowrap") return value_create(VALUE_NOWRAP);
+			break;
+
+		case 8:
+			if (name == "pre-wrap") return value_create(VALUE_PRE_WRAP);
+			if (name == "pre-line") return value_create(VALUE_PRE_LINE);
+			break;
+	}
+	return 0, error("invalid white space value");
+}
+
+function @parse_overflow(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 4:
+			if (name == "auto") return value_create(VALUE_AUTO);
+			break;
+
+		case 6:
+			if (name == "hidden") return value_create(VALUE_HIDDEN);
+			if (name == "scroll") return value_create(VALUE_SCROLL);
+			break;
+
+		case 7:
+			if (name == "visible") return value_create(VALUE_VISIBLE);
+			break;
+	}
+	return 0, error("invalid overflow value");
+}
+
+function @parse_clip_value(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
+		return value_create(VALUE_AUTO);
+	}
+
+	back_token(par);
+	return parse_length(par);
+}
+
+function @parse_clip(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
+		return value_create(VALUE_AUTO);
+	}
+
+	if (token != COMPONENT_FUNCTION) {
+		return 0, error("expected rect function");
+	}
+
+	var func = par->TOKEN_value;
+	if (string_to_lower_case(func->FUNCTION_name) != "rect") {
+		return 0, error("expected rect function");
+	}
+
+	rewind_buffer(func);
+	consume_whitespace(func);
+	var top = parse_clip_value(func);
+	consume_comma(func);
+	consume_whitespace(func);
+	var right = parse_clip_value(func);
+	consume_comma(func);
+	consume_whitespace(func);
+	var bottom = parse_clip_value(func);
+	consume_comma(func);
+	consume_whitespace(func);
+	var left = parse_clip_value(func);
+	consume_whitespace(func);
+	
+	if (next_token(func) != TOKEN_EOF) {
+		return 0, error("invalid rect parameters");
+	}
+
+	return value_create_rect(top, right, bottom, left);
+}
+
+function @parse_visibility(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 6:
+			if (name == "hidden") return value_create(VALUE_HIDDEN);
+			break;
+
+		case 7:
+			if (name == "visible") return value_create(VALUE_VISIBLE);
+			break;
+
+		case 8:
+			if (name == "collapse") return value_create(VALUE_COLLAPSE);
+			break;
+	}
+	return 0, error("invalid visibility value");
+}
+
+function @parse_list_style_type(par)
+{
+	if (next_token(par) != TOKEN_IDENT) {
+		back_token(par);
+		return null;
+	}
+	var name = string_to_lower_case(par->TOKEN_value);
+	switch (length(name)) {
+		case 4:
+			if (name == "none") return value_create(VALUE_NONE);
+			if (name == "disc") return value_create(VALUE_DISC);
+			break;
+
+		case 6:
+			if (name == "circle") return value_create(VALUE_CIRCLE);
+			if (name == "square") return value_create(VALUE_SQUARE);
+			break;
+
+		case 7:
+			if (name == "decimal") return value_create(VALUE_DECIMAL);
+			break;
+
+		case 8:
+			if (name == "armenian") return value_create(VALUE_ARMENIAN);
+			if (name == "georgian") return value_create(VALUE_GEORGIAN);
+			break;
+
+		case 11:
+			if (name == "lower-roman") return value_create(VALUE_LOWER_ROMAN);
+			if (name == "upper-roman") return value_create(VALUE_UPPER_ROMAN);
+			if (name == "lower-greek") return value_create(VALUE_LOWER_GREEK);
+			if (name == "lower-latin") return value_create(VALUE_LOWER_LATIN);
+			if (name == "upper-latin") return value_create(VALUE_UPPER_LATIN);
+			if (name == "lower-alpha") return value_create(VALUE_LOWER_ALPHA);
+			if (name == "upper-alpha") return value_create(VALUE_UPPER_ALPHA);
+			break;
+
+		case 20:
+			if (name == "decimal-leading-zero") return value_create(VALUE_DECIMAL_LEADING_ZERO);
+			break;
+	}
+	back_token(par);
+	return null;
+}
+
+function @parse_list_style_image(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
+		return value_create(VALUE_NONE);
+	}
+
+	back_token(par);
+	if (!next_is_image(par)) {
+		return null;
+	}
+	return parse_image(par);
+}
+
+function @parse_list_style_position(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		if (name == "inside") return value_create(VALUE_INSIDE);
+		if (name == "outside") return value_create(VALUE_OUTSIDE);
+	}
+	back_token(par);
+	return null;
+}
+
+function @parse_list_style(par)
+{
+	var group = value_create_group();
+
+	for (;;) {
+		consume_whitespace(par);
+
+		var value = parse_list_style_type(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		value = parse_list_style_position(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		value = parse_list_style_image(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		break;
+	}
+
+	if (value_child_count(group) == 0) {
+		return 0, error("no list style values present");
+	}
+	return group;
+}
+
+function @parse_content(par)
+{
+	var token = next_token(par);
+	if (token == TOKEN_STRING) {
+		return value_create_content_text(par->TOKEN_value);
+	}
+	return 0, error("only string is accepted");
+}
+
+function @parse_flex_direction(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		switch (length(name)) {
+			case 3:
+				if (name == "row") return value_create(VALUE_ROW);
+				break;
+
+			case 6:
+				if (name == "column") return value_create(VALUE_COLUMN);
+				break;
+
+			case 11:
+				if (name == "row-reverse") return value_create(VALUE_ROW_REVERSE);
+				break;
+
+			case 14:
+				if (name == "column-reverse") return value_create(VALUE_COLUMN_REVERSE);
+				break;
+		}
+	}
+
+	back_token(par);
+	return null;
+}
+
+function @parse_flex_wrap(par)
+{
+	if (next_token(par) == TOKEN_IDENT) {
+		var name = string_to_lower_case(par->TOKEN_value);
+		switch (length(name)) {
+			case 4:
+				if (name == "wrap") return value_create(VALUE_WRAP);
+				break;
+
+			case 6:
+				if (name == "nowrap") return value_create(VALUE_NOWRAP);
+				break;
+
+			case 12:
+				if (name == "wrap-reverse") return value_create(VALUE_WRAP_REVERSE);
+				break;
+		}
+	}
+
+	back_token(par);
+	return null;
+}
+
+function @parse_flex_flow(par)
+{
+	var group = value_create_group();
+
+	for (;;) {
+		consume_whitespace(par);
+
+		var value = parse_flex_direction(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		value = parse_flex_wrap(par);
+		if (value) {
+			value_child_add(group, value);
+			continue;
+		}
+
+		break;
+	}
+
+	if (value_child_count(group) == 0) {
+		return 0, error("no flex flow values present");
+	}
+	return group;
+}
+
+function @parse_order(par)
+{
+	var order = consume_integer(par);
+	return value_create_integer(order);
+}
+
+function @parse_flex_grow_shrink(par)
+{
+	if (next_token(par) != TOKEN_NUMBER) {
+		back_token(par);
+		return null;
+	}
+	var factor = number_as_float(par->TOKEN_value);
+	if ({factor < 0.0}) {
+		return 0, error("negative factor not allowed");
+	}
+	return value_create_number(factor);
+}
+
+function @parse_flex_basis(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "content") {
+		return value_create(VALUE_CONTENT);
+	}
+
+	back_token(par);
+
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
+		return value_create(VALUE_AUTO);
+	}
+
+	back_token(par);
+	if (next_is_length_percentage(par)) {
+		return parse_length_percentage(par);
+	}
+	return null;
+}
+
+function @parse_flex(par)
+{
+	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
+		return value_create(VALUE_NONE);
+	}
+
+	var group = value_create_group();
+
+	var grow = parse_flex_grow_shrink(par);
+	if (grow) {
+		value_child_add(group, grow);
+
+		consume_whitespace(par);
+		var shrink = parse_flex_grow_shrink(par);
+		if (shrink) {
+			value_child_add(group, shrink);
+			consume_whitespace(par);
+		}
+
+		var basis = parse_flex_basis(par);
+		if (basis) {
+			value_child_add(group, basis);
+		}
+	}
+	else {
+		var basis = parse_flex_basis(par);
+		if (!basis) {
+			return null;
+		}
+		value_child_add(group, basis);
+	
+		consume_whitespace(par);
+		grow = parse_flex_grow_shrink(par);
+		if (grow) {
+			value_child_add(group, grow);
+		
+			consume_whitespace(par);
+			var shrink = parse_flex_grow_shrink(par);
+			if (shrink) {
+				value_child_add(group, shrink);
+			}
+		}
+	}
+
+	return group;
+}
+
+function @parse_justify_content(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 6:
+			if (name == "center") return value_create(VALUE_CENTER);
+			break;
+
+		case 8:
+			if (name == "flex-end") return value_create(VALUE_FLEX_END);
+			break;
+
+		case 10:
+			if (name == "flex-start") return value_create(VALUE_FLEX_START);
+			break;
+
+		case 12:
+			if (name == "space-around") return value_create(VALUE_SPACE_AROUND);
+			break;
+
+		case 13:
+			if (name == "space-between") return value_create(VALUE_SPACE_BETWEEN);
+			break;
+	}
+	return 0, error("invalid justify content value");
+}
+
+function @parse_align_items(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 6:
+			if (name == "center") return value_create(VALUE_CENTER);
+			break;
+
+		case 7:
+			if (name == "stretch") return value_create(VALUE_STRETCH);
+			break;
+
+		case 8:
+			if (name == "flex-end") return value_create(VALUE_FLEX_END);
+			if (name == "baseline") return value_create(VALUE_BASELINE);
+			break;
+
+		case 10:
+			if (name == "flex-start") return value_create(VALUE_FLEX_START);
+			break;
+	}
+	return 0, error("invalid align items value");
+}
+
+function @parse_align_self(par)
+{
+	var name = expect_ident(par);
+	if (name == "auto") return value_create(VALUE_AUTO);
+
+	back_token(par);
+	return parse_align_items(par);
+}
+
+function @parse_align_content(par)
+{
+	var name = expect_ident(par);
+	switch (length(name)) {
+		case 6:
+			if (name == "center") return value_create(VALUE_CENTER);
+			break;
+
+		case 7:
+			if (name == "stretch") return value_create(VALUE_STRETCH);
+			break;
+
+		case 8:
+			if (name == "flex-end") return value_create(VALUE_FLEX_END);
+			break;
+
+		case 10:
+			if (name == "flex-start") return value_create(VALUE_FLEX_START);
+			break;
+
+		case 12:
+			if (name == "space-around") return value_create(VALUE_SPACE_AROUND);
+			break;
+
+		case 13:
+			if (name == "space-between") return value_create(VALUE_SPACE_BETWEEN);
+			break;
+	}
+	return 0, error("invalid align content value");
+}
+
+function @parse_tab_size(par)
+{
+	var token = next_token(par);
+	if (token != TOKEN_NUMBER || par->TOKEN_value[2]) {
+		return 0, error("expected integer");
+	}
+	return value_create_integer(par->TOKEN_value[1]);
+}
+
+function @add_handler(name, type, handler, multiple)
+{
+	property_hash{name} = length(property_data);
+	property_data[] = name;
+	property_data[] = type;
+	property_data[] = handler;
+	property_data[] = multiple;
+}
+
+function @init_static_data()
+{
+	property_hash = {};
+	property_data = [];
+
+	add_handler("all", PROP_ALL, parse_all#1, false);
+
+	add_handler("color", PROP_COLOR, parse_color#1, false);
+
+	add_handler("background-color", PROP_BACKGROUND_COLOR, parse_color#1, false);
+	add_handler("background-image", PROP_BACKGROUND_IMAGE, parse_background_image#1, true);
+	add_handler("background-repeat", PROP_BACKGROUND_REPEAT, parse_background_repeat#1, true);
+	add_handler("background-attachment", PROP_BACKGROUND_ATTACHMENT, parse_background_attachment#1, true);
+	add_handler("background-position", PROP_BACKGROUND_POSITION, parse_background_position#1, true);
+	add_handler("background-clip", PROP_BACKGROUND_CLIP, parse_background_clip#1, true);
+	add_handler("background-origin", PROP_BACKGROUND_ORIGIN, parse_background_clip#1, true);
+	add_handler("background-size", PROP_BACKGROUND_SIZE, parse_background_size#1, true);
+	add_handler("background", PROP_BACKGROUND, parse_background#1, false);
+
+	add_handler("border-top-color", PROP_BORDER_TOP_COLOR, parse_color#1, false);
+	add_handler("border-right-color", PROP_BORDER_RIGHT_COLOR, parse_color#1, false);
+	add_handler("border-bottom-color", PROP_BORDER_BOTTOM_COLOR, parse_color#1, false);
+	add_handler("border-left-color", PROP_BORDER_LEFT_COLOR, parse_color#1, false);
+	add_handler("border-color", PROP_BORDER_COLOR, parse_border_color#1, false);
+
+	add_handler("border-top-style", PROP_BORDER_TOP_STYLE, parse_border_style_value#1, false);
+	add_handler("border-right-style", PROP_BORDER_RIGHT_STYLE, parse_border_style_value#1, false);
+	add_handler("border-bottom-style", PROP_BORDER_BOTTOM_STYLE, parse_border_style_value#1, false);
+	add_handler("border-left-style", PROP_BORDER_LEFT_STYLE, parse_border_style_value#1, false);
+	add_handler("border-style", PROP_BORDER_STYLE, parse_border_style#1, false);
+
+	add_handler("border-top-width", PROP_BORDER_TOP_WIDTH, parse_border_width_value#1, false);
+	add_handler("border-right-width", PROP_BORDER_RIGHT_WIDTH, parse_border_width_value#1, false);
+	add_handler("border-bottom-width", PROP_BORDER_BOTTOM_WIDTH, parse_border_width_value#1, false);
+	add_handler("border-left-width", PROP_BORDER_LEFT_WIDTH, parse_border_width_value#1, false);
+	add_handler("border-width", PROP_BORDER_WIDTH, parse_border_width#1, false);
+
+	add_handler("border-top", PROP_BORDER_TOP, parse_border#1, false);
+	add_handler("border-right", PROP_BORDER_RIGHT, parse_border#1, false);
+	add_handler("border-bottom", PROP_BORDER_BOTTOM, parse_border#1, false);
+	add_handler("border-left", PROP_BORDER_LEFT, parse_border#1, false);
+	add_handler("border", PROP_BORDER, parse_border#1, false);
+
+	add_handler("border-top-left-radius", PROP_BORDER_TOP_LEFT_RADIUS, parse_border_radius_value#1, false);
+	add_handler("border-top-right-radius", PROP_BORDER_TOP_RIGHT_RADIUS, parse_border_radius_value#1, false);
+	add_handler("border-bottom-right-radius", PROP_BORDER_BOTTOM_RIGHT_RADIUS, parse_border_radius_value#1, false);
+	add_handler("border-bottom-left-radius", PROP_BORDER_BOTTOM_LEFT_RADIUS, parse_border_radius_value#1, false);
+	add_handler("border-radius", PROP_BORDER, parse_border_radius#1, false);
+
+	add_handler("border-collapse", PROP_BORDER_COLLAPSE, parse_border_collapse#1, false);
+	add_handler("border-spacing", PROP_BORDER_SPACING, parse_border_spacing#1, false);
+
+	// TODO: border images
+
+	add_handler("box-shadow", PROP_BOX_SHADOW, parse_box_shadow#1, false);
+	add_handler("text-shadow", PROP_TEXT_SHADOW, parse_text_shadow#1, false);
+	add_handler("opacity", PROP_OPACITY, parse_opacity#1, false);
+
+	add_handler("font-family", PROP_FONT_FAMILY, parse_font_family#1, true);
+	add_handler("font-weight", PROP_FONT_WEIGHT, parse_font_weight#1, false);
+	// TODO: font-stretch
+	add_handler("font-style", PROP_FONT_STYLE, parse_font_style#1, false);
+	add_handler("font-size", PROP_FONT_SIZE, parse_font_size#1, false);
+	// TODO: font-size-adjust
+	add_handler("font", PROP_FONT, parse_font#1, false);
+
+	add_handler("line-height", PROP_LINE_HEIGHT, parse_line_height#1, false);
+
+	add_handler("margin-top", PROP_MARGIN_TOP, parse_margin_value#1, false);
+	add_handler("margin-right", PROP_MARGIN_RIGHT, parse_margin_value#1, false);
+	add_handler("margin-bottom", PROP_MARGIN_BOTTOM, parse_margin_value#1, false);
+	add_handler("margin-left", PROP_MARGIN_LEFT, parse_margin_value#1, false);
+	add_handler("margin", PROP_MARGIN, parse_margin#1, false);
+
+	add_handler("padding-top", PROP_PADDING_TOP, parse_padding_value#1, false);
+	add_handler("padding-right", PROP_PADDING_RIGHT, parse_padding_value#1, false);
+	add_handler("padding-bottom", PROP_PADDING_BOTTOM, parse_padding_value#1, false);
+	add_handler("padding-left", PROP_PADDING_LEFT, parse_padding_value#1, false);
+	add_handler("padding", PROP_PADDING, parse_padding#1, false);
+
+	add_handler("display", PROP_DISPLAY, parse_display#1, false);
+	add_handler("position", PROP_POSITION, parse_position#1, false);
+	add_handler("top", PROP_TOP, parse_box_offset#1, false);
+	add_handler("right", PROP_RIGHT, parse_box_offset#1, false);
+	add_handler("bottom", PROP_BOTTOM, parse_box_offset#1, false);
+	add_handler("left", PROP_LEFT, parse_box_offset#1, false);
+	add_handler("float", PROP_FLOAT, parse_float#1, false);
+	add_handler("clear", PROP_CLEAR, parse_clear#1, false);
+	add_handler("z-index", PROP_Z_INDEX, parse_z_index#1, false);
+
+	add_handler("width", PROP_WIDTH, parse_width_height#1, false);
+	add_handler("height", PROP_HEIGHT, parse_width_height#1, false);
+	add_handler("min-width", PROP_MIN_WIDTH, parse_length_percentage#1, false);
+	add_handler("max-width", PROP_MAX_WIDTH, parse_max_width_height#1, false);
+	add_handler("min-height", PROP_MIN_HEIGHT, parse_length_percentage#1, false);
+	add_handler("max-height", PROP_MAX_HEIGHT, parse_max_width_height#1, false);
+	add_handler("vertical-align", PROP_VERTICAL_ALIGN, parse_vertical_align#1, false);
+	add_handler("box-sizing", PROP_BOX_SIZING, parse_box_sizing#1, false);
+
+	add_handler("text-align", PROP_TEXT_ALIGN, parse_text_align#1, false);
+	add_handler("text-indent", PROP_TEXT_INDENT, parse_length_percentage#1, false);
+	add_handler("text-decoration", PROP_TEXT_DECORATION, parse_text_decoration#1, false);
+	add_handler("letter-spacing", PROP_LETTER_SPACING, parse_letter_word_spacing#1, false);
+	add_handler("word-spacing", PROP_WORD_SPACING, parse_letter_word_spacing#1, false);
+	add_handler("text-transform", PROP_TEXT_TRANSFORM, parse_text_transform#1, false);
+	add_handler("white-space", PROP_WHITE_SPACE, parse_white_space#1, false);
+
+	add_handler("overflow", PROP_OVERFLOW, parse_overflow#1, false);
+	add_handler("overflow-x", PROP_OVERFLOW_X, parse_overflow#1, false);
+	add_handler("overflow-y", PROP_OVERFLOW_Y, parse_overflow#1, false);
+	add_handler("clip", PROP_CLIP, parse_clip#1, false);
+	add_handler("visibility", PROP_VISIBILITY, parse_visibility#1, false);
+
+	add_handler("list-style-type", PROP_LIST_STYLE_TYPE, parse_list_style_type#1, false);
+	add_handler("list-style-image", PROP_LIST_STYLE_IMAGE, parse_list_style_image#1, false);
+	add_handler("list-style-position", PROP_LIST_STYLE_POSITION, parse_list_style_position#1, false);
+	add_handler("list-style", PROP_LIST_STYLE, parse_list_style#1, false);
+
+	add_handler("content", PROP_CONTENT, parse_content#1, false);
+
+	add_handler("flex-direction", PROP_FLEX_DIRECTION, parse_flex_direction#1, false);
+	add_handler("flex-wrap", PROP_FLEX_WRAP, parse_flex_wrap#1, false);
+	add_handler("flex-flow", PROP_FLEX_FLOW, parse_flex_flow#1, false);
+	add_handler("order", PROP_ORDER, parse_order#1, false);
+	add_handler("flex-grow", PROP_FLEX_GROW, parse_flex_grow_shrink#1, false);
+	add_handler("flex-shrink", PROP_FLEX_SHRINK, parse_flex_grow_shrink#1, false);
+	add_handler("flex-basis", PROP_FLEX_BASIS, parse_flex_basis#1, false);
+	add_handler("flex", PROP_FLEX, parse_flex#1, false);
+	add_handler("justify-content", PROP_JUSTIFY_CONTENT, parse_justify_content#1, false);
+	add_handler("align-items", PROP_ALIGN_ITEMS, parse_align_items#1, false);
+	add_handler("align-self", PROP_ALIGN_SELF, parse_align_self#1, false);
+	add_handler("align-content", PROP_ALIGN_CONTENT, parse_align_content#1, false);
+
+	add_handler("tab-size", PROP_TAB_SIZE, parse_tab_size#1, false);
+	add_handler("-moz-tab-size", PROP_TAB_SIZE, parse_tab_size#1, false);
+
+	colors = {};
+
+	colors{"black"} = 0x000000;
+	colors{"silver"} = 0xC0C0C0;
+	colors{"gray"} = 0x808080;
+	colors{"white"} = 0xFFFFFF;
+	colors{"maroon"} = 0x800000;
+	colors{"red"} = 0xFF0000;
+	colors{"purple"} = 0x800080;
+	colors{"fuchsia"} = 0xFF00FF;
+	colors{"green"} = 0x008000;
+	colors{"lime"} = 0x00FF00;
+	colors{"olive"} = 0x808000;
+	colors{"yellow"} = 0xFFFF00;
+	colors{"navy"} = 0x000080;
+	colors{"blue"} = 0x0000FF;
+	colors{"teal"} = 0x008080;
+	colors{"aqua"} = 0x00FFFF;
+
+	colors{"aliceblue"} = 0xf0f8ff;
+	colors{"antiquewhite"} = 0xfaebd7;
+	colors{"aqua"} = 0x00ffff;
+	colors{"aquamarine"} = 0x7fffd4;
+	colors{"azure"} = 0xf0ffff;
+	colors{"beige"} = 0xf5f5dc;
+	colors{"bisque"} = 0xffe4c4;
+	colors{"black"} = 0x000000;
+	colors{"blanchedalmond"} = 0xffebcd;
+	colors{"blue"} = 0x0000ff;
+	colors{"blueviolet"} = 0x8a2be2;
+	colors{"brown"} = 0xa52a2a;
+	colors{"burlywood"} = 0xdeb887;
+	colors{"cadetblue"} = 0x5f9ea0;
+	colors{"chartreuse"} = 0x7fff00;
+	colors{"chocolate"} = 0xd2691e;
+	colors{"coral"} = 0xff7f50;
+	colors{"cornflowerblue"} = 0x6495ed;
+	colors{"cornsilk"} = 0xfff8dc;
+	colors{"crimson"} = 0xdc143c;
+	colors{"cyan"} = 0x00ffff;
+	colors{"darkblue"} = 0x00008b;
+	colors{"darkcyan"} = 0x008b8b;
+	colors{"darkgoldenrod"} = 0xb8860b;
+	colors{"darkgray"} = 0xa9a9a9;
+	colors{"darkgreen"} = 0x006400;
+	colors{"darkgrey"} = 0xa9a9a9;
+	colors{"darkkhaki"} = 0xbdb76b;
+	colors{"darkmagenta"} = 0x8b008b;
+	colors{"darkolivegreen"} = 0x556b2f;
+	colors{"darkorange"} = 0xff8c00;
+	colors{"darkorchid"} = 0x9932cc;
+	colors{"darkred"} = 0x8b0000;
+	colors{"darksalmon"} = 0xe9967a;
+	colors{"darkseagreen"} = 0x8fbc8f;
+	colors{"darkslateblue"} = 0x483d8b;
+	colors{"darkslategray"} = 0x2f4f4f;
+	colors{"darkslategrey"} = 0x2f4f4f;
+	colors{"darkturquoise"} = 0x00ced1;
+	colors{"darkviolet"} = 0x9400d3;
+	colors{"deeppink"} = 0xff1493;
+	colors{"deepskyblue"} = 0x00bfff;
+	colors{"dimgray"} = 0x696969;
+	colors{"dimgrey"} = 0x696969;
+	colors{"dodgerblue"} = 0x1e90ff;
+	colors{"firebrick"} = 0xb22222;
+	colors{"floralwhite"} = 0xfffaf0;
+	colors{"forestgreen"} = 0x228b22;
+	colors{"fuchsia"} = 0xff00ff;
+	colors{"gainsboro"} = 0xdcdcdc;
+	colors{"ghostwhite"} = 0xf8f8ff;
+	colors{"gold"} = 0xffd700;
+	colors{"goldenrod"} = 0xdaa520;
+	colors{"gray"} = 0x808080;
+	colors{"green"} = 0x008000;
+	colors{"greenyellow"} = 0xadff2f;
+	colors{"grey"} = 0x808080;
+	colors{"honeydew"} = 0xf0fff0;
+	colors{"hotpink"} = 0xff69b4;
+	colors{"indianred"} = 0xcd5c5c;
+	colors{"indigo"} = 0x4b0082;
+	colors{"ivory"} = 0xfffff0;
+	colors{"khaki"} = 0xf0e68c;
+	colors{"lavender"} = 0xe6e6fa;
+	colors{"lavenderblush"} = 0xfff0f5;
+	colors{"lawngreen"} = 0x7cfc00;
+	colors{"lemonchiffon"} = 0xfffacd;
+	colors{"lightblue"} = 0xadd8e6;
+	colors{"lightcoral"} = 0xf08080;
+	colors{"lightcyan"} = 0xe0ffff;
+	colors{"lightgoldenrodyellow"} = 0xfafad2;
+	colors{"lightgray"} = 0xd3d3d3;
+	colors{"lightgreen"} = 0x90ee90;
+	colors{"lightgrey"} = 0xd3d3d3;
+	colors{"lightpink"} = 0xffb6c1;
+	colors{"lightsalmon"} = 0xffa07a;
+	colors{"lightseagreen"} = 0x20b2aa;
+	colors{"lightskyblue"} = 0x87cefa;
+	colors{"lightslategray"} = 0x778899;
+	colors{"lightslategrey"} = 0x778899;
+	colors{"lightsteelblue"} = 0xb0c4de;
+	colors{"lightyellow"} = 0xffffe0;
+	colors{"lime"} = 0x00ff00;
+	colors{"limegreen"} = 0x32cd32;
+	colors{"linen"} = 0xfaf0e6;
+	colors{"magenta"} = 0xff00ff;
+	colors{"maroon"} = 0x800000;
+	colors{"mediumaquamarine"} = 0x66cdaa;
+	colors{"mediumblue"} = 0x0000cd;
+	colors{"mediumorchid"} = 0xba55d3;
+	colors{"mediumpurple"} = 0x9370db;
+	colors{"mediumseagreen"} = 0x3cb371;
+	colors{"mediumslateblue"} = 0x7b68ee;
+	colors{"mediumspringgreen"} = 0x00fa9a;
+	colors{"mediumturquoise"} = 0x48d1cc;
+	colors{"mediumvioletred"} = 0xc71585;
+	colors{"midnightblue"} = 0x191970;
+	colors{"mintcream"} = 0xf5fffa;
+	colors{"mistyrose"} = 0xffe4e1;
+	colors{"moccasin"} = 0xffe4b5;
+	colors{"navajowhite"} = 0xffdead;
+	colors{"navy"} = 0x000080;
+	colors{"oldlace"} = 0xfdf5e6;
+	colors{"olive"} = 0x808000;
+	colors{"olivedrab"} = 0x6b8e23;
+	colors{"orange"} = 0xffa500;
+	colors{"orangered"} = 0xff4500;
+	colors{"orchid"} = 0xda70d6;
+	colors{"palegoldenrod"} = 0xeee8aa;
+	colors{"palegreen"} = 0x98fb98;
+	colors{"paleturquoise"} = 0xafeeee;
+	colors{"palevioletred"} = 0xdb7093;
+	colors{"papayawhip"} = 0xffefd5;
+	colors{"peachpuff"} = 0xffdab9;
+	colors{"peru"} = 0xcd853f;
+	colors{"pink"} = 0xffc0cb;
+	colors{"plum"} = 0xdda0dd;
+	colors{"powderblue"} = 0xb0e0e6;
+	colors{"purple"} = 0x800080;
+	colors{"red"} = 0xff0000;
+	colors{"rosybrown"} = 0xbc8f8f;
+	colors{"royalblue"} = 0x4169e1;
+	colors{"saddlebrown"} = 0x8b4513;
+	colors{"salmon"} = 0xfa8072;
+	colors{"sandybrown"} = 0xf4a460;
+	colors{"seagreen"} = 0x2e8b57;
+	colors{"seashell"} = 0xfff5ee;
+	colors{"sienna"} = 0xa0522d;
+	colors{"silver"} = 0xc0c0c0;
+	colors{"skyblue"} = 0x87ceeb;
+	colors{"slateblue"} = 0x6a5acd;
+	colors{"slategray"} = 0x708090;
+	colors{"slategrey"} = 0x708090;
+	colors{"snow"} = 0xfffafa;
+	colors{"springgreen"} = 0x00ff7f;
+	colors{"steelblue"} = 0x4682b4;
+	colors{"tan"} = 0xd2b48c;
+	colors{"teal"} = 0x008080;
+	colors{"thistle"} = 0xd8bfd8;
+	colors{"tomato"} = 0xff6347;
+	colors{"turquoise"} = 0x40e0d0;
+	colors{"violet"} = 0xee82ee;
+	colors{"wheat"} = 0xf5deb3;
+	colors{"white"} = 0xffffff;
+	colors{"whitesmoke"} = 0xf5f5f5;
+	colors{"yellow"} = 0xffff00;
+	colors{"yellowgreen"} = 0x9acd32;
+}

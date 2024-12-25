@@ -1,0 +1,198 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/font";
+import "gui/view";
+import "gui/subview";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/content/content_data";
+import "browser/view/content/background";
+import "util/string";
+
+const @DEBUG_SPACES = 0;
+
+var @text_line_part: TextLinePart;
+
+class DefaultTextStyle: InlineObject
+{
+	var @font: SystemFont;
+	var @color: Integer;
+	var @shadow: Shadow;
+	var @hover_color: Integer;
+
+	constructor create(font: SystemFont, color: Integer, background: BackgroundView, shadow: Shadow, hover_color: Integer, hover_background: BackgroundView, hover: Hover, content_data: ContentData, mirror: MirrorState)
+	{
+		super::create(background, hover_background, hover? hover.group : null, content_data, mirror);
+		this.font = font;
+		this.color = color;
+		this.shadow = shadow;
+		this.hover_color = hover_color;
+	}
+
+	function get_font(): SystemFont
+	{
+		return font;
+	}
+}
+
+class TextLinePart: InlineLinePart
+{
+	constructor @create()
+	{
+	}
+
+	static function get(): TextLinePart
+	{
+		var handler = text_line_part;
+		if (!handler) {
+			handler = create();
+			text_line_part = handler;
+		}
+		return handler;
+	}
+
+	override function get_text_width(text: String, off: Integer, len: Integer, data): Integer
+	{
+		var style = data as DefaultTextStyle;
+		var s = array_extract(text, off, len);
+		if (DEBUG_SPACES != 0) {
+			s = string_replace_char(s, ' ', '_');
+		}
+		var width = style.font.get_string_advance(s);
+		if (style.background) {
+			var background = style.background;
+			var margin_left = background.inline_margin_left;
+			var margin_right = background.inline_margin_right;
+			if (margin_left > 0) {
+				if (off == style.text_start) {
+					width += margin_left;
+				}
+			}
+			if (margin_right > 0) {
+				if (off+len == style.text_end) {
+					width += margin_right;
+				}
+			}
+		}
+		return width;
+	}
+
+	override function get_text_position(x: Integer, text: String, off: Integer, len: Integer, data): Float
+	{
+		var style = data as DefaultTextStyle;
+		var s = array_extract(text, off, len);
+		if (DEBUG_SPACES != 0) {
+			s = string_replace_char(s, ' ', '_');
+		}
+		if (style.background) {
+			var margin_left = style.background.inline_margin_left;
+			if (margin_left > 0) {
+				if (off == style.text_start) {
+					x -= margin_left;
+				}
+			}
+		}
+		return style.font.get_string_position(s, x);
+	}
+
+	override function text_added(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, overdraw: Integer, text: String, off: Integer, len: Integer, data)
+	{
+		var style = data as DefaultTextStyle;
+		var min_layer = 0;
+		var max_layer = 0;
+		if (style.background) {
+			max_layer = max(max_layer, length(style.background.backgrounds));
+		}
+		if (style.hover_background) {
+			max_layer = max(max_layer, length(style.hover_background.backgrounds));
+		}
+		style.mirror.part_added(block, id, x, y, width, ascent, descent, overdraw, min_layer, max_layer, data);
+	}
+
+	override function paint_content(block: BlockView, id: Integer, p: Painter, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, hover: Boolean, data)
+	{
+		var style = data as DefaultTextStyle;
+		var s = array_extract(text, off, len);
+		if (DEBUG_SPACES != 0) {
+			s = string_replace_char(s, ' ', '_');
+		}
+		var shadow = style.shadow;
+		while (shadow) {
+			draw_shadow(p, x, y, style.font, s, shadow.offset_x, shadow.offset_y, shadow.blur, shadow.color);
+			shadow = shadow.next;
+		}
+		var color = style.color;
+		if (hover) {
+			color = style.hover_color;
+		}
+		style.font.draw_string(p, x, y, s, color);
+	}
+
+	function @draw_shadow(p: Painter, x: Integer, y: Integer, font: SystemFont, s: String, off_x: Integer, off_y: Integer, blur: Float, color: Integer)
+	{
+		if (blur > 0.0) {
+			var ascent = font.get_ascent();
+			var descent = font.get_descent();
+			var extra = iround(font.get_size()*0.5 * blur * 1.5);
+			var w = font.get_string_advance(s);
+			var h = ascent+descent;
+			var img = Image::create(w+extra*2, h+extra*2);
+			var p2 = Painter::create(img);
+			font.draw_string(p2, extra, extra+ascent, s, color);
+			img.blur(blur*1.5);
+			p.draw_image(x+off_x-extra, y+off_y-extra-ascent, img);
+		}
+		else {
+			font.draw_string(p, x+off_x, y+off_y, s, color);
+		}
+	}
+
+	override function handle_mouse_event(block: BlockView, id: Integer, x: Integer, y: Integer, width: Integer, ascent: Integer, descent: Integer, text: String, off: Integer, len: Integer, event: MouseEvent, data): Boolean
+	{
+		var style = data as DefaultTextStyle;
+
+		if (style.hover_group) {
+			var content_data = style.content_data;
+
+			content_data.handle_hover_event(event, style.hover_group, block, id);
+
+			if (event.get_type() == EVENT_MOUSE_DOWN) {
+				if (event.get_button() == MOUSE_BUTTON_LEFT) {
+					content_data.set_hover_status(null);
+					content_data.open_url(style.hover_group.url);
+					return true;
+				}
+				if (event.get_button() == MOUSE_BUTTON_RIGHT) {
+					content_data.show_link_menu(style.hover_group.url);
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+}

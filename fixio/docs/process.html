@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/process";</code>
+</p>
+
+<h2>Process class</h2>
+
+<p>
+Process.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>
+		static function <b>run</b>(args: String[]): Integer<br>
+		static function <b>run</b>(args: String[], env: String[String]): Integer<br>
+		static function <b>run</b>(args: String[], env: String[String], path): Integer<br>
+	</code></dt>
+	<dd>
+		Runs a process and waits until it exits, returning the exit code. You can optionally
+		provide environment and path from which to start the process.
+	</dd>
+	<dt><code>static function <b>create</b>(args: String[], env: String[String], path, flags: Integer): Process</code></dt>
+	<dd>
+		Creates a new process, optionally providing environment, path and redirection of the standard streams.<br>
+		The flags can have these values:<br>
+		<b>REDIR_IN</b> - redirect input stream<br>
+		<b>REDIR_OUT</b> - redirect output stream<br>
+		<b>REDIR_ERR</b> - redirect error stream<br>
+		<b>REDIR_MERGE_ERR</b> - redirect error stream and merge with output stream<br>
+		You can also use these helper values:<br>
+		<b>REDIR_NONE</b> - no stream redirection<br>
+		<b>REDIR_IN_OUT</b> - redirect both input and output streams<br>
+		<b>REDIR_ALL</b> - redirect all streams<br>
+		<b>REDIR_MERGED</b> - redirect all streams with output and error streams being merged<br>
+	</dd>
+	<dt><code>
+		function <b>in_write</b>(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer<br>
+		function <b>out_read</b>(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer<br>
+		function <b>err_read</b>(buf: Byte[], off: Integer, len: Integer, timeout: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Direct functions for reading and writing to the redirected standard streams of the process.
+	</dd>
+	<dt><code>
+		function <b>close_in</b>()<br>
+		function <b>close_out</b>()<br>
+		function <b>close_err</b>()<br>
+	</code></dt>
+	<dd>
+		Direct functions for closing the redirected standard streams of the process.
+	</dd>
+	<dt><code>
+		function <b>create_in_stream</b>(): <a href="process_stream.html">ProcessStream</a><br>
+		function <b>create_out_stream</b>(): <a href="process_stream.html">ProcessStream</a><br>
+		function <b>create_err_stream</b>(): <a href="process_stream.html">ProcessStream</a><br>
+		function <b>create_stream</b>(): <a href="process_stream.html">ProcessStream</a><br>
+	</code></dt>
+	<dd>
+		Creates a new stream class instances for various redirected standard streams.
+	</dd>
+	<dt><code>function <b>wait</b>(): Integer</code></dt>
+	<dd>
+		Waits for the process to exit and returns the exit code.
+	</dd>
+	<dt><code>
+		function <b>kill</b>()<br>
+		function <b>kill</b>(force: Boolean)<br>
+	</code></dt>
+	<dd>
+		Kills the process.
+	</dd>
+	<dt><code>function <b>is_running</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the process is still running.
+	</dd>
+	<dt><code>function <b>get_id</b>(): Integer</code></dt>
+	<dd>
+		Returns the process ID or zero when the process is not running anymore. This function
+		is inaccurate to detect process liveness, use the <code>is_running</code> function to
+		do the real check.
+	</dd>
+	<dt><code>static function <b>get_current_environment</b>(): String[String]</code></dt>
+	<dd>
+		Returns the current process environment variables.
+	</dd>
+</dl>
+
+</body>
+</html>

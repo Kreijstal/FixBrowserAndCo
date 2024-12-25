@@ -1,0 +1,513 @@
+/*
+ * FixScript v0.9 - https://www.fixscript.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "test_use_inner";
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	@LINE_start,
+	@LINE_end,
+	@LINE_file_name,
+	@LINE_line_num,
+	@LINE_func_name,
+	@LINE_SIZE
+};
+
+function @get_token_value(tokens, src, idx)
+{
+	return array_extract(src, tokens[idx+TOK_off], tokens[idx+TOK_len]);
+}
+
+function @token_start(tokens, idx)
+{
+	return tokens[idx+TOK_off];
+}
+
+function @token_end(tokens, idx)
+{
+	return tokens[idx+TOK_off] + tokens[idx+TOK_len];
+}
+
+function assert(value)
+{
+	if (!value) {
+		return 0, error("assert failed");
+	}
+}
+
+function assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function assert_exception(func, msg)
+{
+	var (r, e) = func();
+	if (!e) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got none)"});
+	}
+	if (e[0] != msg) {
+		return 0, error({"assert failed (expected exception '", msg, "' but got '", e[0], "')"});
+	}
+}
+
+function assert_token(tokens, src, i, type, value)
+{
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({"assert failed (expected token type ", type, " but got ", tokens[i+TOK_type], ")"});
+	}
+	var token_value = array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+	if (token_value != value) {
+		return 0, error({"assert failed (expected token value ", value, " but got ", token_value, ")"});
+	}
+	return i + TOK_SIZE;
+}
+
+function assert_key(map, idx, result)
+{
+	var (k, v) = hash_entry(map, idx);
+	if (k != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", k, ")"});
+	}
+}
+
+function process_tokens(fname, tokens, src)
+{
+	log({"hello! fname=", fname, " line=", tokens[TOK_line]});
+
+	postprocess_cnt = postprocess_cnt*10 + 1;
+	script_postprocess(postprocess#4, null);
+
+	var filename = {""}, consts = {}, locals = [], funcs = [];
+	script_query("test_import", filename, consts, locals, funcs);
+	dump(filename);
+	dump(consts);
+	dump(locals);
+	dump(funcs);
+
+	// note: these tests can pass on wrong implementation if the hash order is accidentally correct
+
+	assert(length(consts), 7);
+	assert_key(consts, 0, "ZERO");
+	assert_key(consts, 1, "XXX");
+	assert_key(consts, 2, "IMPORT1");
+	assert_key(consts, 3, "@IMPORT2");
+	assert_key(consts, 4, "FROM_OTHER_FILE");
+	assert_key(consts, 5, "FROM_SAME_FILE");
+	assert_key(consts, 6, "OTHER_SIZE");
+
+	assert(length(locals), 5);
+	assert(locals[0], "aaa_local");
+	assert(locals[1], "local");
+	assert(locals[2], "local1");
+	assert(locals[3], "bbb_local10");
+	assert(locals[4], "local100");
+
+	assert(length(funcs), 6);
+	assert(funcs[0], "zzz_test#0");
+	assert(funcs[1], "aaa_test#0");
+	assert(funcs[2], "test#3");
+	assert(funcs[3], "test_forward#0");
+	assert(funcs[4], "imported_func#0");
+	assert(funcs[5], "dummy_native_func#0");
+	
+	//log({"src=", src});
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		var type = tokens[i+TOK_type];
+		if (type == TOK_STRING && get_token_value(tokens, src, i) == "\"SoMe\"") {
+			tokens[i+TOK_off] = length(src);
+			src[] = '\"';
+			src[] = 'C';
+			src[] = 'H';
+			src[] = 'A';
+			src[] = 'N';
+			src[] = 'G';
+			src[] = 'E';
+			src[] = 'D';
+			src[] = '!';
+			src[] = '\"';
+			tokens[i+TOK_len] = length(src) - tokens[i+TOK_off];
+		}
+		if (type == '$' && i+3*TOK_SIZE <= length(tokens)) {
+			var idx1 = i + 1*TOK_SIZE;
+			var idx2 = i + 2*TOK_SIZE;
+			if (tokens[idx1+TOK_type] == TOK_IDENT && tokens[idx2+TOK_type] == '$') {
+				if (token_end(tokens, i) == token_start(tokens, idx1) && token_end(tokens, idx1) == token_start(tokens, idx2)) {
+					var s = {"\"", get_token_value(tokens, src, idx1), "\""};
+					tokens[i+TOK_type] = TOK_STRING;
+					tokens[i+TOK_off] = length(src);
+					array_set_length(src, length(src) + length(s));
+					array_copy(src, tokens[i+TOK_off], s, 0, length(s));
+					tokens[i+TOK_len] = length(s);
+					array_remove(tokens, idx1, 2*TOK_SIZE);
+				}
+			}
+		}
+		if (type == '$' && i+TOK_SIZE < length(tokens) && tokens[i+TOK_SIZE] == TOK_IDENT) {
+			var ident = get_token_value(tokens, src, i+TOK_SIZE);
+			if (ident == "GENERATE_ARRAY_VALUES") {
+				perf_reset();
+				var s = {""};
+				for (var j=0; j<65536; j++) {
+					if (j > 0) s[] = ',';
+					array_append(s, {j});
+				}
+				var new_tokens = tokens_parse([], src, s, tokens[i+TOK_line]);
+				array_replace_range(tokens, i, i+2*TOK_SIZE, new_tokens);
+				perf_log("gen_array");
+			}
+			else if (ident == "GENERATE_HASH_VALUES") {
+				perf_reset();
+				var s = {""};
+				for (var j=0; j<65536; j++) {
+					if (j > 0) s[] = ',';
+					array_append(s, {j});
+					s[] = ':';
+					array_append(s, {(-j-1)});
+				}
+				var new_tokens = tokens_parse([], src, s, tokens[i+TOK_line]);
+				array_replace_range(tokens, i, i+2*TOK_SIZE, new_tokens);
+				perf_log("gen_hash");
+			}
+			else if (ident == "GENERATE_STRING_VALUES") {
+				perf_reset();
+				var s = {""};
+				for (var j=0; j<65536; j++) {
+					if (j > 0) {
+						array_append(s, ",\" \",");
+					}
+					array_append(s, {j});
+				}
+				var new_tokens = tokens_parse([], src, s, tokens[i+TOK_line]);
+				array_replace_range(tokens, i, i+2*TOK_SIZE, new_tokens);
+				perf_log("gen_string");
+			}
+			else if (ident == "GENERATE_NESTED_ARRAY_VALUES") {
+				perf_reset();
+				var cnt = 256;
+				var levels = 128;
+				var s = {""};
+				var cnt_minus_1 = cnt-1;
+				var levels_minus_1 = levels-1;
+				for (var j=0; j<levels; j++) {
+					var last = j == levels_minus_1;
+					for (var k=0, n=last? cnt:cnt_minus_1; k<n; k++) {
+						if (k > 0) s[] = ',';
+						array_append(s, {k});
+					}
+					if (!last) {
+						s[] = ',';
+						s[] = '[';
+					}
+				}
+				for (var j=0; j<levels_minus_1; j++) {
+					s[] = ']';
+				}
+				var new_tokens = tokens_parse([], src, s, tokens[i+TOK_line]);
+				array_replace_range(tokens, i, i+2*TOK_SIZE, new_tokens);
+				perf_log("gen_nested_array");
+			}
+			else if (ident == "GENERATE_NESTED_HASH_VALUES") {
+				perf_reset();
+				var cnt = 256;
+				var levels = 128;
+				var s = {""};
+				var cnt_minus_1 = cnt-1;
+				var levels_minus_1 = levels-1;
+				for (var j=0; j<levels; j++) {
+					var last = j == levels_minus_1;
+					for (var k=0, n=last? cnt:cnt_minus_1; k<n; k++) {
+						if (k > 0) s[] = ',';
+						array_append(s, {k});
+						s[] = ':';
+						array_append(s, {(-k-1)});
+					}
+					if (!last) {
+						s[] = ',';
+						array_append(s, {cnt_minus_1});
+						s[] = ':';
+						s[] = '{';
+					}
+				}
+				for (var j=0; j<levels_minus_1; j++) {
+					s[] = '}';
+				}
+				var new_tokens = tokens_parse([], src, s, tokens[i+TOK_line]);
+				array_replace_range(tokens, i, i+2*TOK_SIZE, new_tokens);
+				perf_log("gen_nested_hash");
+			}
+			else if (ident == "GENERATE_NESTED_STRING_VALUES") {
+				perf_reset();
+				var cnt = 256;
+				var levels = 128;
+				var s = {""};
+				var cnt_minus_1 = cnt-1;
+				var levels_minus_1 = levels-1;
+				for (var j=0; j<levels; j++) {
+					var last = j == levels_minus_1;
+					for (var k=0, n=last? cnt:cnt_minus_1; k<n; k++) {
+						if (k > 0) {
+							array_append(s, ",\" \",");
+						}
+						array_append(s, {k});
+					}
+					if (!last) {
+						s[] = ',';
+						s[] = '{';
+					}
+				}
+				for (var j=0; j<levels_minus_1; j++) {
+					s[] = '}';
+				}
+				var new_tokens = tokens_parse([], src, s, tokens[i+TOK_line]);
+				array_replace_range(tokens, i, i+2*TOK_SIZE, new_tokens);
+				perf_log("gen_nested_string");
+			}
+		}
+		//log({"type=", type, " value=`", array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]), "` line=", tokens[i+TOK_line]});
+	}
+	log({"total=", length(tokens) / TOK_SIZE});
+	//return 0, error("test");
+
+	var new_tokens = ["aaa", 1, 2, 3];
+	var new_src = {"AAA"};
+	tokens_parse(new_tokens, new_src, "function test()\n{}", 100);
+	//dump(new_tokens);
+	//dump(new_src);
+	//return 0, 1;
+
+	var data = {"Hello": "world! \u1234", 123: 456};
+	assert(unserialize(token_parse_string(token_escape_string(serialize(data)))), data);
+
+	var lines = [];
+	var first_const_off = -1;
+
+	var start_line = -1;
+	var end_line = -1;
+	var extra_line = -1;
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		var type = tokens[i+TOK_type];
+		if (type == KW_CONST && first_const_off == -1) {
+			first_const_off = i;
+		}
+		else if (type == KW_FUNCTION) {
+			i += TOK_SIZE;
+			if (tokens[i+TOK_type] == TOK_IDENT && get_token_value(tokens, src, i) == "test_lines") {
+				start_line = tokens[i+TOK_line];
+				var level = 0;
+				var end = false;
+				while (!end) {
+					i += TOK_SIZE;
+					type = tokens[i+TOK_type];
+					if (type == '{') {
+						level++;
+					}
+					else if (type == '}') {
+						level--;
+						if (level == 0) {
+							end = true;
+						}
+					}
+					else if (type == TOK_IDENT && get_token_value(tokens, src, i) == "added_virtual_function") {
+						if (extra_line == -1) {
+							extra_line = tokens[i+TOK_line];
+						}
+					}
+				}
+				end_line = tokens[i+TOK_line];
+				//log({"test lines start=", start_line, " end=", end_line, " extra=", extra_line});
+
+				lines[] = start_line;
+				lines[] = end_line;
+				lines[] = "some_virtual_file.fix";
+				lines[] = 100000;
+				lines[] = null;
+
+				lines[] = start_line;
+				lines[] = end_line;
+				lines[] = "some_virtual_file2.fix";
+				lines[] = 200000;
+				lines[] = null;
+
+				lines[] = extra_line;
+				lines[] = extra_line;
+				lines[] = "some_virtual_file3.fix";
+				lines[] = 300000;
+				lines[] = "added_virtual_function";
+
+				lines[] = extra_line;
+				lines[] = extra_line;
+				lines[] = "some_virtual_file4.fix";
+				lines[] = 400000;
+				lines[] = "added_virtual_function2";
+			}
+		}
+	}
+
+	new_tokens = [];
+	tokens_parse(new_tokens, src, {"const @stack_trace_lines = ", token_escape_string(serialize(lines)), ";"}, 0);
+	array_insert_array(tokens, first_const_off, new_tokens);
+
+	var (r, e) = script_query("test_error", null, null, null, null);
+	assert(e[0], "changed_script.fix(1025): expected 'function' or 'import' keyword");
+
+	//log({"start_line=", start_line, " end_line=", end_line, " extra_line=", extra_line});
+	assert(script_line(1), "test.fix(1)");
+	assert(script_line(null, tokens, src, 1), "test.fix(1)");
+	assert(script_line("just testing", tokens, src, 1), "just testing(1)");
+	assert(script_line(start_line), "some_virtual_file2.fix(200000)");
+	assert(script_line(extra_line), {"some_virtual_file2.fix(", 200000+extra_line-start_line, ")"});
+	assert(script_line(end_line), {"some_virtual_file2.fix(", 200000+end_line-start_line, ")"});
+
+	var test_src = {""};
+	var test_tokens = tokens_parse([], test_src, {"const @stack_trace_lines = ", token_escape_string(serialize([1, 1000, "other test", 5000, null])), ";"}, 0);
+	assert(script_line(null, test_tokens, test_src, -100), "test.fix(-100)");
+	assert(script_line(null, test_tokens, test_src, 1), "other test(5000)");
+	assert(script_line("just testing", test_tokens, test_src, 1), "other test(5000)");
+
+	var found = false;
+	for (var i=length(tokens)-TOK_SIZE; i>=0; i-=TOK_SIZE) {
+		if (tokens[i] == TOK_IDENT && tokens[i+TOK_len] == 16 && array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]) == "__token_errors__") {
+			var start = i;
+			i = assert_token(tokens, src, i, TOK_IDENT, "__token_errors__");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\0B\0C");
+			i = assert_token(tokens, src, i, KW_FOR, "for");
+			i = assert_token(tokens, src, i, '#', "#");
+			i = assert_token(tokens, src, i, TOK_NUMBER, "0");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "0x");
+			i = assert_token(tokens, src, i, TOK_IDENT, "Z");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "0.");
+			i = assert_token(tokens, src, i, TOK_IDENT, "X");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "1e");
+			i = assert_token(tokens, src, i, TOK_IDENT, "X");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"\\F");
+			i = assert_token(tokens, src, i, TOK_IDENT, "X");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"\\uD800");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"\\u");
+			i = assert_token(tokens, src, i, TOK_IDENT, "D80X");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"\\U");
+			i = assert_token(tokens, src, i, TOK_NUMBER, "123456");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"\\U");
+			i = assert_token(tokens, src, i, TOK_NUMBER, "00");
+			i = assert_token(tokens, src, i, TOK_IDENT, "D800");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"\\U");
+			i = assert_token(tokens, src, i, TOK_NUMBER, "10");
+			i = assert_token(tokens, src, i, TOK_IDENT, "FFXX");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "\"test'x");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "'test\"x");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "''");
+			i = assert_token(tokens, src, i, TOK_CHAR, "'xx'");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "'x\\u0100'");
+			i = assert_token(tokens, src, i, TOK_CHAR, "'abcd'");
+			i = assert_token(tokens, src, i, TOK_UNKNOWN, "'abcde'");
+			array_set_length(tokens, start);
+			found = true;
+			break;
+		}
+	}
+	assert(found);
+
+	assert_exception(postprocess_test#0, "invalid array access"); // TODO: maybe change it?
+	compile_test();
+}
+
+function @postprocess_test()
+{
+	script_postprocess(null, null);
+}
+
+function @postprocess(data, fname, tokens, src)
+{
+	postprocess_cnt = postprocess_cnt*10 + 6;
+}
+
+function @compile_test()
+{
+	var (r, e) = script_compile("test");
+	assert(e[0], "(1): expected 'function' or 'import' keyword");
+
+	var lines = [0x80000000, 0x7FFFFFFF, "compile_test.fix", 0x80000000, null];
+	(r, e) = script_compile({"const @stack_trace_lines = ", token_escape_string(serialize(lines)), "; test"});
+	assert(e[0], "compile_test.fix(1): expected 'function' or 'import' keyword");
+
+	var src = {""};
+	var tokens = tokens_parse([], src, "import\ntest", 100);
+
+	(r, e) = script_compile(tokens, src);
+	assert(e[0], "(101): expected script name");
+
+	// note: this test can pass on wrong implementation if the hash order is accidentally correct
+	(r, e) = script_compile("function @private() {} function public() {} function aaa() {} function bbb() {} function zzz() {}");
+	assert(hash_keys(r), ["public#0", "aaa#0", "bbb#0", "zzz#0"]);
+
+	(r, e) = script_compile("function test(a,b) { return a*100+b; }");
+	assert(r{"test#2"}(1, 2), 102);
+
+	src = {""};
+	tokens = tokens_parse([], src, "function test(a,b) { return a*1000+b; }", 1);
+
+	(r, e) = script_compile(tokens, src);
+	assert(r{"test#2"}(2, 4), 2004);
+}

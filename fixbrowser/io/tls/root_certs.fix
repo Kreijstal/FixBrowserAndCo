@@ -1,0 +1,112 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/tls/cert";
+import "util/string";
+import "util/base64";
+
+function @load_cert(fname)
+{
+	var content = file_read(fname);
+
+	var begin_header = "-----BEGIN CERTIFICATE-----";
+	var end_header = "-----END CERTIFICATE-----";
+	
+	var start = string_search_string(content, begin_header);
+	if (start < 0) {
+		return 0, error({"no certificate found in ", fname});
+	}
+	start += length(begin_header);
+
+	var end = string_search_string(content, end_header, start);
+	if (end < 0) {
+		return 0, error({"no certificate found in ", fname});
+	}
+
+	array_set_length(content, end);
+	array_remove(content, 0, start);
+
+	for (var i=0; i<length(content); i++) {
+		switch (content[i]) {
+			case 'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '=':
+				continue;
+
+			default:
+				array_remove(content, i--);
+				continue;
+		}
+	}
+
+	var binary = base64_decode(content);
+	return cert_parse(binary);
+}
+
+function @generate_index()
+{
+	var index = {};
+	var list = file_list("certs");
+	for (var i=0; i<length(list); i++) {
+		if (string_ends_with(list[i], ".crt")) {
+			var (cert, e) = load_cert({"certs/", list[i]});
+			if (e) {
+				log({"error occured during loading of ", list[i], ":"});
+				dump(e);
+			}
+			else {
+				index{cert->CERT_subject} = list[i];
+			}
+		}
+	}
+	return index;
+}
+
+function load_certs()
+{
+	var (index, e) = file_read("certs/index.dat");
+	if (e) {
+		index = generate_index();
+		file_write("certs/index.dat", serialize(index));
+	}
+	else {
+		index = unserialize(index);
+	}
+
+	for (var i=0; i<length(index); i++) {
+		var (k, v) = hash_entry(index, i);
+		global_set(["root certificate", k], [v, null]);
+	}
+}
+
+function get_root_cert(subject)
+{
+	var key = ["root certificate", subject];
+	var value = global_get(key);
+	if (!value) return null;
+
+	if (value[1]) {
+		return value[1];
+	}
+
+	var cert = load_cert({"certs/", value[0]});
+	value[1] = cert;
+	global_set(key, value);
+	return cert;
+}

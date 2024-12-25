@@ -1,0 +1,339 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "task/task";
+import "task/heap";
+import "io/tcp";
+import "io/time";
+import "io/stream";
+import "cellsplit/worker_comm";
+import "cellsplit/util/connection";
+import "cellsplit/util/vector";
+import "cellsplit/server/packets";
+
+var @log_prefix: String;
+var @g_bot_id: Integer;
+var @conn: Client;
+var @pellets: [Pellet];
+var @cells: [EnvCell];
+var @quit: Boolean;
+
+class Client: Connection
+{
+	static function connect(hostname: String, port: Integer, cookie: Byte[])
+	{
+		AsyncTCPConnection::open(hostname, port, Client::handle_open#2, cookie);
+	}
+
+	static function @handle_open(data, tcp_conn: AsyncTCPConnection)
+	{
+		var cookie = data as Byte[];
+
+		if (!tcp_conn) {
+			throw error("can't connect");
+		}
+		conn = new Client: Connection::create(tcp_conn, 32*1024, 512*1024);
+		conn.set_close_callback(Client::handle_close#3, conn);
+
+		var plp = PreLoginPacket::create();
+		plp.cookie = cookie;
+		plp.send(conn);
+
+		conn.init_cipher(Array::create(32, 1), false);
+	}
+
+	function @handle_close(conn, e)
+	{
+		quit = true;
+		if (e) {
+			dump(e);
+		}
+	}
+
+	override function receive_packet(stream: ArrayStream)
+	{
+		var packet = Packet::receive(this, stream);
+		switch (packet.get_type()) {
+			case PACKET_ERROR: {
+				var ep = packet as ErrorPacket;
+				if (ep.reason == "") {
+					var lp = LoginPacket::create(SYSTEM_TYPE_OTHER, 0);
+					lp.nick = "Bot #"+g_bot_id;
+					lp.send(conn);
+				}
+				else {
+					log("error from server: "+ep.reason);
+				}
+				break;
+			}
+			
+			case PACKET_ADD_CELL: {
+				var acp = packet as AddCellPacket;
+				cells[] = {
+					.id: acp.id,
+					.type: acp.type,
+					.x: acp.pos.x,
+					.y: acp.pos.y,
+					.size: acp.size,
+					.color: acp.color,
+					.name: acp.nick,
+					.own: acp.own
+				};
+				break;
+			}
+
+			case PACKET_REMOVE_CELL: {
+				var rcp = packet as RemoveCellPacket;
+				var id = rcp.id;
+				foreach (var i in cells) {
+					if (cells[i].id == id) {
+						array_remove(cells, i as Integer, EnvCell::SIZE);
+						break;
+					}
+				}
+				break;
+			}
+
+			case PACKET_UPDATE_CELLS: {
+				var ucp = packet as UpdateCellsPacket;
+				var data = ucp.data;
+				var map: CellUpdate[Integer] = {};
+				foreach (var i in data) {
+					map[data[i].id] = i;
+				}
+				foreach (var i in cells) {
+					var idx = map.get(cells[i].id, 0 as Dynamic); //XXX: uses physical zero which is confusing with logical zero comparison below
+					if (idx >= 0) {
+						cells[i].x = data[idx].x;
+						cells[i].y = data[idx].y;
+						cells[i].size = data[idx].size;
+					}
+				}
+				break;
+			}
+
+			case PACKET_ADD_PELLETS: {
+				var app = packet as AddPelletsPacket;
+				array_append(pellets, app.pellets);
+				break;
+			}
+
+			case PACKET_REMOVE_PELLETS: {
+				var rpp = packet as RemovePelletsPacket;
+				if (rpp.ids.length == 1) {
+					var id = rpp.ids[0];
+					foreach (var i in pellets) {
+						if (pellets[i].id == id) {
+							array_remove(pellets, i as Integer, Pellet::SIZE);
+							break;
+						}
+					}
+				}
+				else {
+					var ids: Boolean[Integer] = {};
+					foreach (var id in rpp.ids) {
+						ids[id] = true;
+					}
+					var cnt = ids.length;
+					foreach (var i in pellets) {
+						if (ids.contains(pellets[i].id)) {
+							array_remove(pellets, i as Integer, Pellet::SIZE);
+							if (--cnt == 0) break;
+							i--;
+							continue;
+						}
+					}
+				}
+				break;
+			}
+			
+			case PACKET_GROW_PELLET: {
+				var gpp = packet as GrowPelletPacket;
+				var id = gpp.id;
+				foreach (var i in pellets) {
+					if (pellets[i].id == id) {
+						pellets[i].size = gpp.size;
+						break;
+					}
+				}
+				break;
+			}
+			
+			case PACKET_CLEAR_VIEW: {
+				array_clear(pellets);
+				break;
+			}
+
+			case PACKET_LEADERBOARD:
+			case PACKET_CHAT:
+			case PACKET_SKIN_DATA: {
+				break;
+			}
+			
+			default:
+				throw error("received unknown packet type ("+packet.get_type()+")");
+		}
+	}
+}
+
+function @create_heap(): Heap
+{
+	var heap = Heap::create();
+	heap.register_native_function("log#1", script_log#3, null);
+	heap.register_native_function("clear_log#0", script_clear_log#3, null);
+	heap.register_native_function("mark#2", script_mark#3, null);
+	heap.register_native_function("mark#3", script_mark#3, null);
+	heap.register_native_function("get_pellets#0", script_get_pellets#3, null);
+	heap.register_native_function("get_cells#0", script_get_cells#3, null);
+	heap.register_native_function("set_target#2", script_set_target#3, null);
+	heap.register_native_function("reset#0", script_dummy_func#3, null);
+	heap.register_native_function("reset#1", script_dummy_func#3, null);
+	return heap;
+}
+
+function @load_script(data, heap: Heap, name: String)
+{
+	var fname = name+".fix";
+	if (heap.is_loaded(fname)) return;
+
+	var (compressed, e1) = get_resource("scripts/"+fname+".gz");
+	if (compressed) {
+		heap.load(fname, gzip_uncompress(compressed), load_script#3, data);
+		return;
+	}
+
+	var (src, e2) = get_resource_string("scripts/"+fname);
+	if (src) {
+		heap.load(fname, src, load_script#3, data);
+		return;
+	}
+
+	throw error("script "+fname+" not found");
+}
+
+function @script_log(data, heap: Heap, params: Value[]): Value[]
+{
+	var value = params[0];
+	var s: String;
+	if (heap.is_string(value)) {
+		s = heap.clone_from(value);
+	}
+	else {
+		s = heap.to_string(value);
+	}
+	log(s);
+	return [Value::int(0), Value::int(0)];
+}
+
+function @script_clear_log(data, heap: Heap, params: Value[]): Value[]
+{
+	return [Value::int(0), Value::int(0)];
+}
+
+function @get_float(value: Value): Float
+{
+	if (value.is_int()) {
+		return value.get_int();
+	}
+	return value.get_float();
+}
+
+function @script_mark(data, heap: Heap, params: Value[]): Value[]
+{
+	return [Value::int(0), Value::int(0)];
+}
+
+function @script_get_pellets(data, heap: Heap, params: Value[]): Value[]
+{
+	return [heap.clone_to(pellets), Value::int(0)];
+}
+
+function @script_get_cells(data, heap: Heap, params: Value[]): Value[]
+{
+	return [heap.clone_to(cells), Value::int(0)];
+}
+
+function @script_set_target(data, heap: Heap, params: Value[]): Value[]
+{
+	if (conn) {
+		var ip = InputPacket::create();
+		ip.x = get_float(params[0]);
+		ip.y = get_float(params[1]);
+		ip.send(conn);
+	}
+	return [Value::int(0), Value::int(0)];
+}
+
+function @script_dummy_func(data, heap: Heap, params: Value[]): Value[]
+{
+	return [Value::int(0), Value::int(0)];
+}
+
+function @run_function(heap: Heap, name: String)
+{
+	if (!heap) return;
+
+	var (result, e) = heap.run("script.fix", name, []);
+	if (e) {
+		dump(e);
+	}
+	else if (result[1].value != 0) {
+		log(heap.to_string(result[1], true));
+	}
+}
+
+function @custom_log(value)
+{
+	log(log_prefix+value);
+}
+ 
+function main(bot_id: Integer, name: String, port: Integer, cookie: Byte[])
+{
+	g_bot_id = bot_id;
+	log_prefix = "[bot-"+bot_id+"] ";
+	set_log_function(custom_log#1);
+
+	pellets = [];
+	cells = [];
+
+	var heap = create_heap();
+	heap.load("script.fix", get_resource_string("bots/"+name+".fix"), load_script#3, null);
+
+	Client::connect("localhost", port, cookie);
+
+	var last_time = Monotonic::get_time();
+	while (!quit) {
+		async_process(50);
+
+		var time = Monotonic::get_time();
+		var cnt = 1;
+		while (sub32(time, last_time) >= 200) {
+			if (cnt-- > 0) {
+				heap.run("common.fix", "before_update#0", []);
+				run_function(heap, "update#0");
+			}
+			last_time = add32(last_time, 200);
+		}
+	}
+	log("bot quit");
+}

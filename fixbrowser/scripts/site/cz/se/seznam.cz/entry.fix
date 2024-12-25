@@ -1,0 +1,21 @@
+import "util/common";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "szn.cz")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	/*
+	TODO: doesn't work
+	if (request_get_domain(request) == "videa.seznam.cz") {
+		var elems = element_query_all(document, "img.Video-header-thumbnail");
+		for (var i=0; i<length(elems); i++) {
+			var src = element_get_attr(elems[i], "src");
+			request_set_same_domain_url(request, src);
+		}
+	}
+	*/
+}

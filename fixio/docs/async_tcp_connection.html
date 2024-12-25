@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixIO Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixIO Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "io/tcp";</code>
+</p>
+
+<h2>AsyncTCPConnection class</h2>
+
+<p>
+Asynchronous TCP connection.
+</p>
+
+<p>
+Inherits from <a href="async_stream.html">AsyncStream</a>.
+</p>
+
+<h3 id="functions">Functions</h3>
+
+<dl>
+	<dt><code>static function <b>open</b>(hostname: String, port: Integer, callback, data): AsyncTCPConnection</code></dt>
+	<dd>
+		Initiates connecting to given host and port. Once finished the callback is called. The callback
+		must have this signature:<br>
+		<code>function <b>callback</b>(data, conn: AsyncTCPConnection)</code><br>
+		The <code>conn</code> parameter provides the established connection or <code>null</code> in case there was an error.
+	</dd>
+</dl>
+
+</body>
+</html>

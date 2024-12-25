@@ -1,0 +1,57 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/time";
+import "image/image";
+import "cellsplit/util/random";
+
+var @random: Random;
+
+function generate_color(): Integer
+{
+	if (!random) {
+		random = Random::create(Monotonic::get_micro_time(), 0);
+	}
+	var hue = random.next_float() * 360.0;
+	return hsl_to_rgb(hue, random.next_float()*0.1+0.9, 0.6);
+}
+
+function generate_pellet_color(): Integer
+{
+	if (!random) {
+		random = Random::create(Monotonic::get_micro_time(), 0);
+	}
+	var hue = random.next_float() * 360.0;
+	return hsl_to_rgb(hue, 1.0, 0.5);
+}
+
+function darken_color(color: Integer, scale: Float): Integer
+{
+	var r = (color >>> 16) & 0xFF;
+	var g = (color >>> 8) & 0xFF;
+	var b = color & 0xFF;
+	r = iround(pow(pow(r/255.0, 0.4) * scale, 2.5)*255.0);
+	g = iround(pow(pow(g/255.0, 0.4) * scale, 2.5)*255.0);
+	b = iround(pow(pow(b/255.0, 0.4) * scale, 2.5)*255.0);
+	return 0xFF000000 | (r << 16) | (g << 8) | b;
+}

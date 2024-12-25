@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixBuild Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.code { border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; background: #eee; line-height: 1.2; -moz-tab-size: 4; tab-size: 4; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+		table, td, th { border: 2px solid #ccc; border-collapse: collapse; }
+		td, th { padding: 2px 6px; }
+		th { background-color: #ccc; }
+	</style>
+</head>
+<body>
+
+<h1>FixBuild Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<h2>Build scripts</h2>
+
+<p>
+You can build applications using either a build script or just by invoking FixBuild manually
+using the build parameters. For more information run <code>fixbuild&nbsp;-h</code>.
+</p>
+
+<p>
+Build scripts use a partially declarative approach to set the build properties. You can also
+add your own actions written in FixScript and using the provided simple functions for common
+tasks. Or, instead, you can just write a normal console program for maximum control. FixBuild
+works in two modes, either you can build applications manually using the parameters, this mode
+is used when there is any parameter present with a single dash. Otherwise a file named
+<code>build.fix</code> is searched in the current and parent directories to execute.
+</p>
+
+<p>
+An example of a build script:
+</p>
+
+<pre class="code"><span class="keyword">use</span> <span class="string">"build"</span><span class="symbol">;</span>
+
+<span class="keyword">build</span> <span class="symbol">{</span>
+    verbose<span class="symbol">:</span> true<span class="symbol">,</span>
+    exclude<span class="symbol">:</span> <span class="symbol">[</span><span class="string">"test"</span><span class="symbol">,</span> <span class="string">"another"</span><span class="symbol">],</span>
+    sources<span class="symbol">:</span> <span class="string">"."</span><span class="symbol">,</span>
+    resources<span class="symbol">:</span> <span class="string">"res"</span><span class="symbol">,</span>
+    main<span class="symbol">:</span> <span class="string">"test/main"</span><span class="symbol">,</span>
+    binary<span class="symbol">:</span> <span class="string">"example"</span><span class="symbol">,</span>
+    binary_windows32<span class="symbol">:</span> <span class="string">"example_win32"</span><span class="symbol">,</span>
+    targets<span class="symbol">:</span> <span class="symbol">[</span><span class="string">"windows32"</span><span class="symbol">,</span> <span class="string">"linux32"</span><span class="symbol">],</span>
+    gui<span class="symbol">:</span> true
+<span class="symbol">};</span>
+
+<span class="keyword">prepare</span>
+<span class="symbol">{</span>
+	<span class="comment">// runs before any other action (including parsing of parameters)
+</span><span class="symbol">}</span>
+
+<span class="keyword">prebuild</span>
+<span class="symbol">{</span>
+	<span class="comment">// runs before any task and after parsing of parameters
+</span><span class="symbol">}</span>
+
+<span class="keyword">postbuild</span>
+<span class="symbol">{</span>
+	<span class="comment">// runs after a successful build (all tasks) with no errors
+</span><span class="symbol">}</span>
+
+<span class="keyword">postbuild-fail</span>
+<span class="symbol">{</span>
+	<span class="comment">// runs after an unsuccessful build
+</span><span class="symbol">}</span>
+
+<span class="keyword">cleanup</span>
+<span class="symbol">{</span>
+	<span class="comment">// runs after all actions are done (will not run if prepare fails)
+</span><span class="symbol">}</span>
+
+<span class="keyword">task</span> example <span class="string">"this will show in --help as a description"</span>
+<span class="symbol">{</span>
+	<span class="comment">// a custom task named 'example'
+</span><span class="symbol">}</span>
+
+<span class="keyword">default</span> <span class="keyword">task</span> another-example</span> <span class="symbol">(</span>dep1<span class="symbol">,</span> dep2<span class="symbol">)</span>
+<span class="symbol">{</span>
+	<span class="comment">// a custom task named 'another-example', which is set as a default instead of 'build'
+	// it depends on tasks dep1 and dep2
+</span><span class="symbol">}</span>
+
+<span class="keyword">task</span> -internal-task</span> <span class="string">""</span>
+<span class="symbol">{</span>
+	<span class="comment">// tasks with empty descriptions are removed from --help
+</span><span class="symbol">}</span></pre>
+
+<p>
+There are three predefined tasks, <code>build</code> (builds executables for current platform and is the default
+action), <code>dist</code> (builds executables for all platforms) and <code>clean</code> (cleans generated files).
+If you define tasks with these names, they will be run after doing the implicit action.
+</p>
+
+<p>
+The task names can contain characters, digits and dashes (in any order, including beginning).
+</p>
+
+<p>
+You can use <code>@nofail</code> annotation before calling a function to suppress any exceptions.
+It is just a nicer syntax for <code>var (r, e) = func(...)</code>.
+</p>
+
+<h3>Build options</h3>
+
+<table border="1">
+<tr>
+	<th>Property</th>
+	<th>Type</th>
+	<th>Parameter</th>
+	<th>Description</th>
+</tr>
+<tr>
+	<td>verbose</td>
+	<td align="center">boolean</td>
+	<td align="center">-v</td>
+	<td>enables verbose mode</td>
+</tr>
+<tr>
+	<td>processors</td>
+	<td align="center">boolean</td>
+	<td align="center">-np</td>
+	<td>passing false disables running of token processors (enabled by default)</td>
+</tr>
+<tr>
+	<td>compress</td>
+	<td align="center">boolean</td>
+	<td align="center">-nc</td>
+	<td>passing false disables compression of the scripts (enabled by default)</td>
+</tr>
+<tr>
+	<td>exclude</td>
+	<td align="center">array of strings</td>
+	<td align="center">-ex</td>
+	<td>excludes given file names and directories from processing</td>
+</tr>
+<tr>
+	<td>sources</td>
+	<td align="center">string</td>
+	<td align="center">-src</td>
+	<td>specifies a directory with the sources (the current directory is used by default)</td>
+</tr>
+<tr>
+	<td>resources</td>
+	<td align="center">string</td>
+	<td align="center">-res</td>
+	<td>embeds resources from given directory</td>
+</tr>
+<tr>
+	<td>main</td>
+	<td align="center">string or array of strings</td>
+	<td align="center">-m</td>
+	<td>the name of the main script (must be specified)<br>you can specify additional scripts in case the static detection is insufficient</td>
+</tr>
+<tr>
+	<td>targets</td>
+	<td align="center">array of strings</td>
+	<td align="center">-t</td>
+	<td>a list of platform targets, either full list, or list of disallowed targets (by prepending them with '<code>-</code>')</td>
+</tr>
+<tr>
+	<td>binary</td>
+	<td align="center">string</td>
+	<td align="center">-o</td>
+	<td>the output executable file (defaults to the same name as the main script)</td>
+</tr>
+<tr>
+	<td>binary_&lt;target&gt;</td>
+	<td align="center">string</td>
+	<td align="center">-o</td>
+	<td>alternative executable file for specific platform target</td>
+</tr>
+<tr>
+	<td>gui</td>
+	<td align="center">boolean</td>
+	<td align="center">-g</td>
+	<td>enables building of a GUI application (experimental)</td>
+</tr>
+<tr>
+	<td>icon</td>
+	<td align="center">array of strings</td>
+	<td align="center">-icon</td>
+	<td>provide different sizes of an icon as PNG files</td>
+</tr>
+<tr>
+	<td>wasm_raw</td>
+	<td align="center">boolean</td>
+	<td align="center">-wasm_raw</td>
+	<td>passing true produces raw WASM file instead of HTML for GUI applications</td>
+</tr>
+</table>
+
+<h3>Importing scripts</h3>
+
+<p>
+By default all library scripts are provided internally by FixBuild. There is a <code>build:</code>
+namespace for build related scripts. Currently only the <code>build:build</code> (the token processor)
+and the <code>build:common</code> (the common library) scripts are provided. As a shorthand, referencing
+<code>build</code> script from the initial <code>build.fix</code> script aliases to <code>build:build</code>.
+</p>
+
+<p>
+You can also import scripts from files relative to the build script. Simply use a "<code>path/:script</code>"
+when importing. The important bit is the <code>/:</code> for accessing the files. All the scripts are
+imported into a global namespace (the <code>script</code> portion of it). To import files in the current
+directory just use this form: "<code>./:script</code>". The imported scripts refer to their directory
+implicitly. You can override the internal libraries as long as the scripts from the files are loaded first.
+</p>
+
+<h3>Common functions</h3>
+
+<p>
+These functions are automatically made available by the <code>build</code> token processor.
+In case you need to import them manually use <code>build:common</code> script name.
+</p>
+
+<dl>
+	<dt><code>function <b>get_builds</b>(): Dynamic[String][String]</code></dt>
+	<dd>
+		Returns the list of builds. These are represented as a hash where the key is
+		the output file name and the value is another hash with the build properties.
+		This list is returned by reference and you can change it.
+	</dd>
+	<dt><code>function <b>get_executable</b>(): String</code></dt>
+	<dd>
+		Returns the executable as passed to the generated <code>main</code> function.
+		The string is returned by reference and you can change it.
+	</dd>
+	<dt><code>function <b>get_arguments</b>(): String[]</code></dt>
+	<dd>
+		Returns the arguments. This list is returned by reference and you can change it.
+	</dd>
+	<dt><code>function <b>get_current_target</b>(): String</code></dt>
+	<dd>
+		Returns the current target name.
+	</dd>
+	<dt><code>function <b>get_available_targets</b>(): String[]</code></dt>
+	<dd>
+		Returns the list of available target names.
+	</dd>
+	<dt><code>
+		function <b>register_task</b>(name: String, func)<br>
+		function <b>register_task</b>(name: String, func, desc: String)<br>
+		function <b>register_task</b>(name: String, func, desc: String, deps: String[])<br>
+	</code></dt>
+	<dd>
+		Registers a new task for running. The given function must not have
+		any parameters. You can optionally pass a description and a list of dependencies.
+	</dd>
+	<dt><code>function <b>get_task_list</b>(): String[]</code></dt>
+	<dd>
+		Returns a list of tasks.
+	</dd>
+	<dt><code>function <b>get_task_description</b>(name: String): String</code></dt>
+	<dd>
+		Returns the description of a task.
+	</dd>
+	<dt><code>function <b>set_task_description</b>(name: String, desc: String)</code></dt>
+	<dd>
+		Sets the description of a task.
+	</dd>
+	<dt><code>function <b>get_task_dependencies</b>(name: String): String[]</code></dt>
+	<dd>
+		Returns the list of task dependencies. This list is returned by reference and you
+		can change it.
+	</dd>
+	<dt><code>function <b>get_default_task</b>(): String</code></dt>
+	<dd>
+		Returns the name of the default task.
+	</dd>
+	<dt><code>function <b>set_default_task</b>(name: String)</code></dt>
+	<dd>
+		Sets the name of the default task.
+	</dd>
+	<dt><code>
+		function <b>run_task</b>(name: String): Boolean<br>
+		function <b>run_task</b>(name: String, force: Boolean): Boolean<br>
+	</code></dt>
+	<dd>
+		Runs the task with given name. Tasks run only once unless forced. Returns
+		true when the task was run.
+	</dd>
+	<dt><code>function <b>show_help</b>()</code></dt>
+	<dd>
+		Outputs a help screen based on the registered tasks.
+	</dd>
+	<dt><code>function <b>build</b>(values: Dynamic[String])</code></dt>
+	<dd>
+		Builds an application using the given properties.
+	</dd>
+	<dt><code>function <b>needs_update</b>(dest: String or String[], src: String or String[]): Boolean</code></dt>
+	<dd>
+		Returns true when the destination needs to be updated because it's either missing or the sources
+		files are newer. Both the destination and the source can be either a single file (string) or
+		array of files (strings).
+	</dd>
+	<dt><code>function <b>makedir</b>(name: String or String[])</code></dt>
+	<dd>
+		Creates a directory and any missing parent directories.
+	</dd>
+	<dt><code>function <b>removedir</b>(name: String or String[])</code></dt>
+	<dd>
+		Removes a directory if it's present.
+	</dd>
+	<dt><code>function <b>remove</b>(name: String or String[])</code></dt>
+	<dd>
+		Removes a file if it's present.
+	</dd>
+	<dt><code>function <b>touch</b>(name: String or String[])</code></dt>
+	<dd>
+		Touches a file (creates a new empty file or updates the modification time to the current time).
+	</dd>
+	<dt><code>function <b>basename</b>(fname: String): String</code></dt>
+	<dd>
+		Strips a path from a file name.
+	</dd>
+	<dt><code>function <b>copy</b>(src: String, dest: String)</code></dt>
+	<dd>
+		Copies a file from source to destination. The destination is overwritten, no metadata
+		such as modification time is preserved.
+	</dd>
+	<dt><code>
+		function <b>matches</b>(pattern: String, value: String): Boolean<br>
+		function <b>matches_dir</b>(pattern: String, value: String): Boolean<br>
+	</code></dt>
+	<dd>
+		Returns true when the given value matches the pattern. The pattern is a simple
+		string that must match the value exactly with two wildcard characters:
+		<code>?</code> matches any character and <code>*</code> matches any number of
+		characters (zero or more). The directory variant splits both the pattern and
+		the value by <code>/</code> and tests each part separately (the number of parts
+		must be the same to match).
+	</dd>
+	<dt><code>
+		function <b>find</b>(pattern: String): String[]<br>
+		function <b>find</b>(pattern: String, dir: String): String[]<br>
+		function <b>find</b>(pattern: String, dir: String, excludes: String[]): String[]<br>
+	</code></dt>
+	<dd>
+		Returns a list of paths for file names that match given pattern. Optionally you can specify the
+		directory to search from. The pattern is the same as described in the <code>matches</code>
+		function. The excludes are using the directory variant of the pattern.
+	</dd>
+	<dt><code>
+		function <b>run</b>(command: String or String[])<br>
+		function <b>run</b>(command: String or String[], dir: String)<br>
+	</code></dt>
+	<dd>
+		Runs a command. It is preferred that an array of arguments is used to avoid problems
+		with files with spaces and other problems. When the command is passed as a string
+		there is no escaping support, the string is just split by spaces. Optionally you can
+		specify a directory from where to run the program (it will be set as the current
+		directory for the new process).
+	</dd>
+	<dt><code>
+		function <b>exit</b>()<br>
+		function <b>exit</b>(code: Integer)<br>
+	</code></dt>
+	<dd>
+		Terminates the current process (optionally with an exit code).
+	</dd>
+	<dt><code>
+		function <b>is_windows</b>(): Boolean<br>
+		function <b>is_linux</b>(): Boolean<br>
+		function <b>is_macos</b>(): Boolean<br>
+		function <b>is_haiku</b>(): Boolean<br>
+		function <b>is_wasm</b>(): Boolean<br>
+	</code></dt>
+	<dd>
+		Current operating system detection functions.
+	</dd>
+	<dt><code>function <b>get_fixbuild_version</b>(): String</code></dt>
+	<dd>
+		Returns the FixBuild version.
+	</dd>
+	<dt><code>function <b>get_fixbuild_path</b>(): String</code></dt>
+	<dd>
+		Returns path to the FixBuild binary.
+	</dd>
+</dl>
+
+</body>
+</html>

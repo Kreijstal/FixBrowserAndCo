@@ -1,0 +1,25 @@
+import "util/common";
+import "util/extract";
+
+function adjust_document(request, document)
+{
+	var comments_list = element_query(document, "div.comments-list");
+	if (comments_list) {
+		var scripts = element_query_all(document, "script");
+		for (var i=0; i<length(scripts); i++) {
+			var text = element_extract_text(scripts[i]);
+			var value = extract_string(text, "aid: ", ",");
+			if (value) {
+				load_comments(comments_list, value);
+				break;
+			}
+		}
+	}
+}
+
+function @load_comments(list, id)
+{
+	var html = http_get({"https://www.rockpapershotgun.com/wp-admin/admin-ajax.php?action=fetch_comments&id=", id});
+	element_set_html(list, html);
+	remove_element(list, "div.comment-tools");
+}

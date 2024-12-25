@@ -1,0 +1,138 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "unpack";
+use "classes";
+
+import "image/image";
+import "gui/event";
+import "gui/subview";
+import "gui/subview/scrollview";
+import "gui/subview/button";
+import "gui/pure/scrollview";
+import "cellsplit/gui/panel";
+import "cellsplit/gui/button";
+import "cellsplit/worker_comm";
+
+class ServerList: Panel
+{
+	var @close_func;
+	var @close_data;
+
+	constructor create(parent: SubView, servers: ServerInfo[], close_func, close_data)
+	{
+		super::create("Server List");
+		this.close_func = close_func;
+		this.close_data = close_data;
+		var scale = parent.get_scale();
+		set_rect(0, 0, iround(600*scale), iround(400*scale));
+		set_content(ContentView::create(this, servers));
+		set_moveable(false);
+	}
+
+	override function handle_key_event(event: KeyEvent): Boolean
+	{
+		if (event.get_type() == EVENT_KEY_DOWN && event.get_key() == KEY_ESCAPE) {
+			close();
+			return true;
+		}
+		return false;
+	}
+
+	override function catch_key_event(event: KeyEvent): Boolean
+	{
+		return handle_key_event(event);
+	}
+
+	function @close()
+	{
+		close_func(close_data, null);
+	}
+
+	function @accept(server: ServerInfo)
+	{
+		close_func(close_data, server);
+	}
+}
+
+class @ContentView: SubView
+{
+	var @list: ServerList;
+	var @table: TableView;
+	var @scroll: SubScrollView;
+	var @close_button: GameButton;
+
+	constructor create(list: ServerList, servers: ServerInfo[])
+	{
+		this.list = list;
+		table = TableView::create(list, servers);
+		scroll = PureScrollView::create(table);
+		close_button = GameButton::create("Close");
+		close_button.set_click_action(ServerList::close#1, list);
+		add(scroll);
+		add(close_button);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		scroll.set_rect(0, 0, get_width(), get_height() - iround(40*scale));
+		scroll.set_content_size(1, table.get_preferred_height());
+		close_button.set_rect((get_width() - iround(80*scale))/2, get_height() - iround(30*scale), iround(80*scale), iround(30*scale));
+	}
+}
+
+class @TableView: SubView
+{
+	var @servers: ServerInfo[];
+
+	constructor create(list: ServerList, servers: ServerInfo[])
+	{
+		this.servers = servers;
+		foreach (var server in servers) {
+			var button = GameButton::create(server.name+" ("+server.host+":"+server.port+")");
+			button.set_click_action(TableView::handle_connect#1, [list, server]);
+			add(button);
+		}
+	}
+
+	static function handle_connect([list: ServerList, server: ServerInfo])
+	{
+		list.accept(server);
+	}
+
+	function get_preferred_height(): Integer
+	{
+		var scale = get_scale();
+		return get_child_count() * iround(30*scale);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		var y = 0, w = get_width(), h = iround(30*scale);
+		for (var i=0, n=get_child_count(); i<n; i++) {
+			get_child(i).set_rect(0, y, w, h);
+			y += h;
+		}
+	}
+}

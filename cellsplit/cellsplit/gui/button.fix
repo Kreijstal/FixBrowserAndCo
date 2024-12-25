@@ -1,0 +1,106 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/font";
+import "gui/subview";
+import "gui/subview/button";
+import "cellsplit/gui/common";
+
+class GameButton: SubButton
+{
+	var @label: String;
+	var @font: Font;
+	var @font_size: Float;
+	
+	constructor create(label: String)
+	{
+		this.label = label;
+		font = get_normal_font();
+		font_size = DEFAULT_FONT_SIZE;
+	}
+
+	function get_label(): String
+	{
+		return {label};
+	}
+
+	function set_label(label: String)
+	{
+		this.label = {label};
+		repaint();
+	}
+
+	function set_font(font: Font)
+	{
+		this.font = font;
+	}
+
+	function get_font(): Font
+	{
+		return font;
+	}
+
+	function set_font_size(font_size: Float)
+	{
+		this.font_size = font_size;
+	}
+
+	function get_font_size(): Float
+	{
+		return font_size;
+	}
+	
+	override function paint_background(p: Painter)
+	{
+		var state = get_state();
+		var scale = get_scale();
+		var shape = Shape::round_rect(0, 0, get_width(), get_height(), 5*scale, 5*scale);
+		var shape2 = Shape::round_rect(1.0*scale, 1.0*scale, get_width()-2.0*scale, get_height()-2.0*scale, 4.4*scale, 4.4*scale);
+		var color = (state & BUTTON_HOVER) != 0? 0xFFAAAAAA : 0xFF808080; //XXX
+		if ((state & BUTTON_DISABLED) != 0) {
+			color = 0xFF303030;
+		}
+		else if ((state & BUTTON_PRESSED) != 0) { //XXX
+			color = 0xFF404040;
+		}
+		p.fill_shape(shape, 0xFF404040);
+		p.fill_shape(shape2, color);
+	}
+
+	override function paint_foreground(p: Painter)
+	{
+		var scale = get_scale();
+		var font_size = this.font_size * scale;
+		var w = font.get_string_advance(label) * font_size;
+		p.push();
+		p.set_subpixel_rendering(true);
+		p.set_blend_gamma(1.3);
+		p.fill_shape(font.get_string_shape(label, (get_width()-w)/2.0, (get_height()+font_size*0.65)/2.0, font_size, font_size), 0xFFFFFFFF);
+		p.pop();
+		if (has_focus()) {
+			var shape = Shape::round_rect(3.5*scale, 3.5*scale, get_width()-7*scale, get_height()-7*scale, 2*scale, 2*scale);
+			p.fill_shape(shape.get_outline(1.0*scale), 0xFF000040);
+		}
+	}
+}

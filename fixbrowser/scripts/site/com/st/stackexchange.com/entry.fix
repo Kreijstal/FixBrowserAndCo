@@ -1,0 +1,29 @@
+import "util/common";
+import "util/string";
+
+function is_same_domain(src, dest)
+{
+	if (domain_ends_with(dest, "sstatic.net")) return true;
+	if (domain_ends_with(dest, "i.stack.imgur.com")) return true;
+	return false;
+}
+
+function adjust_document(request, document)
+{
+	var domain = request_get_domain(request);
+
+	remove_element(document, "div#noscript-warning");
+	add_style_to_element(document, "header", "position: absolute !important");
+	add_style_to_element(document, "div.left-sidebar--sticky-container", "position: static !important");
+	add_style_to_element(document, "div#sidebar", "margin-left: 0");
+
+	var links = element_query_all(document, "div[id^='comments-link-'] > a.js-show-link:not(.dno)");
+	for (var i=0; i<length(links); i++) {
+		var id = element_get_attr(element_get_parent(links[i]), "id");
+		id = string_substring(id, length("comments-link-"));
+		var posts = string_from_utf8(http_get({"https://", domain, "/posts/", id, "/comments"}));
+		var container = element_query(document, {"div#comments-", id, " > ul"});
+		element_set_html(container, posts);
+		element_remove(links[i]);
+	}
+}

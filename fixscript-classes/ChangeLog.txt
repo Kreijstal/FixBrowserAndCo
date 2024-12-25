@@ -1,0 +1,83 @@
+Version 0.8 (2024/05/05):
+- Added automatic checking that given script is using classes when the API is being used
+- Added ability to accept multiple different types in function parameters
+- Added ability to use foreach on strings
+- Added direct syntax for using structs with indicies
+- Added support for length property in arrays, strings, hash tables and struct arrays
+- Added support for first and last properties in struct arrays
+- Added more precise types for built-in functions
+- Added ability to call built-in functions for arrays, strings and hash tables with OOP syntax
+- Added ability to define custom extension methods for arrays, strings and hash tables
+- Added ability to import other scripts when using class definition attributes
+- Added more strict handling of function return types
+- Added ability to append new tokens during processing of classes in API
+- Improved memory utilization of global metadata after processing
+- Fixed importing of locals by not including transitively included locals
+- Fixed custom inplace operators sometimes throwing an internal error during processing
+- Fixed array and hash table literals to use appropriate type
+- Fixed implicit type conversion to work with arrays and hash tables
+- Fixed checking of types for non-overridable calls of built-in functions
+- Fixed checking for member attributes with undefined class attributes
+- Fixed checking of types when retrieving two result values from functions
+- Fixed checking for unclosed classes and functions
+- Fixed checking for duplicate classes
+- Fixed parsing of ternary operator in extended operator
+- Fixed propagation of errors when checking for script existence in import statement
+- Fixed get_method_real_name method in ClassType to use proper base class (in API)
+
+Version 0.7 (2022/12/27):
+- Added support for structs (packed data in arrays)
+- Added ability to get offsets of fields in classes
+- Added support for shorthand float operations
+- Added operator overloading for appending to existing strings
+- Added automatic calling of to_string methods in string concatenation
+- Added support for operator overloading
+- Improved error messages when parsing class attributes
+- Changed comparison operators to be more strict about types
+- Adjusted for syntax change to allow multiple semicolons (empty statements)
+- Adjusted for tokenization change of numbers (separate leading plus/minus token)
+- Fixed checking for incompatible types in math operations
+- Fixed registering of global functions defined in attributes
+
+Version 0.6 (2022/03/14):
+- Added ability to get real names of methods in API
+- Added easier way to check for non-primitive types in API
+- Added ability to check for assignability between types in API
+- Improved error message when importing non-existing script
+- Fixed parsing of extended operator with leading plus or minus sign
+
+Version 0.5 (2021/10/03):
+- Adjusted for new symbol representation in tokens
+- Fixed types for string_to_utf8 function
+
+Version 0.4 (2021/05/12):
+- Added ability to directly define static methods using private constants
+- Added access to constants, locals and variables in API
+- Added basic support for import aliases
+- Added automatic to_string implementation
+- Added ability to define global functions using private constants
+- Changed to use script_line function for error reporting
+- Changed adjusting of function calls to include return type in API
+- Fixed parsing of empty array with whitespace between braces
+- Fixed adjusting of functions when called from methods (using API)
+- Fixed bug in throw statement that prevented method calls
+
+Version 0.3 (2020/10/13):
+- Added support for class definitions using private constants
+- Added support for declaring of types when obtaining two results from a function call
+- Added support for function references to class methods
+- Added hiding of helper functions for calling virtual methods
+- Added better syntax for constructors
+- Added API for integration with other token processors
+- Fixed reporting of unrecognized tokens in class body
+- Fixed parsing of operator for array access using constant (->)
+
+Version 0.2 (2020/02/06):
+- Added support for calling super methods
+- Fixed foreach statement
+- Fixed type checking of functions outside classes
+- Fixed method calls preceeded by unary operators
+- Fixed parsing of case statements
+
+Version 0.1 (2019/12/26):
+- Initial release

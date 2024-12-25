@@ -1,0 +1,132 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "gui/subview";
+import "cellsplit/gui/common";
+
+const {
+	BOX_HORIZ,
+	BOX_VERT
+};
+
+implement_MeasureView(GameBox)
+
+class GameBox: SubView
+{
+	var @dir: Integer;
+	var @views: MeasureView[];
+	var @padding: Integer;
+	
+	constructor create(dir: Integer, views: MeasureView[])
+	{
+		this.dir = dir;
+		this.views = views;
+
+		foreach (var view in views) {
+			add(view.as_view());
+		}
+	}
+
+	function set_padding(padding: Integer)
+	{
+		this.padding = padding;
+	}
+
+	function get_padding(): Integer
+	{
+		return padding;
+	}
+
+	function get_preferred_width(scale: Float): Integer
+	{
+		if (dir == BOX_HORIZ) {
+			var width = 0;
+			var first = true;
+			foreach (var view in views) {
+				if (!first) {
+					width += iround(padding*scale);
+				}
+				width += view.get_preferred_width(scale);
+				first = false;
+			}
+			return width;
+		}
+		else {
+			var max_width = 0;
+			foreach (var view in views) {
+				max_width = max(max_width, view.get_preferred_width(scale));
+			}
+			return max_width;
+		}
+	}
+
+	function get_preferred_height(scale: Float): Integer
+	{
+		if (dir == BOX_HORIZ) {
+			var max_height = 0;
+			foreach (var view in views) {
+				max_height = max(max_height, view.get_preferred_height(scale));
+			}
+			return max_height;
+		}
+		else {
+			var height = 0;
+			var first = true;
+			foreach (var view in views) {
+				if (!first) {
+					height += iround(padding*scale);
+				}
+				height += view.get_preferred_height(scale);
+				first = false;
+			}
+			return height;
+		}
+	}
+
+	function as_measure_view(): MeasureView
+	{
+		return GameBoxMeasureView::create(this);
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		if (dir == BOX_HORIZ) {
+			var x = 0;
+			foreach (var view in views) {
+				var width = view.get_preferred_width(scale);
+				view.as_view().set_rect(x, 0, width, get_height());
+				x += width + iround(padding*scale);
+			}
+		}
+		else {
+			var y = 0;
+			foreach (var view in views) {
+				var height = view.get_preferred_height(scale);
+				view.as_view().set_rect(0, y, get_width(), height);
+				y += height + iround(padding*scale);
+			}
+		}
+	}
+}

@@ -1,0 +1,16 @@
+import "util/common";
+import "util/archive";
+
+function adjust_document(request, document)
+{
+	var url = request_get_url(request);
+	var content = {
+		"<div style=\"font-family: sans-serif; font-size: 16px\">",
+		"<b>Error: This website is totally crippled beyond repair by Imperva Incapsula \"CDN\" service.</b><br><br>",
+		"You may have (tiny) luck loading this page (and only the very first request) at a later time.<br><br>",
+		"You may look up a very old version (if any) on <a href=\"", get_archive_org_link(request, url), "\">Internet Archive</a> ",
+		"or on <a href=\"", get_archive_today_link(request, url), "\">Archive Today</a>.",
+		"</div>"
+	};
+	request_replace_document(request, document_parse(content));
+}

@@ -1,0 +1,23 @@
+Version 0.6 (2024/05/05):
+- Added ability to generate arbitrary code using inline code snippets
+- Added ability to create string literals from macro parameter tokens
+- Fixed memory leak caused by not cleaning of private macros
+
+Version 0.5 (2022/12/27):
+- Removed adjustment of semicolons and raw macros (not needed anymore)
+- Fixed usage of temporary names in function references
+
+Version 0.4 (2021/10/03):
+- Adjusted for new symbol representation in tokens
+
+Version 0.3 (2021/05/12):
+- Added support for top-level functions defined from within a macro
+- Changed to use script_line function for error reporting
+
+Version 0.2 (2020/10/13):
+- Added support for private macros
+- Added support for raw macros (no trailing adjustment of semicolons)
+- Added support for macros without parameters
+
+Version 0.1 (2019/12/26):
+- Initial release

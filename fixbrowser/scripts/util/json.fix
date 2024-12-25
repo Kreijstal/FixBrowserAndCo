@@ -1,0 +1,569 @@
+import "util/common";
+import "util/string";
+
+const {
+	@PAR_buf,
+	@PAR_off
+};
+
+const {
+	@VALUE_NULL,
+	@VALUE_TRUE,
+	@VALUE_FALSE,
+	@VALUE_NUMBER,
+	@VALUE_STRING,
+	@VALUE_ARRAY,
+	@VALUE_OBJECT
+};
+
+function @get_value(value, key)
+{
+	if (!value) return null;
+
+	switch (value[0]) {
+		case VALUE_ARRAY: {
+			var array = value[1];
+			if (key >= length(array)) return null;
+			return array[key];
+		}
+
+		case VALUE_OBJECT: {
+			return hash_get(value[1], key, null);
+		}
+	}
+	return null;
+}
+
+function json_length(obj)
+{
+	if (!obj) return 0;
+
+	switch (obj[0]) {
+		case VALUE_ARRAY:
+		case VALUE_OBJECT:
+			return length(obj[1]);
+	}
+	return 0;
+}
+
+function json_get_keys(obj)
+{
+	if (!obj) return [];
+	if (obj[0] != VALUE_OBJECT) return [];
+	return hash_keys(obj[1]);
+}
+
+function json_has_key(obj, key)
+{
+	if (!obj) return false;
+	if (obj[0] != VALUE_OBJECT) return false;
+	return hash_contains(obj[1], key);
+}
+
+function json_get_string(obj, key)
+{
+	var value = get_value(obj, key);
+	if (!value) return null;
+	if (value[0] != VALUE_STRING) return null;
+	return value[1];
+}
+
+function json_get_number(obj, key)
+{
+	var value = get_value(obj, key);
+	if (!value) return null;
+	if (value[0] != VALUE_NUMBER) return null;
+	return value[1];
+}
+
+function json_get_int(obj, key, default_value)
+{
+	var value = get_value(obj, key);
+	if (!value) return default_value;
+	if (value[0] != VALUE_NUMBER) return default_value;
+	var s = value[1];
+	for (var i=0; i<length(s); i++) {
+		switch (s[i]) {
+			case '.', 'e', 'E': return default_value;
+		}
+	}
+	return string_parse_int(s);
+}
+
+function json_get_long(obj, key)
+{
+	var value = get_value(obj, key);
+	if (!value) return null;
+	if (value[0] != VALUE_NUMBER) return null;
+	var s = value[1];
+	for (var i=0; i<length(s); i++) {
+		switch (s[i]) {
+			case '.', 'e', 'E': return null;
+		}
+	}
+	return string_parse_long(s);
+}
+
+function json_get_float(obj, key, default_value)
+{
+	var value = get_value(obj, key);
+	if (!value) return default_value;
+	if (value[0] != VALUE_NUMBER) return default_value;
+	return string_parse_float(value[1]);
+}
+
+function json_get_array(obj, key)
+{
+	var value = get_value(obj, key);
+	if (!value) return null;
+	if (value[0] != VALUE_ARRAY) return null;
+	return value;
+}
+
+function json_get_object(obj, key)
+{
+	var value = get_value(obj, key);
+	if (!value) return null;
+	if (value[0] != VALUE_OBJECT) return null;
+	return value;
+}
+
+function json_to_string(value)
+{
+	return json_to_string(value, {""}, 0);
+}
+
+function @json_to_string(value, s, level)
+{
+	switch (value[0]) {
+		case VALUE_NULL: string_append(s, "null"); break;
+		case VALUE_TRUE: string_append(s, "true"); break;
+		case VALUE_FALSE: string_append(s, "false"); break;
+		case VALUE_NUMBER: string_append(s, value[1]); break;
+		case VALUE_STRING: {
+			s[] = '"';
+			var str = value[1];
+			for (var i=0; i<length(str); i++) {
+				var c = str[i];
+				switch (c) {
+					case '\n': s[] = '\\'; s[] = 'n'; continue;
+					case '\r': s[] = '\\'; s[] = 'r'; continue;
+					case '\t': s[] = '\\'; s[] = 't'; continue;
+					case '\\': s[] = '\\'; s[] = '\\'; continue;
+					case '"': s[] = '\\'; s[] = '"'; continue;
+				}
+				if (c < 0x20 || c > 0xFFFF) {
+					append_unicode_escape(s, c);
+					continue;
+				}
+				s[] = c;
+			}
+			s[] = '"';
+			break;
+		}
+		case VALUE_ARRAY: {
+			s[] = '[';
+			s[] = '\n';
+			var array = value[1];
+			for (var i=0; i<length(array); i++) {
+				indent(s, level+1);
+				json_to_string(array[i], s, level+1);
+				if (i < length(array)-1) s[] = ',';
+				s[] = '\n';
+			}
+			indent(s, level);
+			s[] = ']';
+			break;
+		}
+		case VALUE_OBJECT: {
+			s[] = '{';
+			s[] = '\n';
+			var object = value[1];
+			for (var i=0; i<length(object); i++) {
+				var (k, v) = hash_entry(object, i);
+				indent(s, level+1);
+				json_to_string([VALUE_STRING, k], s, level+1);
+				s[] = ':';
+				s[] = ' ';
+				json_to_string(v, s, level+1);
+				if (i < length(object)-1) s[] = ',';
+				s[] = '\n';
+			}
+			indent(s, level);
+			s[] = '}';
+			break;
+		}
+	}
+	return s;
+}
+
+function @indent(s, num)
+{
+	for (var i=0; i<num; i++) {
+		s[] = ' ';
+		s[] = ' ';
+	}
+}
+
+function @append_unicode_escape(s, value)
+{
+	if (value < 0) {
+		return 0, error("invalid unicode character");
+	}
+	if (value >= 0x10000) {
+		value -= 0x10000;
+		var hi = value >> 10;
+		var lo = value & 0x3FF;
+		if (hi > 0x3FF) return 0, error("invalid unicode character");
+		append_unicode_escape(s, 0xD800 + hi);
+		append_unicode_escape(s, 0xDC00 + lo);
+		return;
+	}
+	s[] = '\\';
+	s[] = 'u';
+	for (var i=3; i>=0; i--) {
+		var digit = (value >> (i*4)) & 0xF;
+		s[] = digit < 10? '0' + digit : 'A' + (digit - 10);
+	}
+}
+
+function json_parse(s)
+{
+	if (length(s) == 0) {
+		return null;
+	}
+
+	var par = [s, 0];
+
+	var buf = par->PAR_buf;
+	var off = par->PAR_off;
+
+	while (off < length(buf)) {
+		switch (buf[off]) {
+			case '\t', '\n', '\r', ' ': off++; continue;
+		}
+		break;
+	}
+
+	par->PAR_off = off;
+	var value = parse_value(par);
+	off = par->PAR_off;
+
+	while (off < length(buf)) {
+		switch (buf[off]) {
+			case '\t', '\n', '\r', ' ': off++; continue;
+		}
+		break;
+	}
+
+	if (off != length(par->PAR_buf)) {
+		return 0, error("unexpected trailing data");
+	}
+	return value;
+}
+
+function @parse_value(par)
+{
+	var buf = par->PAR_buf;
+	var off = par->PAR_off;
+
+	var c = buf[off];
+	switch (c) {
+		case '{': {
+			off++;
+
+			while (off < length(buf)) {
+				switch (buf[off]) {
+					case '\t', '\n', '\r', ' ': off++; continue;
+				}
+				break;
+			}
+
+			if (off == length(buf)) return 0, error("expected value or '}'");
+			if (buf[off] == '}') {
+				par->PAR_off = off+1;
+				return [VALUE_OBJECT, {}];
+			}
+
+			var object = {};
+			for (;;) {
+				while (off < length(buf)) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				par->PAR_off = off;
+				var key = parse_value(par);
+				off = par->PAR_off;
+				// compatibility with improper JSON:
+				if (key[0] != VALUE_STRING) {
+					switch (key[0]) {
+						case VALUE_NULL: key = [VALUE_STRING, "null"]; break;
+						case VALUE_TRUE: key = [VALUE_STRING, "true"]; break;
+						case VALUE_FALSE: key = [VALUE_STRING, "false"]; break;
+						case VALUE_NUMBER: key = [VALUE_STRING, key[1]]; break;
+					}
+				}
+				if (key[0] != VALUE_STRING) {
+					return 0, error("only strings allowed as object keys");
+				}
+
+				while (off < length(buf)) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				if (off == length(buf) || buf[off] != ':') return 0, error({"expected ':' (at ", off, ")"});
+				off++;
+
+				while (off < length(buf)) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				par->PAR_off = off;
+				var value = parse_value(par);
+				off = par->PAR_off;
+
+				while (off < length(buf)) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				object{key[1]} = value;
+
+				if (off == length(buf)) return 0, error("expected ',' or '}'");
+				if (buf[off] == ',') {
+					off++;
+					continue;
+				}
+				break;
+			}
+			
+			if (off == length(buf) || buf[off] != '}') return 0, error("expected '}'");
+			par->PAR_off = off+1;
+			return [VALUE_OBJECT, object];
+		}
+
+		case '[': {
+			off++;
+
+			while (off < length(buf)) {
+				switch (buf[off]) {
+					case '\t', '\n', '\r', ' ': off++; continue;
+				}
+				break;
+			}
+
+			if (off == length(buf)) return 0, error("expected value or ']'");
+			if (buf[off] == ']') {
+				par->PAR_off = off+1;
+				return [VALUE_ARRAY, []];
+			}
+
+			var array = [];
+			for (;;) {
+				while (off < length(buf)) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				par->PAR_off = off;
+				array[] = parse_value(par);
+				off = par->PAR_off;
+
+				while (off < length(buf)) {
+					switch (buf[off]) {
+						case '\t', '\n', '\r', ' ': off++; continue;
+					}
+					break;
+				}
+
+				if (off == length(buf)) return 0, error("expected ',' or ']'");
+				if (buf[off] == ',') {
+					off++;
+					continue;
+				}
+				break;
+			}
+			
+			if (off == length(buf) || buf[off] != ']') return 0, error("expected ']'");
+			par->PAR_off = off+1;
+			return [VALUE_ARRAY, array];
+		}
+
+		case '"': {
+			var s = {""};
+			off++;
+			while (off < length(buf)) {
+				c = buf[off++];
+				switch (c) {
+					case 0x20..0x21, 0x23..0x5B, 0x5D..0x10FFFF:
+						s[] = c;
+						continue;
+
+					case '\\':
+						if (off == length(buf)) return 0, error("invalid escape sequence");
+						c = buf[off++];
+						switch (c) {
+							case '"', '\\', '/': s[] = c; break;
+							case 'b': s[] = 0x08; break;
+							case 'n': s[] = '\n'; break;
+							case 'r': s[] = '\r'; break;
+							case 't': s[] = '\t'; break;
+							
+							case 'u': {
+								var val = 0;
+								for (var i=0; i<4; i++) {
+									if (off == length(buf)) return 0, error("invalid escape sequence");
+									c = buf[off++];
+									switch (c) {
+										case '0'..'9': val = (val << 4) | (c - '0'); break;
+										case 'a'..'f': val = (val << 4) | (c - 'a' + 10); break;
+										case 'A'..'F': val = (val << 4) | (c - 'A' + 10); break;
+										default: return 0, error("invalid escape sequence");
+									}
+								}
+								s[] = val;
+								break;
+							}
+
+							default:
+								return 0, error("invalid escape sequence");
+						}
+						continue;
+
+					case '"':
+						for (var i=0; i<length(s); i++) {
+							c = s[i];
+							if (c >= 0xDC00 && c <= 0xDFFF) {
+								s[i] = 0xFFFD;
+								continue;
+							}
+							if (c >= 0xD800 && c <= 0xDBFF) {
+								if (i+1 == length(s)) {
+									s[i] = 0xFFFD;
+									break;
+								}
+								var hi = c - 0xD800;
+								c = s[i+1];
+								if (c < 0xDC00 || c > 0xDFFF) {
+									s[i] = 0xFFFD;
+									continue;
+								}
+								var lo = c - 0xDC00;
+								s[i] = 0x10000 + ((hi << 10) | lo);
+								array_remove(s, i+1);
+								continue;
+							}
+						}
+						par->PAR_off = off;
+						return [VALUE_STRING, s];
+				}
+				break;
+			}
+			return 0, error("invalid string");
+		}
+
+		case '0'..'9', '-': {
+			var start = off;
+			if (c == '-') {
+				if (++off == length(buf)) return 0, error("expected number");
+				c = buf[off];
+				if (c < '0' || c > '9') return 0, error("expected number");
+			}
+			if (c == '0') {
+				off++;
+			}
+			else {
+				while (c >= '0' && c <= '9') {
+					if (++off == length(buf)) break;
+					c = buf[off];
+				}
+				if (c == '.') {
+					if (++off == length(buf)) return 0, error("expected number");
+					c = buf[off];
+					while (c >= '0' && c <= '9') {
+						if (++off == length(buf)) break;
+						c = buf[off];
+					}
+				}
+				if (c == 'e' || c == 'E') {
+					if (++off == length(buf)) return 0, error("expected number");
+					c = buf[off];
+					if (c == '+' || c == '-') {
+						if (++off == length(buf)) return 0, error("expected number");
+						c = buf[off];
+					}
+					while (c >= '0' && c <= '9') {
+						if (++off == length(buf)) break;
+						c = buf[off];
+					}
+				}
+			}
+			par->PAR_off = off;
+			return [VALUE_NUMBER, string_substring(buf, start, off)];
+		}
+
+		case 't':
+			if (off+3 < length(buf) && buf[off+1] == 'r' && buf[off+2] == 'u' && buf[off+3] == 'e') {
+				par->PAR_off = off + 4;
+				return [VALUE_TRUE];
+			}
+			break;
+
+		case 'f':
+			if (off+4 < length(buf) && buf[off+1] == 'a' && buf[off+2] == 'l' && buf[off+3] == 's' && buf[off+4] == 'e') {
+				par->PAR_off = off + 5;
+				return [VALUE_FALSE];
+			}
+			break;
+	
+		case 'n':
+			if (off+3 < length(buf) && buf[off+1] == 'u' && buf[off+2] == 'l' && buf[off+3] == 'l') {
+				par->PAR_off = off + 4;
+				return [VALUE_NULL];
+			}
+			break;
+	}
+
+	// compatibility with using identifiers as object keys (non-standard JSON):
+
+	switch (c) {
+		case 'A'..'Z', 'a'..'z', '_', '$', 0x80..0x10FFFF: {
+			var start = off++;
+			while (off < length(buf)) {
+				switch (buf[off]) {
+					case 'A'..'Z', 'a'..'z', '_', '$', 0x80..0x10FFFF, '0'..'9':
+						off++;
+						continue;
+				}
+				break;
+			}
+			par->PAR_off = off;
+			return [VALUE_STRING, string_substring(buf, start, off)];
+		}
+	}
+
+	return 0, error({"unexpected character ('", string_char(c), "' at offset ", off, ")"});
+}
+
+function show_json(value)
+{
+	return {"<pre>", html_escape(json_to_string(value)), "</pre>"};
+}
+
+function show_json(dest_elem, value)
+{
+	element_set_html(dest_elem, show_json(value));
+}

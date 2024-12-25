@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixScript Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.snippet { background: #eee; border: 1px solid #ccc; padding: 4px 6px; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+		table[border='1'], table[border='1'] td, table[border='1'] th { border: 2px solid #CCC; border-collapse: collapse; }
+		td, th { padding: 4px 6px; }
+		.menu a { font-weight: bold; text-decoration: none; }
+	</style>
+</head>
+<body>
+
+<h1>FixScript Documentation</h1>
+
+<ul>
+	<li>Version: 0.9</li>
+	<li><a href="https://www.fixscript.org/">Homepage</a> (<a href="http://fixscript.advel.cz/">mirror</a>)</li>
+</ul>
+
+<p class="menu">
+<a href="index.html">Home</a> |
+<a href="docs.html">Docs</a> |
+<a href="capi.html">C API</a> |
+<a href="changelog.html">ChangeLog</a>
+</p>
+
+<h2>C API</h2>
+
+<ul>
+	<li><a href="#prerequisites">Prerequisites</a></li>
+	<li><a href="#temporary-roots">Temporary roots</a></li>
+	<li><a href="#types">Types</a></li>
+	<li><a href="#error-codes">Error codes</a></li>
+	<li><a href="#functions">Functions</a>
+		<ul>
+			<li><a href="#values">Simple values handling</a></li>
+			<li><a href="#heap">Heap management</a></li>
+			<li><a href="#time-limit">Execution time limit</a></li>
+			<li><a href="#handle-refs">Reference handling in value handles</a></li>
+			<li><a href="#array">Array access</a></li>
+			<li><a href="#shared">Shared arrays</a></li>
+			<li><a href="#string">String access</a></li>
+			<li><a href="#hash">Hash access</a></li>
+			<li><a href="#native-handles">Native handles</a></li>
+			<li><a href="#weak-references">Weak references</a></li>
+			<li><a href="#error-handling">Error handling</a></li>
+			<li><a href="#value-inspection">Value inspection</a></li>
+			<li><a href="#serialization">Cloning &amp; serialization</a></li>
+			<li><a href="#scripts">Script loading &amp; running</a></li>
+			<li><a href="#bytecode">Bytecode &amp; heap inspection</a></li>
+		</ul>
+	</li>
+	<li><a href="#async">Optional asynchronous mode</a>
+		<ul>
+			<li><a href="#async-types">Types</a></li>
+			<li><a href="#async-functions">Functions</a></li>
+		</ul>
+	</li>
+</ul>
+
+<h2 id="prerequisites">Prerequisites</h2>
+
+<p>
+The C implementation is currently written for targets where <code>int</code>
+is 4 bytes and <code>short</code> is 2 bytes. This is true for the usual 32/64
+bit targets but may not be true in embedded targets and modifications would
+be needed.
+</p>
+
+<p>
+The code also uses the indirect goto feature of GCC and Clang for increasing
+the performance. However it contains a fallback that uses switches with some
+performance degradation and noticeable increase in object size. This doesn't
+apply when JIT is available for given platform and is not disabled.
+</p>
+
+
+
+<h2 id="temporary-roots">Temporary roots</h2>
+
+<p>
+To avoid premature garbage collection of temporary values in C code all created
+arrays, strings, etc. are added into list of temporary roots. This list is
+cleared only on explicit garbage collection, when calling script function or
+returning from the handler of a native function.
+</p>
+
+<h2 id="types">Types</h2>
+
+<dl>
+	<dt><code>typedef struct Heap Heap;</code></dt>
+	<dd>
+		The heap contains all the data structures of the scripts as well as the
+		compiled scripts themselves.
+	</dd>
+	<dt><code>typedef struct Script Script;</code></dt>
+	<dd>
+		Reference to specific script. This is to allow to query functions defined
+		in that script. The scripts are owned by <code>Heap</code> and must not
+		be mixed up between heaps or freed manually.
+	</dd>
+	<dt><code>typedef struct { int value; int is_array; } Value;</code></dt>
+	<dd>
+		Value struct contains the integer value and an indication if it's an array
+		reference or a float value. It's preferred to use this type as an opaque value
+		and always use the functions for handling the simple values.<br>
+		<b>Internal details:</b> The distinction between array reference and floats is
+		made based on the unsigned value, if it's outside the range 1..0x7FFFFF (meaning
+		the exponent is present or the number is negative or zero) then it's outside of
+		valid array references and it's a float value. Note that denormalized numbers are
+		flushed to zero and thus don't collide with array references (the exponent would
+		be stored as 0 in such case). The <code>is_array</code> is either 0 or 1, this
+		allows to directly compare the struct for equivalence. This struct is always
+		passed by value. You can test validity of any reference by comparing <code>value</code>
+		to zero (all references are non-zero).
+	</dd>
+	<dt><code>typedef struct SharedArrayHandle SharedArrayHandle;</code></dt>
+	<dd>
+		Used for referencing shared arrays outside a heap.
+	</dd>
+	<dt><code>typedef void (*HandleFreeFunc)(void *p);</code></dt>
+	<dd>
+		Used for freeing the native handle. Called during garbage collection, it is advised
+		to not trigger garbage collection in the function (directly or indirectly), however
+		there is a safeguard preventing a recursive GC. Should GC occur again the heap will
+		get larger instead (and there is a possibility of getting spurious out of memory errors
+		if the heap was already big enough, also it can overinflate the heap without the ability
+		to shrink because of fragmentation).
+	</dd>
+	<dt><code>typedef void *(*HandleFunc)(Heap *heap, int op, void *p1, void *p2);</code></dt>
+	<dd>
+		Used for handling the native value handle. The operation can be one of the following:
+		<dl>
+			<dt><code>HANDLE_OP_FREE</code></dt>
+			<dd>free the value handle <code>p1</code> (called during garbage collection, see the note on HandleFreeFunc type)</dd>
+			<dt><code>HANDLE_OP_COPY</code></dt>
+			<dd>create a copy of the value handle <code>p1</code> or return <code>NULL</code> if copies are not supported (the destination heap pointer is in <code>p2</code>), this operation must be thread-safe as the copying can occur in multiple threads concurrently</dd>
+			<dt><code>HANDLE_OP_COMPARE</code></dt>
+			<dd>compare the value handles <code>p1</code> and <code>p2</code>, result is negative (if less), zero (if equal) or positive (if greater), the result needs to be casted to <code>intptr_t</code> and then to <code>void *</code><br>note: the second pointer can be from a handle in a different heap</dd>
+			<dt><code>HANDLE_OP_HASH</code></dt>
+			<dd>return hash of the value handle <code>p1</code> casted to <code>void *</code> (only low 32 bits are used)</dd>
+			<dt><code>HANDLE_OP_TO_STRING</code></dt>
+			<dd>return newly allocated string representation of the value handle <code>p1</code> (return <code>NULL</code> for default string representation)</dd>
+			<dt><code>HANDLE_OP_MARK_REFS</code></dt>
+			<dd>called during GC to mark references (using the <code>fixscript_mark_ref</code> function) held on the native side (<code>p1</code> points to handle)</dd>
+			<dt><code>HANDLE_OP_COPY_REFS</code></dt>
+			<dd>called during deep cloning to copy references (using the <code>fixscript_copy_ref</code> function) held on the native side (<code>p1</code> points to handle and <code>p2</code> to copy context), this operation must be thread-safe as the copying can occur in multiple threads concurrently<br>note: in some circumstances it won't be called for a deep copy (eg. in case of an error during cloning), handle such cases gracefully</dd>
+		</dl>
+	</dd>
+	<dt><code>typedef Script *(*LoadScriptFunc)(Heap *heap, const char *fname, Value *error, void *data);</code></dt>
+	<dd>
+		Used for providing a callback to load other scripts when using the <code>import</code>
+		or the <code>use</code> statement.
+	</dd>
+	<dt><code>typedef Value (*NativeFunc)(Heap *heap, Value *error, int num_params, Value *params, void *data);</code></dt>
+	<dd>
+		Used for providing native functions. Use <code>error</code> to return second return value (usually used for errors, initialized to zero).
+	</dd>
+</dl>
+
+<h2 id="error-codes">Error codes</h2>
+
+<p>
+Note: Error constants are negative values (success code is zero).
+</p>
+
+<dl>
+	<dt><code>FIXSCRIPT_SUCCESS</code></dt>
+	<dd>
+		No error occurred.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_INVALID_ACCESS</code></dt>
+	<dd>
+		The value is an invalid reference.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_INVALID_BYTE_ARRAY</code></dt>
+	<dd>
+		The value is invalid byte array (contains values outside the range of byte or contains non-integer values).
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_INVALID_SHORT_ARRAY</code></dt>
+	<dd>
+		The value is invalid short array (contains values outside the range of short or contains non-integer values).
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_INVALID_NULL_STRING</code></dt>
+	<dd>
+		The string contains zero character (reported only when the string is retrieved without getting the length and thus relying on the zero character termination).
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_CONST_WRITE</code></dt>
+	<dd>
+		The value is a constant string and can't be modified.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_OUT_OF_BOUNDS</code></dt>
+	<dd>
+		The index or range is out of the bounds.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_OUT_OF_MEMORY</code></dt>
+	<dd>
+		Tried to allocate more memory than available or an integer overflow occurred during computation of how much to allocate.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_INVALID_SHARED_ARRAY_OPERATION</code></dt>
+	<dd>
+		Tried to change length or element size on a shared array, or put a reference or native handle to such array.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_KEY_NOT_FOUND</code></dt>
+	<dd>
+		The requested key isn't present in the hash table.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_RECURSION_LIMIT</code></dt>
+	<dd>
+		The recursion limit was exceeded.
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_UNSERIALIZABLE_REF</code></dt>
+	<dd>
+		An unserializable reference occurred (for example native handle).
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_BAD_FORMAT</code></dt>
+	<dd>
+		Bad format or data too short (when unserializing).
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_FUNC_REF_LOAD_ERROR</code></dt>
+	<dd>
+		Script load error during resolving of function reference (typically native function not defined
+		or script wasn't loaded when resolving within already loaded code only).
+	</dd>
+	<dt><code>FIXSCRIPT_ERR_NESTED_WEAKREF</code></dt>
+	<dd>
+		Nested weak references are not allowed (referencing directly another weak reference or having
+		a key as a weak reference).
+	</dd>
+</dl>
+
+<h2 id="functions">Functions</h2>
+
+<h3 id="values">Simple values handling</h3>
+
+<p>
+Note: these functions are all inlined.
+</p>
+
+<dl>
+	<dt><code>Value fixscript_int(int value);</code></dt>
+	<dd>
+		Makes a 32-bit integer value.
+	</dd>
+	<dt><code>Value fixscript_float(float value);</code></dt>
+	<dd>
+		Makes a 32-bit float value. The denormals are flushed to zero.
+	</dd>
+	<dt><code>int fixscript_is_int(Value value);</code></dt>
+	<dd>
+		Returns whether the value is a 32-bit integer.
+	</dd>
+	<dt><code>int fixscript_is_float(Value value);</code></dt>
+	<dd>
+		Returns whether the value is a 32-bit float.
+	</dd>
+	<dt><code>int fixscript_get_int(Value value);</code></dt>
+	<dd>
+		Returns the integer representation of the value. If the value is a float
+		or an array reference it will return the bitwise representation.
+	</dd>
+	<dt><code>float fixscript_get_float(Value value);</code></dt>
+	<dd>
+		Returns the float representation of the value. Gives incorrect values
+		if the value wasn't a float.
+	</dd>
+</dl>
+
+<h3 id="heap">Heap management</h3>
+
+<dl>
+	<dt><code>Heap *fixscript_create_heap();</code></dt>
+	<dd>
+		Creates a new heap, this contains the whole context of script execution. You
+		can use only different heaps in different threads concurrently.
+	</dd>
+	<dt><code>void fixscript_free_heap(Heap *heap);</code></dt>
+	<dd>
+		Frees all the resources for given heap.
+	</dd>
+	<dt><code>void fixscript_collect_heap(Heap *heap);</code></dt>
+	<dd>
+		Runs garbage collection for given heap. It also clears the temporary roots,
+		you need to store references directly in the heap or increase their external
+		reference count to persist them.
+	</dd>
+	<dt><code>long long fixscript_heap_size(Heap *heap);</code></dt>
+	<dd>
+		Traverses the heap to obtain the overall size of the heap in bytes. This includes
+		overheads from reserved memory for array growths and struct paddings, but
+		doesn't include overhead of the underlying <code>malloc</code> implementation.
+	</dd>
+	<dt><code>void fixscript_adjust_heap_size(Heap *heap, long long relative_change);</code></dt>
+	<dd>
+		Adjusts tracked memory footprint of the heap. This is used for making sure the
+		garbage collection knows about externally allocated memory (eg. when using native
+		handles).
+	</dd>
+	<dt><code>void fixscript_set_max_stack_size(Heap *heap, int size);</code></dt>
+	<dd>
+		Sets the maximum stack size in number of stack entries (each taking 5 bytes and
+		currently each up to 32 bytes for native JIT stack).
+	</dd>
+	<dt><code>int fixscript_get_max_stack_size(Heap *heap);</code></dt>
+	<dd>
+		Returns the stack size limit.
+	</dd>
+	<dt><code>int fixscript_get_stack_size(Heap *heap);</code></dt>
+	<dd>
+		Returns the current stack size.
+	</dd>
+	<dt><code>void fixscript_ref(Heap *heap, Value value);</code></dt>
+	<dd>
+		Increases the number of external references, preventing the value from being garbage collected.
+		There is an internal limit that once reached will prevent decreasing of the counter to prevent
+		releasing the value while still potentially being held.<br>
+		<b>Note:</b> Beware of reference cycles that will result into inability to reclaim memory. Often this is
+		when the native handle needs to hold into some heap data which contains reference back to the native
+		handle, creating a cycle. This is best solved by using a value handle and using the <code>HANDLE_OP_MARK_REFS</code>
+		operation to mark any such references. Alternativelly you can use weak references on the native
+		side (simply by not using <code>fixscript_ref</code>) and wrapping the native handle into
+		an object (containing array of references that need to be retained) and referencing to that object
+		instead of the handle.
+	</dd>
+	<dt><code>void fixscript_unref(Heap *heap, Value value);</code></dt>
+	<dd>
+		Decreases the number of external references, once at zero the value can be garbage collected.
+	</dd>
+	<dt><code>void fixscript_set_protected(Heap *heap, Value value, int is_protected);</code></dt>
+	<dd>
+		Sets the protected status of given reference. This is used in native libraries that want to
+		protect internal data structures to not be directly exposed to the scripts by other native
+		libraries that create arbitrary references from just the integer portion and pass them to the
+		scripts.
+	</dd>
+	<dt><code>int fixscript_is_protected(Heap *heap, Value value);</code></dt>
+	<dd>
+		Returns whether the given reference is protected and shouldn't be exposed to the script.
+	</dd>
+	<dt><code>void fixscript_register_cleanup(Heap *heap, HandleFreeFunc free_func, void *data);</code></dt>
+	<dd>
+		Registers a cleanup function that will be called when the heap is freed.
+	</dd>
+	<dt><code>void fixscript_register_heap_key(volatile int *key);</code></dt>
+	<dd>
+		Registers a heap key if it's not registered already, this is done atomically. This is a global operation,
+		and should be used for static initialization only.
+	</dd>
+	<dt><code>int fixscript_set_heap_data(Heap *heap, int key, void *data, HandleFreeFunc free_func);</code></dt>
+	<dd>
+		Sets per-heap value with given key, freeing the previous value if present.
+	</dd>
+	<dt><code>void *fixscript_get_heap_data(Heap *heap, int key);</code></dt>
+	<dd>
+		Returns per-heap value for given key.
+	</dd>
+</dl>
+
+<h3 id="time-limit">Execution time limit</h3>
+
+<dl>
+	<dt><code>void fixscript_set_time_limit(Heap *heap, int limit);</code></dt>
+	<dd>
+		Sets a time limit in milliseconds for execution of the scripts. The time limit starts
+		counting after calling of this function. This function must be called before any
+		scripts are loaded as they need to be instrumented with the time checks. To disable
+		the time limit, pass -1 as a limit (avoid passing 0 as that would remove instrumentation
+		for newly compiled scripts).
+	</dd>
+	<dt><code>int fixscript_get_remaining_time(Heap *heap);</code></dt>
+	<dd>
+		Returns the remaining time in milliseconds (capped to 0) for execution of the scripts.
+		Returns -1 when the time limit is not set. The 0 is also returned when the heap is
+		stopped asynchronously from another thread.
+	</dd>
+	<dt><code>void fixscript_stop_execution(Heap *heap);</code></dt>
+	<dd>
+		Stops the running script asynchronously from another thread. The heap must be using
+		the time limit feature (use -1 for no actual time limit). To be able to run code again
+		the time limit must be set again (it will reset the stop execution flag).
+	</dd>
+</dl>
+
+<h3 id="handle-refs">Reference handling in value handles</h3>
+
+<dl>
+	<dt><code>void fixscript_mark_ref(Heap *heap, Value value);</code></dt>
+	<dd>
+		Marks a reference held on the native side. Call this only during the <code>HANDLE_OP_MARK_REFS</code>
+		operation of the value handles.
+	</dd>
+	<dt><code>Value fixscript_copy_ref(void *ctx, Value value);</code></dt>
+	<dd>
+		Creates a copy of the reference, using the copy context that is available during <code>HANDLE_OP_COPY_REFS</code>
+		operation of the value handles.
+	</dd>
+</dl>
+
+<h3 id="array">Array access</h3>
+
+<dl>
+	<dt><code>Value fixscript_create_array(Heap *heap, int len);</code></dt>
+	<dd>
+		Creates a new array of given length. The reference is added into temporary roots
+		to prevent it from premature deallocation.
+	</dd>
+	<dt><code>Value fixscript_create_byte_array(Heap *heap, const char *buf, int len);</code></dt>
+	<dd>
+		Creates a new byte array with given content. The reference is added into
+		temporary roots to prevent it from premature deallocation.
+	</dd>
+	<dt><code>int fixscript_set_array_length(Heap *heap, Value arr_val, int len);</code></dt>
+	<dd>
+		Sets length of given array, expanding the capacity when needed. If the
+		length is bigger than currently is the space is filled with zeros.
+		Does nothing in case the array reference is invalid. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_array_length(Heap *heap, Value arr_val, int *len);</code></dt>
+	<dd>
+		Returns length of the array or hash in the output parameter. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_array_element_size(Heap *heap, Value arr_val, int *elem_size);</code></dt>
+	<dd>
+		Returns the current element size (1, 2 or 4 bytes) of the array in the output parameter. Returns error code.
+	</dd>
+	<dt><code>int fixscript_is_array(Heap *heap, Value arr_val);</code></dt>
+	<dd>
+		Returns whether the given value is valid reference to an array.
+	</dd>
+	<dt><code>int fixscript_set_array_elem(Heap *heap, Value arr_val, int idx, Value value);</code></dt>
+	<dd>
+		Sets value in the array at given index. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_array_elem(Heap *heap, Value arr_val, int idx, Value *value);</code></dt>
+	<dd>
+		Retrieves value in the array at given index. Returns error code.
+	</dd>
+	<dt><code>int fixscript_append_array_elem(Heap *heap, Value arr_val, Value value);</code></dt>
+	<dd>
+		Appends value in to the array. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_array_range(Heap *heap, Value arr_val, int off, int len, Value *values);</code></dt>
+	<dd>
+		Retrieves values from the array in specified range. Returns error code.
+	</dd>
+	<dt><code>int fixscript_set_array_range(Heap *heap, Value arr_val, int off, int len, Value *values);</code></dt>
+	<dd>
+		Stores values to the array in specified range. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_array_bytes(Heap *heap, Value arr_val, int off, int len, char *bytes);</code></dt>
+	<dd>
+		Retrieves byte values from the array in specified range. Returns error code.
+	</dd>
+	<dt><code>int fixscript_set_array_bytes(Heap *heap, Value arr_val, int off, int len, char *bytes);</code></dt>
+	<dd>
+		Stores byte values to the array in specified range. Returns error code.
+	</dd>
+	<dt><code>int fixscript_has_array_references(Heap *heap, Value arr_val, int off, int len, int float_as_ref, int *result);</code></dt>
+	<dd>
+		Checks the array for contained references. You can specify if you want to treat floats as
+		references (faster) or not. The result is passed in an output parameter. Returns error code.
+	</dd>
+	<dt><code>int fixscript_copy_array(Heap *heap, Value dest, int dest_off, Value src, int src_off, int count);</code></dt>
+	<dd>
+		Copies given amount of values between different arrays or within the same array. Returns error code.
+	</dd>
+	<dt><code>int fixscript_lock_array(Heap *heap, Value arr_val, int off, int len, void **data, int elem_size, int access);</code></dt>
+	<dd>
+		Obtains direct pointer access to an array when possible or allocates a temporary buffer
+		and optionally copies the data to it from the array. You must unlock the array by calling
+		<code>fixscript_unlock_array</code> with the same parameters (length can be made smaller).
+		There must be no other access to the array while being locked.
+		The reference is added into temporary roots to prevent it from premature deallocation.
+		The access can be one of <code>ACCESS_READ_ONLY</code>, <code>ACCESS_WRITE_ONLY</code> or
+		<code>ACCESS_READ_WRITE</code>.
+	</dd>
+	<dt><code>void fixscript_unlock_array(Heap *heap, Value arr_val, int off, int len, void **data, int elem_size, int access);</code></dt>
+	<dd>
+		Finishes direct pointer access to an array or optionally copies the data from the temporary
+		buffer back into the array and frees the temporary buffer if used. All the parameters must
+		be the same as when called the <code>fixscript_lock_array</code> function. It is however
+		permitted to shorten the length to avoid unnecessary copying of data.
+		In write mode the values in the range are converted to integers only, making any references
+		invalid.
+	</dd>
+</dl>
+
+<h3 id="shared">Shared arrays</h3>
+
+<dl>
+	<dt><code>Value fixscript_create_shared_array(Heap *heap, int len, int elem_size);</code></dt>
+	<dd>
+		Creates a new shared array. The reference is added into temporary roots to prevent it
+		from premature deallocation.
+	</dd>
+	<dt><code>Value fixscript_create_or_get_shared_array(Heap *heap, int type, void *ptr, int len, int elem_size, HandleFreeFunc free_func, void *data, int *created);</code></dt>
+	<dd>
+		Creates a new shared array with user provided pointer or gets an existing instance.
+		The type allows to specify what kind of handle type it is (use a non-negative integer
+		or pass a negative number when not used). The pointer must be aligned to element size.
+		The reference is added into temporary roots to prevent it from premature deallocation.
+		Optionally you can retrieve whether the shared array was created or an existing instance
+		was returned instead.<br>
+		<b>Note:</b> The shared arrays are matched based on type, pointer, length, element size
+		and data, therefore if any of these are unique (eg. resulting from a new allocation),
+		the array is always created as new and there is no need to check for creation status.
+	</dd>
+	<dt><code>void fixscript_ref_shared_array(SharedArrayHandle *sah);</code></dt>
+	<dd>
+		Increases the number of references, preventing the shared array from being freed prematurely.
+		There is an internal limit that once reached will prevent decreasing of the counter to prevent
+		freeing the array while still potentially being held.
+	</dd>
+	<dt><code>void fixscript_unref_shared_array(SharedArrayHandle *sah);</code></dt>
+	<dd>
+		Decreases the number of references, once at zero the shared array is freed.
+	</dd>
+	<dt><code>int fixscript_get_shared_array_reference_count(SharedArrayHandle *sah);</code></dt>
+	<dd>
+		Returns the value of reference counter for given shared array.
+	</dd>
+	<dt><code>SharedArrayHandle *fixscript_get_shared_array_handle(Heap *heap, Value arr_val, int expected_type, int *actual_type);</code></dt>
+	<dd>
+		Obtains direct reference to shared array for usage outside of the heap. You can restrict
+		obtaining for given handle type only (pass a negative value to allow any type of shared
+		array). Returns <code>NULL</code> on error (invalid value or different type).
+	</dd>
+	<dt><code>void *fixscript_get_shared_array_handle_data(SharedArrayHandle *sah, int *len, int *elem_size, void **data, int expected_type, int *actual_type);</code></dt>
+	<dd>
+		Returns information about a shared array. You can restrict checking for given handle type
+		(pass a negative value to disable the check). All output parameters are optional. Returns
+		<code>NULL</code> on error (different type).
+	</dd>
+	<dt><code>Value fixscript_get_shared_array_value(Heap *heap, SharedArrayHandle *sah);</code></dt>
+	<dd>
+		Creates or returns an existing reference to given shared array.
+	</dd>
+	<dt><code>Value fixscript_get_shared_array(Heap *heap, int type, void *ptr, int len, int elem_size, void *data);</code></dt>
+	<dd>
+		Returns an existing reference to a shared array, returns <code>null</code> in case the reference
+		is not present.
+	</dd>
+	<dt><code>void *fixscript_get_shared_array_data(Heap *heap, Value arr_val, int *len, int *elem_size, void **data, int expected_type, int *actual_type);</code></dt>
+	<dd>
+		Returns information about a shared array. You can restrict checking for given handle type
+		(pass a negative value to disable the check). All output parameters are optional. Returns
+		<code>NULL</code> on error (invalid value or different type).
+	</dd>
+	<dt><code>int fixscript_is_shared_array(Heap *heap, Value arr_val);</code></dt>
+	<dd>
+		Returns whether the given value is a valid reference to a shared array.
+	</dd>
+</dl>
+
+<h3 id="string">String access</h3>
+
+<dl>
+	<dt><code>Value fixscript_create_string(Heap *heap, const char *s, int len);</code></dt>
+	<dd>
+		Creates a new string from UTF-8 encoded characters of given length. Any
+		incorrectly encoded character is replaced by the replacement character
+		(U+FFFD). If the length is negative the length is computed automatically.
+		The reference is added into temporary roots to prevent it from premature
+		deallocation.
+	</dd>
+	<dt><code>Value fixscript_create_string_utf16(Heap *heap, const unsigned short *s, int len);</code></dt>
+	<dd>
+		A variant of <code>fixscript_create_string</code> that uses UTF-16 encoded
+		characters. Any invalid surrogate pair encoding is replaced by the replacement
+		character (U+FFFD).
+	</dd>
+	<dt><code>int fixscript_get_string(Heap *heap, Value str_val, int str_off, int str_len, char **str, int *len_out);</code></dt>
+	<dd>
+		Returns the string contents as UTF-8 encoded characters (pass negative value for
+		length to use the whole string). Any invalid character (outside of the valid range
+		or within the surrogate pairs range) is replaced by the replacement character (U+FFFD).
+		The string is always zero-terminated and you can optionally obtain the string length.
+		The string must be deallocated by the caller using the <code>free</code> function.
+		If the output length is not obtained and the string contains zero character it returns
+		an error instead of returning shortened string. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_string_utf16(Heap *heap, Value str_val, int str_off, int str_len, unsigned short **str, int *len_out);</code></dt>
+	<dd>
+		A variant of <code>fixscript_get_string</code> that uses UTF-16 encoded
+		characters.
+	</dd>
+	<dt><code>int fixscript_is_string(Heap *heap, Value str_val);</code></dt>
+	<dd>
+		Returns whether the given value is a valid reference to a string.
+	</dd>
+	<dt><code>int fixscript_get_const_string(Heap *heap, Value str_val, int off, int len, Value *ret);</code></dt>
+	<dd>
+		Returns a constant string (can't be modified) for the given string. You can either specify
+		a portion of the original string or specify negative length to consider the whole string,
+		in such case the same string is returned if it is already a constant. Returns error code.
+		There is always only a single instance for each unique constant string.
+	</dd>
+	<dt><code>int fixscript_get_const_string_between(Heap *dest, Heap *src, Value str_val, int off, int len, Value *ret);</code></dt>
+	<dd>
+		A variant that allows to use a different heap for the source string.
+	</dd>
+	<dt><code>int fixscript_is_const_string(Heap *heap, Value str_val);</code></dt>
+	<dd>
+		Returns whether the given value is a valid reference to a constant string.
+	</dd>
+
+</dl>
+
+<h3 id="hash">Hash access</h3>
+
+<dl>
+	<dt><code>Value fixscript_create_hash(Heap *heap);</code></dt>
+	<dd>
+		Creates a new hash. The reference is added into temporary roots to
+		prevent it from premature deallocation.
+	</dd>
+	<dt><code>int fixscript_is_hash(Heap *heap, Value hash_val);</code></dt>
+	<dd>
+		Returns whether the given value is valid reference to a hash.
+	</dd>
+	<dt><code>int fixscript_set_hash_elem(Heap *heap, Value hash_val, Value key_val, Value value_val);</code></dt>
+	<dd>
+		Sets value in the hash for given key. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_hash_elem(Heap *heap, Value hash_val, Value key_val, Value *value_val);</code></dt>
+	<dd>
+		Retrieves value in the hash for given key. Returns error code.
+	</dd>
+	<dt><code>int fixscript_get_hash_elem_between(Heap *heap, Value hash_val, Heap *key_heap, Value key_val, Value *value_val);</code></dt>
+	<dd>
+		Retrieves value in the hash for given key (the key can be from a different heap). Returns error code.
+	</dd>
+	<dt><code>int fixscript_remove_hash_elem(Heap *heap, Value hash_val, Value key_val, Value *value_val);</code></dt>
+	<dd>
+		Removes entry for given key. Returns error code.
+	</dd>
+	<dt><code>int fixscript_clear_hash(Heap *heap, Value hash_val);</code></dt>
+	<dd>
+		Clears all entries in the hash. Returns error code.
+	</dd>
+	<dt><code>int fixscript_iter_hash(Heap *heap, Value hash_val, Value *key_val, Value *value_val, int *pos);</code></dt>
+	<dd>
+		Retrieves the next key and value from the hash. The iteration position must be initialized to zero before
+		retrieving first entry. Returns non-zero if entry was retrieved or zero when there are no more entries present.
+	</dd>
+</dl>
+
+<h3 id="native-handles">Native handles</h3>
+
+<dl>
+	<dt><code>Value fixscript_create_handle(Heap *heap, int type, void *handle, HandleFreeFunc free_func);</code></dt>
+	<dd>
+		Creates a new native handle. The <code>type</code> must not be negative. <code>free_func</code> is optional.
+	</dd>
+	<dt><code>Value fixscript_create_value_handle(Heap *heap, int type, void *handle, HandleFunc handle_func);</code></dt>
+	<dd>
+		Creates a new native value handle (supports comparing by value and cloning). The <code>type</code> must not be negative.
+	</dd>
+	<dt><code>void *fixscript_get_handle(Heap *heap, Value handle_val, int expected_type, int *actual_type);</code></dt>
+	<dd>
+		Obtains native handle with given type (or negative value to disable the check), optionally you can get the type
+		(set to -1 in case the handle is invalid). Returns <code>NULL</code> on error (invalid value or different type).
+	</dd>
+	<dt><code>void fixscript_register_handle_types(volatile int *offset, int count);</code></dt>
+	<dd>
+		Registers given number of native handle types if it's not registered already, this is done atomically.
+		This is a global operation, and should be used for static initialization only. The counts are counted
+		from <code>INT_MAX</code> and allocated by decrementing.
+	</dd>
+	<dt><code>int fixscript_is_handle(Heap *heap, Value handle_val);</code></dt>
+	<dd>
+		Returns whether the given value is a valid reference to a handle.
+	</dd>
+</dl>
+
+<h3 id="weak-references">Weak references</h3>
+
+<dl>
+	<dt><code>int fixscript_create_weak_ref(Heap *heap, Value value, Value *container, Value *key, Value *weak_ref);</code></dt>
+	<dd>
+		Creates a new weak reference (or already existing instance). Optionally you can pass
+		a container (hash table or array) for automatic action to occur once the target object
+		is garbage collected. In case of hash tables either the weak reference or provided
+		key is removed. For arrays either the weak reference or provided key is appended to
+		it. Be sure to periodically empty the array to prevent memory leaks.<br>
+		<b>Note:</b> weak references can't reference directly other weak references (including the key).
+	</dd>
+	<dt><code>int fixscript_get_weak_ref(Heap *heap, Value weak_ref, Value *value);</code></dt>
+	<dd>
+		Obtains the reference value for given weak reference.
+	</dd>
+	<dt><code>int fixscript_is_weak_ref(Heap *heap, Value weak_ref);</code></dt>
+	<dd>
+		Returns whether the given value is a weak reference.
+	</dd>
+</dl>
+
+<h3 id="error-handling">Error handling</h3>
+
+<dl>
+	<dt><code>const char *fixscript_get_error_msg(int error_code);</code></dt>
+	<dd>
+		Returns error message as a constant string, returns NULL for success or unknown error codes.
+	</dd>
+	<dt><code>Value fixscript_create_error(Heap *heap, Value msg);</code></dt>
+	<dd>
+		Creates error value (with the same format as the builtin <code>error</code> function) with given value for message.
+	</dd>
+	<dt><code>Value fixscript_create_error_string(Heap *heap, const char *s);</code></dt>
+	<dd>
+		Creates error value (with the same format as the builtin <code>error</code> function) with given error message.
+	</dd>
+	<dt><code>Value fixscript_error(Heap *heap, Value *error, int code);</code></dt>
+	<dd>
+		Creates error value (with the same format as the builtin <code>error</code> function) with error message that
+		corresponds to given error code. For convenience it returns zero and stores the error into the provided parameter.
+	</dd>
+	<dt><code>const char *fixscript_get_compiler_error(Heap *heap, Value error);</code></dt>
+	<dd>
+		Returns a string representation of a compiler error. It also handles simplifying of
+		syntax errors produced by token processors. The returned string is allocated internally
+		and the previous pointer is freed for each invocation of this function.
+	</dd>
+</dl>
+
+<h3 id="value-inspection">Value inspection</h3>
+
+<dl>
+	<dt><code>int fixscript_dump_value(Heap *heap, Value value, int newlines);</code></dt>
+	<dd>
+		Pretty prints the given value to standard error stream (<code>stderr</code>).
+	</dd>
+	<dt><code>int fixscript_to_string(Heap *heap, Value value, int newlines, char **str, int *len);</code></dt>
+	<dd>
+		Pretty prints the given value to newly allocated UTF-8 string (zero-terminated if length is not obtained).
+		Returns error code.
+	</dd>
+</dl>
+
+<h3 id="serialization">Cloning & serialization</h3>
+
+<dl>
+	<dt><code>int fixscript_compare(Heap *heap, Value value1, Value value2);</code></dt>
+	<dd>
+		Compares the values, returns a non-zero value when they are equal. There is currently
+		a maximum recursion limit of 50, more nested values will simply return as not equal.
+	</dd>
+	<dt><code>int fixscript_compare_between(Heap *heap1, Value value1, Heap *heap2, Value value2);</code></dt>
+	<dd>
+		A variant that allows to use a different heap for each value.
+	</dd>
+	<dt><code>int fixscript_clone(Heap *heap, Value value, int deep, Value *clone);</code></dt>
+	<dd>
+		Clones given value. Returns error code.
+	</dd>
+	<dt><code>int fixscript_clone_between(Heap *dest, Heap *src, Value value, Value *clone, LoadScriptFunc load_func, void *load_data, Value *error);</code></dt>
+	<dd>
+		Clones given value between different (or same) heaps. The optional load function is to load
+		the scripts for cloned function references, otherwise the references will be unresolved
+		until cloned again with the load function provided. You can pass the <code>fixscript_resolve_existing</code>
+		function to allow references to be resolved in already loaded code without loading any other code.
+		Returns error code. You can optionally obtain more precise error value when script load fails (if
+		resolving is used). The error is stored in the destination heap, if no such detailed error is produced
+		use the standard error codes. It is permitted to clone to multiple threads concurrently as long as the
+		source heap is not used for anything else.
+	</dd>
+	<dt><code>int fixscript_serialize(Heap *heap, Value *buf_val, Value value);</code></dt>
+	<dd>
+		Serializes given value to byte array value (created when not provided).
+	</dd>
+	<dt><code>int fixscript_unserialize(Heap *heap, Value buf_val, int *off, int len, Value *value);</code></dt>
+	<dd>
+		Unserializes value from given byte array value. The provided offset is adjusted with the resulting position
+		after the operation. If the length is passed as negative it will allow extra data after the serialized
+		data (possibily another serialized data).
+	</dd>
+	<dt><code>int fixscript_serialize_to_array(Heap *heap, char **buf, int *len_out, Value value);</code></dt>
+	<dd>
+		Serializes given value to native byte array. If length is not obtained the serialized form is prepended by
+		the size of the serialized data.
+	</dd>
+	<dt><code>int fixscript_unserialize_from_array(Heap *heap, const char *buf, int *off_out, int len, Value *value);</code></dt>
+	<dd>
+		Unserializes value from given native byte array. If length is negative it is read from the beginning
+		of the serialized data (must be outputed in that form). Optionally you can retrieve offset after the
+		serialized data, in that case it will allow extra data after the serialized data (possibly another
+		serialized data).
+	</dd>
+</dl>
+
+<h3 id="scripts">Script loading & running</h3>
+
+<dl>
+	<dt><code>Script *fixscript_load(Heap *heap, const char *src, const char *fname, Value *error, LoadScriptFunc load_func, void *load_data);</code></dt>
+	<dd>
+		Loads given script source under provided file name. On error it returns <code>NULL</code> and the error
+		value is outputed (optional). Passing of <code>load_func</code> is optional (<code>import</code> and
+		<code>use</code> statements will not work in such case). You can use <code>fixscript_resolve_existing</code>
+		function to allow loading of already compiled scripts.
+	</dd>
+	<dt><code>Script *fixscript_load_file(Heap *heap, const char *name, Value *error, const char *dirname);</code></dt>
+	<dd>
+		A variant of <code>fixscript_load</code> that loads scripts from file system.
+	</dd>
+	<dt><code>Script *fixscript_load_embed(Heap *heap, const char *name, Value *error, const char * const * const embed_files);</code></dt>
+	<dd>
+		A variant of <code>fixscript_load</code> that loads scripts from embedded static array as produced by the <code>fixembed</code> tool.
+	</dd>
+	<dt><code>Script *fixscript_reload(Heap *heap, const char *src, const char *fname, Value *error, LoadScriptFunc load_func, void *load_data);</code></dt>
+	<dd>
+		Reloads given script. The newly loaded version of the script replaces existing functions so new calls will
+		go to the updated script. On error it returns <code>NULL</code> and the error value is outputed (optional).
+		Passing of <code>load_func</code> is optional (<code>import</code> and <code>use</code> statements will not
+		work in such case). You can use <code>fixscript_resolve_existing</code> function to allow loading of already
+		compiled scripts.
+	</dd>
+	<dt><code>Script *fixscript_resolve_existing(Heap *heap, const char *name, Value *error, void *data);</code></dt>
+	<dd>
+		Script loading function that returns an error when trying to load a new script. Used for enabling function
+		reference resolving within already loaded scripts when cloning between heaps or just to allow to use
+		the previously compiled scripts only.
+	</dd>
+	<dt><code>Script *fixscript_get(Heap *heap, const char *fname);</code></dt>
+	<dd>
+		Returns script for given file name (or <code>NULL</code> if not found).
+	</dd>
+	<dt><code>char *fixscript_get_script_name(Heap *heap, Script *script);</code></dt>
+	<dd>
+		Returns newly allocated script name for given script (or <code>NULL</code> if no script is provided).
+	</dd>
+	<dt><code>Value fixscript_get_function(Heap *heap, Script *script, const char *func_name);</code></dt>
+	<dd>
+		Returns function handle for function with given name (must provide parameter count as part of the name).
+		Returns zero in case the script is not provided.
+	</dd>
+	<dt><code>int fixscript_get_function_list(Heap *heap, Script *script, char ***functions_out, int *count_out);</code></dt>
+	<dd>
+		Obtains a list of functions in given script as two output parameters. Returns an error code. The individual
+		strings and the list must be freed using the <code>free</code> function.
+	</dd>
+	<dt><code>int fixscript_get_function_name(Heap *heap, Value func_val, char **script_name_out, char **func_name_out, int *num_params_out);</code></dt>
+	<dd>
+		Obtains script name, function name and number of parameters for given function value (all obtained values are optional). Returns error code.
+	</dd>
+	<dt><code>int fixscript_is_func_ref(Heap *heap, Value func_ref);</code></dt>
+	<dd>
+		Returns whether the given value is a function reference.
+	</dd>
+	<dt><code>Value fixscript_run(Heap *heap, Script *script, const char *func_name, Value *error, ...);</code></dt>
+	<dd>
+		Runs function with given name (including parameter count in the name) and (optionally) obtains the error value.
+	</dd>
+	<dt><code>Value fixscript_run_args(Heap *heap, Script *script, const char *func_name, Value *error, Value *args);</code></dt>
+	<dd>
+		A variant of <code>fixscript_run</code> with arguments passed as an array. 
+	</dd>
+	<dt><code>Value fixscript_call(Heap *heap, Value func, int num_params, Value *error, ...);</code></dt>
+	<dd>
+		Calls function using given function value and (optionally) obtains the error value.
+	</dd>
+	<dt><code>Value fixscript_call_args(Heap *heap, Value func, int num_params, Value *error, Value *args);</code></dt>
+	<dd>
+		A variant of <code>fixscript_call</code> with arguments passed as an array. 
+	</dd>
+	<dt><code>void fixscript_register_native_func(Heap *heap, const char *name, NativeFunc func, void *data);</code></dt>
+	<dd>
+		Registers (or replaces) native function with given name.
+	</dd>
+	<dt><code>NativeFunc fixscript_get_native_func(Heap *heap, const char *name, void **data);</code></dt>
+	<dd>
+		Returns registered native function and the associated data (optional).
+	</dd>
+</dl>
+
+<h3 id="bytecode">Bytecode &amp; heap inspection</h3>
+
+<dl>
+	<dt><code>char *fixscript_dump_code(Heap *heap, Script *script, const char *func_name);</code></dt>
+	<dd>
+		Returns newly allocated string representation of bytecode for given function (or all functions if not provided).
+	</dd>
+	<dt><code>char *fixscript_dump_heap(Heap *heap);</code></dt>
+	<dd>
+		Returns newly allocated string representation of heap values.
+	</dd>
+</dl>
+
+<h2 id="async">Optional asynchronous mode</h2>
+
+<p>
+There is an optional support for asynchronous mode that allows to have
+suspendable native functions and automatic suspension after processing of a
+number of instructions (for emulation of threads). The result is that the
+FixScript code is synchronous and the asynchronicity needs to be dealt with
+in native functions only.
+</p>
+
+<p>
+This needs to be enabled by the <code>FIXSCRIPT_ASYNC</code> define. When compiling
+for the WebAssembly target it is automatically enabled. Use the <code>FIXSCRIPT_NO_ASYNC</code>
+define to disable it.
+</p>
+
+<p>
+Currently enabling this mode disables the JIT compiler. There is no plan to add
+support for JIT in this mode except for platforms that require it for operation
+(WebAssembly only). Any other native platform is always able to manipulate the
+native stack therefore there is no need for this mode. However it might be
+simpler in some cases (and to be platform independent) to use this mode instead.
+</p>
+
+<h3 id="async-types">Types</h3>
+
+<dl>
+	<dt><code>typedef void (*ContinuationFunc)(void *data);</code></dt>
+	<dd>
+		A general continuation function.
+	</dd>
+	<dt><code>typedef void (*ContinuationResultFunc)(Heap *heap, Value result, Value error, void *data);</code></dt>
+	<dd>
+		A continuation function that receives result from an asynchronous call.
+	</dd>
+	<dt><code>typedef void (*ContinuationSuspendFunc)(ContinuationFunc resume_func, void *resume_data, void *data);</code></dt>
+	<dd>
+		A continuation function that receives another continuation function for
+		resuming the original processing.
+	</dd>
+</dl>
+
+<h3 id="async-functions">Functions</h3>
+
+<dl>
+	<dt><code>void fixscript_set_auto_suspend_handler(Heap *heap, int num_instructions, ContinuationSuspendFunc func, void *data);</code></dt>
+	<dd>
+		Sets the handler for automatic suspension after processing a number of instructions.
+		The handler can cancel the suspension by calling the resume function immediately.
+		It reuses the execution time limit feature which is automatically enabled for
+		all heaps in asynchronous mode. Pass <code>NULL</code> as function to disable it.<br>
+		Note: automatic suspension is disabled in token processors.
+	</dd>
+	<dt><code>void fixscript_get_auto_suspend_handler(Heap *heap, int *num_instructions, ContinuationSuspendFunc *func, void **data);</code></dt>
+	<dd>
+		Returns the handler for automatic suspension. All output parameters are optional.
+	</dd>
+	<dt><code>void fixscript_suspend(Heap *heap, ContinuationResultFunc *func, void **data);</code></dt>
+	<dd>
+		Suspends the native function. Returns the continuation function that needs to be called with
+		the result. After calling this function the native function handler should just return.
+		It is a fatal non-recoverable error to call this function when the FixScript code isn't called
+		using the asynchronous variants of the call functions. Use the <code>fixscript_in_async_call</code>
+		to check for this condition.
+	</dd>
+	<dt><code>void fixscript_suspend_void(Heap *heap, ContinuationFunc *func, void **data);</code></dt>
+	<dd>
+		An alternative variant of suspending for native functions that return no value. Uses a simpler
+		continuation function type.
+	</dd>
+	<dt><code>void fixscript_run_async(Heap *heap, Script *script, const char *func_name, Value *args, ContinuationResultFunc cont_func, void *cont_data);</code></dt>
+	<dd>
+		Runs asynchronously function with given name (including parameter count in the name). After
+		calling this function you should just return, leaving further processing to the provided
+		continuation function.
+	</dd>
+	<dt><code>void fixscript_call_async(Heap *heap, Value func, int num_params, Value *args, ContinuationResultFunc cont_func, void *cont_data);</code></dt>
+	<dd>
+		A variant for asynchronous calling using a function reference.
+	</dd>
+	<dt><code>void fixscript_allow_sync_call(Heap *heap);</code></dt>
+	<dd>
+		This function must be called right before the normal (synchronous) call functions
+		(<code>fixscript_run</code> and <code>fixscript_call</code>) to allow to run in
+		synchronous mode from an asynchronous call. This is for special needs where you
+		can't support asynchronous mode (for example when calling functions from native
+		handles). The auto suspending is also automatically disabled in this mode.
+	</dd>
+	<dt><code>int fixscript_in_async_call(Heap *heap);</code></dt>
+	<dd>
+		Returns whether the heap is currently in asynchronous call.
+	</dd>
+</dl>
+
+</body>
+</html>

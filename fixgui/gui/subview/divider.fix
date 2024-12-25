@@ -1,0 +1,201 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/event";
+import "gui/subview";
+
+const {
+	DIVIDE_HORIZ,
+	DIVIDE_VERT
+};
+
+class SubDivider: SubView
+{
+	var @type: Integer;
+	var @first: SubView;
+	var @second: SubView;
+	var @divider: Divider;
+	var @split: Float;
+	var @divider_size: Integer;
+	var @overhang_size: Integer;
+	var @drag_offset: Integer;
+
+	constructor create(type: Integer, first: SubView, second: SubView)
+	{
+		this.type = type;
+		this.first = first;
+		this.second = second;
+		add(first);
+		add(second);
+		split = 0.5;
+		divider_size = 5;
+	}
+
+	function get_type(): Integer
+	{
+		return type;
+	}
+
+	function get_first(): SubView
+	{
+		return first;
+	}
+
+	function get_second(): SubView
+	{
+		return second;
+	}
+
+	function set_split(split: Float)
+	{
+		if (split === this.split) return;
+		this.split = fclamp(split, 0.0, 1.0);
+		handle_resize();
+		repaint();
+	}
+
+	function get_split(): Float
+	{
+		return split;
+	}
+
+	function set_divider_size(size: Integer)
+	{
+		if (size === this.divider_size) return;
+		this.divider_size = size;
+		handle_resize();
+		repaint();
+	}
+
+	function get_divider_size(): Integer
+	{
+		return divider_size;
+	}
+
+	function set_overhang_size(size: Integer)
+	{
+		if (this.overhang_size == 0 && size != 0) {
+			divider = Divider::create();
+			add(divider);
+			divider.set_cursor(get_cursor());
+		}
+		else if (this.overhang_size != 0 && size == 0) {
+			remove(divider);
+			divider = null;
+		}
+		this.overhang_size = size;
+	}
+
+	function get_overhang_size(): Integer
+	{
+		return overhang_size;
+	}
+
+	override function handle_resize()
+	{
+		var scale = get_scale();
+		if (type == DIVIDE_HORIZ) {
+			var x = iround((get_width() - divider_size * scale) * split);
+			first.set_rect(0, 0, x, get_height());
+			second.set_rect(x+iround(divider_size * scale), 0, get_width() - x - iround(divider_size * scale), get_height());
+
+			if (divider) {
+				var x1 = x - iround(overhang_size * scale);
+				var x2 = x + iround(divider_size * scale) + iround(overhang_size * scale);
+				divider.set_rect(x1, 0, x2-x1, get_height());
+			}
+		}
+		else {
+			var y = iround((get_height() - divider_size * scale) * split);
+			first.set_rect(0, 0, get_width(), y);
+			second.set_rect(0, y+iround(divider_size * scale), get_width(), get_height() - y - iround(divider_size * scale));
+
+			if (divider) {
+				var y1 = y - iround(overhang_size * scale);
+				var y2 = y + iround(divider_size * scale) + iround(overhang_size * scale);
+				divider.set_rect(0, y1, get_width(), y2-y1);
+			}
+		}
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			if (type == DIVIDE_HORIZ) {
+				drag_offset = event.get_x() - get_first().get_width();
+			}
+			else {
+				drag_offset = event.get_y() - get_first().get_height();
+			}
+			return true;
+		}
+		if (event.get_type() == EVENT_MOUSE_DRAG && (event.get_modifiers() & MOD_LBUTTON) != 0) {
+			var scale = get_scale();
+			if (type == DIVIDE_HORIZ) {
+				set_split(float(event.get_x() - drag_offset) / float(get_width() - iround(divider_size * scale)));
+			}
+			else {
+				set_split(float(event.get_y() - drag_offset) / float(get_height() - iround(divider_size * scale)));
+			}
+			return true;
+		}
+		return false;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var scale = get_scale();
+		if (type == DIVIDE_HORIZ) {
+			var x = iround((get_width() - iround(divider_size * scale)) * split);
+			paint_divider(p, x, 0, iround(divider_size * scale), get_height());
+		}
+		else {
+			var y = iround((get_height() - iround(divider_size * scale)) * split);
+			paint_divider(p, 0, y, get_width(), iround(divider_size * scale));
+		}
+		draw_children(p);
+	}
+
+	virtual function paint_divider(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		p.fill_rect(x, y, width, height, 0xFFFF00FF);
+	}
+}
+
+class @Divider: SubView
+{
+	constructor create()
+	{
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		event = clone(event);
+		event.translate(get_x(), get_y());
+		var parent = get_parent();
+		var ret = parent.handle_mouse_event(event);
+		set_cursor(parent.get_cursor());
+		return ret;
+	}
+}

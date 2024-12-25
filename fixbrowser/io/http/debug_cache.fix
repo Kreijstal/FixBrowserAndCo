@@ -1,0 +1,122 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/crypto/md5";
+import "util/array";
+
+const {
+	@WRITER_stream = STREAM_SIZE,
+	@WRITER_key,
+	@WRITER_data,
+	@WRITER_SIZE
+};
+
+const {
+	@READER_data = STREAM_SIZE,
+	@READER_off,
+	@READER_SIZE
+};
+
+function cache_get(key)
+{
+	key = to_hex(md5(serialize(key)));
+	var (data, e) = file_read({"debug_cache/", key});
+	if (e) {
+		return null;
+	}
+	log("resource obtained from debug cache");
+	return create_reader(data);
+}
+
+function cache_create_writer(stream, key)
+{
+	var writer = object_extend(stream_create(), WRITER_SIZE);
+	writer->STREAM__vfunc__read_part__4 = writer_read_part#4;
+	writer->STREAM__vfunc__write_part__4 = writer_write_part#4;
+	writer->STREAM__vfunc__flush__1 = writer_flush#1;
+	writer->STREAM__vfunc__close__1 = writer_close#1;
+	writer->WRITER_stream = stream;
+	writer->WRITER_key = to_hex(md5(serialize(key)));
+	writer->WRITER_data = [];
+	return writer;
+}
+
+function @create_reader(data)
+{
+	var reader = object_extend(stream_create(), READER_SIZE);
+	reader->STREAM__vfunc__read_part__4 = reader_read_part#4;
+	reader->READER_data = data;
+	reader->READER_off = 0;
+	return reader;
+}
+
+function @to_hex(value)
+{
+	var hex = {""};
+	var len = length(value);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}
+
+function @writer_read_part(writer, buf, off, len)
+{
+	var read = stream_read_part(writer->WRITER_stream, buf, off, len);
+	if (read > 0) {
+		array_append(writer->WRITER_data, buf, off, read);
+	}
+	return read;
+}
+
+function @writer_write_part(writer, buf, off, len)
+{
+	return stream_write_part(writer->WRITER_stream, buf, off, len);
+}
+
+function @writer_flush(writer)
+{
+	stream_flush(writer->WRITER_stream);
+}
+
+function @writer_close(writer)
+{
+	stream_close(writer->WRITER_stream);
+	var (r, e) = file_write({"debug_cache/", writer->WRITER_key}, writer->WRITER_data);
+}
+
+function @reader_read_part(reader, buf, off, len)
+{
+	var data = reader->READER_data;
+	if (reader->READER_off == length(data)) {
+		return -1;
+	}
+
+	var read = min(length(data) - reader->READER_off, len);
+	array_copy(buf, off, data, reader->READER_off, read);
+	reader->READER_off += read;
+	return read;
+}

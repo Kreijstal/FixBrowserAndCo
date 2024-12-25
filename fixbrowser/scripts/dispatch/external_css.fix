@@ -1,0 +1,90 @@
+import "util/common";
+import "util/string";
+
+function adjust_document(request, document)
+{
+	var elems = element_query_all(document, "link[rel='stylesheet'][href]");
+	for (var i=0; i<length(elems); i++) {
+		var href = element_get_attr(elems[i], "href");
+
+		if (string_contains(href, "purecss")) {
+			if (string_starts_with(href, "https://unpkg.com/purecss@1.")) {
+				replace_css(elems[i], "pure-min-1.0.0.css");
+			}
+			else if (string_starts_with(href, "https://unpkg.com/purecss@0.6.")) {
+				replace_css(elems[i], "pure-min-0.6.2.css");
+			}
+			else if (string_starts_with(href, "http://yui.yahooapis.com/pure/0.5.")) {
+				replace_css(elems[i], "pure-min-0.5.0.css");
+			}
+			else {
+				replace_css(elems[i], "pure-min-0.4.2.css");
+			}
+		}
+		else if (string_contains(href, "bootstrap")) {
+			href = strip_bootstrap_prefix(href);
+			if (!href) continue;
+
+			if (string_starts_with(href, "4.3.")) {
+				replace_css(elems[i], "bootstrap.min-4.3.1.css");
+			}
+			else if (string_starts_with(href, "4.2.")) {
+				replace_css(elems[i], "bootstrap.min-4.2.1.css");
+			}
+			else if (string_starts_with(href, "4.")) {
+				replace_css(elems[i], "bootstrap.min-4.0.0.css");
+			}
+			else if (string_starts_with(href, "3.4.")) {
+				replace_css(elems[i], "bootstrap.min-3.4.1.css");
+			}
+			else if (string_starts_with(href, "3.3.")) {
+				replace_css(elems[i], "bootstrap.min-3.3.7.css");
+			}
+			else {
+				replace_css(elems[i], "bootstrap.min-2.3.2.css");
+			}
+		}
+		else if (string_contains(href, "materialize")) {
+			replace_css(elems[i], "materialize.min-1.0.0.css");
+		}
+	}
+}
+
+function @strip_prefix(url, prefixes)
+{
+	for (var i=0; i<length(prefixes); i++) {
+		if (string_starts_with(url, prefixes[i])) {
+			return string_substring(url, length(prefixes[i]));
+		}
+	}
+	return null;
+}
+
+function @strip_single_prefix(url, prefix)
+{
+	if (string_starts_with(url, prefix)) {
+		return string_substring(url, length(prefix));
+	}
+	return null;
+}
+
+function @strip_bootstrap_prefix(url)
+{
+	url = url_create(url);
+	var domain = url_get_host(url);
+	var path = url_path_to_string(url);
+
+	if (domain_ends_with(domain, "bootstrapcdn.com")) return strip_single_prefix(path, "/bootstrap/");
+	if (domain == "ajax.aspnetcdn.com") return strip_single_prefix(path, "/ajax/bootstrap/");
+	if (domain == "cdnjs.cloudflare.com") return strip_single_prefix(path, "/ajax/libs/twitter-bootstrap/");
+	return null;
+}
+
+function @replace_css(elem, name)
+{
+	var style = element_create("style");
+	var text = element_create_text(resource_get({"dispatch/css/", name}));
+	element_append_child(style, text);
+	element_insert_after(element_get_parent(elem), style, elem);
+	element_remove(elem);
+}

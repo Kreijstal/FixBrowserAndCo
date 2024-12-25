@@ -1,0 +1,68 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+function array_append(base, arr)
+{
+	array_append(base, arr, 0, length(arr));
+}
+
+function array_append(base, arr, off, len)
+{
+	var base_len = length(base);
+	array_set_length(base, base_len + len);
+	array_copy(base, base_len, arr, off, len);
+}
+
+function array_prepend(base, arr)
+{
+	array_prepend(base, arr, 0, length(arr));
+}
+
+function array_prepend(base, arr, off, len)
+{
+	var base_len = length(base);
+	array_set_length(base, base_len + len);
+	array_copy(base, len, base, 0, base_len);
+	array_copy(base, 0, arr, off, len);
+}
+
+function array_join(arr1, arr2)
+{
+	var len1 = length(arr1);
+	var len2 = length(arr2);
+	var result = [];
+	array_set_length(result, len1+len2);
+	array_copy(result, 0, arr1, 0, len1);
+	array_copy(result, len1, arr2, 0, len2);
+	return result;
+}
+
+function array_set(base, arr)
+{
+	array_set(base, arr, 0, length(arr));
+}
+
+function array_set(base, arr, off, len)
+{
+	array_set_length(base, len);
+	array_copy(base, 0, arr, off, len);
+}
+

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixScript Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+		.snippet { background: #eee; border: 1px solid #ccc; padding: 4px 6px; }
+		.keyword { color: #00c; font-weight: bold; }
+		.symbol { color: #666; }
+		.string { color: #808; }
+		.function { font-weight: bold; }
+		table[border='1'], table[border='1'] td, table[border='1'] th { border: 2px solid #CCC; border-collapse: collapse; }
+		td, th { padding: 4px 6px; }
+		.menu a { font-weight: bold; text-decoration: none; }
+	</style>
+</head>
+<body>
+
+<h1>FixScript Documentation</h1>
+
+<ul>
+	<li>Version: 0.9</li>
+	<li><a href="https://www.fixscript.org/">Homepage</a> (<a href="http://fixscript.advel.cz/">mirror</a>)</li>
+</ul>
+
+<p class="menu">
+<a href="index.html">Home</a> |
+<a href="docs.html">Docs</a> |
+<a href="capi.html">C API</a> |
+<a href="changelog.html">ChangeLog</a>
+</p>
+
+<p>
+FixScript is an extensible scripting language designed for simple implementation and strong
+support for both backward and forward compatibility.
+</p>
+
+<p>
+You can use FixScript both as a standalone and embedded programming language. You can build
+standalone native executables for any supported platform from every platform.
+</p>
+
+<p>
+The best results are obtained when combined with the C language to get a very powerful tool.
+This way you can use the best of the two worlds, using the language for the high-level stuff
+and C doing the interoperability and fast stuff while having a good integration between
+both languages.
+</p>
+
+<p>
+You can learn more about FixScript in the <a href="https://www.fixscript.org/blog/introduction">Introduction to FixScript</a> blog post.
+</p>
+
+<h2>Features</h2>
+
+<ul>
+<li>simple and efficient implementation</li>
+<li>JIT compiler available for x86 and x86_64 CPU architectures (an interpreter is used for other architectures)</li>
+<li>object-oriented by convention (avoids the overheads of inheritance in script languages and the more descriptive names of functions and fields make more clear what data structures are being manipulated in absence of static types)</li>
+<li>full class syntax (including type checking) is also available as a token processor</li>
+<li>available types: 32-bit integers, 32-bit floats (without denormals), (compressed) resizable arrays, unicode strings, shared arrays, hash tables, function references, weak references, and native handles</li>
+<li>can also work with 64-bit (or more) integers and 64-bit floats using intrinsic functions</li>
+<li>mark-and-sweep garbage collector (each thread having own heap with ability to explicitly share data)</li>
+<li>written in C as a single file and a header (approx. 780KB source file including JIT, 26kLOC, 400KB object code)</li>
+<li>familiar C-like syntax with ability to create new syntaxes using token processors (macros)</li>
+<li>minimal amount of built-in functions, suited well for embedded and portable usage</li>
+<li>ability to speed-up specific functions written in FixScript by using optional native functions without sacrifying backward compatibility</li>
+<li>ability to return second value, primarilly to report errors, when the error value is not retrieved it fallbacks through functions similar to exception handling</li>
+<li>designed for backward and forward compatibility of both the scripts and the host application, the language and built-in functions are fixed</li>
+<li>designed to catch more errors at compile-time than is usual in script languages</li>
+<li>designed for multithreading (although in specific ways)</li>
+<li>friendly to native compilation (most operators work with a single type only)</li>
+<li>integer overflow emits an error</li>
+<li>ability to set execution time limit</li>
+<li>ability to reload scripts in-place to change behaviors of functions (live update)</li>
+<li>licensed under ZLIB license (doesn't need any notices in binary distributions)</li>
+</ul>
+
+<p>
+The libraries extend the features further:
+</p>
+
+<ul>
+<li>simple to use macro system</li>
+<li>static typing and direct support for classes</li>
+<li>multithreading</li>
+<li>direct declaration of C and JS functions for calling</li>
+</ul>
+
+<h2>Status</h2>
+
+<p>
+The first public release was released after 2 years of development at the end of 2019 and the
+language is currently in the <b>Beta</b> phase. This means that it's pretty much in it's final
+shape, but some (minor) incompatibilities can occur. Also some additions are still to be expected.
+Currently most of the work is being done in creating and improving of the common libraries as well
+as various improvements and bugfixes.
+</p>
+
+<p>
+The plan is to use the language in real world usages for a longer time to catch some potential pitfalls
+before the final stabilization (many were already resolved). That will occur once the 1.0 version is reached.
+After that point, the language will be frozen forever, providing a super stable base to build on. The
+language is extensible in various ways so this doesn't limit possible improvements into the future.
+</p>
+
+<p>
+After the 1.0 version, the language (including the built-in functions, serialization format, etc.) will be
+unchanged, however the implementation is expected to be improved over the time. Specifically the C API/ABI
+will remain backward compatible within major versions, adding new functions in minor versions, and no API/ABI
+changes in patch versions. It is expected that every major version will remain supported indefinitelly at
+basic level (bugfixes only).
+</p>
+
+<p>
+The language is by default using a JIT compiler (or an interpreter when not available for given CPU
+architecture). An optimizing native compiler is also in development based on native codegen that was
+developed as part of a different project. The goal is to make the language fast while maintaining good
+ratio between performance and implementation simplicity.
+</p>
+
+<h2>Examples</h2>
+
+<p>
+The base language looks like this:
+</p>
+
+<pre class="snippet">
+<span class="keyword">const</span> <span class="symbol">@</span>PI <span class="symbol">=</span> 3<span class="symbol">.</span>141592654<span class="symbol">;</span>
+
+<span class="keyword">const</span> <span class="symbol">{</span>
+    BASE_first<span class="symbol">,</span>
+    BASE_second<span class="symbol">,</span>
+    BASE_SIZE
+<span class="symbol">};</span>
+
+<span class="keyword">const</span> <span class="symbol">{</span>
+    SUBCLASS_third <span class="symbol">=</span> BASE_SIZE<span class="symbol">,</span>
+    SUBCLASS_SIZE
+<span class="symbol">};</span>
+
+<span class="keyword">function</span> <span class="function">base_create</span><span class="symbol">(</span>first<span class="symbol">,</span> second<span class="symbol">)</span>
+<span class="symbol">{</span>
+    <span class="keyword">var</span> base <span class="symbol">=</span> <span class="function">object_create</span><span class="symbol">(</span>BASE_SIZE<span class="symbol">);</span>
+    base<span class="symbol">-&gt;</span>BASE_first <span class="symbol">=</span> first<span class="symbol">;</span>
+    base<span class="symbol">-&gt;</span>BASE_second <span class="symbol">=</span> second<span class="symbol">;</span>
+    <span class="keyword">return</span> base<span class="symbol">;</span>
+<span class="symbol">}</span>
+
+<span class="keyword">function</span> <span class="function">subclass_create</span><span class="symbol">(</span>first<span class="symbol">,</span> second<span class="symbol">,</span> third<span class="symbol">)</span>
+<span class="symbol">{</span>
+    <span class="keyword">var</span> subclass <span class="symbol">=</span> <span class="function">object_extend</span><span class="symbol">(</span><span class="function">base_create</span><span class="symbol">(</span>first<span class="symbol">,</span> second<span class="symbol">),</span> SUBCLASS_SIZE<span class="symbol">);</span>
+    subclass<span class="symbol">-&gt;</span>BASE_first <span class="symbol">=</span> 0<span class="symbol">;</span>
+    subclass<span class="symbol">-&gt;</span>SUBCLASS_third <span class="symbol">=</span> third<span class="symbol">;</span>
+    <span class="keyword">return</span> subclass<span class="symbol">;</span>
+<span class="symbol">}</span>
+
+<span class="keyword">function</span> <span class="function">test</span><span class="symbol">()</span>
+<span class="symbol">{</span>
+    <span class="function">log</span><span class="symbol">({</span><span class="string">"the value of PI: "</span><span class="symbol">,</span> PI<span class="symbol">});</span>
+
+    <span class="keyword">var</span> array <span class="symbol">=</span> <span class="symbol">[];</span>
+    <span class="keyword">for</span> <span class="symbol">(</span><span class="keyword">var</span> i<span class="symbol">=</span>0<span class="symbol">;</span> i<span class="symbol">&lt;</span><span class="function">length</span><span class="symbol">(</span>array<span class="symbol">);</span> i<span class="symbol">++)</span> <span class="symbol">{</span>
+        <span class="symbol">...</span>
+    <span class="symbol">}</span>
+
+    <span class="keyword">var</span> hash <span class="symbol">=</span> <span class="symbol">{};</span>
+    <span class="keyword">for</span> <span class="symbol">(</span><span class="keyword">var</span> i<span class="symbol">=</span>0<span class="symbol">;</span> i<span class="symbol">&lt;</span><span class="function">length</span><span class="symbol">(</span>hash<span class="symbol">);</span> i<span class="symbol">++)</span> <span class="symbol">{</span>
+        <span class="keyword">var</span> <span class="symbol">(</span>k<span class="symbol">,</span> v<span class="symbol">)</span> <span class="symbol">=</span> <span class="function">hash_entry</span><span class="symbol">(</span>hash<span class="symbol">,</span> i<span class="symbol">);</span>
+        <span class="symbol">...</span>
+    <span class="symbol">}</span>
+
+    <span class="comment">// float operators:
+</span>    <span class="keyword">return</span> <span class="symbol">{</span><span class="function">float</span><span class="symbol">(</span>1<span class="symbol">)</span> <span class="symbol">+</span> <span class="symbol">{</span>2<span class="symbol">.</span>0 <span class="symbol">*</span> 3<span class="symbol">.</span>0<span class="symbol">}};</span>
+<span class="symbol">}</span>
+</pre>
+
+<p style="margin-top: 2em">
+However you can create and use libraries for extending the base syntax, for example
+the same code using the implementation of classes:
+</p>
+
+<pre class="snippet">
+<span class="keyword">use</span> <span class="string">"classes"</span><span class="symbol">;</span>
+
+<span class="keyword">const</span> <span class="symbol">@</span>PI <span class="symbol">=</span> 3<span class="symbol">.</span>141592654<span class="symbol">;</span>
+
+<span class="keyword">class</span> Base
+<span class="symbol">{</span>
+    <span class="keyword">var</span> first<span class="symbol">:</span> Integer<span class="symbol">;</span>
+    <span class="keyword">var</span> second<span class="symbol">:</span> Integer<span class="symbol">;</span>
+
+    <span class="keyword">constructor</span> <span class="function">create</span><span class="symbol">(</span>first<span class="symbol">:</span> Integer<span class="symbol">,</span> second<span class="symbol">:</span> Integer<span class="symbol">)</span>
+    <span class="symbol">{</span>
+        <span class="keyword">this</span><span class="symbol">.</span>first <span class="symbol">=</span> first<span class="symbol">;</span>
+        <span class="keyword">this</span><span class="symbol">.</span>second <span class="symbol">=</span> second<span class="symbol">;</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+
+<span class="keyword">class</span> Subclass<span class="symbol">:</span> Base
+<span class="symbol">{</span>
+    <span class="keyword">var</span> third<span class="symbol">:</span> Float<span class="symbol">[];</span>
+
+    <span class="keyword">constructor</span> <span class="function">create</span><span class="symbol">(</span>first<span class="symbol">:</span> Integer<span class="symbol">,</span> second<span class="symbol">:</span> Integer<span class="symbol">,</span> third<span class="symbol">:</span> Float<span class="symbol">[])</span>
+    <span class="symbol">{</span>
+        <span class="keyword">super</span><span class="symbol">::</span><span class="function">create</span><span class="symbol">(</span>first<span class="symbol">,</span> second<span class="symbol">);</span>
+        <span class="keyword">this</span><span class="symbol">.</span>first <span class="symbol">=</span> 0<span class="symbol">;</span>
+        <span class="keyword">this</span><span class="symbol">.</span>third <span class="symbol">=</span> third<span class="symbol">;</span>
+    <span class="symbol">}</span>
+<span class="symbol">}</span>
+
+<span class="keyword">function</span> <span class="function">test</span><span class="symbol">()</span>
+<span class="symbol">{</span>
+    <span class="function">log</span><span class="symbol">(</span><span class="string">"the value of PI: "</span> <span class="symbol">+</span> PI<span class="symbol">);</span>
+
+    <span class="keyword">var</span> array<span class="symbol">:</span> Integer<span class="symbol">[]</span> <span class="symbol">=</span> <span class="symbol">[];</span>
+    <span class="keyword">for</span> <span class="symbol">(</span><span class="keyword">var</span> i<span class="symbol">=</span>0<span class="symbol">;</span> i<span class="symbol">&lt;</span>array<span class="symbol">.</span>length<span class="symbol">;</span> i<span class="symbol">++)</span> <span class="symbol">{</span>
+        <span class="symbol">...</span>
+    <span class="symbol">}</span>
+
+    <span class="keyword">var</span> hash<span class="symbol">:</span> Integer<span class="symbol">[</span>String<span class="symbol">]</span> <span class="symbol">=</span> <span class="symbol">{};</span>
+    <span class="keyword">foreach</span> <span class="symbol">(</span><span class="keyword">var</span> k<span class="symbol">,</span> v <span class="keyword">in</span> hash<span class="symbol">)</span> <span class="symbol">{</span>
+        <span class="symbol">...</span>
+    <span class="symbol">}</span>
+
+    <span class="keyword">return</span> 1 <span class="symbol">+</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> 3<span class="symbol">.</span>0<span class="symbol">;</span>
+<span class="symbol">}</span>
+</pre>
+
+<p>
+You can find more examples in the <a href="https://www.fixscript.org/blog/introduction">Introduction to FixScript</a> blog post.
+</p>
+
+
+</body>
+</html>

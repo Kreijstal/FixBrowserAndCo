@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixUtil Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixUtil Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "util/json";</code>
+</p>
+
+<h3>Classes</h3>
+
+<ul>
+<li><a href="#class-json">JSON</a></li>
+<li><a href="#class-json-null">JSONNull</a></li>
+<li><a href="#class-json-boolean">JSONBoolean</a></li>
+<li><a href="#class-json-long">JSONLong</a></li>
+<li><a href="#class-json-double">JSONDouble</a></li>
+</ul>
+
+<h2 id="class-json">JSON class</h2>
+
+<p>
+This class wraps the JSON data structure. Normal types (integers, floats, strings, arrays, hashes)
+are used for the values so you can access it directly without the convenience of this class too.
+However some types don't directly map: <a href="#class-json-null"><code>null</code></a>,
+<a href="#class-json-boolean">boolean</a>, <a href="#class-json-long">long</a> and
+<a href="#class-json-double">double</a>. These are represented by special classes with their
+constraints.
+</p>
+
+<h3>Encode/decode</h3>
+
+<dl>
+	<dt><code>
+		static function <b>parse</b>(data: Byte[]): <a href="#class-json">JSON</a><br>
+		static function <b>parse</b>(data: Byte[], strict: Boolean): <a href="#class-json">JSON</a><br>
+		static function <b>parse_string</b>(s: String): <a href="#class-json">JSON</a><br>
+		static function <b>parse_string</b>(s: String, strict: Boolean): <a href="#class-json">JSON</a><br>
+	</code></dt>
+	<dd>
+		Parses JSON (either from UTF-8 encoded byte array or a string). Optionally
+		you can disable strict mode to allow parsing non-standard JSONs.
+	</dd>
+	<dt><code>function <b>to_bytes</b>(): Byte[]</code></dt>
+	<dd>
+		Converts the value to JSON byte array (UTF-8 encoded).
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Converts the value to JSON string.
+	</dd>
+</dl>
+
+<h3>Value access</h3>
+
+<dl>
+	<dt><code>
+		function <b>get</b>(key): <a href="#class-json">JSON</a><br>
+		function <b>get</b>(key, default_value): <a href="#class-json">JSON</a><br>
+	</code></dt>
+	<dd>
+		Returns a value for given key, either an integer for arrays or a string for objects.
+		It can optionally return a default value instead of an error.
+	</dd>
+	<dt><code>function <b>opt</b>(key): <a href="#class-json">JSON</a></code></dt>
+	<dd>
+		A variant of the <code>get</code> function that returns a special no value marker
+		in case the key is not found (or there is some other problem such as type mismatch).
+		You can check the presence of an actual value by calling the <code>has_value</code>
+		method. Also the various methods to get values simply return a reasonably safe default
+		value (such as zeros, empty arrays etc.) when used on the no value marker.
+	</dd>
+	<dt><code>function <b>length</b>(): Integer</code></dt>
+	<dd>
+		Returns the number of values (valid for arrays and objects only).
+	</dd>
+	<dt><code>function <b>get_keys</b>(): String[]</code></dt>
+	<dd>
+		Returns the list of keys in an object.
+	</dd>
+	<dt><code>function <b>has_value</b>(): Boolean</code></dt>
+	<dd>
+		Returns true when the value returned by the <code>opt</code> method is an actual value.
+	</dd>
+	<dt><code>function <b>is_null</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is JSON's <code>null</code> value.
+	</dd>
+	<dt><code>function <b>is_boolean</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is JSON's boolean value.
+	</dd>
+	<dt><code>function <b>is_int</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is an integer.
+	</dd>
+	<dt><code>function <b>is_long</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is JSON's long value.
+	</dd>
+	<dt><code>function <b>is_float</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is a float.
+	</dd>
+	<dt><code>function <b>is_double</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is JSON's double value.
+	</dd>
+	<dt><code>function <b>is_string</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is a string.
+	</dd>
+	<dt><code>function <b>is_array</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is an array.
+	</dd>
+	<dt><code>function <b>is_object</b>(): Boolean</code></dt>
+	<dd>
+		Returns whether the value is an object.
+	</dd>
+	<dt><code>
+		function <b>as_boolean</b>(): Boolean<br>
+		function <b>as_boolean</b>(default_value: Boolean): Boolean<br>
+	</code></dt>
+	<dd>
+		Returns the value as a boolean. It can optionally return a default value instead of an error.
+	</dd>
+	<dt><code>
+		function <b>as_int</b>(): Integer<br>
+		function <b>as_int</b>(default_value: Integer): Integer<br>
+	</code></dt>
+	<dd>
+		Returns the value as an integer. It can optionally return a default value instead of an error.
+	</dd>
+	<dt><code>
+		function <b>as_long</b>(): <a href="long.html">Long</a><br>
+		function <b>as_long</b>(default_value: Integer): <a href="long.html">Long</a><br>
+	</code></dt>
+	<dd>
+		Returns the value as a long. It can optionally return a default value instead of an error.
+	</dd>
+	<dt><code>
+		function <b>as_float</b>(): Float<br>
+		function <b>as_float</b>(default_value: Float): Float<br>
+	</code></dt>
+	<dd>
+		Returns the value as a float. It can optionally return a default value instead of an error.
+	</dd>
+	<dt><code>
+		function <b>as_double</b>(): <a href="double.html">Double</a><br>
+		function <b>as_double</b>(default_value: Float): <a href="double.html">Double</a><br>
+	</code></dt>
+	<dd>
+		Returns the value as a double. It can optionally return a default value instead of an error.
+	</dd>
+	<dt><code>
+		function <b>as_string</b>(): String<br>
+		function <b>as_string</b>(default_value: String): String<br>
+	</code></dt>
+	<dd>
+		Returns the value as a string. It can optionally return a default value instead of an error.
+	</dd>
+	<dt><code>function <b>as_array</b>(): <a href="#class-json">JSON</a>[]</code></dt>
+	<dd>
+		Returns the value as an array of values.
+	</dd>
+	<dt><code>function <b>as_object</b>(): <a href="#class-json">JSON</a>[String]</code></dt>
+	<dd>
+		Returns the value as an object (hash).
+	</dd>
+</dl>
+
+<h2 id="class-json-null">JSONNull class</h2>
+
+<p>
+This class represents a JSON's <code>null</code> value.
+</p>
+
+<h3>Functions</h3>
+
+<dl>
+	<dt><code>static function <b>get</b>(): JSONNull</code></dt>
+	<dd>
+		Returns JSON's <code>null</code> value.
+	</dd>
+	<dt><code>static function <b>is_instance</b>(value): Boolean</code></dt>
+	<dd>
+		Returns whether the value is a JSON's <code>null</code> value.
+	</dd>
+</dl>
+
+<h2 id="class-json-boolean">JSONBoolean class</h2>
+
+<p>
+This class represents a JSON's boolean value.
+</p>
+
+<h3>Functions</h3>
+
+<dl>
+	<dt><code>static function <b>get</b>(value: Boolean): JSONBoolean</code></dt>
+	<dd>
+		Returns JSON's boolean value.
+	</dd>
+	<dt><code>static function <b>is_instance</b>(value): Boolean</code></dt>
+	<dd>
+		Returns whether the value is a JSON's boolean value.
+	</dd>
+	<dt><code>function <b>to_boolean</b>(): Boolean</code></dt>
+	<dd>
+		Returns the value as a boolean.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the value as a string.
+	</dd>
+</dl>
+
+<h2 id="class-json-long">JSONLong class</h2>
+
+<p>
+This class represents a JSON's long value. As JSON has only a double type, this
+just wraps the exactly representable integer numbers in the range from -9007199254740992
+to 9007199254740992 (53 bits).
+</p>
+
+<h3>Functions</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(value: <a href="long.html">Long</a>): JSONLong</code></dt>
+	<dd>
+		Creates a JSON's long value.
+	</dd>
+	<dt><code>static function <b>create</b>(lo: Integer, hi: Integer): JSONLong</code></dt>
+	<dd>
+		Creates a JSON's long value with given low and high 32-bit parts.
+	</dd>
+	<dt><code>static function <b>from_int</b>(value: Integer): JSONLong</code></dt>
+	<dd>
+		Creates a JSON's long value from an integer.
+	</dd>
+	<dt><code>static function <b>from_string</b>(s: String): JSONLong</code></dt>
+	<dd>
+		Creates a JSON's long value from a string.
+	</dd>
+	<dt><code>static function <b>is_instance</b>(value): Boolean</code></dt>
+	<dd>
+		Returns whether the value is a JSON's long value.
+	</dd>
+	<dt><code>function <b>to_int</b>(): Integer</code></dt>
+	<dd>
+		Returns the value as an integer. Throws an error on integer overflow.
+	</dd>
+	<dt><code>function <b>to_long</b>(): <a href="long.html">Long</a></code></dt>
+	<dd>
+		Returns the value as a long.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the value as a string.
+	</dd>
+</dl>
+
+<h2 id="class-json-double">JSONDouble class</h2>
+
+<p>
+This class represents a JSON's double value. NaNs and infinities can't be stored.
+</p>
+
+<h3>Functions</h3>
+
+<dl>
+	<dt><code>static function <b>create</b>(value: <a href="double.html">Double</a>): JSONDouble</code></dt>
+	<dd>
+		Creates a JSON's double value.
+	</dd>
+	<dt><code>static function <b>create</b>(lo: Integer, hi: Integer): JSONDouble</code></dt>
+	<dd>
+		Creates a JSON's double value with given low and high 32-bit parts.
+	</dd>
+	<dt><code>static function <b>from_float</b>(value: Float): JSONDouble</code></dt>
+	<dd>
+		Creates a JSON's double value from a float.
+	</dd>
+	<dt><code>static function <b>from_string</b>(s: String): JSONDouble</code></dt>
+	<dd>
+		Creates a JSON's double value from a string.
+	</dd>
+	<dt><code>static function <b>is_instance</b>(value): Boolean</code></dt>
+	<dd>
+		Returns whether the value is a JSON's double value.
+	</dd>
+	<dt><code>function <b>to_float</b>(): Float</code></dt>
+	<dd>
+		Returns the value as a float.
+	</dd>
+	<dt><code>function <b>to_double</b>(): <a href="double.html">Double</a></code></dt>
+	<dd>
+		Returns the value as a double.
+	</dd>
+	<dt><code>function <b>to_string</b>(): String</code></dt>
+	<dd>
+		Returns the value as a string.
+	</dd>
+</dl>
+
+</body>
+</html>

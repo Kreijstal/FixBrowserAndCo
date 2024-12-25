@@ -1,0 +1,814 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/font";
+import "gui/view";
+import "gui/subview";
+import "gui/subview/button";
+import "gui/native/virtual";
+import "gui/native/web";
+
+const @USE_BLUR = 1;
+
+const @PI = 3.14159265;
+
+class DefaultKeyboard: VirtualKeyboard
+{
+	var @keyboard: Keyboard;
+	var @toggle_size: Integer;
+	var @shown: Boolean;
+
+	constructor create()
+	{
+		shown = false;
+	}
+
+	override function accept_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.get_x() >= (get_width() - toggle_size) && event.get_y() >= (get_height() - toggle_size)) { //XXX
+			return true;
+		}
+		return super.accept_mouse_event(event);
+	}
+
+	override function accept_touch_event(event: TouchEvent): Boolean
+	{
+		if (keyboard) {
+			var rect = keyboard.get_rect();
+			var extra = iround(10 * get_scale());
+			rect.y1 -= extra;
+			if (rect.contains(event.get_x(), event.get_y())) {
+				if (event.get_y() < rect.y1 + extra) {
+					event.set_position(event.get_x(), rect.y1 + extra);
+				}
+				return true;
+			}
+		}
+		return false;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		/*
+		if (event.get_type() == EVENT_MOUSE_DOWN && event.get_button() == MOUSE_BUTTON_LEFT) {
+			if (event.get_x() >= (get_width() - toggle_size) && event.get_y() >= (get_height() - toggle_size)) { //XXX
+				if (shown) {
+					hide();
+				}
+				else {
+					show();
+				}
+				return true;
+			}
+		}
+		*/
+		return false;
+	}
+
+	override function catch_mouse_event(event: MouseEvent): Boolean
+	{
+		return handle_mouse_event(event);
+	}
+
+	override function show()
+	{
+		if (!shown) {
+			if (keyboard) {
+				var rect = keyboard.get_rect();
+				rect.translate(10000, 0);
+				keyboard.set_rect(rect);
+			}
+			shown = true;
+		}
+	}
+
+	override function hide()
+	{
+		if (shown) {
+			if (keyboard) {
+				var rect = keyboard.get_rect();
+				rect.translate(-10000, 0);
+				keyboard.set_rect(rect);
+			}
+			shown = false;
+		}
+	}
+
+	override function is_visible(): Boolean
+	{
+		return shown;
+	}
+
+	override function get_visible_area(): Rect
+	{
+		if (shown) {
+			var rect = keyboard.get_rect();
+			return Rect(0, 0, get_width(), rect.y1);
+		}
+		return get_local_rect();
+	}
+
+	override function handle_resize()
+	{
+		if (!keyboard) {
+			keyboard = Keyboard::create();
+			add(keyboard);
+		}
+		var safe_area = Web::get_safe_area();
+		var width = get_width() - safe_area[0] - safe_area[2];
+		var height = get_height() - safe_area[1] - safe_area[3];
+
+		var h = iround(width / 3.0);
+		toggle_size = h/5;
+		if (height > width && iround(width / get_scale()) < 740) {
+			h *= 2;
+			toggle_size *= 2;
+		}
+		if (h > height/2) {
+			h = height/2;
+		}
+		keyboard.set_rect(shown? 0 : -10000, get_height()-h-safe_area[3], get_width(), h+safe_area[3]);
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		//p.fill_rect(0, 0, get_width(), get_height(), 0x40004040);
+		if (shown) {
+			draw_children(p);
+		}
+	}
+}
+
+class @Keyboard: SubView
+{
+	var @font: SystemFont;
+	var @keys: Button[];
+	var @last_width: Integer;
+	var @last_height: Integer;
+	var @last_scale: Float;
+	var @size: Float;
+	var @vert_size: Float;
+	var @max_height: Integer;
+	var @shift_mode: Boolean;
+	var @shift_cnt: Integer;
+	var @ctrl_cnt: Integer;
+	var @alt_cnt: Integer;
+	var @caps_lock: Boolean;
+	var @paint_buttons: Boolean;
+	var @paint_texts: Boolean;
+	var @img: Image;
+	var @layer: Layer;
+	var @current_opacity: Float;
+	var @target_opacity: Float;
+	var @animation_active: Boolean;
+	var @last_anim_time: Integer;
+
+	constructor create()
+	{
+		keys = [];
+		if (USE_BLUR == 0) {
+			paint_buttons = true;
+			paint_texts = true;
+		}
+	}
+
+	function @get_button(idx: Integer, label: String): Button
+	{
+		while (idx >= keys.length) {
+			keys[] = null;
+		}
+		var button = keys[idx];
+		if (button) {
+			button.set_font(font);
+			button.set_label(label);
+		}
+		else {
+			button = Button::create(idx, font, label);
+			add(button);
+			keys[idx] = button;
+		}
+		return button;
+	}
+
+	function @set_button(x: Float, y: Float, pos: Float, idx: Integer, label: String)
+	{
+		set_button(x, y, pos, pos+1.0, idx, label);
+	}
+
+	function @set_button(x: Float, y: Float, pos: Float, pos2: Float, idx: Integer, label: String)
+	{
+		var ix = iround(x+pos*size);
+		var ix2 = iround(x+pos2*size);
+		var iy = iround(y);
+		var iy2 = iround(y+vert_size);
+		get_button(idx, label).set_rect(ix, iy, ix2-ix, iy2-iy);
+		max_height = max(max_height, iy2);
+	}
+
+	function @get_modifiers(): Integer
+	{
+		var mod = 0;
+		if (shift_mode) mod |= MOD_SHIFT;
+		if (ctrl_cnt > 0) mod |= MOD_CTRL | MOD_CMD;
+		if (alt_cnt > 0) mod |= MOD_ALT;
+		return mod;
+	}
+
+	override function accept_touch_event(event: TouchEvent): Boolean
+	{
+		var y = clamp(event.get_y() - iround(10 * get_scale()), 0, max_height-1);
+		event.set_position(event.get_x(), y);
+		return true;
+	}
+
+	override function handle_resize()
+	{
+		var safe_area = Web::get_safe_area();
+		var width = get_width() - safe_area[0] - safe_area[2];
+		var height = get_height() - safe_area[3];
+
+		if (width == last_width && height == last_height && get_scale() == last_scale) {
+			if (layer) {
+				target_opacity = get_x() >= 0? 1.0 : 0.0;
+				if (target_opacity != current_opacity && !animation_active) {
+					animation_active = true;
+					last_anim_time = 0;
+					Web::run_animation(Keyboard::handle_visibility_animation#2, this);
+				}
+			}
+			return;
+		}
+		last_width = width;
+		last_height = height;
+		last_scale = get_scale();
+
+		if (Web::is_present()) {
+			if (layer) {
+				layer = null;
+				heap_collect();
+			}
+			var point = [-get_x(), 0];
+			point_to_top(point);
+			layer = Layer::create(1000000, point[0], point[1], get_width(), get_height(), 0, 0, 0, LAYER_TRANSLUCENT | LAYER_ACCELERATED, null, null);
+			current_opacity = get_x() >= 0? 1.0 : 0.0;
+			target_opacity = current_opacity;
+			set_opacity(current_opacity);
+		}
+
+		size = width / 15.0;
+		vert_size = size;
+		var narrow = false;
+		if (get_parent().get_height() > get_parent().get_width() && iround(get_parent().get_width() / get_scale()) < 740) {
+			vert_size = vert_size*2.0;
+			narrow = true;
+		}
+		var parent_half_height = (get_parent().get_height() - safe_area[1] - safe_area[3])*0.5;
+		if (vert_size*5.0 > parent_half_height) {
+			vert_size = parent_half_height/5.0;
+		}
+		font = SystemFont::create("Default", fmax(size, vert_size)/5.0, FONT_NORMAL);
+		var x = safe_area[0] + 0.0*size;
+		var y = 0.0*vert_size;
+		max_height = 0;
+		//set_button(x, y, 0, KEY_GRAVE, "`");
+		set_button(x, y, 0, KEY_ESCAPE, "Esc");
+		set_button(x, y, 1, KEY_NUM1, "1");
+		set_button(x, y, 2, KEY_NUM2, "2");
+		set_button(x, y, 3, KEY_NUM3, "3");
+		set_button(x, y, 4, KEY_NUM4, "4");
+		set_button(x, y, 5, KEY_NUM5, "5");
+		set_button(x, y, 6, KEY_NUM6, "6");
+		set_button(x, y, 7, KEY_NUM7, "7");
+		set_button(x, y, 8, KEY_NUM8, "8");
+		set_button(x, y, 9, KEY_NUM9, "9");
+		set_button(x, y, 10, KEY_NUM0, "0");
+		set_button(x, y, 11, KEY_MINUS, "-");
+		set_button(x, y, 12, KEY_EQUAL, "=");
+		set_button(x, y, 13, 15, KEY_BACKSPACE, narrow? "Back" : "Backspace");
+		x = safe_area[0] + -0.5 * size;
+		y = 1.0*vert_size;
+		set_button(x, y, 0.5, 2, KEY_TAB, "TAB");
+		set_button(x, y, 2, KEY_Q, "Q");
+		set_button(x, y, 3, KEY_W, "W");
+		set_button(x, y, 4, KEY_E, "E");
+		set_button(x, y, 5, KEY_R, "R");
+		set_button(x, y, 6, KEY_T, "T");
+		set_button(x, y, 7, KEY_Y, "Y");
+		set_button(x, y, 8, KEY_U, "U");
+		set_button(x, y, 9, KEY_I, "I");
+		set_button(x, y, 10, KEY_O, "O");
+		set_button(x, y, 11, KEY_P, "P");
+		set_button(x, y, 12, KEY_LBRACKET, "[");
+		set_button(x, y, 13, KEY_RBRACKET, "]");
+		set_button(x, y, 14, 15.5, KEY_BACKSLASH, "\\");
+		x = safe_area[0] + 0.0*size;
+		y = 2.0*vert_size;
+		set_button(x, y, 0, 2, KEY_CAPS_LOCK, narrow? "Caps" : "Caps Lock");
+		set_button(x, y, 2, KEY_A, "A");
+		set_button(x, y, 3, KEY_S, "S");
+		set_button(x, y, 4, KEY_D, "D");
+		set_button(x, y, 5, KEY_F, "F");
+		set_button(x, y, 6, KEY_G, "G");
+		set_button(x, y, 7, KEY_H, "H");
+		set_button(x, y, 8, KEY_J, "J");
+		set_button(x, y, 9, KEY_K, "K");
+		set_button(x, y, 10, KEY_L, "L");
+		set_button(x, y, 11, KEY_SEMICOLON, ";");
+		set_button(x, y, 12, KEY_APOSTROPHE, "'");
+		set_button(x, y, 13, 15, KEY_ENTER, "Enter");
+		x = safe_area[0] + 0.5*size;
+		y = 3.0*vert_size;
+		set_button(x, y, -0.5, 2, KEY_LSHIFT, "Shift");
+		set_button(x, y, 2, KEY_Z, "Z");
+		set_button(x, y, 3, KEY_X, "X");
+		set_button(x, y, 4, KEY_C, "C");
+		set_button(x, y, 5, KEY_V, "V");
+		set_button(x, y, 6, KEY_B, "B");
+		set_button(x, y, 7, KEY_N, "N");
+		set_button(x, y, 8, KEY_M, "M");
+		set_button(x, y, 9, KEY_COMMA, ",");
+		set_button(x, y, 10, KEY_PERIOD, ".");
+		set_button(x, y, 11, KEY_SLASH, "/");
+		//set_button(x, y, 12, 14.5, KEY_RSHIFT, "Shift");
+		set_button(x, y, 13, 14.5, KEY_RSHIFT, "Shift");
+		x = safe_area[0] + 0.0*size;
+		y = 4.0*vert_size;
+		set_button(x, y, 0, 1.5, KEY_LCONTROL, "Ctrl");
+		set_button(x, y, 1.5, 3, KEY_LALT, "Alt");
+		set_button(x, y, 3, 9.5, KEY_SPACE, "");
+		set_button(x, y, 9.5, 10.5, KEY_NONE, "Exit");
+		set_button(x, y, 10.5, 11.5, KEY_RCONTROL, "Ctrl");
+		x = safe_area[0] + -0.5*size;
+		y = 3.0*vert_size;
+		set_button(x, y, 13, KEY_UP, "Up");
+		x = safe_area[0] + -0.5*size;
+		y = 4.0*vert_size;
+		set_button(x, y, 12, KEY_LEFT, "Left");
+		set_button(x, y, 13, KEY_DOWN, "Down");
+		set_button(x, y, 14, KEY_RIGHT, "Right");
+
+		if (USE_BLUR != 0) {
+			img = Image::create(get_width(), get_height());
+			var p = Painter::create(img);
+			paint_buttons = true;
+			p.fill_rect(0, 0, get_width(), get_height(), 0x30000000);
+			draw_children(p);
+			paint_buttons = false;
+			img.blur(5.0/1.5*get_scale());
+			paint_texts = true;
+			draw_children(p);
+			paint_texts = false;
+			img.blur(1.0/1.5*get_scale());
+			if (layer) {
+				layer.update(0, 0, get_width(), get_height(), Keyboard::paint_content#6, this);
+			}
+		}
+	}
+
+	function @set_opacity(opacity: Float)
+	{
+		if (layer) {
+			opacity = sin(opacity * PI * 0.5);
+			layer.set_opacity(opacity);
+
+			var point = [-get_x(), 0];
+			point_to_top(point);
+			layer.move(point[0], point[1] + iround((1.0 - opacity) * get_height()));
+		}
+	}
+
+	function @handle_visibility_animation(time: Integer): Boolean
+	{
+		if (time == 0) time++;
+		if (last_anim_time == 0) {
+			last_anim_time = time;
+		}
+		var delta = sub32(time, last_anim_time) / 200.0;
+		last_anim_time = time;
+
+		if (target_opacity > current_opacity) {
+			current_opacity = current_opacity + delta;
+			if (current_opacity >= 1.0) {
+				current_opacity = 1.0;
+				animation_active = false;
+			}
+			set_opacity(current_opacity);
+			return animation_active;
+		}
+
+		if (target_opacity < current_opacity) {
+			current_opacity = current_opacity - delta;
+			var finished = false;
+			if (current_opacity <= 0.0) {
+				current_opacity = 0.0;
+				animation_active = false;
+			}
+			set_opacity(current_opacity);
+			return animation_active;
+		}
+
+		animation_active = false;
+		return false;
+	}
+
+	override function handle_repaint(rect: Rect)
+	{
+		super.handle_repaint(rect);
+		if (layer) {
+			layer.update(rect.get_x(), rect.get_y(), rect.get_width(), rect.get_height(), Keyboard::paint_content#6, this);
+			rect.clear();
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		if (layer) {
+			return;
+		}
+		
+		if (img) {
+			p.draw_image(0, 0, img);
+		}
+		else {
+			p.fill_rect(0, 0, get_width(), get_height(), 0x30000000);
+		}
+		draw_children(p);
+	}
+
+	function @paint_content(p: Painter, x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		p.clear_rect(0, 0, get_width(), get_height(), 0x00000000);
+		if (img) {
+			p.draw_image(0, 0, img);
+		}
+		else {
+			p.fill_rect(0, 0, get_width(), get_height(), 0x30000000);
+		}
+		draw_children(p);
+	}
+}
+
+class @Button: SubButton
+{
+	var @type: Integer;
+	var @font: SystemFont;
+	var @label: String;
+
+	var @touch_id: Integer;
+	var @unpress_timer: Timer;
+	var @do_unpress: Boolean;
+
+	constructor create(type: Integer, font: SystemFont, label: String)
+	{
+		this.type = type;
+		this.font = font;
+		this.label = label;
+		this.touch_id = -1;
+		set_focusable(false);
+	}
+
+	function set_font(font: SystemFont)
+	{
+		this.font = font;
+	}
+
+	function set_label(label: String)
+	{
+		this.label = label;
+	}
+
+	override function paint_background(p: Painter)
+	{
+		var keyboard = get_parent() as Keyboard;
+		var state = get_state();
+		if (state == 0 && !keyboard.paint_buttons) {
+			return;
+		}
+		var scale = get_scale()/1.5;
+		var outline_width = 1.0*scale;
+		var shape = Shape::round_rect(0, 0, get_width(), get_height(), 5*scale, 5*scale);
+		var shape2 = Shape::round_rect(outline_width*0.5, outline_width*0.5, get_width()-outline_width, get_height()-outline_width, 5*scale, 5*scale);
+		var color = (state & BUTTON_HOVER) != 0? 0xAA666666 : 0xA0404040; //XXX
+		if ((state & BUTTON_PRESSED) != 0) { //XXX
+			color = 0xFF404040;
+		}
+		p.fill_shape(shape, color);
+		if (USE_BLUR != 0) {
+			p.fill_shape(shape2.get_outline(outline_width), 0xFF000000);
+		}
+		else {
+			p.fill_shape(shape2.get_outline(outline_width), 0xEE000000);
+		}
+	}
+
+	override function paint_foreground(p: Painter)
+	{
+		var keyboard = get_parent() as Keyboard;
+		var state = get_state();
+		if (state == 0 && !keyboard.paint_texts) {
+			return;
+		}
+		var w = font.get_string_advance(label);
+		var h = font.get_height();
+		var x = (get_width()-w)/2;
+		var y = (get_height()-h)/2 + font.get_ascent();
+		var c1 = 0xFFFFFFFF;
+		var c2 = 0xFF000000;
+		var arrow = false;
+		var arrow_size = 0.0;
+		switch (type) {
+			case KEY_LEFT:
+			case KEY_RIGHT:
+			case KEY_UP:
+			case KEY_DOWN:
+				arrow = true;
+				arrow_size = min(get_width(), get_height())/6;
+				x = get_width()/2;
+				y = get_height()/2;
+				break;
+		}
+		if (USE_BLUR != 0) {
+			c1 = 0xFFFFFFFF;
+			c2 = 0x11000000;
+			if (arrow) {
+				var shape = get_arrow_shape(x, y, arrow_size);
+				for (var i=-2; i<=2; i++) {
+					for (var j=-2; j<=2; j++) {
+						if (abs(i) == 2 && abs(j) == 2) continue;
+						p.translate(j, i);
+						p.fill_shape(shape, c2);
+						p.translate(-j, -i);
+					}
+				}
+				p.fill_shape(shape, c1);
+			}
+			else {
+				for (var i=-2; i<=2; i++) {
+					for (var j=-2; j<=2; j++) {
+						if (abs(i) == 2 && abs(j) == 2) continue;
+						font.draw_string(p, x+j, y+i, label, c2);
+					}
+				}
+				font.draw_string(p, x, y, label, c1);
+			}
+		}
+		else {
+			if (arrow) {
+				var shape = get_arrow_shape(x, y, arrow_size);
+				p.translate(-1, 0);
+				p.fill_shape(shape, c2);
+				p.translate(+2, 0);
+				p.fill_shape(shape, c2);
+				p.translate(-1, -1);
+				p.fill_shape(shape, c2);
+				p.translate(0, +2);
+				p.fill_shape(shape, c2);
+				p.translate(0, -1);
+				p.fill_shape(shape, c1);
+			}
+			else {
+				font.draw_string(p, x-1, y, label, c2);
+				font.draw_string(p, x+1, y, label, c2);
+				font.draw_string(p, x, y-1, label, c2);
+				font.draw_string(p, x, y+1, label, c2);
+				font.draw_string(p, x, y, label, c1);
+			}
+		}
+	}
+
+	function @get_arrow_shape(x: Float, y: Float, size: Float): Shape
+	{
+		var s1 = 0.5;
+		var s2 = 0.1;
+		var shape = Shape::create();
+		shape.move_to(x - size, y);
+		shape.line_to(x - size*s1, y - size*s1);
+		shape.line_to(x - size*s1, y - size*s2);
+		shape.line_to(x + size, y - size*s2);
+		shape.line_to(x + size, y + size*s2);
+		shape.line_to(x - size*s1, y + size*s2);
+		shape.line_to(x - size*s1, y + size*s1);
+		shape.close_path();
+
+		var tr = Transform::create();
+		tr.translate(x, y);
+		switch (type) {
+			case KEY_UP:    tr.rotate(PI*0.5); break;
+			case KEY_RIGHT: tr.rotate(PI*1.0); break;
+			case KEY_DOWN:  tr.rotate(PI*1.5); break;
+		}
+		tr.translate(-x, -y);
+		shape.transform(tr);
+		return shape;
+	}
+
+	override function handle_mouse_event(event: MouseEvent): Boolean
+	{
+		if (event.is_touch()) {
+			return true;
+		}
+		Web::flush_drawing();
+		var ret = super.handle_mouse_event(event);
+		Web::flush_drawing();
+		return ret;
+	}
+
+	override function handle_touch_event(event: TouchEvent): Boolean
+	{
+		switch (event.get_type()) {
+			case EVENT_TOUCH_START:
+				if (touch_id == -1) {
+					touch_id = event.get_id();
+					set_state(get_state() | BUTTON_PRESSED);
+					Web::flush_drawing();
+					repaint();
+					Web::flush_drawing();
+					if (!unpress_timer) {
+						unpress_timer = Timer::create(75, Button::handle_unpress#1, this);
+					}
+					do_unpress = false;
+					unpress_timer.restart();
+					var keyboard = get_parent() as Keyboard;
+					if (type == KEY_LSHIFT || type == KEY_RSHIFT) {
+						keyboard.shift_cnt++;
+						keyboard.shift_mode = true;
+						Virtual::post_key_event(KeyEvent::create(EVENT_KEY_DOWN, null, type, keyboard.get_modifiers()));
+					}
+					if (type == KEY_LCONTROL || type == KEY_RCONTROL) {
+						keyboard.ctrl_cnt++;
+						Virtual::post_key_event(KeyEvent::create(EVENT_KEY_DOWN, null, type, keyboard.get_modifiers()));
+					}
+					if (type == KEY_LALT || type == KEY_RALT) {
+						keyboard.alt_cnt++;
+						Virtual::post_key_event(KeyEvent::create(EVENT_KEY_DOWN, null, type, keyboard.get_modifiers()));
+					}
+				}
+				break;
+
+			case EVENT_TOUCH_END:
+				if (event.get_id() == touch_id) {
+					touch_id = -1;
+ 					if (unpress_timer) {
+						do_unpress = true;
+					}
+					else {
+						set_state(get_state() & ~BUTTON_PRESSED);
+						Web::flush_drawing();
+						repaint();
+						Web::flush_drawing();
+					}
+					if (!event.is_cancelled()) {
+						var keyboard = get_parent() as Keyboard;
+						if (type == KEY_LSHIFT || type == KEY_RSHIFT) {
+							keyboard.shift_cnt--;
+							keyboard.shift_mode = keyboard.shift_cnt != 0;
+							Virtual::post_key_event(KeyEvent::create(EVENT_KEY_UP, null, type, keyboard.get_modifiers()));
+						}
+						else if (type == KEY_LCONTROL || type == KEY_RCONTROL) {
+							keyboard.ctrl_cnt--;
+							Virtual::post_key_event(KeyEvent::create(EVENT_KEY_UP, null, type, keyboard.get_modifiers()));
+						}
+						else if (type == KEY_LALT || type == KEY_RALT) {
+							keyboard.alt_cnt--;
+							Virtual::post_key_event(KeyEvent::create(EVENT_KEY_UP, null, type, keyboard.get_modifiers()));
+						}
+						else {
+							handle_click(true);
+						}
+					}
+				}
+				break;
+		}
+		return true;
+	}
+
+	function @handle_unpress()
+	{
+		unpress_timer.stop();
+		unpress_timer = null;
+
+		if (do_unpress) {
+			set_state(get_state() & ~BUTTON_PRESSED);
+			Web::flush_drawing();
+			repaint();
+			Web::flush_drawing();
+		}
+	}
+
+	override function handle_click()
+	{
+		handle_click(false);
+	}
+
+	function @handle_click(touch: Boolean)
+	{
+		if (type == KEY_NONE) {
+			Virtual::force_quit();
+			return;
+		}
+
+		Web::flush_drawing();
+
+		var keyboard = get_parent() as Keyboard;
+		var shift = keyboard.shift_mode || keyboard.caps_lock;
+		var modifiers = keyboard.get_modifiers();
+
+		Virtual::post_key_event(KeyEvent::create(EVENT_KEY_DOWN, null, type, modifiers));
+
+		var chars: String = null;
+		switch (type) {
+			case KEY_GRAVE: chars = shift? "~" : "`"; break;
+			case KEY_NUM1: chars = shift? "!" : "1"; break;
+			case KEY_NUM2: chars = shift? "@" : "2"; break;
+			case KEY_NUM3: chars = shift? "#" : "3"; break;
+			case KEY_NUM4: chars = shift? "$" : "4"; break;
+			case KEY_NUM5: chars = shift? "%" : "5"; break;
+			case KEY_NUM6: chars = shift? "^" : "6"; break;
+			case KEY_NUM7: chars = shift? "&" : "7"; break;
+			case KEY_NUM8: chars = shift? "*" : "8"; break;
+			case KEY_NUM9: chars = shift? "(" : "9"; break;
+			case KEY_NUM0: chars = shift? ")" : "0"; break;
+			case KEY_MINUS: chars = shift? "_" : "-"; break;
+			case KEY_EQUAL: chars = shift? "+" : "="; break;
+			case KEY_Q: chars = shift? "Q" : "q"; break;
+			case KEY_W: chars = shift? "W" : "w"; break;
+			case KEY_E: chars = shift? "E" : "e"; break;
+			case KEY_R: chars = shift? "R" : "r"; break;
+			case KEY_T: chars = shift? "T" : "t"; break;
+			case KEY_Y: chars = shift? "Y" : "y"; break;
+			case KEY_U: chars = shift? "U" : "u"; break;
+			case KEY_I: chars = shift? "I" : "i"; break;
+			case KEY_O: chars = shift? "O" : "o"; break;
+			case KEY_P: chars = shift? "P" : "p"; break;
+			case KEY_LBRACKET: chars = shift? "{" : "["; break;
+			case KEY_RBRACKET: chars = shift? "}" : "]"; break;
+			case KEY_BACKSLASH: chars = shift? "|" : "\\"; break;
+			case KEY_A: chars = shift? "A" : "a"; break;
+			case KEY_S: chars = shift? "S" : "s"; break;
+			case KEY_D: chars = shift? "D" : "d"; break;
+			case KEY_F: chars = shift? "F" : "f"; break;
+			case KEY_G: chars = shift? "G" : "g"; break;
+			case KEY_H: chars = shift? "H" : "h"; break;
+			case KEY_J: chars = shift? "J" : "j"; break;
+			case KEY_K: chars = shift? "K" : "k"; break;
+			case KEY_L: chars = shift? "L" : "l"; break;
+			case KEY_SEMICOLON: chars = shift? ":" : ";"; break;
+			case KEY_APOSTROPHE: chars = shift? "\"" : "'"; break;
+			case KEY_Z: chars = shift? "Z" : "z"; break;
+			case KEY_X: chars = shift? "X" : "x"; break;
+			case KEY_C: chars = shift? "C" : "c"; break;
+			case KEY_V: chars = shift? "V" : "v"; break;
+			case KEY_B: chars = shift? "B" : "b"; break;
+			case KEY_N: chars = shift? "N" : "n"; break;
+			case KEY_M: chars = shift? "M" : "m"; break;
+			case KEY_COMMA: chars = shift? "<" : ","; break;
+			case KEY_PERIOD: chars = shift? ">" : "."; break;
+			case KEY_SLASH: chars = shift? "?" : "/"; break;
+			case KEY_SPACE: chars = " "; break;
+		}
+
+		if (chars != null && (modifiers & (MOD_CTRL | MOD_ALT)) == 0) {
+			Virtual::post_key_event(KeyEvent::create_typed(null, chars, modifiers));
+		}
+
+		Virtual::post_key_event(KeyEvent::create(EVENT_KEY_UP, null, type, modifiers));
+
+		Web::flush_drawing();
+
+		if (type == KEY_CAPS_LOCK) {
+			keyboard.caps_lock = !keyboard.caps_lock;
+		}
+
+		if (!touch) {
+			if (type == KEY_LSHIFT || type == KEY_RSHIFT) {
+				keyboard.shift_mode = !keyboard.shift_mode;
+			}
+			else {
+				keyboard.shift_mode = false;
+			}
+		}
+	}
+}

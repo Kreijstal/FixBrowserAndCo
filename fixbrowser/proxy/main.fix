@@ -1,0 +1,95 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "io/stream";
+import "io/tcp";
+import "io/http/util";
+import "io/http/request";
+import "io/tls/root_certs";
+import "task/task";
+import "proxy/handler";
+import "proxy/handler_error";
+import "browser/script/script";
+
+var @task_id;
+
+function @accept(server)
+{
+	var stream = tcp_server_accept(server);
+	var req = request_create();
+
+	var (r1, e1) = parse_headers(stream, req, false);
+	if (e1) {
+		dump(e1);
+		//var (r2, ignored) = flush_headers(stream);
+		send_error(stream, 400, "Bad Request", e1);
+		script_collect_heap();
+		return;
+	}
+	
+	var (r2, e2) = send_response(stream, req);
+	if (e2) {
+		dump(e2);
+		send_error(stream, 500, "Internal Server Error", e2);
+		script_collect_heap();
+		return;
+	}
+
+	var (r3, e3) = stream_close(stream); // TODO
+	script_collect_heap();
+}
+
+function @log_function(value)
+{
+	if (!is_string(value)) {
+		value = to_string(value);
+	}
+	log({"[#", task_id, "] ", value});
+}
+
+function @task_main(_task_id, server)
+{
+	task_id = _task_id;
+	set_log_function(log_function#1);
+
+	for (;;) {
+		var (r, e) = accept(server);
+		if (e) {
+			dump(e);
+		}
+	}
+}
+
+function main(port)
+{
+	check_scripts();
+	load_certs();
+
+	var server = tcp_server_create(port);
+	log({"FixProxy started, listening on port ", port});
+	for (var i=0; i<10; i++) {
+		task_create(task_main#2, [i, server]);
+	}
+	
+	for (;;) {
+		task_sleep(1000000);
+	}
+}

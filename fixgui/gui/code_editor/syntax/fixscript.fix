@@ -1,0 +1,1322 @@
+/*
+ * FixScript GUI v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "image/image";
+import "gui/code_editor/font";
+import "gui/code_editor/syntax";
+
+const {
+	SYNTAX_PLAIN,
+	SYNTAX_IDENTIFIER,
+	SYNTAX_KEYWORD,
+	SYNTAX_SYMBOL,
+	SYNTAX_NUMBER,
+	SYNTAX_STRING,
+	SYNTAX_ESCAPE,
+	SYNTAX_FUNCTION,
+	SYNTAX_COMMENT,
+	SYNTAX_BAD_TABS,
+	@NUM_SYNTAX_TYPES
+};
+
+const {
+	STATE_COMMENT = 0x01,
+	STATE_USE     = 0x02
+};
+
+const {
+	@MODE_PLAIN,
+	@MODE_TABS,
+	@MODE_BAD_TABS,
+	@MODE_IDENTIFIER,
+	@MODE_SYMBOL,
+	@MODE_NUMBER,
+	@MODE_NUMBER_FRACT,
+	@MODE_NUMBER_EXPONENT,
+	@MODE_HEX_NUMBER,
+	@MODE_STRING,
+	@MODE_CHAR,
+	@MODE_ESCAPE,
+	@MODE_ESCAPE_HEX,
+	@MODE_SINGLELINE_COMMENT,
+	@MODE_MULTILINE_COMMENT
+};
+
+class @KeywordSet
+{
+	static function create(): KeywordSet
+	{
+		return {} as KeywordSet;
+	}
+
+	function add(keyword: String)
+	{
+		var keywords = this as Dynamic[Dynamic];
+		var hash = 0;
+		foreach (var c in keyword) {
+			hash = add32(mul32(hash, 31), c);
+		}
+		var values = keywords.get(hash, null);
+		if (values) {
+			if (is_string(values)) {
+				keywords[hash] = [values, {keyword}];
+			}
+			else {
+				values[] = {keyword};
+			}
+		}
+		else {
+			keywords[hash] = {keyword};
+		}
+	}
+
+	function contains(hash: Integer, s: String, off: Integer, len: Integer): Boolean
+	{
+		var keywords = this as Dynamic[Dynamic];
+		var values = keywords.get(hash, null);
+		if (values) {
+			var ident = array_extract(s, off, len);
+			if (is_string(values)) {
+				if (ident == values) {
+					return true;
+				}
+			}
+			else {
+				foreach (var value in values) {
+					if (ident == value) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	function get_simple_set(): Boolean[String]
+	{
+		var keywords = this as Dynamic[Dynamic];
+		var set: Boolean[String] = {};
+		foreach (var key, values in keywords) {
+			if (is_string(key)) continue;
+			if (is_string(values)) {
+				set[values] = true;
+			}
+			else {
+				foreach (var value in values) {
+					set[value] = true;
+				}
+			}
+		}
+		return set;
+	}
+
+	function add_class(name: String)
+	{
+		var keywords = this as Dynamic[Dynamic];
+		keywords[{name}] = true;
+	}
+
+	function has_class(name: String): Boolean
+	{
+		var keywords = this as Dynamic[Dynamic];
+		return keywords.contains(name);
+	}
+}
+
+class @State
+{
+	var keywords: KeywordSet;
+	var flags: Integer;
+	var cur_class: Class;
+	var all_classes: Class;
+	var all_functions: Function;
+
+	constructor create(keywords: KeywordSet)
+	{
+		this.keywords = keywords;
+	}
+
+	function set_flag(value: Integer, set: Boolean): State
+	{
+		if (set) {
+			if ((flags & value) == 0) {
+				var state = clone(this) as State;
+				state.flags |= value;
+				return state;
+			}
+		}
+		else {
+			if ((flags & value) != 0) {
+				var state = clone(this) as State;
+				state.flags &= ~value;
+				return state;
+			}
+		}
+		return this;
+	}
+
+	function set_class(value: Class): State
+	{
+		if (value !== cur_class) {
+			var state = clone(this) as State;
+			if (value) {
+				value.prev = all_classes;
+				state.all_classes = value;
+			}
+			state.cur_class = value;
+			return state;
+		}
+		return this;
+	}
+
+	function get_classes(): Class[]
+	{
+		var classes: Class[] = [];
+		var cls = all_classes;
+		while (cls) {
+			classes[] = cls;
+			cls = cls.prev;
+		}
+		return classes;
+	}
+
+	function add_function(value: Function): State
+	{
+		var state = clone(this) as State;
+		value.prev = all_functions;
+		state.all_functions = value;
+		return state;
+	}
+
+	function get_functions(): Function[]
+	{
+		var functions: Function[] = [];
+		var func = all_functions;
+		while (func) {
+			functions[] = func;
+			func = func.prev;
+		}
+		return functions;
+	}
+}
+
+class @Class
+{
+	var name: String;
+	var parent: String;
+	var prev: Class;
+
+	constructor create(name: String, parent: String)
+	{
+		this.name = name;
+		this.parent = parent;
+	}
+}
+
+class @Function
+{
+	var cls: Class;
+	var name: String;
+	var is_static: Boolean;
+	var prev: Function;
+
+	constructor create(cls: Class, name: String, is_static: Boolean)
+	{
+		this.cls = cls;
+		this.name = name;
+		this.is_static = is_static;
+	}
+}
+
+class FixScriptSyntax: Syntax
+{
+	var @tab_size: Integer;
+	var @syntax_fonts: AbstractFont[];
+	var @keywords: KeywordSet;
+	var @get_keywords_func;
+	var @get_keywords_data;
+	var @completion_func;
+	var @completion_data;
+
+	static function create(): FixScriptSyntax
+	{
+		return create(FixScriptSyntax::common_keywords#2, null);
+	}
+
+	constructor create(get_keywords_func, get_keywords_data)
+	{
+		tab_size = 4;
+
+		keywords = KeywordSet::create();
+		
+		keywords.add("do");
+		keywords.add("if");
+		keywords.add("for");
+		keywords.add("var");
+		keywords.add("use");
+		keywords.add("else");
+		keywords.add("case");
+		keywords.add("while");
+		keywords.add("break");
+		keywords.add("const");
+		keywords.add("return");
+		keywords.add("import");
+		keywords.add("switch");
+		keywords.add("default");
+		keywords.add("function");
+		keywords.add("continue");
+
+		this.get_keywords_func = get_keywords_func;
+		this.get_keywords_data = get_keywords_data;
+	}
+
+	static function @common_keywords(data, name: String): String[]
+	{
+		if (name == "macros") {
+			return [
+				"macro"
+			];
+		}
+		if (name == "classes") {
+			return [
+				"foreach",
+				"class",
+				"struct",
+				"static",
+				"virtual",
+				"override",
+				"new",
+				"in",
+				"as",
+				"throw",
+				"constructor",
+				"operator",
+				"super",
+				"this"
+			];
+		}
+		if (name == "native/extern") {
+			return [
+				"extern",
+				"struct",
+				"union",
+				"typedef",
+				"char",
+				"short",
+				"int",
+				"long",
+				"float",
+				"double",
+				"void",
+				"int8_t",
+				"uint8_t",
+				"int16_t",
+				"uint16_t",
+				"int32_t",
+				"uint32_t",
+				"int64_t",
+				"uint64_t",
+				"wchar_t"
+			];
+		}
+		if (name == "optional") {
+			return [
+				"optional"
+			];
+		}
+		return null;
+	}
+
+	function set_completion_handler(func, data)
+	{
+		completion_func = func;
+		completion_data = data;
+	}
+
+	function set_tab_size(tab_size: Integer)
+	{
+		this.tab_size = tab_size;
+	}
+
+	override function set_font(font: AbstractFont)
+	{
+		super.set_font(font);
+		var bold_font = font.with_style(font.get_style() | FONT_BOLD);
+		var underline_font = font.with_style(font.get_style() | FONT_UNDERLINE);
+
+		syntax_fonts = [];
+		for (var i=0; i<NUM_SYNTAX_TYPES; i++) {
+			syntax_fonts[] = font;
+		}
+		syntax_fonts[SYNTAX_ESCAPE] = underline_font;
+		syntax_fonts[SYNTAX_FUNCTION] = bold_font;
+	}
+
+	override function process(attrs: [Attribute], s: String, off: Integer, len: Integer, state: State): State
+	{
+		if (!state) {
+			state = State::create(keywords);
+		}
+
+		var font = get_font();
+		var attrs_start = length(attrs);
+
+		var mode = MODE_PLAIN;
+		if (len > 0 && s[off] == '\t') {
+			mode = MODE_TABS;
+		}
+		if ((state.flags & STATE_COMMENT) != 0) { //XXX
+			mode = MODE_MULTILINE_COMMENT;
+		}
+
+		macro flush(type)
+		{
+			if (i > last) {
+				var width = syntax_fonts[type].get_string_advance(s, last, i-last);
+				attrs[] = {
+					.length: i-last,
+					.width: width,
+					.style: type
+				};
+				cur_x = cur_x + width;
+				last = i;
+			}
+		}
+
+		macro flush_tabs()
+		{
+			if (i > last) {
+				var tab_width = font.get_string_advance(" ")*tab_size;
+				var x = (ceil((cur_x + font.get_string_advance(" ")) / tab_width) + (i-last-1)) * tab_width;
+				var width = x - cur_x;
+				attrs[] = {
+					.length: i-last,
+					.width: width,
+					.style: mode == MODE_BAD_TABS? SYNTAX_BAD_TABS : back_mode == MODE_PLAIN? SYNTAX_PLAIN : SYNTAX_COMMENT
+				};
+				cur_x = cur_x + width;
+				last = i;
+			}
+		}
+
+		var last = off;
+		var ident_hash = 0;
+		var back_mode = 0;
+		var cur_x = 0.0;
+		var remaining = 0;
+
+		for (var i=off, n=off+len; i<n; i++) {
+			var c = s[i];
+			switch (mode) {
+				case MODE_PLAIN:
+					switch (c) {
+						case '\t':
+							flush(SYNTAX_PLAIN);
+							mode = MODE_BAD_TABS;
+							back_mode = MODE_PLAIN;
+							break;
+
+						case 'A'..'Z', 'a'..'z', '_':
+							flush(SYNTAX_PLAIN);
+							ident_hash = c;
+							mode = MODE_IDENTIFIER;
+							break;
+
+						case '(', ')', '{', '}', '[', ']', ',', ';', '~', ':', '@', '?', '+', '-', '*', '/', '%', '&', '|', '^', '=', '!', '<', '>', '.':
+							if (c == '/' && i+1 < n) {
+								var c2 = s[i+1];
+								if (c2 == '/') {
+									flush(SYNTAX_PLAIN);
+									mode = MODE_SINGLELINE_COMMENT;
+									i++;
+									break;
+								}
+								if (c2 == '*') {
+									flush(SYNTAX_PLAIN);
+									mode = MODE_MULTILINE_COMMENT;
+									i++;
+									break;
+								}
+							}
+							flush(SYNTAX_PLAIN);
+							mode = MODE_SYMBOL;
+							break;
+
+						case '0'..'9':
+							flush(SYNTAX_PLAIN);
+							if (c == '0' && i+1 < n && s[i+1] == 'x') {
+								mode = MODE_HEX_NUMBER;
+								i++;
+							}
+							else {
+								mode = MODE_NUMBER;
+							}
+							break;
+
+						case '"':
+							flush(SYNTAX_PLAIN);
+							mode = MODE_STRING;
+							break;
+
+						case '\'':
+							flush(SYNTAX_PLAIN);
+							mode = MODE_CHAR;
+							break;
+					}
+					continue;
+
+				case MODE_TABS:
+				case MODE_BAD_TABS:
+					if (c != '\t') {
+						flush_tabs();
+						mode = back_mode;
+						i--;
+					}
+					continue;
+
+				case MODE_IDENTIFIER:
+					switch (c) {
+						case 'A'..'Z', 'a'..'z', '_', '0'..'9':
+							ident_hash = add32(mul32(ident_hash, 31), c);
+							break;
+
+						default: {
+							var type = SYNTAX_IDENTIFIER;
+							if (state.keywords.contains(ident_hash, s, last, i-last)) {
+								type = SYNTAX_KEYWORD;
+							}
+							if (type == SYNTAX_IDENTIFIER && c == '(') {
+								type = SYNTAX_FUNCTION;
+							}
+							flush(type);
+							mode = MODE_PLAIN;
+							i--;
+							break;
+						}
+					}
+					continue;
+
+				case MODE_SYMBOL:
+					switch (c) {
+						case '(', ')', '{', '}', '[', ']', ',', ';', '~', ':', '@', '?', '+', '-', '*', '/', '%', '&', '|', '^', '=', '!', '<', '>', '.':
+							if (c == '/' && i+1 < n) {
+								var c2 = s[i+1];
+								if (c2 == '/') {
+									flush(SYNTAX_SYMBOL);
+									mode = MODE_SINGLELINE_COMMENT;
+									i++;
+									break;
+								}
+								if (c2 == '*') {
+									flush(SYNTAX_SYMBOL);
+									mode = MODE_MULTILINE_COMMENT;
+									i++;
+									break;
+								}
+							}
+							continue;
+
+						default:
+							flush(SYNTAX_SYMBOL);
+							mode = MODE_PLAIN;
+							i--;
+							break;
+					}
+					continue;
+
+				case MODE_NUMBER:
+					switch (c) {
+						case '0'..'9':
+							continue;
+
+						case '.':
+							if (i+1 < n && s[i+1] >= '0' && s[i+1] <= '9') {
+								mode = MODE_NUMBER_FRACT;
+							}
+							else {
+								flush(SYNTAX_NUMBER);
+								mode = MODE_PLAIN;
+								i--;
+							}
+							continue;
+
+						case 'e', 'E':
+							if (i+1 < n && s[i+1] >= '0' && s[i+1] <= '9') {
+								mode = MODE_NUMBER_EXPONENT;
+							}
+							else {
+								flush(SYNTAX_NUMBER);
+								mode = MODE_PLAIN;
+								i--;
+							}
+							continue;
+
+						default:
+							flush(SYNTAX_NUMBER);
+							mode = MODE_PLAIN;
+							i--;
+							continue;
+					}
+					continue;
+
+				case MODE_NUMBER_FRACT:
+					switch (c) {
+						case '0'..'9':
+							continue;
+
+						case 'e', 'E':
+							if (i+1 < n && s[i+1] >= '0' && s[i+1] <= '9') {
+								mode = MODE_NUMBER_EXPONENT;
+							}
+							else {
+								flush(SYNTAX_NUMBER);
+								mode = MODE_PLAIN;
+								i--;
+							}
+							continue;
+
+						default:
+							flush(SYNTAX_NUMBER);
+							mode = MODE_PLAIN;
+							i--;
+							continue;
+					}
+					continue;
+
+				case MODE_NUMBER_EXPONENT:
+					switch (c) {
+						case '0'..'9':
+							continue;
+
+						default:
+							flush(SYNTAX_NUMBER);
+							mode = MODE_PLAIN;
+							i--;
+							continue;
+					}
+					continue;
+
+				case MODE_HEX_NUMBER:
+					switch (c) {
+						case '0'..'9', 'A'..'F', 'a'..'f':
+							continue;
+
+						default:
+							flush(SYNTAX_NUMBER);
+							mode = MODE_PLAIN;
+							i--;
+							continue;
+					}
+					continue;
+
+				case MODE_STRING:
+				case MODE_CHAR:
+					switch (c) {
+						case '\\':
+							flush(SYNTAX_STRING);
+							back_mode = mode;
+							mode = MODE_ESCAPE;
+							continue;
+
+						case '"':
+							if (mode == MODE_STRING) {
+								i++;
+								flush(SYNTAX_STRING);
+								i--;
+								mode = MODE_PLAIN;
+								continue;
+							}
+							continue;
+
+						case '\'':
+							if (mode == MODE_CHAR) {
+								i++;
+								flush(SYNTAX_STRING);
+								i--;
+								mode = MODE_PLAIN;
+								continue;
+							}
+							continue;
+					}
+					continue;
+
+				case MODE_ESCAPE:
+					switch (c) {
+						case 'r', 'n', 't', '\\', '\'', '"':
+							i++;
+							flush(SYNTAX_ESCAPE);
+							i--;
+							mode = back_mode;
+							continue;
+
+						case '0'..'9', 'A'..'F', 'a'..'f':
+							mode = MODE_ESCAPE_HEX;
+							remaining = 1;
+							continue;
+
+						case 'u':
+							mode = MODE_ESCAPE_HEX;
+							remaining = 4;
+							continue;
+
+						case 'U':
+							mode = MODE_ESCAPE_HEX;
+							remaining = 6;
+							continue;
+
+						default:
+							mode = back_mode;
+							continue;
+					}
+					continue;
+
+				case MODE_ESCAPE_HEX:
+					switch (c) {
+						case '0'..'9', 'A'..'F', 'a'..'f':
+							if (--remaining == 0) {
+								i++;
+								flush(SYNTAX_ESCAPE);
+								i--;
+								mode = back_mode;
+							}
+							continue;
+
+						default:
+							mode = back_mode;
+							i--;
+							continue;
+					}
+					continue;
+
+				case MODE_SINGLELINE_COMMENT:
+					if (c == '\t') {
+						flush(SYNTAX_COMMENT);
+						mode = MODE_TABS;
+						back_mode = MODE_SINGLELINE_COMMENT;
+						continue;
+					}
+					continue;
+
+				case MODE_MULTILINE_COMMENT:
+					if (c == '*' && i+1 < n && s[i+1] == '/') {
+						i += 2;
+						flush(SYNTAX_COMMENT);
+						i--;
+						mode = MODE_PLAIN;
+						continue;
+					}
+					if (c == '\t') {
+						flush(SYNTAX_COMMENT);
+						mode = MODE_TABS;
+						back_mode = MODE_MULTILINE_COMMENT;
+						continue;
+					}
+					continue;
+			}
+		}
+
+		{
+			var i = off+len;
+			switch (mode) {
+				case MODE_PLAIN:
+					flush(SYNTAX_PLAIN);
+					break;
+
+				case MODE_TABS:
+				case MODE_BAD_TABS:
+					flush_tabs();
+					break;
+
+				case MODE_IDENTIFIER:
+					flush(state.keywords.contains(ident_hash, s, last, i-last)? SYNTAX_KEYWORD : SYNTAX_IDENTIFIER);
+					break;
+
+				case MODE_SYMBOL:
+					flush(SYNTAX_SYMBOL);
+					break;
+
+				case MODE_NUMBER:
+				case MODE_NUMBER_FRACT:
+				case MODE_NUMBER_EXPONENT:
+				case MODE_HEX_NUMBER:
+					flush(SYNTAX_NUMBER);
+					break;
+
+				case MODE_STRING:
+				case MODE_CHAR:
+				case MODE_ESCAPE:
+					flush(SYNTAX_STRING);
+					break;
+
+				case MODE_SINGLELINE_COMMENT:
+				case MODE_MULTILINE_COMMENT:
+					flush(SYNTAX_COMMENT);
+					break;
+			}
+		}
+
+		macro skip_whitespace(p, i)
+		{
+			while (i < length(attrs)) {
+				var $len = attrs[i].length;
+				switch (attrs[i].style) {
+					case SYNTAX_PLAIN: {
+						var $whitespace = true;
+						for (var $j=p, $n=p+$len; $j<$n; $j++) {
+							if (s[$j] != ' ' && s[$j] != '\t') {
+								$whitespace = false;
+								break;
+							}
+						}
+						if (!$whitespace) break;
+						// fallthrough
+					}
+
+					case SYNTAX_COMMENT:
+					case SYNTAX_BAD_TABS:
+						p += $len;
+						i++;
+						continue;
+				}
+				break;
+			}
+		}
+
+		macro next_attr(p, i)
+		{
+			p += attrs[i].length;
+			i++;
+		}
+
+		macro get_attr_value(p, i)
+		{
+			array_extract(s, p, attrs[i].length)
+		}
+
+		var in_use = (state.flags & STATE_USE) != 0;
+		var recheck_keywords = false;
+		var cur_class = state.cur_class;
+		var is_static = false;
+		var pos = off;
+		for (var i=attrs_start as Attribute; i<length(attrs); i++) {
+			var attr_len = attrs[i].length;
+			switch (attrs[i].style) {
+				case SYNTAX_PLAIN:
+				case SYNTAX_COMMENT:
+				case SYNTAX_BAD_TABS:
+					break;
+
+				case SYNTAX_KEYWORD:
+					in_use = false;
+					if (attr_len == 3 && array_extract(s, pos, attr_len) == "use") {
+						in_use = true;
+					}
+					if ((attr_len == 5 && array_extract(s, pos, attr_len) == "class") ||
+					    (attr_len == 6 && array_extract(s, pos, attr_len) == "struct"))
+					{
+						var name: String = null;
+						var parent: String = null;
+						var p = pos+attr_len;
+						var j = i+1;
+						skip_whitespace(p, j);
+						if (j < length(attrs) && attrs[j].style == SYNTAX_IDENTIFIER) {
+							name = get_attr_value(p, j);
+							next_attr(p, j);
+							skip_whitespace(p, j);
+							if (j < length(attrs) && attrs[j].style == SYNTAX_SYMBOL && get_attr_value(p, j) == ":") {
+								next_attr(p, j);
+								skip_whitespace(p, j);
+								if (j < length(attrs) && attrs[j].style == SYNTAX_IDENTIFIER) {
+									parent = get_attr_value(p, j);
+								}
+							}
+						}
+						if (name) {
+							cur_class = Class::create(name, parent);
+						}
+					}
+					if (attr_len == 6 && array_extract(s, pos, attr_len) == "static") {
+						is_static = true;
+					}
+					if ((attr_len == 8 && array_extract(s, pos, attr_len) == "function") ||
+					    (attr_len == 11 && array_extract(s, pos, attr_len) == "constructor"))
+					{
+						if (s[off] != ' ' && s[off] != '\t') {
+							cur_class = null;
+						}
+						if (attr_len == 11) {
+							is_static = true;
+						}
+
+						var p = pos+attr_len;
+						var j = i+1;
+						skip_whitespace(p, j);
+						if (j < length(attrs) && (attrs[j].style == SYNTAX_IDENTIFIER || attrs[j].style == SYNTAX_FUNCTION)) {
+							var name = get_attr_value(p, j);
+							state = state.add_function(Function::create(cur_class, name, is_static));
+						}
+						is_static = false;
+					}
+					break;
+
+				case SYNTAX_STRING:
+					if (in_use) {
+						var attr_text = array_extract(s, pos, attr_len) as String;
+						if (attr_text.length > 2 && attr_text[0] == '"' && attr_text[attr_text.length-1] == '"') {
+							var name = attr_text.substring(1, attr_text.length-1);
+							var list = get_keywords_func(get_keywords_data, name) as String[];
+							if (list) {
+								var keywords = clone_deep(state.keywords) as KeywordSet; 
+								keywords.add_class(name);
+								foreach (var keyword in list) {
+									keywords.add(keyword);
+								}
+								state = clone(state);
+								state.keywords = keywords;
+								recheck_keywords = true;
+							}
+						}
+					}
+					in_use = false;
+					break;
+
+				case SYNTAX_IDENTIFIER:
+				case SYNTAX_FUNCTION:
+					in_use = false;
+					if (recheck_keywords) {
+						ident_hash = 0;
+						for (var j=pos, n=pos+attr_len; j<n; j++) {
+							ident_hash = add32(mul32(ident_hash, 31), s[j]);
+						}
+						if (state.keywords.contains(ident_hash, s, pos, attr_len)) {
+							attrs[i].style = SYNTAX_KEYWORD;
+						}
+					}
+					break;
+				
+				default:
+					in_use = false;
+					break;
+			}
+			pos += attr_len;
+		}
+		state = state.set_flag(STATE_USE, in_use);
+		state = state.set_class(cur_class);
+
+		if (mode == MODE_MULTILINE_COMMENT) {
+			state = state.set_flag(STATE_COMMENT, true);
+		}
+		else if (mode == MODE_TABS && back_mode == MODE_MULTILINE_COMMENT) {
+			state = state.set_flag(STATE_COMMENT, true);
+		}
+		else {
+			state = state.set_flag(STATE_COMMENT, false);
+		}
+		return state;
+	}
+
+	override function get_position(s: String, off: Integer, len: Integer, width: Float, style: Dynamic, x: Float): Float
+	{
+		if (s[off] == '\t') {
+			if (len == 1) {
+				return x / width;
+			}
+			var tab_width = get_font().get_string_advance(" ")*tab_size;
+			var x1 = width - tab_width * (len-1);
+			var x2 = width;
+			if (x < x1) {
+				return x / x1;
+			}
+			return 1.0 + ((x-x1) / (x2-x1) * (len-1));
+		}
+		return syntax_fonts[style].get_string_position(s, off, len, x);
+	}
+
+	override function get_visual_position(s: String, off: Integer, len: Integer, width: Float, style: Dynamic, x: Integer): Float
+	{
+		if (s[off] == '\t') {
+			if (x <= 0) return 0;
+			if (x >= len) return width;
+			var tab_width = get_font().get_string_advance(" ")*tab_size;
+			var x1 = width - tab_width * (len-1);
+			var x2 = width;
+			return x1 + (x-1)*tab_width;
+		}
+		return syntax_fonts[style].get_string_advance(s, off, x);
+	}
+
+	override function draw_text(p: Painter, x: Float, y: Integer, s: String, off: Integer, len: Integer, width: Float, height: Integer, ascent: Integer, selection: Boolean, style: Dynamic)
+	{
+		if (s[off] == '\t') {
+			if (style == SYNTAX_BAD_TABS && !selection) {
+				p.fill_rect(iround(x), y, iround(width), height, 0xFFFF0000);
+			}
+			return;
+		}
+		var font = syntax_fonts[style];
+		var color = 0xFF000000;
+		switch (style) {
+			case SYNTAX_IDENTIFIER: color = 0xFF000000; break;
+			case SYNTAX_KEYWORD: color = 0xFF0000FF; break;
+			case SYNTAX_SYMBOL: color = 0xFF404040; break;
+			case SYNTAX_NUMBER: color = 0xFFC00000; break;
+			case SYNTAX_STRING: color = 0xFF800080; break;
+			case SYNTAX_ESCAPE: color = 0xFF000000; break;
+			case SYNTAX_COMMENT: color = 0xFF808080; break;
+			case SYNTAX_FUNCTION: color = 0xFF000000; break;
+		}
+		if (selection) color = 0xFFFFFFFF;
+		font.draw_string(p, x, y+ascent, s, off, len, color);
+	}
+
+	override function get_completion_data(data: SyntaxData, x: Integer, y: Integer, choices: CompletionData)
+	{
+		var state = data.get_state(data.get_row_count()) as State;
+		var cur_line = data.get_text(y);
+		var all_text: String;
+
+		macro call_completion_func() {
+			if (completion_func) {
+				if (!all_text) {
+					all_text = data.get_all_text();
+				}
+				var fixscript_choices = FixScriptCompletionData::create(this, choices);
+				completion_func(completion_data, all_text, data.get_all_text_position(x, y), fixscript_choices);
+			}
+		}
+
+		if (x-1 >= 0 && cur_line[x-1] == '"') {
+			var start_x = x-2;
+			while (start_x >= 0) {
+				if (cur_line[start_x] == '"' && (start_x == 0 || cur_line[start_x-1] != '\\')) {
+					break;
+				}
+				start_x--;
+			}
+			if (start_x >= 0) {
+				choices.set_range(start_x, x);
+				add_text(choices, "wrap in {}", SYNTAX_PLAIN);
+				var s = "{"+cur_line.substring(start_x, x)+", }";
+				choices.finish_line(s, s.length-1);
+				call_completion_func();
+				return;
+			}
+		}
+
+		var start_x = x-1;
+		while (start_x >= 0 && is_identifier_char(cur_line[start_x], false)) {
+			start_x--;
+		}
+		start_x++;
+		if (start_x < x && is_identifier_char(cur_line[start_x], true)) {
+			var end_x = x;
+			while (end_x < cur_line.length && is_identifier_char(cur_line[end_x], false)) {
+				end_x++;
+			}
+			var start_text = cur_line.substring(start_x, x);
+			choices.set_range(start_x, end_x);
+			var keywords = state.keywords.get_simple_set();
+			if (!all_text) {
+				all_text = data.get_all_text();
+			}
+			foreach (var word, value in extract_words(all_text)) {
+				if (word == start_text) continue;
+				if (keywords.contains(word)) continue;
+				if (word.starts_with(start_text)) {
+					add_text(choices, word, SYNTAX_PLAIN);
+					choices.finish_line(word);
+				}
+			}
+			foreach (var keyword, value in keywords) {
+				if (keyword.starts_with(start_text)) {
+					add_text(choices, keyword, SYNTAX_KEYWORD);
+					choices.finish_line(keyword);
+				}
+			}
+			call_completion_func();
+			return;
+		}
+
+		var has_classes = state.keywords.has_class("classes");
+		choices.set_range(x, x);
+		var cur_class = (data.get_state(y+1) as State).cur_class;
+		var is_statement = true;
+		for (var i=0; i<x; i++) {
+			if (cur_line[i] != ' ' && cur_line[i] != '\t') {
+				is_statement = false;
+				break;
+			}
+		}
+		foreach (var func in state.get_functions()) {
+			if (func.cls) {
+				if (func.cls === cur_class) {
+					add_text(choices, func.name, SYNTAX_IDENTIFIER);
+					add_text(choices, "()", SYNTAX_SYMBOL);
+					add_text(choices, " ["+func.cls.name+"]", SYNTAX_COMMENT);
+					var s = func.name+"()";
+					if (is_statement) {
+						choices.finish_line(s+";", s.length-1);
+					}
+					else {
+						choices.finish_line(s, s.length-1);
+					}
+				}
+				else if (func.is_static) {
+					add_text(choices, func.cls.name, SYNTAX_IDENTIFIER);
+					add_text(choices, "::", SYNTAX_SYMBOL);
+					add_text(choices, func.name, SYNTAX_FUNCTION);
+					add_text(choices, "()", SYNTAX_SYMBOL);
+					var s = func.cls.name+"::"+func.name+"()";
+					if (is_statement) {
+						choices.finish_line(s+";", s.length-1);
+					}
+					else {
+						choices.finish_line(s, s.length-1);
+					}
+				}
+			}
+			else {
+				add_text(choices, func.name, SYNTAX_IDENTIFIER);
+				add_text(choices, "()", SYNTAX_SYMBOL);
+				var s = func.name+"()";
+				if (is_statement) {
+					choices.finish_line(s+";", s.length-1);
+				}
+				else {
+					choices.finish_line(s, s.length-1);
+				}
+			}
+		}
+
+		if (has_classes) {
+			add_text(choices, "for", SYNTAX_KEYWORD);
+			add_text(choices, " (", SYNTAX_SYMBOL);
+			add_text(choices, "var", SYNTAX_KEYWORD);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "=", SYNTAX_SYMBOL);
+			add_text(choices, "0", SYNTAX_NUMBER);
+			add_text(choices, ";", SYNTAX_SYMBOL);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "<", SYNTAX_SYMBOL);
+			add_text(choices, "...", SYNTAX_COMMENT);
+			add_text(choices, ";", SYNTAX_SYMBOL);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "++)", SYNTAX_SYMBOL);
+			var s = "for (var i=0; i<; i++) {\n}";
+			choices.finish_line(s, 16);
+
+			add_text(choices, "foreach", SYNTAX_KEYWORD);
+			add_text(choices, " (", SYNTAX_SYMBOL);
+			add_text(choices, "var", SYNTAX_KEYWORD);
+			add_text(choices, " value", SYNTAX_IDENTIFIER);
+			add_text(choices, " in", SYNTAX_KEYWORD);
+			add_text(choices, " ...", SYNTAX_COMMENT);
+			add_text(choices, ")", SYNTAX_SYMBOL);
+			s = "foreach (var value in ) {\n}";
+			choices.finish_line(s, 22);
+
+			add_text(choices, "foreach", SYNTAX_KEYWORD);
+			add_text(choices, " (", SYNTAX_SYMBOL);
+			add_text(choices, "var", SYNTAX_KEYWORD);
+			add_text(choices, " key", SYNTAX_IDENTIFIER);
+			add_text(choices, ",", SYNTAX_SYMBOL);
+			add_text(choices, " value", SYNTAX_IDENTIFIER);
+			add_text(choices, " in", SYNTAX_KEYWORD);
+			add_text(choices, " ...", SYNTAX_COMMENT);
+			add_text(choices, ")", SYNTAX_SYMBOL);
+			s = "foreach (var key, value in ) {\n}";
+			choices.finish_line(s, 27);
+		}
+		else {
+			add_text(choices, "for", SYNTAX_KEYWORD);
+			add_text(choices, " (", SYNTAX_SYMBOL);
+			add_text(choices, "var", SYNTAX_KEYWORD);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "=", SYNTAX_SYMBOL);
+			add_text(choices, "0", SYNTAX_NUMBER);
+			add_text(choices, ";", SYNTAX_SYMBOL);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "<", SYNTAX_SYMBOL);
+			add_text(choices, "length", SYNTAX_FUNCTION);
+			add_text(choices, "(", SYNTAX_SYMBOL);
+			add_text(choices, "...", SYNTAX_COMMENT);
+			add_text(choices, ");", SYNTAX_SYMBOL);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "++)", SYNTAX_SYMBOL);
+			add_text(choices, " [array]", SYNTAX_COMMENT);
+			var s = "for (var i=0; i<length(); i++) {\n}";
+			choices.finish_line(s, 23);
+
+			add_text(choices, "for", SYNTAX_KEYWORD);
+			add_text(choices, " (", SYNTAX_SYMBOL);
+			add_text(choices, "var", SYNTAX_KEYWORD);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "=", SYNTAX_SYMBOL);
+			add_text(choices, "0", SYNTAX_NUMBER);
+			add_text(choices, ";", SYNTAX_SYMBOL);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "<", SYNTAX_SYMBOL);
+			add_text(choices, "length", SYNTAX_FUNCTION);
+			add_text(choices, "(", SYNTAX_SYMBOL);
+			add_text(choices, "...", SYNTAX_COMMENT);
+			add_text(choices, ");", SYNTAX_SYMBOL);
+			add_text(choices, " i", SYNTAX_IDENTIFIER);
+			add_text(choices, "++)", SYNTAX_SYMBOL);
+			add_text(choices, " [hash]", SYNTAX_COMMENT);
+			s = "for (var i=0; i<length(); i++) {\n\tvar (key, value) = hash_entry(, i);\n}";
+			choices.finish_line(s, 23);
+		}
+
+		call_completion_func();
+	}
+
+	static function is_identifier_char(c: Integer, first_char: Boolean): Boolean
+	{
+		switch (c) {
+			case 'A'..'Z': return true;
+			case 'a'..'z': return true;
+			case '0'..'9': return !first_char;
+			case '_': return true;
+		}
+		return false;
+	}
+
+	static function extract_words(text: String): Boolean[String]
+	{
+		var set: Boolean[String] = {};
+		var ident = false;
+		var off = -1;
+		for (var i=0; i<text.length; i++) {
+			var c = text[i];
+			switch (c) {
+				case 'A'..'Z', 'a'..'z', '_':
+					if (!ident) {
+						if (i > 0) {
+							c = text[i-1];
+							if (c >= '0' && c <= '9') break;
+						}
+						ident = true;
+						off = i;
+					}
+					break;
+
+				case '0'..'9':
+					break;
+
+				default:
+					if (ident) {
+						set[text.substring(off, i)] = true;
+					}
+					ident = false;
+					if (c == '/') {
+						if (++i >= text.length) break;
+						c = text[i];
+						if (c == '/') {
+							i++;
+							while (i < text.length && text[i] != '\n') {
+								i++;
+							}
+							i--;
+							break;
+						}
+						if (c == '*') {
+							i++;
+							while (i+1 < text.length && (text[i] != '*' || text[i+1] != '/')) {
+								i++;
+							}
+							break;
+						}
+						i--;
+					}
+					else if (c == '"') {
+						i++;
+						var start = i;
+						while (i < text.length && (text[i] != '"' || text[i-1] == '\\') && text[i] != '\n') {
+							i++;
+						}
+						break;
+					}
+					break;
+			}
+		}
+		return set;
+	}
+
+	function @add_text(choices: CompletionData, text: String, style: Integer)
+	{
+		var font = syntax_fonts[style];
+		choices.add_text(text, style, font.get_string_advance(text));
+	}
+}
+
+class FixScriptCompletionData
+{
+	var @syntax: FixScriptSyntax;
+	var @choices: CompletionData;
+	
+	constructor @create(syntax: FixScriptSyntax, choices: CompletionData)
+	{
+		this.syntax = syntax;
+		this.choices = choices;
+	}
+
+	function add(text: String)
+	{
+		var paren_pos = -1;
+		for (var i=0; i<text.length; i++) {
+			if (text[i] == '(') {
+				paren_pos = i;
+				break;
+			}
+		}
+		
+		if (paren_pos != -1) {
+			syntax.add_text(choices, array_extract(text, 0, paren_pos), SYNTAX_FUNCTION);
+			syntax.add_text(choices, array_extract(text, paren_pos, 1), SYNTAX_SYMBOL);
+			syntax.add_text(choices, array_extract(text, paren_pos+1, 1), SYNTAX_SYMBOL);
+			choices.finish_line(text, paren_pos+1);
+		}
+		else {
+			syntax.add_text(choices, text, SYNTAX_PLAIN);
+			choices.finish_line(text);
+		}
+	}
+}
+
+function @String::starts_with(match: String): Boolean
+{
+	var len = match.length;
+	if (this.length < len) return false;
+	return array_extract(this, 0, len) == match;
+}
+
+function @String::substring(start: Integer): String
+{
+	return array_extract(this, start, this.length - start);
+}
+
+function @String::substring(start: Integer, end: Integer): String
+{
+	return array_extract(this, start, end - start);
+}

@@ -1,0 +1,571 @@
+/*
+ * FixBrowser v0.1 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "image/rect";
+import "gui/event";
+import "gui/view";
+import "gui/font";
+import "gui/subview";
+import "gui/subview/scrollview";
+import "gui/pure/scrollview";
+import "task/task";
+import "task/channel";
+import "browser/richtext/model";
+import "browser/richtext/view";
+import "browser/view/model";
+import "browser/view/content/content";
+import "browser/view/content/content_data";
+import "browser/worker/result";
+import "browser/view/scroller";
+import "browser/view/image";
+import "browser/view/dialog";
+
+const {
+	HISTORY_BACK    = 0x01,
+	HISTORY_FORWARD = 0x02,
+	HISTORY_RELOAD  = 0x04,
+	HISTORY_STOP    = 0x08
+};
+
+const @MAX_REDIRECTS = 10;
+
+var @cache_channel: Channel;
+var @fetch_channel: Channel;
+
+class WebView: SubView
+{
+	var @scroll: SubScrollView;
+	var @content: ContentView;
+	var @dialog: DialogView;
+	var @redirect_count: Integer;
+	var @document: Document;
+	var @history: History;
+
+	var @title_func;
+	var @title_data;
+	var @status_func;
+	var @hover_status_func;
+	var @status_data;
+
+	var @request_id: Integer;
+	var @cancel_channel: Channel;
+
+	static function init()
+	{
+		Task::create("browser/worker/init_task", "init#0", []);
+
+		cache_channel = Channel::create();
+		Task::create("browser/worker/cache_task", "main#1", [cache_channel]);
+
+		fetch_channel = Channel::create(1000);
+		for (var i=0; i<1; i++) {
+			Task::create("browser/worker/fetch_task", "main#2", [fetch_channel, cache_channel]);
+		}
+		Timer::run(500, WebView::spawn_fetch_tasks#1, [3]);
+
+		__image_cache_set_channels(fetch_channel, cache_channel);
+	}
+
+	static function @spawn_fetch_tasks(data): Boolean
+	{
+		Task::create("browser/worker/fetch_task", "main#2", [fetch_channel, cache_channel]);
+		return --data[0] != 0;
+	}
+
+	constructor create()
+	{
+		history = History::create();
+		set_focusable(true);
+	}
+
+	function set_title_handler(func, data)
+	{
+		title_func = func;
+		title_data = data;
+	}
+
+	function set_status_handler(func, hover_func, data)
+	{
+		status_func = func;
+		hover_status_func = hover_func;
+		status_data = data;
+	}
+
+	function set_history_handler(func, data)
+	{
+		history.update_func = func;
+		history.update_data = data;
+		history.update();
+	}
+
+	function open_url(url: String)
+	{
+		redirect_count = 0;
+		history.add(this, url);
+		worker_load_url(url, false);
+	}
+
+	function open_image(url: String, img: WebImage)
+	{
+		if (!img) {
+			open_url(url);
+			return;
+		}
+
+		request_id++;
+		history.add(this, url);
+		show_document(Document::for_dialog(ImageViewerDialog::create(img.get_data())), false);
+		history.update(this);
+		if (status_func) {
+			status_func(status_data, "");
+		}
+	}
+
+	function back()
+	{
+		history.back(this);
+	}
+
+	function forward()
+	{
+		history.forward(this);
+	}
+
+	function reload()
+	{
+		if (history.pos >= 0 && !history.reloading) {
+			var entry = history.entries[history.pos];
+			redirect_count = 0;
+			worker_load_url(entry.url, true);
+			history.reloading = true;
+			history.update();
+		}
+	}
+
+	function stop()
+	{
+		if (cancel_channel) {
+			worker_cancel();
+			history.stop();
+		}
+	}
+
+	function @worker_load_url(url: String, reload: Boolean)
+	{
+		if (cancel_channel) {
+			cancel_channel.send(null);
+		}
+		cancel_channel = Channel::create(1);
+		Worker::create("browser/worker/worker", "load_url#5", [++request_id, url, reload, fetch_channel, cancel_channel], WebView::worker_handler#2, this);
+	}
+
+	function @worker_cancel()
+	{
+		if (cancel_channel) {
+			cancel_channel.send(null);
+			cancel_channel = null;
+		}
+		request_id++;
+		if (status_func) {
+			status_func(status_data, "");
+		}
+	}
+
+	function @worker_handler(msg)
+	{
+		if (msg[1] != request_id) {
+			return;
+		}
+
+		switch (msg[0]) {
+			case MSG_STATUS: {
+				if (status_func) {
+					status_func(status_data, msg[2]);
+				}
+				break;
+			}
+
+			case MSG_EXCEPTION: {
+				stop();
+				var e = msg[2];
+				dump(e);
+				if (status_func) {
+					var text = e[0];
+					status_func(status_data, "Error occurred: "+text);
+				}
+				break;
+			}
+
+			case MSG_ERROR: {
+				stop();
+				var e = msg[2];
+				if (status_func) {
+					if (length(e) > 0 && e[length(e)-1] != '.') {
+						e[] = '.';
+					}
+					status_func(status_data, e);
+				}
+				break;
+			}
+
+			case MSG_REDIRECT: {
+				var url = msg[2] as String;
+				log("redirecting to: "+url);
+				if (status_func) {
+					status_func(status_data, "Redirecting to: "+url);
+				}
+				history.redirect(url);
+				if (redirect_count++ < MAX_REDIRECTS) {
+					worker_load_url(url, false);
+				}
+				else {
+					log("too many redirects");
+					if (status_func) {
+						status_func(status_data, "Too many redirects.");
+					}
+				}
+				break;
+			}
+
+			case MSG_CONTENT: {
+				var document = msg[2] as Document;
+				show_document(document, history.reloading);
+				history.reloading = false;
+				history.update(this);
+				if (status_func) {
+					status_func(status_data, "Done.");
+				}
+				break;
+			}
+			
+			default: {
+				stop();
+				if (status_func) {
+					status_func(status_data, "Error while processing the request.");
+				}
+				log("unknown msg="+msg);
+				break;
+			}
+		}
+	}
+
+	function @show_document(document: Document, reload: Boolean)
+	{
+		document.dump();
+
+		var had_focus = false;
+		if (content) {
+			had_focus = content.has_focus();
+		}
+		if (dialog) {
+			var view = get_current_focus();
+			while (view) {
+				if (view === dialog) {
+					had_focus = true;
+					break;
+				}
+				view = view.get_parent();
+			}
+		}
+
+		if (scroll) {
+			remove(scroll);
+		}
+		if (dialog) {
+			remove(dialog);
+		}
+
+		this.document = document;
+
+		if (document.dialog) {
+			dialog = DialogView::create(document.dialog);
+			content = null;
+			scroll = null;
+			add(dialog);
+			if (title_func) {
+				title_func(title_data, null);
+			}
+		}
+		else {
+			content = ContentView::create(document, reload);
+			content.data.web_view = this;
+			content.data.reload_model_func = WebView::reload_model#1;
+			content.data.relayout_func = WebView::relayout#1;
+			content.data.open_url_func = WebView::open_url#2;
+			content.data.open_image_func = WebView::open_image#3;
+			content.data.hover_status_func = hover_status_func;
+			content.data.hover_status_data = status_data;
+			scroll = SmoothScrollView::create(content);
+			dialog = null;
+			add(scroll);
+			if (title_func) {
+				title_func(title_data, document.title);
+			}
+		}
+		handle_resize();
+
+		if (content) {
+			if (has_focus() || had_focus) {
+				content.focus();
+			}
+		}
+		if (dialog) {
+			if (has_focus() || had_focus) {
+				dialog.focus();
+			}
+		}
+	}
+
+	function @reload_model()
+	{
+		var document = Document::unserialize(document.serialize());
+		show_document(document, false);
+	}
+
+	function @relayout()
+	{
+		handle_resize();
+		content.mark_dirty();
+		repaint();
+	}
+
+	override function handle_resize()
+	{
+		if (scroll) {
+			scroll.set_rect(0, 0, get_width(), get_height());
+
+			var rect = scroll.get_view_area(false, true);
+			var visibility = scroll.get_scrollbar_visibility();
+			var always_vertical = (visibility == SCROLL_ALWAYS_VERTICAL || visibility == SCROLL_ALWAYS_BOTH);
+
+			if (scroll.get_vertical_scrollbar()) {
+				content.layout(rect.get_width());
+				if (content.get_layout_height() <= rect.get_height() && !always_vertical) {
+					content.layout(get_width());
+				}
+			}
+			else {
+				content.layout(get_width());
+				if (content.get_layout_height() > rect.get_height()) {
+					content.layout(rect.get_width());
+				}
+			}
+
+			scroll.set_content_size(content.get_layout_width(), content.get_layout_height());
+		}
+		else if (dialog) {
+			dialog.set_rect(0, 0, get_width(), get_height());
+		}
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		if (!scroll && !dialog) {
+			p.fill_rect(0, 0, get_width(), get_height(), 0xFFCCCCCC);
+		}
+		draw_children(p);
+	}
+
+	override function handle_focus_event(event: FocusEvent)
+	{
+		if (event.get_type() == EVENT_FOCUS_GAINED) {
+			if (content) {
+				content.focus();
+			}
+			if (dialog) {
+				dialog.focus();
+			}
+		}
+	}
+
+	function pass_key_event(event: KeyEvent): Boolean
+	{
+		if (scroll) {
+			return scroll.catch_key_event(event);
+		}
+		return false;
+	}
+}
+
+class @History
+{
+	var @entries: HistoryEntry[];
+	var @pos: Integer;
+	var @update_func;
+	var @update_data;
+	var @reloading: Boolean;
+
+	constructor create()
+	{
+		entries = [];
+		pos = -1;
+	}
+
+	function add(view: WebView, url: String)
+	{
+		if (pos >= 0) {
+			entries[pos].update(view);
+		}
+		array_set_length(entries, pos+1);
+		var entry = HistoryEntry::create();
+		entry.url = {url};
+		entries[] = entry;
+		pos++;
+		reloading = false;
+		update();
+	}
+
+	function update(view: WebView)
+	{
+		entries[pos].update(view);
+		update();
+	}
+
+	function redirect(url: String)
+	{
+		var entry = entries[pos];
+		entry.url = {url};
+		entry.document = null;
+		reloading = false;
+		update();
+	}
+
+	function back(view: WebView)
+	{
+		if (pos > 0) {
+			entries[pos].update(view);
+			view.worker_cancel();
+			reloading = false;
+			var entry = entries[--pos];
+			if (entry.document) {
+				entry.load(view);
+			}
+			else {
+				view.redirect_count = 0;
+				view.worker_load_url(entry.url, false);
+			}
+			update();
+		}
+	}
+
+	function forward(view: WebView)
+	{
+		if (pos < length(entries)-1) {
+			entries[pos].update(view);
+			view.worker_cancel();
+			reloading = false;
+			var entry = entries[++pos];
+			if (entry.document) {
+				entry.load(view);
+			}
+			else {
+				view.redirect_count = 0;
+				view.worker_load_url(entry.url, false);
+			}
+			update();
+		}
+	}
+
+	function stop()
+	{
+		if (reloading) {
+			reloading = false;
+			update();
+			return;
+		}
+		
+		if (pos >= 0) {
+			if (pos == length(entries)-1) {
+				array_set_length(entries, pos--);
+			}
+			update();
+		}
+	}
+
+	function @update()
+	{
+		if (update_func) {
+			var flags = 0;
+			if (pos > 0) flags |= HISTORY_BACK;
+			if (pos < length(entries)-1) flags |= HISTORY_FORWARD;
+			if (pos >= 0) {
+				var entry = entries[pos];
+				if (entry.document != null && !reloading) {
+					flags |= HISTORY_RELOAD;
+				}
+				else {
+					flags |= HISTORY_STOP;
+				}
+			}
+			update_func(update_data, length(entries) != 0? {entries[pos].url} : null, flags);
+		}
+	}
+}
+
+class @HistoryEntry
+{
+	var @url: String;
+	var @document: Byte[];
+	var @state;
+
+	constructor create()
+	{
+	}
+
+	function update(view: WebView)
+	{
+		if (view.document) {
+			var data = view.document.serialize();
+			this.document = array_create_shared(length(data), 1);
+			array_copy(this.document, 0, data, 0, length(data));
+		}
+		else {
+			this.document = null;
+		}
+
+		if (view.scroll) {
+			state = view.scroll.get_scroll_position();
+		}
+		else if (view.dialog) {
+			state = view.dialog.get_view_state();
+		}
+		else {
+			state = null;
+		}
+	}
+
+	function load(view: WebView)
+	{
+		view.show_document(Document::unserialize(document), false);
+		if (state) {
+			if (view.scroll) {
+				var scroll_pos = state as Integer[];
+				view.scroll.set_scroll_position(scroll_pos[0], scroll_pos[1]);
+			}
+			else if (view.dialog) {
+				view.dialog.set_view_state(state);
+			}
+		}
+	}
+}

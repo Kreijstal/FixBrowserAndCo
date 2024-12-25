@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<title>FixGUI Documentation</title>
+	<style>
+		html { background: #eee; margin: 0; padding: 0; }
+		body { font-family: Verdana, sans-serif; font-size: 14px; line-height: 150%; color: #000; }
+		body { max-width: 1400px; margin: 0 auto; padding: 20px 20px; }
+		body { background: #fff; box-shadow: -1px 0px 0px #ccc, 1px 0px 0px #ccc, 0px 1px 0px #ccc; }
+		h1 { margin-top: 0; }
+		dl, dt, dd { margin: 0; }
+		dt { border: 1px solid #ccc; border-radius: 3px; margin: 5px 0; padding: 1px 6px; background: #eee; }
+		dd { margin: 5px 0px 15px 30px; }
+	</style>
+</head>
+<body>
+
+<h1>FixGUI Documentation</h1>
+
+<p>
+<a href="index.html">Back to summary</a>
+</p>
+
+<p>
+<code>import "gui/view";</code>
+</p>
+
+<h2>Clipboard class</h2>
+
+<p>
+Provides access to the system clipboard.
+</p>
+
+<dl>
+	<dt><code>static function <b>set_text</b>(text: String)</code></dt>
+	<dd>
+		Sets the clipboard to given text (pass <code>null</code> to clear the clipboard).
+	</dd>
+	<dt><code>static function <b>get_text</b>(): String</code></dt>
+	<dd>
+		Returns the text value of the clipboard or <code>null</code> when the content is not
+		convertible to text or the clipboard is empty.
+	</dd>
+</dl>
+
+</body>
+</html>

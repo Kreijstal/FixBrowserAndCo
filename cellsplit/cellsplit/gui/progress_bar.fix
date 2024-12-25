@@ -1,0 +1,62 @@
+/*
+ * CellSplit v0.2 - https://www.cellsplit.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "image/image";
+import "gui/view";
+import "gui/subview";
+
+class GameProgressBar: SubView
+{
+	var @animation: Integer;
+
+	constructor create()
+	{
+		Timer::run(10, GameProgressBar::animate#1, weakref_create(this));
+	}
+
+	function @animate(): Boolean
+	{
+		this = weakref_get(this);
+		if (!this) return false;
+		animation = add32(animation, 1);
+		repaint();
+		return true;
+	}
+
+	override function handle_paint(p: Painter)
+	{
+		var scale = get_scale();
+		var shape = Shape::round_rect(0, 0, get_width(), get_height(), 2.5*scale, 2.5*scale);
+		var shape2 = Shape::round_rect(1.0*scale, 1.0*scale, get_width()-2.0*scale, get_height()-2.0*scale, 1.8*scale, 1.8*scale);
+		var color = 0xFF808080;
+		p.fill_shape(shape, 0xFF404040);
+		p.fill_shape(shape2, color);
+		p.push();
+		p.clip_shape(shape2);
+		var extra = get_height();
+		var w = get_width() + extra;
+		p.fill_rect(animation % w - extra, 0, get_height(), get_height(), 0xFF222222);
+		p.pop();
+		draw_children(p);
+	}
+}
