@@ -23,31 +23,6 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Create versions file if not exists
-        run: |
-          if [ ! -f versions.txt ]; then
-            cat > versions.txt << EOL
-            fixbrowser=0.1
-            fixbuild=0.6
-            fixgui=0.8
-            fiximage=0.7
-            fixio=0.8
-            fixnative=0.4
-            fixscript=0.9
-            fixscript-classes=0.8
-            fixscript-macros=0.6
-            fixscript-optional=0.3
-            fixscript-unpack=0.4
-            fixtask=0.6
-            fixutil=0.4
-            cellsplit=0.2
-            mathlib=20240605
-            bindiff=20240505
-            mathlib-webdemo=20240605
-            png=20190922
-            zcomp=20190922
-            EOL
-          fi
 
       - name: Check and update versions
         run: |
