@@ -1,0 +1,132 @@
+name: Update Software Versions
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Runs every hour
+  workflow_dispatch:
+
+jobs:
+  update-versions:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.x'
+
+      - name: Create versions file if not exists
+        run: |
+          if [ ! -f versions.txt ]; then
+            cat > versions.txt << EOL
+            fixbrowser=0.1
+            fixbuild=0.6
+            fixgui=0.8
+            fiximage=0.7
+            fixio=0.8
+            fixnative=0.4
+            fixscript=0.9
+            fixscript-classes=0.8
+            fixscript-macros=0.6
+            fixscript-optional=0.3
+            fixscript-unpack=0.4
+            fixtask=0.6
+            fixutil=0.4
+            cellsplit=0.2
+            mathlib=20240605
+            bindiff=20240505
+            mathlib-webdemo=20240605
+            png=20190922
+            zcomp=20190922
+            EOL
+          fi
+
+      - name: Check and update versions
+        run: |
+          #!/bin/bash
+          
+          function check_url() {
+            curl --output /dev/null --silent --head --fail "$1"
+            return $?
+          }
+          
+          function process_package() {
+            local package=$1
+            local current_version=$2
+            local base_url=$3
+            
+            # Skip version increment check for advel.cz domains
+            if [[ $base_url == *"advel.cz"* ]]; then
+              local url="${base_url}/${package}-${current_version}.zip"
+              if check_url "$url"; then
+                echo "Downloading ${package} version ${current_version}"
+                curl -L "$url" -o "${package}.zip"
+                rm -rf "$package"
+                unzip -o "${package}.zip" -d "$package"
+                rm "${package}.zip"
+                return 0
+              fi
+              return 1
+            fi
+            
+            # Try current version
+            local url="${base_url}/${package}-${current_version}.zip"
+            if check_url "$url"; then
+              echo "Current version exists: ${package}-${current_version}"
+              
+              # Try minor version increment
+              local minor_version=$(echo $current_version | awk -F. '{print $1"."$2+0.1}')
+              local minor_url="${base_url}/${package}-${minor_version}.zip"
+              
+              if check_url "$minor_url"; then
+                echo "Found new minor version: ${package}-${minor_version}"
+                curl -L "$minor_url" -o "${package}.zip"
+                rm -rf "$package"
+                unzip -o "${package}.zip" -d "$package"
+                rm "${package}.zip"
+                sed -i "s/${package}=${current_version}/${package}=${minor_version}/" versions.txt
+                return 0
+              fi
+              
+              # Try major version increment
+              local major_version=$((${current_version%%.*} + 1)).0
+              local major_url="${base_url}/${package}-${major_version}.zip"
+              
+              if check_url "$major_url"; then
+                echo "Found new major version: ${package}-${major_version}"
+                curl -L "$major_url" -o "${package}.zip"
+                rm -rf "$package"
+                unzip -o "${package}.zip" -d "$package"
+                rm "${package}.zip"
+                sed -i "s/${package}=${current_version}/${package}=${major_version}/" versions.txt
+                return 0
+              fi
+            fi
+            return 1
+          }
+          
+          # Read current versions
+          while IFS='=' read -r package version; do
+            if [[ $package == mathlib* ]] || [[ $package == bindiff ]] || [[ $package == png ]] || [[ $package == zcomp ]]; then
+              process_package "$package" "$version" "http://public-domain.advel.cz/download"
+            elif [[ $package == cellsplit ]]; then
+              process_package "$package" "$version" "https://www.cellsplit.org/download"
+            else
+              process_package "$package" "$version" "https://www.fixbrowser.org/download"
+            fi
+          done < versions.txt
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add versions.txt */
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update software versions" && git push)
