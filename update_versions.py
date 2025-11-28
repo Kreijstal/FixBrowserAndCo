@@ -73,22 +73,45 @@ def try_version_update(package: str, current_version: str, base_url: str) -> Opt
     # Try current version first
     url = f"{base_url}/{package}-{current_version}.zip"
     if download_and_extract(url, package):
-        # Try minor version increment
-        current_major, current_minor = map(float, current_version.split('.'))
-        minor_version = f"{int(current_major)}.{current_minor + 0.1}"
-        minor_url = f"{base_url}/{package}-{minor_version}.zip"
+        # Parse version using integer arithmetic
+        parts = current_version.split('.')
+        if len(parts) < 2:
+            # Non-semver version, just return current version
+            return current_version
+        current_major = int(parts[0])
+        current_minor = int(parts[1])
         
-        if download_and_extract(minor_url, package):
-            return minor_version
-
-        # Try major version increment
-        major_version = f"{int(current_major + 1)}.0"
+        latest_version = current_version
+        
+        # Keep incrementing minor version until we hit a 404
+        test_minor = current_minor + 1
+        while True:
+            test_version = f"{current_major}.{test_minor}"
+            test_url = f"{base_url}/{package}-{test_version}.zip"
+            if download_and_extract(test_url, package):
+                latest_version = test_version
+                test_minor += 1
+            else:
+                break
+        
+        # Try major version increment (e.g., 0.9 -> 1.0)
+        major_version = f"{current_major + 1}.0"
         major_url = f"{base_url}/{package}-{major_version}.zip"
         
         if download_and_extract(major_url, package):
-            return major_version
+            latest_version = major_version
+            # Continue checking minor versions for new major
+            test_minor = 1
+            while True:
+                test_version = f"{current_major + 1}.{test_minor}"
+                test_url = f"{base_url}/{package}-{test_version}.zip"
+                if download_and_extract(test_url, package):
+                    latest_version = test_version
+                    test_minor += 1
+                else:
+                    break
 
-        return current_version
+        return latest_version
     
     return None
 

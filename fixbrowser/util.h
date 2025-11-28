@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -23,6 +23,7 @@
 #define UTIL_H
 
 #include <stdint.h>
+#include "fixscript.h"
 
 #define MIN(a, b) ((a)<(b)? (a):(b))
 #define MAX(a, b) ((a)>(b)? (a):(b))
@@ -38,7 +39,9 @@ Value create_stdlib_error(Heap *heap, const char *msg);
 void init_critical_sections();
 #endif
  
-void start_global_cleanup_thread();
+int init_self_file(const char *argv0);
+void start_memory_cache_cleanup_thread();
 void register_util_functions(Heap *heap);
+Script *script_load_file(Heap *heap, const char *name, Value *error, const char *dirname);
 
 #endif /* UTIL_H */

@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -18,6 +18,8 @@
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
  */
+
+use "string_switch";
 
 import "io/charset/charset";
 import "util/string";
@@ -634,7 +636,7 @@ function @parse_rcdata_end_tag_name(html)
 		}
 
 		html->HTML_chars_value = {"</"};
-		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		array_append(html->HTML_chars_value, html->HTML_temp_buf);
 		back_char(html);
 		set_state(html, STATE_RCDATA);
 		return TOKEN_CHARS;
@@ -711,7 +713,7 @@ function @parse_rawtext_end_tag_name(html)
 		}
 
 		html->HTML_chars_value = {"</"};
-		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		array_append(html->HTML_chars_value, html->HTML_temp_buf);
 		back_char(html);
 		set_state(html, STATE_RAWTEXT);
 		return TOKEN_CHARS;
@@ -793,7 +795,7 @@ function @parse_script_data_end_tag_name(html)
 		}
 
 		html->HTML_chars_value = {"</"};
-		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		array_append(html->HTML_chars_value, html->HTML_temp_buf);
 		back_char(html);
 		set_state(html, STATE_SCRIPT_DATA);
 		return TOKEN_CHARS;
@@ -1002,7 +1004,7 @@ function @parse_script_data_escaped_end_tag_name(html)
 		}
 
 		html->HTML_chars_value = {"</"};
-		string_append(html->HTML_chars_value, html->HTML_temp_buf);
+		array_append(html->HTML_chars_value, html->HTML_temp_buf);
 		back_char(html);
 		set_state(html, STATE_SCRIPT_DATA_ESCAPED);
 		return TOKEN_CHARS;
@@ -2160,7 +2162,7 @@ function @parse_char_ref(html)
 					}
 				}
 				array_set_length(temp_buf, 0);
-				string_append(temp_buf, value);
+				array_append(temp_buf, value);
 				return set_state(html, STATE_CHAR_REF_END);
 			}
 			else {
@@ -2273,7 +2275,7 @@ function @parse_numeric_char_ref(html)
 function @parse_char_ref_end(html)
 {
 	if (is_attr_value_state(html->HTML_ret_state)) {
-		string_append(html->HTML_tag_new_attr_value, html->HTML_temp_buf);
+		array_append(html->HTML_tag_new_attr_value, html->HTML_temp_buf);
 		clear_temp_buf(html);
 		set_state(html, html->HTML_ret_state);
 		return TOKEN_NEXT;
@@ -2463,89 +2465,76 @@ function @reset_insertion_mode(html)
 
 	for (;;) {
 		var type = element_get_type(node);
-		switch (length(type)) {
-			case 2:
-				if (type == "td" || type == "th") {
-					if (node_idx > 0) {
-						html->HTML_insertion_mode = INS_IN_CELL;
-						return;
-					}
-				}
-				if (type == "tr") {
-					html->HTML_insertion_mode = INS_IN_ROW;
+		switch (type) {
+			case "td":
+			case "th":
+				if (node_idx > 0) {
+					html->HTML_insertion_mode = INS_IN_CELL;
 					return;
 				}
 				break;
 
-			case 4:
-				if (type == "head") {
-					if (node_idx > 0) {
-						html->HTML_insertion_mode = INS_IN_HEAD;
-						return;
-					}
-				}
-				if (type == "body") {
-					html->HTML_insertion_mode = INS_IN_BODY;
-					return;
-				}
-				if (type == "html") {
-					html->HTML_insertion_mode = html->HTML_head_elem? INS_AFTER_HEAD : INS_BEFORE_HEAD;
+			case "tr":
+				html->HTML_insertion_mode = INS_IN_ROW;
+				return;
+
+			case "head":
+				if (node_idx > 0) {
+					html->HTML_insertion_mode = INS_IN_HEAD;
 					return;
 				}
 				break;
 
-			case 5:
-				if (type == "tbody" || type == "thead" || type == "tfoot") {
-					html->HTML_insertion_mode = INS_IN_TABLE_BODY;
-					return;
-				}
-				if (type == "table") {
-					html->HTML_insertion_mode = INS_IN_TABLE;
-					return;
-				}
-				break;
+			case "body":
+				html->HTML_insertion_mode = INS_IN_BODY;
+				return;
 
-			case 6:
-				if (type == "select") {
-					html->HTML_insertion_mode = INS_IN_SELECT;
-					if (node_idx > 0) {
-						var ancestor_idx = node_idx;
-						var ancestor = node;
-						while (ancestor_idx > 0) {
-							ancestor = stack[--ancestor_idx];
-							var anc_type = element_get_type(ancestor);
-							if (anc_type == "template") break;
-							if (anc_type == "table") {
-								html->HTML_insertion_mode = INS_IN_SELECT_IN_TABLE;
-								break;
-							}
+			case "html":
+				html->HTML_insertion_mode = html->HTML_head_elem? INS_AFTER_HEAD : INS_BEFORE_HEAD;
+				return;
+
+			case "tbody":
+			case "thead":
+			case "tfoot":
+				html->HTML_insertion_mode = INS_IN_TABLE_BODY;
+				return;
+
+			case "table":
+				html->HTML_insertion_mode = INS_IN_TABLE;
+				return;
+
+			case "select":
+				html->HTML_insertion_mode = INS_IN_SELECT;
+				if (node_idx > 0) {
+					var ancestor_idx = node_idx;
+					var ancestor = node;
+					while (ancestor_idx > 0) {
+						ancestor = stack[--ancestor_idx];
+						var anc_type = element_get_type(ancestor);
+						if (anc_type == "template") break;
+						if (anc_type == "table") {
+							html->HTML_insertion_mode = INS_IN_SELECT_IN_TABLE;
+							break;
 						}
 					}
-					return;
 				}
-				break;
+				return;
 
-			case 7:
-				if (type == "caption") {
-					html->HTML_insertion_mode = INS_IN_CAPTION;
-					return;
-				}
-				break;
+			case "caption":
+				html->HTML_insertion_mode = INS_IN_CAPTION;
+				return;
 
-			case 8:
-				if (type == "colgroup") {
-					html->HTML_insertion_mode = INS_IN_COLUMN_GROUP;
-					return;
-				}
-				if (type == "template") {
-					html->HTML_insertion_mode = stack_last(html->HTML_template_insertion_modes_stack);
-					return;
-				}
-				if (type == "frameset") {
-					html->HTML_insertion_mode = INS_IN_FRAMESET;
-					return;
-				}
-				break;
+			case "colgroup":
+				html->HTML_insertion_mode = INS_IN_COLUMN_GROUP;
+				return;
+
+			case "template":
+				html->HTML_insertion_mode = stack_last(html->HTML_template_insertion_modes_stack);
+				return;
+
+			case "frameset":
+				html->HTML_insertion_mode = INS_IN_FRAMESET;
+				return;
 		}
 
 		if (node_idx == 0) {
@@ -2616,6 +2605,11 @@ function @create_element(html)
 	return element_create(html->HTML_tag_name, null, html->HTML_tag_attrs);
 }
 
+function @create_auto_element(html, name)
+{
+	return element_create(name, null, html->HTML_tag_name == name? html->HTML_tag_attrs : null);
+}
+
 function @insert_element(html)
 {
 	return insert_element(html, null);
@@ -2654,7 +2648,7 @@ function @insert_chars(html, data)
 	var prev = next? element_get_prev(next) : element_get_last_child(parent);
 	if (prev && element_is_type(prev, "#text")) {
 		var prev_data = element_get_data(prev);
-		string_append(prev_data, data);
+		array_append(prev_data, data);
 	}
 	else {
 		var elem = element_create("#text", data);
@@ -3190,7 +3184,7 @@ function @process_before_html(html, token)
 		}
 	}
 
-	var e = element_create("html");
+	var e = create_auto_element(html, "html");
 	element_append_child(html->HTML_document, e);
 	html->HTML_open_elements_stack[] = e;
 	html->HTML_insertion_mode = INS_BEFORE_HEAD;
@@ -3249,7 +3243,7 @@ function @process_before_head(html, token)
 		}
 	}
 	
-	html->HTML_head_elem = insert_element(html, element_create("head"));
+	html->HTML_head_elem = insert_element(html, create_auto_element(html, "head"));
 	html->HTML_insertion_mode = INS_IN_HEAD;
 	return false;
 }
@@ -3548,7 +3542,7 @@ function @process_after_head(html, token)
 		}
 	}
 
-	insert_element(html, element_create("body"));
+	insert_element(html, create_auto_element(html, "body"));
 	html->HTML_insertion_mode = INS_IN_BODY;
 	return false;
 }
@@ -5708,7 +5702,7 @@ function @assert_text(input, output)
 		if (token != TOKEN_CHARS) {
 			return 0, error({"assert failed (expected character tokens only)"});
 		}
-		string_append(chars, html->HTML_chars_value);
+		array_append(chars, html->HTML_chars_value);
 	}
 	if (chars != output) {
 		return 0, error({"assert failed (expected '", output, "' but got '", chars, "')"});

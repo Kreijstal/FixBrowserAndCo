@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -119,7 +119,7 @@ class @BackgroundView: SubView
 		p.fill_shape(shape, 0xFFFFFFFF);
 		p.pop();
 
-		var version = "v0.1";
+		var version = "v0.4";
 		size = 12.5;
 		var width_ver = font.get_string_advance(version)*size;
 		p.push();
@@ -136,7 +136,7 @@ class @BackgroundView: SubView
 		p.fill_shape(shape.get_outline(1.0), 0x40202020);
 		p.translate(0.5, 0.5);
 
-		var text1 = "Copyright \A9 2018-2024 Martin Dvorak";
+		var text1 = "Copyright \A9 2018-2025 Martin Dvorak";
 		var text2 = "www.fixbrowser.org";
 		var size2 = 12.8;
 		var width1 = font.get_string_advance(text1) * size2;

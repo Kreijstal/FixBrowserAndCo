@@ -1,31 +1,29 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var imgs = element_query_all(document, "img[data-src]");
-	for (var i=0; i<length(imgs); i++) {
-		var img = imgs[i];
-		element_set_attr(img, "src", element_get_attr(img, "data-src"));
+	foreach (var img in document.query_all("img[data-src]")) {
+		img.set_attr("src", img.get_attr("data-src"));
 	}
 
-	imgs = element_query_all(document, "img.article-image");
-	for (var i=0; i<length(imgs); i++) {
-		element_set_attr(imgs[i], "style", "height: auto;");
+	foreach (var img in document.query_all("img.article-image")) {
+		img.set_attr("style", "height: auto;");
 	}
 
-	imgs = element_query_all(document, "img.Card__img");
-	for (var i=0; i<length(imgs); i++) {
-		element_set_attr(imgs[i], "style", "width: 100%; height: 100%; padding: 0;");
+	foreach (var img in document.query_all("img.Card__img")) {
+		img.set_attr("style", "width: 100%; height: 100%; padding: 0;");
 	}
 
 	rewrite_links(document, rewrite#3, null);
 }
 
-function @rewrite(elem, value, data)
+function @rewrite(elem: Element, value: String, data): String
 {
-	if (string_starts_with(value, "http://assets.atlasobscura.com/")) {
-		value = string_substring(value, 5);
+	if (value.starts_with("http://assets.atlasobscura.com/")) {
+		value = value.substring(5);
 	}
 	return value;
 }

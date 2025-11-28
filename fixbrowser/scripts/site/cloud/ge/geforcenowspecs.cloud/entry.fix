@@ -1,0 +1,62 @@
+use "classes";
+
+import "util/common";
+import "util/extract";
+import "util/json";
+import "util/string";
+
+function adjust_document(request: Request, document: Element)
+{
+	add_style_to_element(document, "body > div", "opacity: 1");
+	remove_element(document, "video");
+
+	if (request.get_path() == "/") {
+		var (partner_list, e) = extract_partner_list(request, document);
+		if (e) {
+			dump(e);
+		}
+
+		var selector = document.query("div > button");
+		if (selector != null && partner_list != null) { //XXX
+			var parent = selector.get_parent();
+			var classes = selector.get_attr("class");
+			parent.insert_html_before(selector, {
+				"<style>",
+					"div#partner-selector { position: relative; left: -15px; }",
+					"div#partner-list { position: absolute; z-index: 1000; left: 0; right: 0; margin-top: -3px; background: #333; color: #eee; border: 1px solid rgb(22,101,52); border-radius: 0 0 5px 5px; display: none; }",
+					"div#partner-button { cursor: default; }",
+					"div#partner-selector:hover div#partner-button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }",
+					"div#partner-selector:hover div#partner-list { display: block; }",
+					"div#partner-list a { display: block; padding: 5px 10px; }",
+					"div#partner-list a:hover { background: rgb(22,101,52); }",
+				"</style>",
+				"<div id=\"partner-selector\"><div id=\"partner-button\" class=\""+classes+"\">Select Alliance Partner</div><div id=\"partner-list\">"+partner_list+"</div></div>"
+			});
+			selector.remove();
+		}
+	}
+	else if (request.get_path().starts_with("/partners/")) {
+		var home = document.query("div > button");
+		if (home) {
+			var parent = home.get_parent();
+			var classes = home.get_attr("class");
+			parent.insert_html_before(home, "<a href=\"/\" class=\""+classes+"\" style=\"position: relative; left: -15px\">Home</a>");
+			home.remove();
+		}
+	}
+}
+
+function @extract_partner_list(request: Request, document: Element): String
+{
+	var script = document.query("script[src*='/app/page-']");
+	if (script) {
+		var content = String::from_utf8(Http::get(Link::get_absolute(request.get_url(), script.get_attr("src"))).content);
+		var options = JSON::parse("[{"+extract_string(content, "options:[{", "}]")+"}]", false) as String[String][];
+		var s = {""};
+		foreach (var entry in options) {
+			s += "<a href=\""+html_escape("/partners/"+entry["value"])+"\">"+html_escape(entry["label"])+"</a>";
+		}
+		return s;
+	}
+	return null;
+}

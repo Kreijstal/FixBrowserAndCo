@@ -1,0 +1,432 @@
+/*
+ * FixScript String Switch v0.1-dev - https://www.fixscript.org/
+ * Copyright (c) 2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+/*----------------------------------------------------------------------------
+
+This token processor adds support for extending the switch statement to string
+values. The switch must have constant string for each case, null values are not
+handled.
+
+The matching is implemented in an efficient manner using hashing.
+
+Example:
+
+  use "string_switch";
+
+  function test(str)
+  {
+      switch (str) {
+          default:
+          case "first": return 1;
+          case "second": return 2;
+      }
+
+      switch (str; 10, 20) {
+          // a variant that uses a range (the end is exclusive) from the given string to avoid unnecessary allocations
+      }
+  }
+
+----------------------------------------------------------------------------*/
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const @DEBUG = 0;
+
+var @global_counter;
+
+function process_tokens(fname, tokens, src)
+{
+	var last_switch = -1;
+
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		switch (tokens[i+TOK_type]) {
+			case KW_SWITCH:
+				last_switch = i;
+				break;
+
+			case KW_CASE:
+				if (i+TOK_SIZE < length(tokens) && tokens[i+TOK_SIZE+TOK_type] == TOK_STRING) {
+					if (last_switch >= 0) {
+						parse_switch(tokens, src, last_switch - TOK_SIZE);
+						i = last_switch;
+						last_switch = -1;
+					}
+				}
+				break;
+		}
+	}
+
+	if (DEBUG) {
+		dump_tokens(tokens, src);
+		return 0, 1;
+	}
+}
+
+function @parse_switch(tokens, src, i)
+{
+	var switch_start = i + TOK_SIZE;
+	i = expect_type(tokens, src, i, KW_SWITCH, "switch");
+	i = expect_symbol(tokens, src, i, '(');
+	var start_expr = i + TOK_SIZE;
+	i = expect_expression(tokens, src, i);
+	var end_expr = i + TOK_SIZE;
+	i = expect_next(tokens, src, i);
+	var start_from = -1;
+	var end_from = -1;
+	var start_to = -1;
+	var end_to = -1;
+	if (tokens[i+TOK_type] == ';') {
+		start_from = i + TOK_SIZE;
+		i = expect_expression(tokens, src, i);
+		end_from = i + TOK_SIZE;
+		i = expect_symbol(tokens, src, i, ',');
+		start_to = i + TOK_SIZE;
+		i = expect_expression(tokens, src, i);
+		end_to = i + TOK_SIZE;
+	}
+	else {
+		i -= TOK_SIZE;
+	}
+	i = expect_symbol(tokens, src, i, ')');
+	var switch_end = i + TOK_SIZE;
+	i = expect_symbol(tokens, src, i, '{');
+
+	var level = 0;
+	var values = {};
+	var offsets = {};
+	var hashes = {};
+	var has_collisions = false;
+	var body_end = -1;
+
+	for (var j=i+TOK_SIZE; j<length(tokens); j+=TOK_SIZE) {
+		switch (tokens[j+TOK_type]) {
+			case '(', '{', '[':
+				level++;
+				continue;
+
+			case ')', '}', ']':
+				if (level == 0) {
+					break;
+				}
+				level--;
+				continue;
+
+			case KW_CASE:
+				if (level == 0) {
+					j = expect_type(tokens, src, j, TOK_STRING, "string literal");
+					expect_symbol(tokens, src, j, ':');
+					var value = get_token_string(tokens, src, j);
+					if (hash_contains(values, value)) {
+						return 0, error({script_line(tokens[j+TOK_line]), ": duplicate case value"});
+					}
+					var hash = 5381;
+					for (var k=0; k<length(value); k++) {
+						hash = add32(mul32(hash, 33), value[k]);
+					}
+					var hash_values = hash_get(hashes, hash, null);
+					if (hash_values) {
+						has_collisions = true;
+					}
+					else {
+						hash_values = [];
+						hashes{hash} = hash_values;
+					}
+					hash_values[] = value;
+					values{value} = hash;
+					offsets{value} = j;
+				}
+				continue;
+
+			case KW_DEFAULT:
+				if (level == 0) {
+					if (hash_contains(values, null)) {
+						return 0, error({script_line(tokens[j+TOK_line]), ": duplicate default statement"});
+					}
+					expect_symbol(tokens, src, j, ':');
+					values{null} = 0;
+					offsets{null} = j;
+				}
+				continue;
+
+			default:
+				continue;
+		}
+		body_end = j;
+		break;
+	}
+
+	if (DEBUG) {
+		dump(values);
+		dump(hashes);
+	}
+
+	var expr_var = {"__string_switch_expr_", global_counter};
+	var from_var = {"__string_switch_from_", global_counter};
+	var to_var = {"__string_switch_to_", global_counter};
+	var hash_var = {"__string_switch_hash_", global_counter};
+	var which_var = {"__string_switch_which_", global_counter};
+	var iter_var = {"__string_switch_iter_", global_counter};
+	var value_var = {"__string_switch_value_", global_counter};
+	var handle_var = {"__string_switch_handle_", global_counter++};
+
+	if (DEBUG) {
+		expr_var = "expr";
+		from_var = "from";
+		to_var = "to";
+		hash_var = "hash";
+		which_var = "which";
+		iter_var = "iter";
+		value_var = "value";
+		handle_var = "handle";
+	}
+
+	var switch_line = tokens[switch_start + TOK_line];
+
+	var prepend_tokens = tokens_parse([], src, {"{ var ", expr_var, "="}, switch_line);
+	array_append(prepend_tokens, tokens, start_expr, end_expr - start_expr);
+	if (start_from >= 0) {
+		tokens_parse(prepend_tokens, src, {",", from_var, "="}, switch_line);
+		array_append(prepend_tokens, tokens, start_from, end_from - start_from);
+	}
+	tokens_parse(prepend_tokens, src, {",", to_var, "="}, switch_line);
+	if (start_to >= 0) {
+		array_append(prepend_tokens, tokens, start_to, end_to - start_to);
+	}
+	else {
+		tokens_parse(prepend_tokens, src, {"length(", expr_var, ")"}, switch_line);
+	}
+	if (!has_collisions) {
+		tokens_parse(prepend_tokens, src, {",", handle_var, "=true"}, switch_line);
+	}
+	tokens_parse(prepend_tokens, src, {
+		",", hash_var, "=5381;",
+		"for (var ", iter_var, "=", start_from >= 0? from_var : "0", "; ", iter_var, "<", to_var, ";", iter_var, "++) {",
+			hash_var, " = add32(mul32(", hash_var, ", 33), ", expr_var, "[", iter_var, "]);",
+		"}"
+	}, switch_line);
+	if (DEBUG) switch_line++;
+
+	var end_tokens = tokens_parse([], src, "}", tokens[body_end + TOK_line]);
+	array_insert_array(tokens, body_end + TOK_SIZE, end_tokens);
+	
+	if (has_collisions) {
+		var new_values = {};
+		for (var j=0; j<length(values); j++) {
+			var (value, hash) = hash_entry(values, j);
+			new_values{value} = j;
+		}
+		tokens_parse(prepend_tokens, src, {
+			"var ", which_var, " = -1;",
+			"switch (", hash_var, ") {"
+		}, switch_line);
+		for (var j=0; j<length(hashes); j++) {
+			var (hash, hash_values) = hash_entry(hashes, j);
+			if (DEBUG) switch_line++;
+			tokens_parse(prepend_tokens, src, {"case ", hash, ": {"}, switch_line);
+			if (start_from >= 0) {
+				tokens_parse(prepend_tokens, src, {
+					"var ", value_var, " = array_extract(", expr_var, ", ", from_var, ", ", to_var, " - ", from_var, ");"
+				}, switch_line);
+			}
+			for (var k=0; k<length(hash_values); k++) {
+				tokens_parse(prepend_tokens, src, {
+					"if (", start_from >= 0? value_var : expr_var, " == ", token_escape_string(hash_values[k]), ") {",
+						which_var, " = ", new_values{hash_values[k]}, ";",
+						"break;",
+					"}"
+				}, switch_line);
+			}
+			tokens_parse(prepend_tokens, src, {"break; }"}, switch_line);
+		}
+		tokens_parse(prepend_tokens, src, {"} switch (", which_var, ")"}, switch_line);
+		if (DEBUG) {
+			dump(new_values);
+		}
+
+		for (var j=length(offsets)-1; j>=0; j--) {
+			var (value, offset) = hash_entry(offsets, j);
+			var which_str = {new_values{value}};
+			tokens[offset+TOK_type] = TOK_NUMBER;
+			tokens[offset+TOK_off] = length(src);
+			tokens[offset+TOK_len] = length(which_str);
+			array_append(src, which_str);
+		}
+	}
+	else {
+		tokens_parse(prepend_tokens, src, {"switch (", hash_var, ")"}, switch_line);
+
+		var new_tokens = [];
+		for (var j=length(offsets)-1; j>=0; j--) {
+			var (value, hash) = hash_entry(values, j);
+			var offset = offsets{value};
+			if (value) {
+				var hash_str = {hash};
+				if (hash < 0) {
+					array_remove(hash_str, 0);
+					array_clear(new_tokens);
+					tokens_parse(new_tokens, src, "-", tokens[offset+TOK_line]);
+					array_insert_array(tokens, offset, new_tokens);
+					offset += TOK_SIZE;
+				}
+				tokens[offset+TOK_type] = TOK_NUMBER;
+				tokens[offset+TOK_off] = length(src);
+				tokens[offset+TOK_len] = length(hash_str);
+				array_append(src, hash_str);
+
+				array_clear(new_tokens);
+				if (start_from >= 0) {
+					tokens_parse(new_tokens, src, {"if (", handle_var, " && array_extract(", expr_var, ", ", from_var, ", ", to_var, " - ", from_var, ") != ", token_escape_string(value), ") break; ", handle_var, " = false;"}, tokens[offset+TOK_SIZE+TOK_line]);
+				}
+				else {
+					tokens_parse(new_tokens, src, {"if (", handle_var, " && ", expr_var, " != ", token_escape_string(value), ") break;", handle_var, " = false;"}, tokens[offset+TOK_SIZE+TOK_line]);
+				}
+				array_insert_array(tokens, offset+2*TOK_SIZE, new_tokens);
+			}
+			else {
+				array_clear(new_tokens);
+				tokens_parse(new_tokens, src, {handle_var, " = false;"}, tokens[offset+TOK_SIZE+TOK_line]);
+				array_insert_array(tokens, offset+2*TOK_SIZE, new_tokens);
+			}
+		}
+	}
+	
+	array_replace_range(tokens, switch_start, switch_end, prepend_tokens);
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": unexpected end of file"});
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}

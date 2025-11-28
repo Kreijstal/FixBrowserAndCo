@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -137,6 +137,11 @@ function url_create(s)
 	return url;
 }
 
+function url_clear_params(url)
+{
+	url->URL_params = null;
+}
+
 function url_get_param(url, param_name)
 {
 	var params = url->URL_params;
@@ -179,6 +184,10 @@ function url_set_param(url, param_name, param_value)
 	if (param_value) {
 		params[] = {param_name};
 		params[] = {param_value};
+	}
+
+	if (length(params) == 0) {
+		url->URL_params = null;
 	}
 }
 
@@ -263,7 +272,14 @@ function url_merge(url, relative)
 	}
 
 	merged->URL_path = path_to_string(path_merge(path_parse(url->URL_path), path_parse(relative->URL_path), false));
-	merged->URL_params = clone_deep(relative->URL_params);
+
+	if (relative->URL_host || relative->URL_path != "" || relative->URL_params) {
+		merged->URL_params = clone_deep(relative->URL_params);
+	}
+	else {
+		merged->URL_params = clone_deep(url->URL_params);
+	}
+
 	merged->URL_fragment = clone(relative->URL_fragment);
 	
 	return merged;
@@ -278,37 +294,37 @@ function url_to_string(url)
 {
 	var s = {""};
 	if (url->URL_scheme != null) {
-		string_append(s, url->URL_scheme);
+		array_append(s, url->URL_scheme);
 		s[] = ':';
 	}
 	if (url->URL_host != null) {
 		s[] = '/';
 		s[] = '/';
 		if (url->URL_user != null) {
-			string_append(s, percent_encode_auth(url->URL_user));
+			array_append(s, percent_encode_auth(url->URL_user));
 			if (url->URL_password != null) {
 				s[] = ':';
-				string_append(s, percent_encode_auth(url->URL_password));
+				array_append(s, percent_encode_auth(url->URL_password));
 			}
 			s[] = '@';
 		}
-		string_append(s, url->URL_host);
+		array_append(s, url->URL_host);
 		if (url->URL_port != 0) {
 			s[] = ':';
-			string_append(s, {url->URL_port});
+			array_append(s, {url->URL_port});
 		}
 	}
 	if (url->URL_path != null) {
-		string_append(s, percent_encode_path(url->URL_path));
+		array_append(s, percent_encode_path(url->URL_path));
 	}
 	var query = url_query_to_string(url);
 	if (query != null) {
 		s[] = '?';
-		string_append(s, query);
+		array_append(s, query);
 	}
 	if (url->URL_fragment != null) {
 		s[] = '#';
-		string_append(s, percent_encode_fragment(url->URL_fragment));
+		array_append(s, percent_encode_fragment(url->URL_fragment));
 	}
 	return s;
 }
@@ -325,10 +341,10 @@ function url_query_to_string(url)
 		if (i > 0) {
 			s[] = '&';
 		}
-		string_append(s, percent_encode_query(name));
+		array_append(s, percent_encode_query(name));
 		if (value) {
 			s[] = '=';
-			string_append(s, percent_encode_query(value));
+			array_append(s, percent_encode_query(value));
 		}
 	}
 	return s;
@@ -345,7 +361,7 @@ function url_path_query_to_string(url)
 	var query = url_query_to_string(url);
 	if (query != null) {
 		s[] = '?';
-		string_append(s, query);
+		array_append(s, query);
 	}
 	return s;
 }
@@ -377,4 +393,7 @@ function test_url()
 	assert_url(url_merge(absolute, url_create("#frag")), "basescheme://basehost/base/Path#frag");
 	assert_url(url_merge(absolute, url_create("baseScheme://baseHost")), "basescheme://basehost");
 	assert_url(url_merge(absolute, url_create("baseScheme://baseHost ")), "basescheme://invalid"); // TODO: handle differently?
+	assert_url(url_merge(url_create("baseScheme://baseHost/base/Path"), url_create("#fragment")), "basescheme://basehost/base/Path#fragment");
+	assert_url(url_merge(url_create("baseScheme://baseHost/base/Path?query"), url_create("")), "basescheme://basehost/base/Path?query");
+	assert_url(url_merge(url_create("baseScheme://baseHost/base/Path?query"), url_create("#fragment")), "basescheme://basehost/base/Path?query#fragment");
 }

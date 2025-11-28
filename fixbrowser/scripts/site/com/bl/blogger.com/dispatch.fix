@@ -1,7 +1,9 @@
+use "classes";
+
 import "util/common";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	request_add_same_domain(request, "blogger.com");
-	request_add_same_domain(request, "blogspot.com");
+	request.add_same_domain("blogger.com");
+	request.add_same_domain("blogspot.com");
 }

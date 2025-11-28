@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,6 +19,9 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "macros";
+use "util/time_literals";
+
 import "io/stream";
 import "io/http/http";
 import "io/http/util";
@@ -31,9 +34,11 @@ import "io/tls/tls";
 import "io/charset/charset";
 import "task/task";
 import "task/channel";
+import "task/global";
 import "util/string";
 import "util/html";
 import "util/base64";
+import "util/memory_cache";
 import "browser/html/html";
 import "browser/html/element";
 import "browser/css/css";
@@ -46,6 +51,23 @@ import "browser/view/model";
 
 var @request_id;
 var @cancel_channel;
+
+macro @get_content_type(&type, &charset, content_type)
+{
+	var type = content_type;
+	if (!type) {
+		type = "text/html";
+	}
+	var charset = null;
+	var parts = string_split(type, ';');
+	type = string_trim(parts[0]);
+	for (var i=1; i<length(parts); i++) {
+		var p = string_split(parts[i], '=');
+		if (length(p) == 2 && string_trim(p[0]) == "charset") {
+			charset = charset_get(string_trim(p[1]));
+		}
+	}
+}
 
 function @real_load_url(url, reload, fetch_channel)
 {
@@ -83,36 +105,38 @@ function @real_load_url(url, reload, fetch_channel)
 	log({"URL: ", url_to_string(target_url)});
 
 	var script_request = script_request:request_create(target_url);
-	var replaced_content = script_run_domain_handle_request(script_request);
+	script_run_handle_request(script_request);
 	if (script_request->REQ_redirect) {
 		worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
 		return;
 	}
-	if (replaced_content) {
-		var document = html_parse(replaced_content, null);
+	if (script_request->REQ_content_replacement_data) {
+		get_content_type(&content_type, &content_charset, script_request->REQ_content_replacement_type);
 
-		script_run_domain_adjust_document(script_request, document);
+		// TODO: handle other types too
+		if (content_type != "text/html") {
+			return 0, error("currently only HTML type is allowed for replacement content");
+		}
+
+		var document = html_parse(script_request->REQ_content_replacement_data, content_charset);
+
+		script_run_adjust_document(script_request, document);
 		if (script_request->REQ_redirect) {
 			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
 			return;
 		}
 		document = request_get_document_replacement(script_request, document);
-		script_run_global_adjust_document(script_request, document);
-		if (script_request->REQ_redirect) {
-			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
-			return;
-		}
-		document = request_get_document_replacement(script_request, document);
 
-		//send_response(response, element_to_html(document));
+		worker_send([MSG_CONTENT, request_id, process_document(document, url_to_string(target_url), reload, update_status#2, null, [rewrite_url#3, script_request, target_url], fetch_channel, cancel_check#0)]);
 		return;
 	}
 
 	var http = http_create(target_url);
-	http_set_header(http, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:63.0) Gecko/20100101 Firefox/63.0");
+	http_set_header(http, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0");
 	http_set_header(http, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
 	http_set_header(http, "Accept-Language", "en-US,en;q=0.5");
 	http_set_header(http, "Accept-Encoding", "identity");
+	http_set_header(http, "Referer", {target_url->URL_scheme, "://", target_url->URL_host, "/"});
 	//if (req->REQ_post_data) {
 	//	http_set_post_data(http, "application/x-www-form-urlencoded; charset=UTF-8", req->REQ_post_data);
 	//}
@@ -149,34 +173,31 @@ function @real_load_url(url, reload, fetch_channel)
 		}
 		stream_close(http);
 
-		var new_url = url_to_string(url_merge(target_url, url_create(location)));
+		var new_url = url_to_string(url_merge(target_url, url_create(string_from_utf8(location))));
 		
-		replaced_content = script_run_domain_handle_redirect(script_request, new_url);
-		if (!replaced_content && !script_request->REQ_redirect) {
-			replaced_content = script_run_global_handle_redirect(script_request, new_url);
-		}
-		
+		script_run_handle_redirect(script_request, new_url);
 		if (script_request->REQ_redirect) {
 			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
 			return;
 		}
-		if (replaced_content) {
-			var document = html_parse(replaced_content, null);
-		
-			script_run_domain_adjust_document(script_request, document);
-			if (script_request->REQ_redirect) {
-				worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
-				return;
+		if (script_request->REQ_content_replacement_data) {
+			get_content_type(&content_type, &content_charset, script_request->REQ_content_replacement_type);
+
+			// TODO: handle other types too
+			if (content_type != "text/html") {
+				return 0, error("currently only HTML type is allowed for replacement content");
 			}
-			document = request_get_document_replacement(script_request, document);
-			script_run_global_adjust_document(script_request, document);
+
+			var document = html_parse(script_request->REQ_content_replacement_data, content_charset);
+		
+			script_run_adjust_document(script_request, document);
 			if (script_request->REQ_redirect) {
 				worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
 				return;
 			}
 			document = request_get_document_replacement(script_request, document);
 
-			//send_response(response, element_to_html(document));
+			worker_send([MSG_CONTENT, request_id, process_document(document, url_to_string(target_url), reload, update_status#2, null, [rewrite_url#3, script_request, target_url], fetch_channel, cancel_check#0)]);
 			return;
 		}
 
@@ -184,19 +205,7 @@ function @real_load_url(url, reload, fetch_channel)
 		return;
 	}
 
-	var content_type = request_get_header(http_req, "Content-Type");
-	if (!content_type) {
-		content_type = "text/html";
-	}
-	var content_charset = null;
-	var parts = string_split(content_type, ';');
-	content_type = string_trim(parts[0]);
-	for (var i=1; i<length(parts); i++) {
-		var p = string_split(parts[i], '=');
-		if (length(p) == 2 && string_trim(p[0]) == "charset") {
-			content_charset = charset_get(string_trim(p[1]));
-		}
-	}
+	get_content_type(&content_type, &content_charset, request_get_header(http_req, "Content-Type"));
 
 	var date = null, expires = null;
 	var date_header = request_get_header(http_req, "Date");
@@ -240,19 +249,13 @@ function @real_load_url(url, reload, fetch_channel)
 	}
 
 	if (is_html_file(content_type)) {
-		global_set("unknown_css_properties", {}, 3600);
+		memory_cache_set("unknown_css_properties", {}, 1 hour);
 		var buf = stream_read_all(http);
 		stream_close(http);
 		worker_send([MSG_STATUS, request_id, "Parsing HTML..."]);
 		var document = html_parse(buf, content_charset);
 
-		script_run_domain_adjust_document(script_request, document);
-		if (script_request->REQ_redirect) {
-			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
-			return;
-		}
-		document = request_get_document_replacement(script_request, document);
-		script_run_global_adjust_document(script_request, document);
+		script_run_adjust_document(script_request, document);
 		if (script_request->REQ_redirect) {
 			worker_send([MSG_REDIRECT, request_id, script_request->REQ_redirect]);
 			return;
@@ -269,7 +272,7 @@ function @real_load_url(url, reload, fetch_channel)
 		stream_close(http);
 		var sheet = css_parse(buf, content_charset);
 		var processed = stylesheet_to_string(sheet);
-		//global_set(["cache.css", req->REQ_path], processed, 3600);
+		//memory_cache_set(["cache.css", req->REQ_path], processed, 1 hour);
 		//send_response(response, "text/css; charset=UTF-8", processed);
 		return;
 	}

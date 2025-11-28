@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -98,7 +98,8 @@ function whitelist_document(doc, doc_url, url_rewrite_func, url_rewrite_data, im
 		element_append_child(head, script);
 	}
 
-	sanitize_unicode(doc);
+	// TODO: improve and make unicode filtering configurable
+	//sanitize_unicode(doc);
 }
 
 function @whitelist_style(wl, e)
@@ -256,15 +257,15 @@ function @create_img_links(wl, domain)
 	var image_domains = wl->WL_image_domains;
 	if (image_domains) {
 		for (var i=0; i<length(image_domains); i++) {
-			string_append(s, "/img/");
-			string_append(s, image_domains[i]);
+			array_append(s, "/img/");
+			array_append(s, image_domains[i]);
 		}
 	}
 
-	string_append(s, "/img/");
-	string_append(s, domain);
+	array_append(s, "/img/");
+	array_append(s, domain);
 	s[] = '/';
-	string_append(s, url_to_string(wl->WL_doc_url));
+	array_append(s, url_to_string(wl->WL_doc_url));
 	return s;
 }
 
@@ -409,6 +410,11 @@ function @whitelist_body(wl, elem)
 		}
 	}
 
+	if (type == "audio" || type == "video") {
+		element_set_attr(elem, "controls", "");
+		element_set_attr(elem, "preload", "none");
+	}
+
 	for (var e = element_get_first_child(elem), next; e; e = next) {
 		next = whitelist_body(wl, e);
 	}
@@ -525,7 +531,7 @@ function @handle_class_attr(wl, value)
 		if (!name) return null;
 
 		if (length(s) > 0) s[] = ' ';
-		string_append(s, name);
+		array_append(s, name);
 	}
 	return s;
 }
@@ -543,7 +549,7 @@ function @handle_style_attr(wl, value)
 		if (length(s) > 0) {
 			s[] = ' ';
 		}
-		string_append(s, property_to_string(props[i]));
+		array_append(s, property_to_string(props[i]));
 	}
 	return s;
 }
@@ -556,6 +562,12 @@ function @handle_title_attr(wl, value)
 function @handle_anchor_href_attr(wl, value)
 {
 	return rewrite_url(wl, value, true);
+}
+
+function @handle_anchor_target_attr(wl, value)
+{
+	if (value == "_blank") return null;
+	return value;
 }
 
 function @handle_image_src_attr(wl, value)
@@ -707,7 +719,7 @@ function @handle_iframe_src_attr(wl, value)
 	return rewrite_url(wl, value, false);
 }
 
-function handle_iframe_autoresize_attr(wl, value)
+function @handle_iframe_autoresize_attr(wl, value)
 {
 	var s = string_to_lower_case(value);
 	if (s == "none") return s;
@@ -722,6 +734,82 @@ function @handle_iframe_border_attr(wl, value)
 	return limit_int_range(value, 0, 1);
 }
 
+function @handle_iframe_name_attr(wl, value)
+{
+	return value;
+}
+
+function @handle_video_src_attr(wl, value)
+{
+	return rewrite_url(wl, value, false);
+}
+
+function @handle_video_boolean_attr(wl, value)
+{
+	return "";
+}
+
+function @handle_video_preload_attr(wl, value)
+{
+	var s = string_to_lower_case(value);
+	if (s == "none") return s;
+	if (s == "metadata") return s;
+	if (s == "auto") return s;
+	if (s == "") return s;
+	return null;
+}
+
+function @handle_source_srcset_attr(wl, value)
+{
+	var s = {""};
+	var list = string_split(value, ',');
+	for (var i=0; i<length(list); i++) {
+		var parts = string_split(string_trim(list[i]), ' ', true);
+		if (length(parts) > 0) {
+			if (length(s) > 0) {
+				s[] = ',';
+			}
+			array_append(s, rewrite_url(wl, parts[0], false));
+			for (var j=1; j<length(parts); j++) {
+				var part = parts[j];
+				var valid_chars = true;
+				for (var k=0; k<length(part); k++) {
+					switch (part[k]) {
+						case '0'..'9', '.', 'w', 'x': continue;
+					}
+					valid_chars = false;
+					break;
+				}
+				if (!valid_chars) {
+					continue;
+				}
+				if (part[length(part)-1] == 'w') {
+					var (width, e) = string_parse_int(part, 0, length(part)-1);
+					if (!e && width > 0) {
+						s[] = ' ';
+						array_append(s, {width});
+						s[] = 'w';
+					}
+				}
+				else if (part[length(part)-1] == 'x') {
+					var (density, e) = string_parse_float(part, 0, length(part)-1);
+					if (!e && {density > 0.0}) {
+						s[] = ' ';
+						array_append(s, {density});
+						s[] = 'x';
+					}
+				}
+			}
+		}
+	}
+	return s;
+}
+
+function @handle_source_type_attr(wl, value)
+{
+	return value;
+}
+
 function @handle_color(wl, value)
 {
 	if (!wl->WL_cached_colors) {
@@ -734,10 +822,10 @@ function @handle_color(wl, value)
 	}
 	
 	var sheet = css_parse({"* { color: ", value, "; }"}, null);
-	if (length(sheet->SHEET_rules) == 1) {
-		var props = sheet->SHEET_rules[0]->RULE_properties;
+	if (length(sheet->STYLESHEET_rules) == 1) {
+		var props = sheet->STYLESHEET_rules[0]->SELECTORRULE_properties;
 		if (length(props) == 1) {
-			var prop_value = props[0]->PROP_value;
+			var prop_value = props[0]->PROPERTY_value;
 			if (prop_value->VALUE_type == VALUE_COLOR_RGB) {
 				var color_value = value_to_string(prop_value);
 				wl->WL_cached_colors{value} = color_value;
@@ -748,6 +836,16 @@ function @handle_color(wl, value)
 
 	wl->WL_cached_colors{value} = null;
 	return null;
+}
+
+function @handle_details_open_attr(wl, value)
+{
+	return "";
+}
+
+function @handle_details_name_attr(wl, value)
+{
+	return value;
 }
 
 function @limit_int_range(value, min, max) {
@@ -798,12 +896,13 @@ function @init_allowed_tags()
 	add_tags(["dl", "dt", "dd"], common_attrs);
 	add_tags(["thead", "tbody", "tfoot"], common_attrs);
 	add_tags(["fieldset", "legend"], common_attrs);
-	add_tags(["details", "summary"], common_attrs);
+	add_tags(["summary"], common_attrs);
 	add_tags(["center"], common_attrs);
 
 	add_tags(["a"], common_attrs, {
 		"href": handle_anchor_href_attr#2,
-		"name": handle_id_attr#2
+		"name": handle_id_attr#2,
+		"target": handle_anchor_target_attr#2
 	});
 
 	add_tags(["img"], common_attrs, {
@@ -879,11 +978,39 @@ function @init_allowed_tags()
 		"autoresize": handle_iframe_autoresize_attr#2,
 		"width": handle_width_height_attr#2,
 		"height": handle_width_height_attr#2,
-		"frameborder": handle_iframe_border_attr#2
+		"frameborder": handle_iframe_border_attr#2,
+		"name": handle_iframe_name_attr#2
 	});
+
+	add_tags(["picture"], common_attrs);
+	add_tags(["audio"], common_attrs, {
+		"src": handle_video_src_attr#2,
+		"controls": handle_video_boolean_attr#2,
+		"loop": handle_video_boolean_attr#2,
+		"preload": handle_video_preload_attr#2
+	});
+	add_tags(["video"], common_attrs, {
+		"src": handle_video_src_attr#2,
+		"controls": handle_video_boolean_attr#2,
+		"loop": handle_video_boolean_attr#2,
+		"poster": handle_video_src_attr#2,
+		"width": handle_width_height_attr#2,
+		"height": handle_width_height_attr#2,
+		"preload": handle_video_preload_attr#2
+	});
+	add_tags(["source"], common_attrs, {
+		"src": handle_video_src_attr#2,
+		"srcset": handle_source_srcset_attr#2,
+		"type": handle_source_type_attr#2
+	});
+
+	add_tags(["details"], common_attrs, {
+		"open": handle_details_open_attr#2,
+		"name": handle_details_name_attr#2
+	});
+
 	/*
 	html_elem_types{"area"} = true;
-	html_elem_types{"audio"} = true;
 	html_elem_types{"base"} = true;
 	html_elem_types{"bdi"} = true;
 	html_elem_types{"bdo"} = true;
@@ -912,7 +1039,6 @@ function @init_allowed_tags()
 	html_elem_types{"object"} = true;
 	html_elem_types{"output"} = true;
 	html_elem_types{"param"} = true;
-	html_elem_types{"picture"} = true;
 	html_elem_types{"progress"} = true;
 	html_elem_types{"q"} = true;
 	html_elem_types{"rb"} = true;
@@ -922,13 +1048,11 @@ function @init_allowed_tags()
 	html_elem_types{"ruby"} = true;
 	html_elem_types{"samp"} = true;
 	html_elem_types{"script"} = true;
-	html_elem_types{"source"} = true;
 	html_elem_types{"style"} = true;
 	html_elem_types{"template"} = true;
 	html_elem_types{"time"} = true;
 	html_elem_types{"title"} = true;
 	html_elem_types{"track"} = true;
 	html_elem_types{"var"} = true;
-	html_elem_types{"video"} = true;
 	*/
 }

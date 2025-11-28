@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -112,7 +112,7 @@ static Value sort_current_selectors(Heap *heap, Value *error, int num_params, Va
 static Script *load_script(Heap *heap, const char *fname, Value *error, void *data)
 {
    if (test_scripts) {
-      return fixscript_load_file(heap, fname, error, ".");
+      return script_load_file(heap, fname, error, ".");
    }
    else {
       return fixscript_load_embed(heap, fname, error, embed_scripts);
@@ -164,7 +164,8 @@ int app_main(int argc, char **argv)
 {
    Heap *heap;
    Script *script;
-   Value error;
+   Value error, args;
+   int i;
 #ifdef _WIN32
    WSADATA wsa_data;
 #endif
@@ -176,7 +177,11 @@ int app_main(int argc, char **argv)
    signal(SIGPIPE, SIG_IGN);
 #endif
 
-   start_global_cleanup_thread();
+   if (!init_self_file(argv[0])) {
+      fprintf(stderr, "error: can't determine path of the executable\n");
+      return 0;
+   }
+   start_memory_cache_cleanup_thread();
    
    if (argc >= 2 && !strcmp(argv[1], "-t")) {
       test_scripts = 1;
@@ -192,8 +197,13 @@ int app_main(int argc, char **argv)
       fflush(stderr);
       return 0;
    }
-   
-   fixscript_run(heap, script, "init#0", &error);
+
+   args = fixscript_create_array(heap, 0);
+   for (i=1; i<argc; i++) {
+      fixscript_append_array_elem(heap, args, fixscript_create_string(heap, argv[i], -1));
+   }
+
+   fixscript_run(heap, script, "init#1", &error, args);
    if (error.value) {
       fixscript_dump_value(heap, error, 1);
       return 0;

@@ -1,0 +1,228 @@
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const @class_Base64 = "";
+const @static_Base64_encode_1 = "(Byte[]): String";
+const @static_Base64_encode_2 = "(String, Byte[]): String";
+const @static_Base64_encode_3 = "(Byte[], Integer, Integer): String";
+const @static_Base64_encode_4 = "(String, Byte[], Integer, Integer): String";
+const @static_Base64_decode_1 = "(String): Byte[]";
+const @static_Base64_decode_2 = "(Byte[], String): Byte[]";
+const @static_Base64_decode_3 = "(String, Integer, Integer): Byte[]";
+const @static_Base64_decode_4 = "(Byte[], String, Integer, Integer): Byte[]";
+
+var @table;
+var @rev_table;
+
+function base64_encode(buf)
+{
+	return base64_encode({""}, buf, 0, length(buf));
+}
+
+function base64_encode(s, buf)
+{
+	return base64_encode(s, buf, 0, length(buf));
+}
+
+function base64_encode(buf, off, len)
+{
+	return base64_encode({""}, buf, off, len);
+}
+
+function base64_encode(s, buf, off, len)
+{
+	var tbl = table;
+	if (!tbl) {
+		tbl = init_table();
+	}
+
+	var i = off, end = off + len;
+	for (; i+2<end; i+=3) {
+		var value = ((buf[i] & 0xFF) << 16) | ((buf[i+1] & 0xFF) << 8) | (buf[i+2] & 0xFF);
+		s[] = tbl[(value >> 18) & 0x3F];
+		s[] = tbl[(value >> 12) & 0x3F];
+		s[] = tbl[(value >> 6) & 0x3F];
+		s[] = tbl[(value >> 0) & 0x3F];
+	}
+
+	switch (end - i) {
+		case 1: {
+			var b0 = buf[i] & 0xFF;
+			s[] = tbl[b0 >> 2];
+			s[] = tbl[(b0 << 4) & 0x3F];
+			s[] = '=';
+			s[] = '=';
+			break;
+		}
+
+		case 2: {
+			var b0 = buf[i] & 0xFF;
+			var b1 = buf[i+1] & 0xFF;
+			s[] = tbl[b0 >> 2];
+			s[] = tbl[((b0 << 4) | (b1 >> 4)) & 0x3F];
+			s[] = tbl[(b1 << 2) & 0x3F];
+			s[] = '=';
+			break;
+		}
+	}
+	return s;
+}
+
+function base64_decode(s)
+{
+	return base64_decode([], s, 0, length(s));
+}
+
+function base64_decode(out, s)
+{
+	return base64_decode(out, s, 0, length(s));
+}
+
+function base64_decode(s, off, len)
+{
+	return base64_decode([], s, off, len);
+}
+
+function base64_decode(out, s, off, len)
+{
+	var tbl = rev_table;
+	if (!tbl) {
+		tbl = init_rev_table();
+	}
+
+	if (len & 3) {
+		return 0, error("length must be multiple of 4 bytes");
+	}
+
+	for (var i=off, n=off+len-4; i<n; i+=4) {
+		var b0 = tbl[s[i]];
+		var b1 = tbl[s[i+1]];
+		var b2 = tbl[s[i+2]];
+		var b3 = tbl[s[i+3]];
+		if ((b0 | b1 | b2 | b3) & 0x80) {
+			return 0, error("invalid character encountered");
+		}
+		out[] = (b0 << 2) | (b1 >> 4);
+		out[] = ((b1 & 0xF) << 4) | (b2 >> 2);
+		out[] = ((b2 & 0x3) << 6) | b3;
+	}
+	if (len > 0) {
+		var i = off+len-4;
+		var b0 = tbl[s[i]];
+		var b1 = tbl[s[i+1]];
+		var b2 = tbl[s[i+2]];
+		var b3 = tbl[s[i+3]];
+		out[] = (b0 << 2) | (b1 >> 4);
+		if (b3 == 0x80) {
+			b3 = 0;
+			if (b2 == 0x80) {
+				b2 = 0;
+			}
+			else {
+				out[] = ((b1 & 0xF) << 4) | (b2 >> 2);
+			}
+		}
+		else {
+			out[] = ((b1 & 0xF) << 4) | (b2 >> 2);
+			out[] = ((b2 & 0x3) << 6) | b3;
+		}
+		if ((b0 | b1 | b2 | b3) & 0x80) {
+			return 0, error("invalid character encountered");
+		}
+	}
+	return out;
+}
+
+function @init_table()
+{
+	table = array_create(64, 1);
+	for (var i=0; i<26; i++) {
+		table[i] = 'A' + i;
+		table[26+i] = 'a' + i;
+	}
+	for (var i=0; i<10; i++) {
+		table[52+i] = '0' + i;
+	}
+	table[62] = '+';
+	table[63] = '/';
+	return table;
+}
+
+function @init_rev_table()
+{
+	if (!table) {
+		init_table();
+	}
+
+	rev_table = array_create(256, 1);
+	array_fill(rev_table, 0xFF);
+	for (var i=0; i<64; i++) {
+		rev_table[table[i]] = i;
+	}
+	rev_table['='] = 0x80;
+	return rev_table;
+}
+
+/*
+function @assert(value, result)
+{
+	if (value != result) {
+		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	}
+}
+
+function @assert_base64(value, result)
+{
+	assert(base64_encode(value), result);
+	assert(base64_decode(result), value);
+}
+
+function @assert_base64(value, off, len, result)
+{
+	assert(base64_encode(value, off, len), result);
+	assert(base64_decode(result), array_extract(value, off, len));
+}
+
+function @conv_string(arr)
+{
+	var s = {""};
+	array_append(s, arr);
+	return s;
+}
+
+function test_base64()
+{
+	assert_base64("", "");
+	assert_base64("str", "c3Ry");
+	assert_base64("st", "c3Q=");
+	assert_base64("s", "cw==");
+	assert_base64("This is a test string.", "VGhpcyBpcyBhIHRlc3Qgc3RyaW5nLg==");
+	assert_base64("This is a test string", "VGhpcyBpcyBhIHRlc3Qgc3RyaW5n");
+	assert_base64("This is a test strin", "VGhpcyBpcyBhIHRlc3Qgc3RyaW4=");
+	assert_base64("This is a test stri", "VGhpcyBpcyBhIHRlc3Qgc3RyaQ==");
+	assert_base64("This is a test str", "VGhpcyBpcyBhIHRlc3Qgc3Ry");
+	assert_base64("This is a test string.", 5, 9, "aXMgYSB0ZXN0");
+	assert_base64("This is a test string.", 5, 8, "aXMgYSB0ZXM=");
+	assert_base64("This is a test string.", 5, 7, "aXMgYSB0ZQ==");
+	assert_base64("This is a test string.", 5, 6, "aXMgYSB0");
+	assert(conv_string(base64_decode("VGhpcyBpcyBhIHRlc3Qgc3RyaW5nLg==", 20, 8)), "string");
+}
+*/

@@ -1,38 +1,36 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "cdn0.tnwcdn.com")) return true;
 	return false;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var imgs = element_query_all(document, "img[data-src]");
-	for (var i=0; i<length(imgs); i++) {
-		var img = imgs[i];
-		var (srcset, e) = extract_srcset(element_get_attr(img, "data-srcset"));
+	foreach (var img in document.query_all("img[data-src]")) {
+		var (srcset, e) = extract_srcset(img.get_attr("data-srcset"));
 		if (e) dump(e);
-		element_set_attr(img, "src", srcset? srcset : element_get_attr(img, "data-src"));
-		element_set_attr(img, "style", "opacity: 1");
+		img.set_attr("src", srcset? srcset : img.get_attr("data-src"));
+		img.set_attr("style", "opacity: 1");
 	}
 
-	var links = element_query_all(document, "a.lazy.story-image[data-src]");
-	for (var i=0; i<length(links); i++) {
-		var link = links[i];
-		var (srcset, e) = extract_srcset(element_get_attr(link, "data-srcset"));
+	foreach (var link in document.query_all("a.lazy.story-image[data-src]")) {
+		var (srcset, e) = extract_srcset(link.get_attr("data-srcset"));
 		if (e) dump(e);
-		var img = element_create("img");
-		element_set_attr(img, "src", srcset? srcset : element_get_attr(link, "data-src"));
-		element_append_child(link, img);
-		element_set_attr(link, "style", "height: auto; padding: 0; opacity: 1;");
+		var img = Element::create("img");
+		img.set_attr("src", srcset? srcset : link.get_attr("data-src"));
+		link.append_child(img);
+		link.set_attr("style", "height: auto; padding: 0; opacity: 1;");
 	}
 }
 
-function @extract_srcset(srcset)
+function @extract_srcset(srcset: String): String
 {
 	if (!srcset) return null;
-	var res = string_split(srcset, ',');
-	return string_split(string_trim(res[length(res)-1]), ' ')[0];
+	var res = srcset.split(',');
+	return res[res.length-1].trim().split(' ')[0];
 }

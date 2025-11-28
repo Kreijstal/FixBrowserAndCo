@@ -1,0 +1,113 @@
+use "util/time_literals";
+use "classes";
+
+import "util/common";
+import "util/string";
+
+class CommentTracker
+{
+	var @domain: String;
+
+	constructor create(domain: String)
+	{
+		this.domain = domain;
+	}
+
+	virtual function get_comment_count(document: Element): Integer
+	{
+		return -1;
+	}
+
+	virtual function get_comment_list(document: Element): Dynamic[];
+
+	virtual function get_comment_time(comment: Dynamic): String;
+
+	virtual function link_first_comment(document: Element);
+
+	virtual function mark_comment(comment: Dynamic, index: Integer, last: Boolean);
+
+	virtual function compare_time(time1: String, time2: String): Integer
+	{
+		return String::compare(time1, time2);
+	}
+
+	function track(document: Element, discussion_key: String[])
+	{
+		var (r, e) = track0(document, discussion_key);
+		if (e) {
+			dump(e);
+		}
+	}
+	
+	function @track0(document: Element, discussion_key: String[])
+	{
+		var last_num_comments = -1;
+		var last_time: String;
+		
+		var data = get_data(domain, discussion_key);
+		if (data) {
+			last_num_comments = data["comments"];
+			last_time = data["last_time"];
+		}
+
+		var max_time: String;
+		var comment_counter = 0;
+		var unread_comments: Dynamic[] = [];
+
+		foreach (var comment in get_comment_list(document)) {
+			var time = get_comment_time(comment);
+			if (last_time != null && (last_time == "" || compare_time(time, last_time) > 0)) { //XXX
+				unread_comments[] = comment;
+			}
+			if (!max_time || compare_time(time, max_time) > 0) {
+				max_time = time;
+			}
+			comment_counter++;
+		}
+
+		if (unread_comments.length > 0) {
+			link_first_comment(document);
+		}
+
+		for (var i=0; i<unread_comments.length; i++) {
+			mark_comment(unread_comments[i], i, i == unread_comments.length-1);
+		}
+
+		var num_comments = get_comment_count(document);
+		if (num_comments < 0) {
+			num_comments = comment_counter;
+		}
+
+		if (!max_time) {
+			max_time = "";
+		}
+
+		set_data(domain, discussion_key, {
+			"comments": num_comments,
+			"last_time": max_time
+		});
+	}
+
+	function get_last_comment_count(discussion_key: String[]): Integer
+	{
+		var data = get_data(domain, discussion_key);
+		if (data) {
+			return data["comments"];
+		}
+		return -1;
+	}
+
+	static function @get_data(domain: String, discussion_key: String[]): Dynamic[String]
+	{
+		var key = ["comment_tracker"];
+		key.append(discussion_key);
+		return DataStore::get(domain, key) as Dynamic[String];
+	}
+
+	static function @set_data(domain: String, discussion_key: String[], value: Dynamic[String])
+	{
+		var key = ["comment_tracker"];
+		key.append(discussion_key);
+		DataStore::set(domain, key, value, 30 days);
+	}
+}

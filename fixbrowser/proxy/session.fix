@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,8 +19,11 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "util/time_literals";
+
 import "io/crypto/aes";
 import "util/base64";
+import "util/memory_cache";
 
 const @INITIAL_TIMEOUT_MINS = 5;
 const @NORMAL_TIMEOUT_HOURS = 4;
@@ -34,7 +37,7 @@ const {
 	@SESSION_SIZE
 };
 
-function @get_global_key(session)
+function @get_memory_cache_key(session)
 {
 	var key = session->SESSION_key;
 	return ["user_session", array_extract(key, 0, length(key)-16)];
@@ -47,7 +50,7 @@ function @create()
 		session->SESSION_key = crypto_random(4+16);
 		session->SESSION_created = true;
 		session->SESSION_data = {};
-		if (global_cond_swap(get_global_key(session), null, [], INITIAL_TIMEOUT_MINS*60) != null) {
+		if (memory_cache_cond_swap(get_memory_cache_key(session), null, [], INITIAL_TIMEOUT_MINS*60) != null) {
 			continue;
 		}
 		return session;
@@ -93,13 +96,13 @@ function session_get_or_create(key)
 	var session = object_create(SESSION_SIZE);
 	session->SESSION_key = raw_key;
 
-	var gkey = get_global_key(session);
-	var encrypted = global_get(gkey);
+	var cache_key = get_memory_cache_key(session);
+	var encrypted = memory_cache_get(cache_key);
 	if (!encrypted) {
 		return create();
 	}
 
-	global_cond_swap(gkey, encrypted, encrypted, NORMAL_TIMEOUT_HOURS*3600);
+	memory_cache_cond_swap(cache_key, encrypted, encrypted, NORMAL_TIMEOUT_HOURS * 1 hour);
 	
 	session->SESSION_encrypted = encrypted;
 	session->SESSION_data = decrypt_data(session, encrypted);
@@ -114,9 +117,9 @@ function session_update(session)
 	var key = session->SESSION_key;
 	key = array_extract(key, length(key)-16, 16);
 
-	var gkey = get_global_key(session);
+	var cache_key = get_memory_cache_key(session);
 
-	var encrypted = global_get(gkey);
+	var encrypted = memory_cache_get(cache_key);
 	for (;;) {
 		var new_encrypted;
 
@@ -132,7 +135,7 @@ function session_update(session)
 			new_encrypted = encrypt_data(session, new_data);
 		}
 
-		var old_encrypted = global_cond_swap(gkey, encrypted, new_encrypted, NORMAL_TIMEOUT_HOURS*3600);
+		var old_encrypted = memory_cache_cond_swap(cache_key, encrypted, new_encrypted, NORMAL_TIMEOUT_HOURS * 1 hour);
 		if (old_encrypted == encrypted) break;
 		encrypted = old_encrypted;
 	}

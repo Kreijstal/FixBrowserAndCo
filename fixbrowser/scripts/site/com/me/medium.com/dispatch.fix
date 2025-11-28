@@ -1,55 +1,57 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/json";
 
-function handle_redirect(request, new_url)
+function handle_redirect(request: Request, new_url: String)
 {
-	if (string_starts_with(new_url, "https://medium.com/m/global-identity?redirectUrl=")) {
-		var http = http_open(new_url);
-		http_connect(http);
-		var location = http_get_header(http, "Location");
-		stream_close(http);
+	if (new_url.starts_with("https://medium.com/m/global-identity?redirectUrl=")) {
+		var http = Http::open(new_url);
+		http.connect();
+		var location = http.get_header("Location");
+		http.close();
 
 		if (location) {
-			var gi = link_get_param(location, "gi");
+			var gi = Link::get_param(location, "gi");
 			if (gi) {
-				var doc_url = link_with_params(request_get_url(request), {"gi": gi});
-				return http_get(doc_url);
+				request.replace_from_http(Link::with_params(request.get_url(), {"gi": gi}));
+				return;
 			}
 		}
 	}
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	request_add_same_domain(request, "medium.com");
 	remove_class_in_all_elements(document, ".u-fixed", "u-fixed");
 
 	/*
 	TODO
-	var path = request_get_path(request);
-	var idx = string_rev_search_char(path, '-');
+	var path = request.get_path();
+	var idx = path.rev_search_char('-');
 	if (idx != -1) {
-		var id = string_substring(path, idx+1);
-		var responses_div = element_query(document, "div.js-responsesWrapper");
+		var id = path.substring(idx+1);
+		var responses_div = document.query("div.js-responsesWrapper");
 		if (responses_div) {
-			//log({"id=", id, " responses=", element_to_string(responses_div)});
+			//log("id="+id+" responses="+responses_div.to_string());
 			load_responses(request, responses_div, id);
 		}
 	}
 	*/
 }
 
-function @load_responses(request, responses_div, id)
+function @load_responses(request: Request, responses_div: Element, id: String)
 {
 	// filter=other
 	// https://medium.com/_/api/posts/ID/responsesStream?filter=other
-	var json = string_from_utf8(http_get({"https://medium.com/_/api/posts/", id, "/responses?filter=best"}));
-	var idx = string_search_char(json, '{');
+	var json_src = String::from_utf8(Http::get("https://medium.com/_/api/posts/"+id+"/responses?filter=best").content);
+	var idx = json_src.search_char('{');
 	if (idx != -1) {
-		array_remove(json, 0, idx);
+		json_src.remove(0, idx);
 	}
-	json = json_parse(json);
+	var json = JSON::parse_string(json_src);
 
 	show_json(responses_div, json);
 }

@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,6 +19,7 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+import "io/file";
 import "io/stream";
 import "io/crypto/md5";
 import "util/array";
@@ -39,7 +40,7 @@ const {
 function cache_get(key)
 {
 	key = to_hex(md5(serialize(key)));
-	var (data, e) = file_read({"debug_cache/", key});
+	var (data, e) = file_read_whole({get_executable_path(), "/debug_cache/", key});
 	if (e) {
 		return null;
 	}
@@ -64,6 +65,7 @@ function @create_reader(data)
 {
 	var reader = object_extend(stream_create(), READER_SIZE);
 	reader->STREAM__vfunc__read_part__4 = reader_read_part#4;
+	reader->STREAM__vfunc__write_part__4 = reader_write_part#4;
 	reader->READER_data = data;
 	reader->READER_off = 0;
 	return reader;
@@ -105,7 +107,7 @@ function @writer_flush(writer)
 function @writer_close(writer)
 {
 	stream_close(writer->WRITER_stream);
-	var (r, e) = file_write({"debug_cache/", writer->WRITER_key}, writer->WRITER_data);
+	var (r, e) = file_write_whole({get_executable_path(), "/debug_cache/", writer->WRITER_key}, writer->WRITER_data);
 }
 
 function @reader_read_part(reader, buf, off, len)
@@ -119,4 +121,9 @@ function @reader_read_part(reader, buf, off, len)
 	array_copy(buf, off, data, reader->READER_off, read);
 	reader->READER_off += read;
 	return read;
+}
+
+function @reader_write_part(reader, buf, off, len)
+{
+	return len;
 }

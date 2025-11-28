@@ -1,0 +1,969 @@
+/*
+ * FixScript Image v0.7 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "image/image";
+
+class @Path
+{
+	var shape: Shape;
+	var fill_color: Integer;
+	var outline: Shape;
+	var outline_color: Integer;
+
+	constructor create(shape: Shape, fill_color: Integer, outline: Shape, outline_color: Integer)
+	{
+		this.shape = shape;
+		this.fill_color = fill_color;
+		this.outline = outline;
+		this.outline_color = outline_color;
+	}
+	
+	function draw(p: Painter)
+	{
+		p.fill_shape(shape, fill_color);
+		if (outline) {
+			p.fill_shape(outline, outline_color);
+		}
+	}
+}
+
+class @State
+{
+	var transform: Transform;
+	var fill_color: Integer;
+	var stroke_color: Integer;
+	var stroke_width: Float;
+	var stroke_linecap: Integer;
+	var stroke_linejoin: Integer;
+	var stroke_miterlimit: Float;
+
+	constructor create()
+	{
+		transform = Transform::create();
+		fill_color = 0xFF000000;
+		stroke_width = 1.0;
+		stroke_linecap = CAP_BUTT;
+		stroke_linejoin = JOIN_MITER;
+		stroke_miterlimit = 4.0;
+	}
+}
+
+class SVGImage
+{
+	var @width: Float;
+	var @height: Float;
+	var @paths: Path[];
+
+	static function load(data: Byte[]): SVGImage
+	{
+		return parse(String::from_utf8(data));
+	}
+	
+	constructor parse(s: String)
+	{
+		var stack: State[] = [];
+		var state = State::create();
+		paths = [];
+
+		var attrs: String[String] = {};
+
+		for (var i=0; i<s.length; i++) {
+			var c = s[i];
+
+			// skip text:
+			if (c != '<') {
+				continue;
+			}
+
+			// skip comment:
+			if (i+3 < s.length && s[i+1] == '!' && s[i+2] == '-' && s[i+3] == '-') {
+				i += 3;
+				var start = i;
+				while (i+1 < s.length) {
+					c = s[++i];
+					if (c == '>' && i-2 > start && s[i-1] == '-' && s[i-2] == '-') break;
+				}
+				continue;
+			}
+
+			// skip special tag:
+			if (i+1 < s.length && s[i+1] == '?') {
+				i++;
+				var start = i;
+				while (i+1 < s.length) {
+					c = s[++i];
+					if (c == '>' && i-1 > start && s[i-1] == '?') break;
+				}
+				continue;
+			}
+
+			// skip cdata:
+			if (i+7 < s.length && s[i+1] == '!' && s[i+2] == 'C' && s[i+3] == 'D' && s[i+4] == 'A' && s[i+5] == 'T' && s[i+6] == 'A' && s[i+7] == '[') {
+				i += 7;
+				var start = i;
+				while (i+1 < s.length) {
+					c = s[++i];
+					if (c == '>' && i-2 > start && s[i-1] == ']' && s[i-2] == ']') break;
+				}
+				continue;
+			}
+
+			// find tag boundaries:
+			var start = i+1;
+			while (i+1 < s.length) {
+				c = s[++i];
+				if (c == '>') {
+					break;
+				}
+			}
+			var end = i;
+
+			var closing = false;
+			var self_closed = false;
+
+			if (start < end && s[start] == '/') {
+				closing = true;
+				start++;
+			}
+
+			var name_end = end;
+			for (var j=start; j<end; j++) {
+				c = s[j];
+				if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '/') {
+					name_end = j;
+					break;
+				}
+			}
+
+			var name = s.substring(start, name_end);
+			start = name_end;
+
+			attrs.clear();
+			while (start < end) {
+				while (start < end) {
+					c = s[start];
+					if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+						start++;
+						continue;
+					}
+					break;
+				}
+
+				if (c == '/') {
+					self_closed = true;
+					break;
+				}
+
+				var key_end = end;
+				for (var j=start; j<end; j++) {
+					c = s[j];
+					if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '=') {
+						key_end = j;
+						break;
+					}
+				}
+				if (key_end == end) break;
+
+				var key = s.substring(start, key_end);
+				start = key_end;
+
+				var value_start = end;
+				for (var j=start; j<end; j++) {
+					c = s[j];
+					if (c == '"' || c == '\'') {
+						value_start = j+1;
+						break;
+					}
+				}
+				if (value_start == end) break;
+
+				start = value_start;
+
+				var value_end = end;
+				for (var j=value_start; j<end; j++) {
+					if (s[j] == c) {
+						value_end = j;
+						break;
+					}
+				}
+				if (value_end == end) break;
+
+				var value = s.substring(start, value_end);
+				attrs[key] = value;
+				start = value_end+1;
+			}
+
+			//log("name='"+name+"' closing="+closing+" self_closed="+self_closed);
+			//dump(attrs);
+
+			if (name == "g" && !self_closed) {
+				if (closing) {
+					state = stack[stack.length-1];
+					stack.set_length(stack.length-1);
+				}
+				else {
+					stack[] = clone(state);
+					apply_styles(state, attrs);
+				}
+			}
+			else if (name == "path" && !closing) {
+				var value = attrs["d"];
+				if (attrs.length > 1) {
+					stack[] = clone(state);
+					apply_styles(state, attrs);
+				}
+				//log("path='"+value+"'");
+				var shape = parse_path(value);
+				if (shape) {
+					var outline: Shape;
+					if (state.stroke_width > 0.0 && state.stroke_color != 0) {
+						outline = shape.get_outline(state.stroke_width, state.stroke_linecap, state.stroke_linejoin, state.stroke_miterlimit);
+						outline.transform(state.transform);
+					}
+					shape.transform(state.transform);
+					paths[] = Path::create(shape, state.fill_color, outline, state.stroke_color);
+				}
+				if (attrs.length > 1) {
+					state = stack[stack.length-1];
+					stack.set_length(stack.length-1);
+				}
+			}
+			else if (name == "svg" && !closing) {
+				var value = attrs.get("viewBox", null);
+				if (value) {
+					var parts = split_transform_params(value);
+					foreach (var part in parts) {
+						part.trim_inplace();
+					}
+					this.width = String::parse_float(parts[2]);
+					this.height = String::parse_float(parts[3]);
+				}
+				else {
+					this.width = String::parse_float(attrs.get("width", "1"));
+					this.height = String::parse_float(attrs.get("height", "1"));
+				}
+			}
+		}
+	}
+
+	static function @apply_styles(state: State, attrs: String[String])
+	{
+		foreach (var key, value in attrs) {
+			apply_style(state, key, value);
+		}
+		var value = attrs.get("transform", null);
+		if (value) {
+			state.transform = clone(state.transform);
+			apply_transform(state.transform, value);
+		}
+		value = attrs.get("style", null);
+		if (value) {
+			var rules = value.split(';');
+			foreach (var rule in rules) {
+				var idx = rule.search_char(':');
+				if (idx == -1) continue;
+				var key = rule.substring(0, idx);
+				value = rule.substring(idx+1);
+				key.trim_inplace();
+				value.trim_inplace();
+				//log(key+"="+value);
+				apply_style(state, key, value);
+			}
+		}
+	}
+
+	static function @apply_style(state: State, key: String, value: String)
+	{
+		if (key == "fill") {
+			state.fill_color = parse_color(value);
+		}
+		else if (key == "stroke") {
+			state.stroke_color = parse_color(value);
+		}
+		else if (key == "stroke-width") {
+			if (value.ends_with("px")) {
+				value.set_length(value.length-2);
+				value.trim_inplace();
+			}
+			state.stroke_width = String::parse_float(value);
+		}
+		else if (key == "stroke-linecap") {
+			if (value == "butt") {
+				state.stroke_linecap = CAP_BUTT;
+			}
+			else if (value == "round") {
+				state.stroke_linecap = CAP_ROUND;
+			}
+			else if (value == "square") {
+				state.stroke_linecap = CAP_SQUARE;
+			}
+		}
+		else if (key == "stroke-linejoin") {
+			if (value == "miter") {
+				state.stroke_linejoin = JOIN_MITER;
+			}
+			else if (value == "round") {
+				state.stroke_linejoin = JOIN_ROUND;
+			}
+			else if (value == "bevel") {
+				state.stroke_linejoin = JOIN_BEVEL;
+			}
+		}
+		else if (key == "stroke-miterlimit") {
+			state.stroke_miterlimit = String::parse_float(value);
+		}
+	}
+
+	static function @apply_transform(transform: Transform, value: String)
+	{
+		value.trim_inplace();
+		//log("value='"+value+"'");
+		for (;;) {
+			var params = extract_transform(value);
+			if (!params) break;
+			//dump(params);
+			//log("value='"+value+"'");
+
+			if (params[0] == "matrix") {
+				var tr = Transform::create();
+				tr.m00 = String::parse_float(params[1]);
+				tr.m10 = String::parse_float(params[2]);
+				tr.m01 = String::parse_float(params[3]);
+				tr.m11 = String::parse_float(params[4]);
+				tr.m02 = String::parse_float(params[5]);
+				tr.m12 = String::parse_float(params[6]);
+				transform.mul(tr);
+			}
+			else if (params[0] == "translate") {
+				if (params.length == 2) {
+					params[] = params[1];
+				}
+				transform.translate(
+					String::parse_float(params[1]),
+					String::parse_float(params[2])
+				);
+			}
+			else if (params[0] == "scale") {
+				if (params.length == 2) {
+					params[] = params[1];
+				}
+				transform.scale(
+					String::parse_float(params[1]),
+					String::parse_float(params[2])
+				);
+			}
+			else if (params[0] == "rotate") {
+				if (params.length == 2) {
+					transform.rotate(
+						String::parse_float(params[1])
+					);
+				}
+				else {
+					transform.translate(
+						String::parse_float(params[2]),
+						String::parse_float(params[3])
+					);
+					transform.rotate(
+						String::parse_float(params[1])
+					);
+					transform.translate(
+						-String::parse_float(params[2]),
+						-String::parse_float(params[3])
+					);
+				}
+			}
+			else if (params[0] == "skewX") {
+				transform.shear(
+					tan(String::parse_float(params[1])),
+					0
+				);
+			}
+			else if (params[0] == "skewY") {
+				transform.shear(
+					0,
+					tan(String::parse_float(params[1]))
+				);
+			}
+		}
+	}
+
+	static function @parse_path(s: String): Shape
+	{
+		s.trim_inplace();
+		if (s.length == 0) {
+			return null;
+		}
+
+		var shape = Shape::create();
+		var number = 0.0;
+
+		macro skip_whitespace() {
+			while (i+1 < s.length) {
+				var $c = s[++i];
+				if ($c == ' ' || $c == '\t' || $c == '\r' || $c == '\n' || $c == ',') {
+					continue;
+				}
+				i--;
+				break;
+			}
+		}
+
+		macro @consume_digits() {
+			while (i+1 < s.length) {
+				var $c = s[++i];
+				if ($c >= '0' && $c <= '9') continue;
+				i--;
+				break;
+			}
+		}
+
+		macro get_number() {{
+			skip_whitespace();
+			var $result = false;
+			if (i+1 < s.length) {
+				var $start = i+1;
+				if (s[i+1] == '-') {
+					i++;
+				}
+				consume_digits();
+				if (i+1 < s.length && s[i+1] == '.') {
+					i++;
+					consume_digits();
+				}
+				if (i+1 < s.length && (s[i+1] == 'e' || s[i+1] == 'E')) {
+					i++;
+					if (i+1 < s.length && s[i+1] == '-') {
+						i++;
+					}
+					consume_digits();
+				}
+				i++;
+				if (i - $start > 1 || (i - $start == 1 && s[$start] != '-')) {
+					//log("num='"+s.substring($start, i)+"'");
+					number = String::parse_float(s, $start, i-$start);
+					$result = true;
+				}
+				i--;
+			}
+			= $result
+		}}
+
+		macro require_number() {{
+			if (!get_number()) throw error("parse error");
+			= number
+		}}
+
+		var first_x = 0.0, first_y = 0.0;
+		var cur_x = 0.0, cur_y = 0.0;
+		var prev_cmd = 0;
+		var last_cp_x = 0.0, last_cp_y = 0.0;
+
+		for (var i=0; i<s.length; i++) {
+			i--;
+			skip_whitespace();
+			i++;
+			var cmd = s[i];
+			//log("cmd="+s.extract(i, 1));
+			switch (cmd) {
+				case 'M', 'm': {
+					var x = require_number();
+					var y = require_number();
+					if (cmd == 'm') {
+						x = cur_x + x;
+						y = cur_y + y;
+					}
+					shape.move_to(x, y);
+					cur_x = x;
+					cur_y = y;
+					first_x = x;
+					first_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						x = number;
+						y = require_number();
+						if (cmd == 'm') {
+							x = cur_x + x;
+							y = cur_y + y;
+						}
+						shape.line_to(x, y);
+						cur_x = x;
+						cur_y = y;
+					}
+					break;
+				}
+
+				case 'Z', 'z': {
+					shape.close_path();
+					cur_x = first_x;
+					cur_y = first_y;
+					break;
+				}
+
+				case 'L', 'l': {
+					var x = require_number();
+					var y = require_number();
+					if (cmd == 'l') {
+						x = cur_x + x;
+						y = cur_y + y;
+					}
+					shape.line_to(x, y);
+					cur_x = x;
+					cur_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						x = number;
+						y = require_number();
+						if (cmd == 'l') {
+							x = cur_x + x;
+							y = cur_y + y;
+						}
+						shape.line_to(x, y);
+						cur_x = x;
+						cur_y = y;
+					}
+					break;
+				}
+
+				case 'H', 'h': {
+					var x = require_number();
+					if (cmd == 'h') {
+						x = cur_x + x;
+					}
+					shape.line_to(x, cur_y);
+					cur_x = x;
+					for (;;) {
+						if (!get_number()) break;
+						x = number;
+						if (cmd == 'h') {
+							x = cur_x + x;
+						}
+						shape.line_to(x, cur_y);
+						cur_x = x;
+					}
+					break;
+				}
+
+				case 'V', 'v': {
+					var y = require_number();
+					if (cmd == 'v') {
+						y = cur_y + y;
+					}
+					shape.line_to(cur_x, y);
+					cur_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						y = number;
+						if (cmd == 'v') {
+							y = cur_y + y;
+						}
+						shape.line_to(cur_x, y);
+						cur_y = y;
+					}
+					break;
+				}
+
+				case 'C', 'c': {
+					var x1 = require_number();
+					var y1 = require_number();
+					var x2 = require_number();
+					var y2 = require_number();
+					var x = require_number();
+					var y = require_number();
+					if (cmd == 'c') {
+						x1 = cur_x + x1;
+						y1 = cur_y + y1;
+						x2 = cur_x + x2;
+						y2 = cur_y + y2;
+						x = cur_x + x;
+						y = cur_y + y;
+					}
+					last_cp_x = x2;
+					last_cp_y = y2;
+					shape.cubic_to(x1, y1, x2, y2, x, y);
+					cur_x = x;
+					cur_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						x1 = number;
+						y1 = require_number();
+						x2 = require_number();
+						y2 = require_number();
+						x = require_number();
+						y = require_number();
+						if (cmd == 'c') {
+							x1 = cur_x + x1;
+							y1 = cur_y + y1;
+							x2 = cur_x + x2;
+							y2 = cur_y + y2;
+							x = cur_x + x;
+							y = cur_y + y;
+						}
+						last_cp_x = x2;
+						last_cp_y = y2;
+						shape.cubic_to(x1, y1, x2, y2, x, y);
+						cur_x = x;
+						cur_y = y;
+					}
+					break;
+				}
+
+				case 'S', 's': {
+					var x1 = cur_x;
+					var y1 = cur_y;
+					var x2 = require_number();
+					var y2 = require_number();
+					var x = require_number();
+					var y = require_number();
+					if (cmd == 's') {
+						x2 = cur_x + x2;
+						y2 = cur_y + y2;
+						x = cur_x + x;
+						y = cur_y + y;
+					}
+					if (prev_cmd == 'C' || prev_cmd == 'c' || prev_cmd == 'S' || prev_cmd == 's') {
+						x1 = cur_x + (cur_x - last_cp_x);
+						y1 = cur_y + (cur_y - last_cp_y);
+					}
+					last_cp_x = x2;
+					last_cp_y = y2;
+					shape.cubic_to(x1, y1, x2, y2, x, y);
+					cur_x = x;
+					cur_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						x1 = cur_x + (cur_x - last_cp_x);
+						y1 = cur_y + (cur_y - last_cp_y);
+						x2 = number;
+						y2 = require_number();
+						x = require_number();
+						y = require_number();
+						if (cmd == 's') {
+							x2 = cur_x + x2;
+							y2 = cur_y + y2;
+							x = cur_x + x;
+							y = cur_y + y;
+						}
+						last_cp_x = x2;
+						last_cp_y = y2;
+						shape.cubic_to(x1, y1, x2, y2, x, y);
+						cur_x = x;
+						cur_y = y;
+					}
+					break;
+				}
+
+				case 'Q', 'q': {
+					var x1 = require_number();
+					var y1 = require_number();
+					var x = require_number();
+					var y = require_number();
+					if (cmd == 'q') {
+						x1 = cur_x + x1;
+						y1 = cur_y + y1;
+						x = cur_x + x;
+						y = cur_y + y;
+					}
+					last_cp_x = x1;
+					last_cp_y = y1;
+					shape.quad_to(x1, y1, x, y);
+					cur_x = x;
+					cur_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						x1 = number;
+						y1 = require_number();
+						x = require_number();
+						y = require_number();
+						if (cmd == 'q') {
+							x1 = cur_x + x1;
+							y1 = cur_y + y1;
+							x = cur_x + x;
+							y = cur_y + y;
+						}
+						last_cp_x = x1;
+						last_cp_y = y1;
+						shape.quad_to(x1, y1, x, y);
+						cur_x = x;
+						cur_y = y;
+					}
+					break;
+				}
+
+				case 'T', 't': {
+					var x1 = cur_x;
+					var y1 = cur_y;
+					var x = require_number();
+					var y = require_number();
+					if (cmd == 't') {
+						x = cur_x + x;
+						y = cur_y + y;
+					}
+					if (prev_cmd == 'Q' || prev_cmd == 'q' || prev_cmd == 'T' || prev_cmd == 't') {
+						x1 = cur_x + (cur_x - last_cp_x);
+						y1 = cur_y + (cur_y - last_cp_y);
+					}
+					last_cp_x = x1;
+					last_cp_y = y1;
+					shape.quad_to(x1, y1, x, y);
+					cur_x = x;
+					cur_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						x1 = cur_x + (cur_x - last_cp_x);
+						y1 = cur_y + (cur_y - last_cp_y);
+						x = number;
+						y = require_number();
+						if (cmd == 't') {
+							x = cur_x + x;
+							y = cur_y + y;
+						}
+						last_cp_x = x1;
+						last_cp_y = y1;
+						shape.quad_to(x1, y1, x, y);
+						cur_x = x;
+						cur_y = y;
+					}
+					break;
+				}
+
+				case 'A', 'a': {
+					var rx = require_number();
+					var ry = require_number();
+					var rot = require_number();
+					var large_arc_flag = require_number();
+					var sweep_flag = require_number();
+					var x = require_number();
+					var y = require_number();
+					if (cmd == 'a') {
+						rx = cur_x + rx;
+						ry = cur_y + ry;
+						x = cur_x + x;
+						y = cur_y + y;
+					}
+					// TODO
+					shape.line_to(x, y);
+					cur_x = x;
+					cur_y = y;
+					for (;;) {
+						if (!get_number()) break;
+						rx = number;
+						ry = require_number();
+						rot = require_number();
+						large_arc_flag = require_number();
+						sweep_flag = require_number();
+						x = require_number();
+						y = require_number();
+						if (cmd == 'a') {
+							rx = cur_x + rx;
+							ry = cur_y + ry;
+							x = cur_x + x;
+							y = cur_y + y;
+						}
+						// TODO
+						shape.line_to(x, y);
+						cur_x = x;
+						cur_y = y;
+					}
+					break;
+				}
+
+				default:
+					throw error("parse error");
+			}
+			prev_cmd = cmd;
+		}
+		return shape;
+	}
+
+	static function @get_hex_digit(c: Integer): Integer
+	{
+		switch (c) {
+			case '0'..'9': return c - '0';
+			case 'a'..'f': return c - 'a' + 10;
+			case 'A'..'F': return c - 'A' + 10;
+		}
+		return 0;
+	}
+
+	static function @parse_color(s: String): Integer
+	{
+		s.trim_inplace();
+		if (s.length == 0) return 0xFF000000;
+		if (s[0] != '#') return 0xFF000000;
+		s.remove(0);
+		
+		if (s.length == 3) {
+			var r = get_hex_digit(s[0]) * 17;
+			var g = get_hex_digit(s[1]) * 17;
+			var b = get_hex_digit(s[2]) * 17;
+			return 0xFF000000 | (r << 16) | (g << 8) | b;
+		}
+		else if (s.length == 6) {
+			var r = get_hex_digit(s[0]) * 16 + get_hex_digit(s[1]);
+			var g = get_hex_digit(s[2]) * 16 + get_hex_digit(s[3]);
+			var b = get_hex_digit(s[4]) * 16 + get_hex_digit(s[5]);
+			return 0xFF000000 | (r << 16) | (g << 8) | b;
+		}
+		return 0xFF000000;
+	}
+
+	function get_width(): Float
+	{
+		return width;
+	}
+
+	function get_height(): Float
+	{
+		return height;
+	}
+
+	function draw(p: Painter)
+	{
+		foreach (var path in paths) {
+			path.draw(p);
+		}
+	}
+}
+
+function @extract_transform(value: String): String[]
+{
+	var start = value.search_char('(');
+	if (start == -1) {
+		return null;
+	}
+
+	var end = value.search_char(')', start+1);
+	if (end == -1) {
+		return null;
+	}
+
+	var name = value.substring(0, start);
+	var params = split_transform_params(value.substring(start+1, end));
+	value.remove(0, end+1);
+	
+	name.trim_inplace();
+	foreach (var param in params) {
+		param.trim_inplace();
+	}
+	params.insert(0, name);
+	return params;
+}
+
+macro @string_split_macro(s, char_expr, multi)
+{
+	if (length(s) == 0) {
+		return [];
+	}
+	var result = [];
+	var last = -1;
+	for (var i=0; i<length(s); i++) {
+		var c = s[i];
+		if (char_expr) {
+			var end = i;
+			if (multi) {
+				while (i+1 < length(s)) {
+					c = s[++i];
+					if (!(char_expr)) {
+						i--;
+						break;
+					}
+				}
+			}
+			result[] = s.substring(last+1, end);
+			last = i;
+		}
+	}
+	if (last < length(s)) {
+		result[] = s.substring(last+1);
+	}
+	return result;
+}
+
+function @split_transform_params(s: String): String[]
+{
+	string_split_macro(s, c == ' ' || c == ',', true);
+}
+
+function @String::split(char: Integer): String[]
+{
+	string_split_macro(this, c == char, false);
+}
+
+function @String::starts_with(match: String): Boolean
+{
+	var len = match.length;
+	if (this.length < len) return false;
+	return array_extract(this, 0, len) == match;
+}
+
+function @String::ends_with(match: String): Boolean
+{
+	var len = match.length;
+	if (this.length < len) return false;
+	return array_extract(this, length(this)-len, len) == match;
+}
+
+function @String::trim_inplace()
+{
+	var len = length(this);
+	var off1 = 0, off2 = len-1;
+	for (; off1 < len; off1++) {
+		switch (this[off1]) {
+			case ' ', '\t', '\r', '\n': continue;
+		}
+		break;
+	}
+	for (; off2 > off1; off2--) {
+		switch (this[off2]) {
+			case ' ', '\t', '\r', '\n': continue;
+		}
+		break;
+	}
+	if (off1 == 0 && off2 == len-1) return;
+	array_set_length(this, off2+1);
+	array_remove(this, 0, off1);
+}
+
+function @String::search_char(char: Integer): Integer
+{
+	return this.search_char(char, 0);
+}
+
+function @String::search_char(char: Integer, off: Integer): Integer
+{
+	for (var i=off; i<this.length; i++) {
+		if (this[i] == char) return i;
+	}
+	return -1;
+}
+
+function @String::substring(start: Integer): String
+{
+	return array_extract(this, start, this.length - start);
+}
+
+function @String::substring(start: Integer, end: Integer): String
+{
+	return array_extract(this, start, end - start);
+}

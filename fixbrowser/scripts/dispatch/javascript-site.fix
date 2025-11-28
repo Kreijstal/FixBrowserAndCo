@@ -1,8 +1,12 @@
-function handle_request(request)
+use "classes";
+
+import "util/common";
+
+function handle_request(request: Request)
 {
-	return {
+	request.replace_with_html({
 		"<div style=\"font-family: sans-serif; font-size: 16px\">",
 		"<b>Error: This website is using JavaScript to generate content.</b>",
 		"</div>"
-	};
+	});
 }

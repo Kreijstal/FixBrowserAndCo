@@ -1,19 +1,94 @@
-function string_append(base, str)
-{
-	string_append(base, str, 0, length(str));
-}
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
 
-function string_append(base, str, off)
-{
-	string_append(base, str, off, length(str) - off);
-}
+import "util/long";
+import "util/double";
 
-function string_append(base, str, off, len)
-{
-	var base_len = length(base);
-	array_set_length(base, base_len + len);
-	array_copy(base, base_len, str, off, len);
-}
+const @import_scripts = "util/long,util/double";
+const @method_String_substring_2 = "(Integer): String";
+const @method_String_substring_3 = "(Integer, Integer): String";
+const @static_String_join_2 = "(Dynamic[], String): String";
+const @method_String_split_2 = "(Integer): String[]";
+const @method_String_split_3 = "(Integer, Boolean): String[]";
+const @method_String_starts_with_2 = "(String): Boolean";
+const @method_String_ends_with_2 = "(String): Boolean";
+const @method_String_replace_char_3 = "(Integer, Integer): String";
+const @method_String_replace_char_inplace_3 = "(Integer, Integer): Void";
+const @method_String_replace_string_3 = "(String, String): String";
+const @method_String_replace_string_inplace_3 = "(String, String): Void";
+const @static_String_char_1 = "(Integer): String";
+const @method_String_to_lower_case_1 = "(): String";
+const @method_String_to_upper_case_1 = "(): String";
+const @method_String_trim_1 = "(): String";
+const @method_String_trim_2 = "(Dynamic): String";
+const @method_String_trim_inplace_1 = "(): Void";
+const @method_String_trim_inplace_2 = "(Dynamic): Void";
+const @method_String_pad_left_2 = "(Integer): String";
+const @method_String_pad_left_3 = "(Integer, Integer): String";
+const @method_String_pad_right_2 = "(Integer): String";
+const @method_String_pad_right_3 = "(Integer, Integer): String";
+const @method_String_search_char_2 = "(Integer): Integer";
+const @method_String_search_char_3 = "(Integer, Integer): Integer";
+const @method_String_search_char_4 = "(Integer, Integer, Integer): Integer";
+const @method_String_rev_search_char_2 = "(Integer): Integer";
+const @method_String_rev_search_char_3 = "(Integer, Integer): Integer";
+const @method_String_rev_search_char_4 = "(Integer, Integer, Integer): Integer";
+const @method_String_search_multi_char_2 = "(String): Integer";
+const @method_String_search_multi_char_3 = "(String, Integer): Integer";
+const @method_String_search_multi_char_4 = "(String, Integer, Integer): Integer";
+const @method_String_rev_search_multi_char_2 = "(String): Integer";
+const @method_String_rev_search_multi_char_3 = "(String, Integer): Integer";
+const @method_String_rev_search_multi_char_4 = "(String, Integer, Integer): Integer";
+const @method_String_search_string_2 = "(String): Integer";
+const @method_String_search_string_3 = "(String, Integer): Integer";
+const @method_String_search_string_4 = "(String, Integer, Integer): Integer";
+const @method_String_rev_search_string_2 = "(String): Integer";
+const @method_String_rev_search_string_3 = "(String, Integer): Integer";
+const @method_String_rev_search_string_4 = "(String, Integer, Integer): Integer";
+const @method_String_contains_2 = "(String): Boolean";
+const @static_String_compare_2 = "(String, String): Integer";
+const @static_String_parse_hex_int_1 = "(String): Integer";
+const @static_String_parse_hex_int_2 = "(String, Integer): Integer";
+const @static_String_parse_hex_int_3 = "(String, Integer, Integer): Integer";
+const @static_String_parse_hex_int_4 = "(String, Integer, Integer, Integer): Integer";
+const @static_String_parse_long_1 = "(String): Long";
+const @static_String_parse_long_2 = "(String, Long): Long";
+const @static_String_parse_long_3 = "(String, Integer, Integer): Long";
+const @static_String_parse_long_4 = "(String, Integer, Integer, Long): Long";
+const @static_String_parse_double_1 = "(String): Double";
+const @static_String_parse_double_2 = "(String, Double): Double";
+const @static_String_parse_double_3 = "(String, Integer, Integer): Double";
+const @static_String_parse_double_4 = "(String, Integer, Integer, Double): Double";
+const @static_String_from_int_1 = "(Integer): String";
+const @static_String_from_int_2 = "(String, Integer): String";
+const @static_String_from_hex_int_1 = "(Integer): String";
+const @static_String_from_hex_int_2 = "(String, Integer): String";
+const @static_String_from_float_1 = "(Float): String";
+const @static_String_from_float_2 = "(String, Float): String";
+const @static_String_from_long_1 = "(Long): String";
+const @static_String_from_long_2 = "(String, Long): String";
+const @static_String_from_double_1 = "(Double): String";
+const @static_String_from_double_2 = "(String, Double): String";
+
+function @invalid_value() {}
 
 function string_substring(s, start)
 {
@@ -32,23 +107,59 @@ function string_join(array, delim)
 	}
 	var s = {array[0]};
 	for (var i=1; i<length(array); i++) {
-		s = {s, delim, array[i]};
+		var value = array[i];
+		if (!is_string(value)) {
+			value = {value};
+		}
+		array_append(s, delim);
+		array_append(s, value);
 	}
 	return s;
 }
 
-function string_starts_with(str, match)
+function string_split(s, char)
 {
-	var len = length(match);
-	if (length(str) < len) return false;
-	return array_extract(str, 0, len) == match;
+	return string_split(s, char, false);
 }
 
-function string_ends_with(str, match)
+function string_split(s, char, multi)
+{
+	if (length(s) == 0) {
+		return [];
+	}
+	var result = [];
+	var last = -1;
+	for (var i=0; i<length(s); i++) {
+		if (s[i] == char) {
+			var end = i;
+			if (multi) {
+				while (i+1 < length(s)) {
+					if (s[i+1] != char) break;
+					i++;
+				}
+			}
+			result[] = array_extract(s, last+1, end-last-1);
+			last = i;
+		}
+	}
+	if (last < length(s)) {
+		result[] = array_extract(s, last+1, length(s)-last-1);
+	}
+	return result;
+}
+
+function string_starts_with(s, match)
 {
 	var len = length(match);
-	if (length(str) < len) return false;
-	return array_extract(str, length(str)-len, len) == match;
+	if (length(s) < len) return false;
+	return array_extract(s, 0, len) == match;
+}
+
+function string_ends_with(s, match)
+{
+	var len = length(match);
+	if (length(s) < len) return false;
+	return array_extract(s, length(s)-len, len) == match;
 }
 
 function string_replace_char(s, char, replacement)
@@ -62,10 +173,38 @@ function string_replace_char(s, char, replacement)
 	return s;
 }
 
-function string_char(c)
+function string_replace_char_inplace(s, char, replacement)
 {
-	var s = {" "};
-	s[0] = c;
+	for (var i=0; i<length(s); i++) {
+		if (s[i] == char) {
+			s[i] = replacement;
+		}
+	}
+}
+
+function string_replace_string(s, search, replacement)
+{
+	s = {s};
+	string_replace_string_inplace(s, search, replacement);
+	return s;
+}
+
+function string_replace_string_inplace(s, search, replacement)
+{
+	var start = 0;
+	for (;;) {
+		var idx = string_search_string(s, search, start);
+		if (idx < 0) break;
+
+		array_replace_range(s, idx, idx+length(search), replacement);
+		start = idx+length(replacement);
+	}
+}
+
+function string_char(char)
+{
+	var s = {"?"};
+	s[0] = char;
 	return s;
 }
 
@@ -93,33 +232,24 @@ function string_to_upper_case(s)
 	return s;
 }
 
-function string_split(s, c)
-{
-	var result = [];
-	var last = 0;
-	for (var i=0; i<length(s); i++) {
-		if (s[i] == c) {
-			result[] = array_extract(s, last, i-last);
-			last = i+1;
-		}
-	}
-	if (last < length(s)) {
-		result[] = array_extract(s, last, length(s)-last);
-	}
-	return result;
-}
-
-function @default_whitespace(c)
-{
-	switch (c) {
-		case ' ', '\t', '\r', '\n': return true;
-	}
-	return false;
-}
-
 function string_trim(s)
 {
-	return string_trim(s, default_whitespace#1);
+	var len = length(s);
+	var off1 = 0, off2 = len-1;
+	for (; off1 < len; off1++) {
+		switch (s[off1]) {
+			case ' ', '\t', '\r', '\n': continue;
+		}
+		break;
+	}
+	for (; off2 > off1; off2--) {
+		switch (s[off2]) {
+			case ' ', '\t', '\r', '\n': continue;
+		}
+		break;
+	}
+	if (off1 == 0 && off2 == len-1) return {s};
+	return array_extract(s, off1, off2-off1+1);
 }
 
 function string_trim(s, is_whitespace_func)
@@ -136,21 +266,57 @@ function string_trim(s, is_whitespace_func)
 	return array_extract(s, off1, off2-off1+1);
 }
 
+function string_trim_inplace(s)
+{
+	var len = length(s);
+	var off1 = 0, off2 = len-1;
+	for (; off1 < len; off1++) {
+		switch (s[off1]) {
+			case ' ', '\t', '\r', '\n': continue;
+		}
+		break;
+	}
+	for (; off2 > off1; off2--) {
+		switch (s[off2]) {
+			case ' ', '\t', '\r', '\n': continue;
+		}
+		break;
+	}
+	if (off1 == 0 && off2 == len-1) return;
+	array_set_length(s, off2+1);
+	array_remove(s, 0, off1);
+}
+
+function string_trim_inplace(s, is_whitespace_func)
+{
+	var len = length(s);
+	var off1 = 0, off2 = len-1;
+	while (off1 < len && is_whitespace_func(s[off1])) {
+		off1++;
+	}
+	while (off2 > off1 && is_whitespace_func(s[off2])) {
+		off2--;
+	}
+	if (off1 == 0 && off2 == len-1) return;
+	array_set_length(s, off2+1);
+	array_remove(s, 0, off1);
+}
+
 function string_pad_left(s, len)
 {
 	return string_pad_left(s, len, ' ');
 }
 
-function string_pad_left(s, len, c)
+function string_pad_left(s, len, char)
 {
 	if (length(s) >= len) {
 		return {s};
 	}
-
 	var p = {""};
-	array_set_length(p, len);
-	array_fill(p, 0, len - length(s), c);
-	array_copy(p, len - length(s), s, 0, length(s));
+	for (var i=len-length(s)-1; i>=0; i--) {
+		p[] = char;
+	}
+	array_append(p, s);
 	return p;
 }
 
@@ -159,51 +325,50 @@ function string_pad_right(s, len)
 	return string_pad_right(s, len, ' ');
 }
 
-function string_pad_right(s, len, c)
+function string_pad_right(s, len, char)
 {
 	if (length(s) >= len) {
 		return {s};
 	}
-
-	var p = {""};
-	array_set_length(p, len);
-	array_copy(p, 0, s, 0, length(s));
-	array_fill(p, length(s), len - length(s), c);
+	var p = {s};
+	for (var i=len-length(s)-1; i>=0; i--) {
+		p[] = char;
+	}
 	return p;
 }
 
-function string_search_char(s, c)
+function string_search_char(s, char)
 {
-	return string_search_char(s, c, 0, length(s));
+	return string_search_char(s, char, 0, length(s));
 }
 
-function string_search_char(s, c, off)
+function string_search_char(s, char, start)
 {
-	return string_search_char(s, c, off, length(s));
+	return string_search_char(s, char, start, length(s));
 }
 
-function string_search_char(s, c, off, end)
+function string_search_char(s, char, start, end)
 {
-	for (var i=off; i<end; i++) {
-		if (s[i] == c) return i;
+	for (var i=start; i<end; i++) {
+		if (s[i] == char) return i;
 	}
 	return -1;
 }
 
-function string_rev_search_char(s, c)
+function string_rev_search_char(s, char)
 {
-	return string_rev_search_char(s, c, 0, length(s));
+	return string_rev_search_char(s, char, 0, length(s));
 }
 
-function string_rev_search_char(s, c, off)
+function string_rev_search_char(s, char, end)
 {
-	return string_rev_search_char(s, c, off, length(s));
+	return string_rev_search_char(s, char, 0, end);
 }
 
-function string_rev_search_char(s, c, off, end)
+function string_rev_search_char(s, char, start, end)
 {
-	for (var i=end-1; i>=off; i--) {
-		if (s[i] == c) return i;
+	for (var i=end-1; i>=start; i--) {
+		if (s[i] == char) return i;
 	}
 	return -1;
 }
@@ -213,14 +378,35 @@ function string_search_multi_char(s, chars)
 	return string_search_multi_char(s, chars, 0, length(s));
 }
 
-function string_search_multi_char(s, chars, off)
+function string_search_multi_char(s, chars, start)
 {
-	return string_search_multi_char(s, chars, off, length(s));
+	return string_search_multi_char(s, chars, start, length(s));
 }
 
-function string_search_multi_char(s, chars, off, end)
+function string_search_multi_char(s, chars, start, end)
 {
-	for (var i=off; i<end; i++) {
+	for (var i=start; i<end; i++) {
+		var c = s[i];
+		for (var j=0; j<length(chars); j++) {
+			if (c == chars[j]) return i;
+		}
+	}
+	return -1;
+}
+
+function string_rev_search_multi_char(s, chars)
+{
+	return string_rev_search_multi_char(s, chars, 0, length(s));
+}
+
+function string_rev_search_multi_char(s, chars, end)
+{
+	return string_rev_search_multi_char(s, chars, 0, end);
+}
+
+function string_rev_search_multi_char(s, chars, start, end)
+{
+	for (var i=end-1; i>=start; i--) {
 		var c = s[i];
 		for (var j=0; j<length(chars); j++) {
 			if (c == chars[j]) return i;
@@ -231,21 +417,24 @@ function string_search_multi_char(s, chars, off, end)
 
 function string_search_string(s, search)
 {
-	return string_search_string(s, search, 0);
+	return string_search_string(s, search, 0, length(s));
 }
 
-function string_search_string(s, search, off)
+function string_search_string(s, search, start)
 {
-	var len1 = length(s);
-	var len2 = length(search);
-	if (len2 == 0) return -1;
+	return string_search_string(s, search, start, length(s));
+}
+
+function string_search_string(s, search, start, end)
+{
+	var len = length(search);
+	if (len == 0) return -1;
 
 	var c0 = search[0];
-
-	for (var i=off; i<len1; i++) {
-		if (s[i] == c0 && len1-i >= len2) {
+	for (var i=start; i<end; i++) {
+		if (s[i] == c0 && end-i >= len) {
 			var found = true;
-			for (var j=1; j<len2; j++) {
+			for (var j=1; j<len; j++) {
 				if (s[i+j] != search[j]) {
 					found = false;
 					break;
@@ -259,213 +448,210 @@ function string_search_string(s, search, off)
 	return -1;
 }
 
+function string_rev_search_string(s, search)
+{
+	return string_rev_search_string(s, search, 0, length(s));
+}
+
+function string_rev_search_string(s, search, end)
+{
+	return string_rev_search_string(s, search, 0, end);
+}
+
+function string_rev_search_string(s, search, start, end)
+{
+	var len = length(search);
+	if (len == 0) return -1;
+
+	var c0 = search[len-1];
+	for (var i=end-1; i>=start; i--) {
+		if (s[i] == c0 && i-start+1 >= len) {
+			var found = true;
+			for (var j=1; j<len; j++) {
+				if (s[i-j] != search[len-j-1]) {
+					found = false;
+					break;
+				}
+			}
+			if (found) {
+				return i-len+1;
+			}
+		}
+	}
+	return -1;
+}
+
 function string_contains(s, search)
 {
 	return string_search_string(s, search) != -1;
 }
 
-function string_parse_int(value)
+function string_compare(s1, s2)
 {
-	var i, c, len = length(value), result, mul = 1;
-	for (i=0; i<len; i++) {
-		c = value[i];
-		switch (c) {
-			case '0'..'9':
-				result = result*10 + (c - '0') * mul;
-				continue;
-				
-			case '+':
-				if (i != 0) break;
-				continue;
-
-			case '-':
-				if (i != 0) break;
-				mul = -1;
-				continue;
+	var len1 = length(s1);
+	var len2 = length(s2);
+	for (var i=0, n=min(len1, len2); i<n; i++) {
+		var c1 = s1[i];
+		var c2 = s2[i];
+		if (c1 < c2) {
+			return -1;
 		}
-		return 0, error("invalid character");
+		if (c1 > c2) {
+			return +1;
+		}
 	}
-	if (len + (mul >> 1) == 0) {
-		return 0, error("no digits present");
-	}
-	return result;
+	if (len1 < len2) return -1;
+	if (len1 > len2) return +1;
+	return 0;
 }
 
-function string_parse_hex_int(value)
+function string_parse_hex_int(s)
 {
-	var i, c, len = length(value), result;
+	return string_parse_hex_int(s, 0, length(s), false, 0);
+}
+
+function string_parse_hex_int(s, default_value)
+{
+	return string_parse_hex_int(s, 0, length(s), true, default_value);
+}
+
+function string_parse_hex_int(s, off, len)
+{
+	return string_parse_hex_int(s, off, len, false, 0);
+}
+
+function string_parse_hex_int(s, off, len, default_value)
+{
+	return string_parse_hex_int(s, off, len, true, default_value);
+}
+
+function @string_parse_hex_int(s, off, len, has_default, default_value)
+{
+	var i, c, result;
+	if (len > 8) {
+		while (s[off] == '0' && len > 1) {
+			off++;
+			len--;
+		}
+		if (len > 8) {
+			if (has_default) {
+				return default_value;
+			}
+			return 0, error("too many digits");
+		}
+	}
+	if (len == 0) {
+		if (has_default) {
+			return default_value;
+		}
+		return 0, error("no digits present");
+	}
 	for (i=0; i<len; i++) {
-		c = value[i];
+		c = s[off+i];
 		switch (c) {
 			case '0'..'9':
-				result = result*16 + (c - '0');
+				result = (result << 4) | (c - '0');
 				continue;
 
 			case 'a'..'f':
-				result = result*16 + (c - 'a' + 10);
+				result = (result << 4) | (c - 'a' + 10);
 				continue;
 
 			case 'A'..'F':
-				result = result*16 + (c - 'A' + 10);
+				result = (result << 4) | (c - 'A' + 10);
 				continue;
 		}
+		if (has_default) {
+			return default_value;
+		}
 		return 0, error("invalid character");
-	}
-	if (len == 0) {
-		return 0, error("no digits present");
 	}
 	return result;
 }
 
-function string_parse_long(value)
+function string_parse_long(s)
 {
-	var i, c, len = length(value), result = [0, 0], mul = 1;
-	for (i=0; i<len; i++) {
-		c = value[i];
-		switch (c) {
-			case '0'..'9': {
-				var (mlo, mhi) = mul64(result[0], result[1], 10, 0);
-				if (mhi < 0 && result[1] >= 0) return 0, error("integer overflow");
-				if (mhi >= 0 && result[1] < 0) return 0, error("integer overflow");
-				var (lo, c1) = add32(mlo, (c - '0') * mul);
-				var (hi, c2) = add32(mhi, mul >> 1, c1);
-				if (c2) return 0, error("integer overflow");
-				result[0] = lo;
-				result[1] = hi;
-				continue;
-			}
-				
-			case '+':
-				if (i != 0) break;
-				continue;
-				
-			case '-':
-				if (i != 0) break;
-				mul = -1;
-				continue;
-		}
-		return 0, error("invalid character");
-	}
-	if (len + (mul >> 1) == 0) {
-		return 0, error("no digits present");
-	}
-	return result;
+	var (lo, hi) = @string_parse_long(s);
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
 }
 
-// caveat: simple implementation with less accuracy
-function string_parse_float(value)
+function string_parse_long(s, default_value)
 {
-	var i=0, len = length(value);
-	if (len == 0) return 0, error("no digits present");
-
-	var result = 0.0, mul = 1.0;
-
-	var c = value[0];
-	if (c == '-') {
-		i++;
-		mul = -1.0;
-	}
-	else if (c == '+') {
-		i++;
-	}
-
-	while (i < len) {
-		c = value[i];
-		switch (c) {
-			case '0'..'9': {
-				result = {{result*10.0} + {float(c - '0') * mul}};
-				i++;
-				continue;
-			}
-		}
-		break;
-	}
-
-	if (i == len) {
-		return result;
-	}
-
-	c = value[i++];
-	if (c == '.') {
-		var div = mul;
-		while (i < len) {
-			div = {div * 10.0};
-			c = value[i];
-			switch (c) {
-				case '0'..'9': {
-					result = {result + {float(c - '0') / div}};
-					i++;
-					continue;
-				}
-			}
-			break;
-		}
-	
-		if (i == len) {
-			return result;
-		}
-		c = value[i++];
-	}
-
-	if (c == 'e' || c == 'E') {
-		if (i == len) {
-			return 0, error("invalid exponent");
-		}
-		if (value[i] == '+') {
-			i++;
-			if (i == len) {
-				return 0, error("invalid exponent");
-			}
-		}
-		var (exp, err) = string_parse_int(string_substring(value, i, len));
-		if (err) {
-			return 0, error("invalid exponent");
-		}
-		result = {result * pow(10.0, float(exp))};
-		return result;
-	}
-
-	if (i != len) {
-		return 0, error("invalid character");
-	}
-	
-	return result;
+	var (lo, hi) = @string_parse_long(s, 0, length(s), invalid_value#0, invalid_value#0);
+	if (lo === invalid_value#0) return default_value;
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
 }
 
-function string_long(value)
+function string_parse_long(s, off, len)
 {
-	var vlo = value[0], vhi = value[1];
-
-	if (vlo == 0 && vhi == 0x80000000) {
-		return {"-9223372036854775808"};
-	}
-
-	var result = {""};
-	var pos = 20, neg = false;
-	array_set_length(result, pos);
-
-	if (vhi < 0) {
-		neg = true;
-		(vlo, vhi) = mul64(vlo, vhi, -1, -1);
-	}
-
-	while (vlo != 0 || vhi != 0) {
-		var (dlo, dhi) = div64(vlo, vhi, 10, 0);
-		var (rlo, rhi) = rem64(vlo, vhi, 10, 0);
-		result[--pos] = '0'+rlo;
-		vlo = dlo;
-		vhi = dhi;
-	}
-
-	if (neg) {
-		result[--pos] = '-';
-	}
-	return array_extract(result, pos, length(result)-pos);
+	var (lo, hi) = @string_parse_long(s, off, len);
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
 }
 
-function string_int_hex(value)
+function string_parse_long(s, off, len, default_value)
 {
-	var s = {""}, zero=true;
+	var (lo, hi) = @string_parse_long(s, off, len, invalid_value#0, invalid_value#0);
+	if (lo === invalid_value#0) return default_value;
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
+}
+
+function string_parse_double(s)
+{
+	var (lo, hi) = @string_parse_double(s);
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
+}
+
+function string_parse_double(s, default_value)
+{
+	var (lo, hi) = @string_parse_double(s, 0, length(s), invalid_value#0, invalid_value#0);
+	if (lo === invalid_value#0) return default_value;
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
+}
+
+function string_parse_double(s, off, len)
+{
+	var (lo, hi) = @string_parse_double(s, off, len);
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
+}
+
+function string_parse_double(s, off, len, default_value)
+{
+	var (lo, hi) = @string_parse_double(s, off, len, invalid_value#0, invalid_value#0);
+	if (lo === invalid_value#0) return default_value;
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
+}
+
+function string_parse_double(s, off, len, default_lo, default_hi)
+{
+	return 0, error("do not use this variant of the function");
+}
+
+function string_from_int(value)
+{
+	return {value};
+}
+
+function string_from_int(s, value)
+{
+	array_append(s, {value});
+}
+
+function string_from_hex_int(value)
+{
+	return string_from_hex_int({""}, value);
+}
+
+function string_from_hex_int(s, value)
+{
+	var zero = true;
 	for (var i=0; i<8; i++) {
 		var digit = value >>> 28;
 		value <<= 4;
@@ -476,7 +662,7 @@ function string_int_hex(value)
 			s[] = '0' + digit;
 		}
 		else {
-			s[] = 'a' + (digit - 10);
+			s[] = 'A' + (digit - 10);
 		}
 		zero = false;
 	}
@@ -484,6 +670,37 @@ function string_int_hex(value)
 	return s;
 }
 
+function string_from_float(value)
+{
+	return {value};
+}
+
+function string_from_float(s, value)
+{
+	array_append(s, {value});
+}
+
+function string_from_long(value)
+{
+	return @string_from_long(value->LONG_lo, value->LONG_hi);
+}
+
+function string_from_long(s, value)
+{
+	return @string_from_long(s, value->LONG_lo, value->LONG_hi);
+}
+
+function string_from_double(value)
+{
+	return @string_from_double(value->DOUBLE_lo, value->DOUBLE_hi);
+}
+
+function string_from_double(s, value)
+{
+	return @string_from_double(s, value->DOUBLE_lo, value->DOUBLE_hi);
+}
+
+/*
 function @assert(value, result)
 {
 	if (value != result) {
@@ -491,41 +708,212 @@ function @assert(value, result)
 	}
 }
 
-function @assert_inexact(value, result, err)
+function @alt_whitespace_func(c)
 {
-	if ({fabs({value - result}) > err}) {
-		return 0, error({"assert failed (expected ", result, " but got ", value, ")"});
+	switch (c) {
+		case ' ', '.': return true;
 	}
-}
-
-function @assert_exception(func, data, msg)
-{
-	var (r, e) = func(data);
-	if (!e) {
-		return 0, error({"assert failed (expected exception '", msg, "' but got none)"});
-	}
-	if (e[0] != msg) {
-		return 0, error({"assert failed (expected exception '", msg, "' but got '", e[0], "')"});
-	}
+	return false;
 }
 
 function test_string()
 {
-	assert_exception(string_parse_int#1, "", "no digits present");
-	assert_exception(string_parse_int#1, "-", "no digits present");
-	assert_exception(string_parse_int#1, " 1", "invalid character");
-	assert_exception(string_parse_int#1, "x", "invalid character");
-	assert_exception(string_parse_int#1, "2147483648", "integer overflow");
-	assert(string_parse_int("0"), 0);
-	assert(string_parse_int("0000000000000"), 0);
-	assert(string_parse_int("123456789"), 123456789);
-	assert(string_parse_int("-123456789"), -123456789);
-	assert(string_parse_int("-2147483648"), -2147483648);
-	assert(string_parse_int("-000002147483648"), -2147483648);
-	assert(string_parse_float("12345678"), 12345678.0);
-	assert(string_parse_float("123456789"), 123456792.0);
-	assert_inexact(string_parse_float("123.45"), 123.45, 0.0001);
-	assert_inexact(string_parse_float("-123.45"), -123.45, 0.0001);
-	assert_inexact(string_parse_float("123.45e+3"), 123450.0, 0.01);
-	assert_inexact(string_parse_float("-123.45e-3"), -0.12345, 0.01);
+	var s = {"some"};
+	array_append(s, " string");
+	assert(s, "some string");
+	array_append(s, " maybe other", 6, length(" maybe other")-6);
+	assert(s, "some string other");
+	s[] = ' ';
+	assert(s, "some string other ");
+	array_append(s, " maybe other", 1, 5);
+	assert(s, "some string other maybe");
+
+	s = {"some string"};
+	array_insert_array(s, 5, "other ");
+	assert(s, "some other string");
+	array_insert_array(s, 5, "xxanxx", 2, 2);
+	assert(s, "some another string");
+	array_insert_array(s, 12, "string maybe", 7, length("string maybe")-7);
+	assert(s, "some anothermaybe string");
+	array_insert(s, 12, ' ');
+	assert(s, "some another maybe string");
+	array_remove(s, 5, 13);
+	assert(s, "some  string");
+	array_remove(s, 4);
+	assert(s, "some string");
+	array_remove(s, 0);
+	assert(s, "ome string");
+	array_remove(s, 9);
+	assert(s, "ome strin");
+	array_insert_array(s, 0, "maybe s");
+	assert(s, "maybe some strin");
+	array_insert(s, 16, 'g');
+	assert(s, "maybe some string");
+	array_insert_array(s, 17, " maybe");
+	assert(s, "maybe some string maybe");
+	array_remove(s, 0, 23);
+	assert(s, "");
+
+	assert(string_substring("some testing", 5), "testing");
+	assert(string_substring("some testing", 5, 9), "test");
+
+	assert(string_join([], ","), "");
+	assert(string_join([""], ","), "");
+	assert(string_join([123], ","), "123");
+	assert(string_join([123,456], ","), "123,456");
+	assert(string_join([123,456], "..."), "123...456");
+
+	assert(string_split("", ','), []);
+	assert(string_split("123", ','), ["123"]);
+	assert(string_split(",123,,456,,", ','), ["", "123", "", "456", "", ""]);
+	assert(string_split(",123,,456,,", ',', true), ["", "123", "456", ""]);
+
+	assert(string_starts_with("just", "just test"), false);
+	assert(string_starts_with("just test", "just"), true);
+	assert(string_ends_with("just", "just test"), false);
+	assert(string_ends_with("just test", "test"), true);
+
+	s = {"abcabcabc"};
+	assert(string_replace_char(s, 'b', 'B'), "aBcaBcaBc");
+	assert(s, "abcabcabc");
+	string_replace_char_inplace(s, 'b', 'B');
+	assert(s, "aBcaBcaBc");
+
+	assert(string_replace_string("aaabbbccc", "abb", "ABB"), "aaABBbccc");
+	assert(string_replace_string("xaaaxaaa", "xaa", "xxaa"), "xxaaaxxaaa");
+	assert(string_replace_string("axaax", "xa", "ax"), "aaxax");
+	assert(string_replace_string("aaabbbccc", "", "X"), "aaabbbccc");
+	s = {"aaabbbccc"};
+	string_replace_string_inplace(s, "b", "X");
+	assert(s, "aaaXXXccc");
+
+	assert(string_char('A'), "A");
+
+	assert(string_to_lower_case("Some Test"), "some test");
+	assert(string_to_upper_case("Some Test"), "SOME TEST");
+
+	assert(string_trim("  some test  "), "some test");
+	assert(string_trim(".. some test.. ", alt_whitespace_func#1), "some test");
+
+	s = {"  some test  "};
+	string_trim_inplace(s);
+	assert(s, "some test");
+	s = {".. some test.. "};
+	string_trim_inplace(s, alt_whitespace_func#1);
+	assert(s, "some test");
+
+	assert(string_pad_left("abc", 2), "abc");
+	assert(string_pad_left("abc", 5), "  abc");
+	assert(string_pad_left("abc", 5, '_'), "__abc");
+
+	assert(string_pad_right("abc", 2), "abc");
+	assert(string_pad_right("abc", 5), "abc  ");
+	assert(string_pad_right("abc", 5, '_'), "abc__");
+
+	assert(string_search_char("abcabc", 'C'), -1);
+	assert(string_search_char("abcabc", 'b'), 1);
+	assert(string_search_char("abcabc", 'b', 1), 1);
+	assert(string_search_char("abcabc", 'b', 2), 4);
+	assert(string_search_char("abcabc", 'b', 2, 4), -1);
+	assert(string_search_char("abcabc", 'b', 2, 5), 4);
+
+	assert(string_rev_search_char("abcabc", 'C'), -1);
+	assert(string_rev_search_char("abcabc", 'b'), 4);
+	assert(string_rev_search_char("abcabc", 'b', 5), 4);
+	assert(string_rev_search_char("abcabc", 'b', 4), 1);
+	assert(string_rev_search_char("abcabc", 'b', 2, 4), -1);
+	assert(string_rev_search_char("abcabc", 'b', 2, 5), 4);
+
+	assert(string_search_multi_char("abcabc", ""), -1);
+	assert(string_search_multi_char("abcabc", "B"), -1);
+	assert(string_search_multi_char("abcabc", "bcD"), 1);
+	assert(string_search_multi_char("abcabc", "Dcb"), 1);
+	assert(string_search_multi_char("abcabc", "bcD", 2), 2);
+	assert(string_search_multi_char("abcabc", "Dcb", 2), 2);
+	assert(string_search_multi_char("abcabc", "bbb", 2, 4), -1);
+	assert(string_search_multi_char("abcabc", "bbb", 2, 5), 4);
+
+	assert(string_rev_search_multi_char("abcabc", ""), -1);
+	assert(string_rev_search_multi_char("abcabc", "B"), -1);
+	assert(string_rev_search_multi_char("abcabc", "abD"), 4);
+	assert(string_rev_search_multi_char("abcabc", "Dba"), 4);
+	assert(string_rev_search_multi_char("abcabc", "abD", 5), 4);
+	assert(string_rev_search_multi_char("abcabc", "Dba", 5), 4);
+	assert(string_rev_search_multi_char("abcabc", "abD", 4), 3);
+	assert(string_rev_search_multi_char("abcabc", "Dba", 4), 3);
+	assert(string_rev_search_multi_char("abcabc", "bbb", 2, 4), -1);
+	assert(string_rev_search_multi_char("abcabc", "bbb", 2, 5), 4);
+
+	assert(string_search_string("just test", ""), -1);
+	assert(string_search_string("just test", "Test"), -1);
+	assert(string_search_string("just test", "test"), 5);
+	assert(string_search_string("abcabc", "bc"), 1);
+	assert(string_search_string("abcabc", "bc", 2), 4);
+	assert(string_search_string("abcabc", "bc", 2, 5), -1);
+
+	assert(string_rev_search_string("just test", ""), -1);
+	assert(string_rev_search_string("just test", "Test"), -1);
+	assert(string_rev_search_string("just test", "test"), 5);
+	assert(string_rev_search_string("abcabc", "bc"), 4);
+	assert(string_rev_search_string("abcabc", "bc", 6), 4);
+	assert(string_rev_search_string("abcabc", "bc", 5), 1);
+	assert(string_rev_search_string("Xabcabc", "ab", 5), 1);
+	assert(string_rev_search_string("abcabc", "ab", 4), 0);
+	assert(string_rev_search_string("bcabc", "ab", 3), -1);
+	assert(string_rev_search_string("bcabc", "ab", 4), 2);
+	assert(string_rev_search_string("abcabc", "bc", 2, 5), -1);
+
+	assert(string_contains("just test", ""), false);
+	assert(string_contains("just test", "just"), true);
+	assert(string_contains("just test", "test"), true);
+	assert(string_contains("just test", "something"), false);
+	assert(string_contains("just test", "abc"), false);
+	assert(string_contains("just test", "just test"), true);
+
+	assert(string_compare("", ""), 0);
+	assert(string_compare("aaa", ""), +1);
+	assert(string_compare("", "aaa"), -1);
+	assert(string_compare("aaa", "aaaa"), -1);
+	assert(string_compare("aaaa", "aaa"), +1);
+	assert(string_compare("aaaa", "aaaa"), 0);
+	assert(string_compare("aaa", "bbb"), -1);
+	assert(string_compare("bbb", "aaa"), +1);
+	assert(string_compare("abb", "abc"), -1);
+	assert(string_compare("abc", "abb"), +1);
+
+	assert(string_parse_hex_int("0"), 0);
+	assert(string_parse_hex_int("0000"), 0);
+	assert(string_parse_hex_int("00000000"), 0);
+	assert(string_parse_hex_int("000000000000"), 0);
+	assert(string_parse_hex_int("00000000000F"), 0xF);
+	var (r, e) = string_parse_hex_int("");
+	assert(e != null, true);
+	(r, e) = string_parse_hex_int("10000000F");
+	assert(e != null, true);
+	(r, e) = string_parse_hex_int("0G00000F");
+	assert(e != null, true);
+	assert(string_parse_hex_int("", 0xBADF00D), 0xBADF00D);
+	assert(string_parse_hex_int("10000000F", 0xBADF00D), 0xBADF00D);
+	assert(string_parse_hex_int("0G00000F", 0xBADF00D), 0xBADF00D);
+	assert(string_parse_hex_int("12345678"), 0x12345678);
+	assert(string_parse_hex_int("87654321"), 0x87654321);
+	assert(string_parse_hex_int("FFffffFF"), -1);
+	assert(string_parse_hex_int("FFFFFFfe"), -2);
+	assert(string_parse_hex_int("12345678", 2, 4), 0x3456);
+	assert(string_parse_hex_int("1234G678", 2, 4, 0xBADF00D), 0xBADF00D);
+
+	assert(string_from_hex_int(0), "0");
+	assert(string_from_hex_int(1), "1");
+	assert(string_from_hex_int(0xABCDEF), "ABCDEF");
+	assert(string_from_hex_int(0x12345678), "12345678");
+	assert(string_from_hex_int(0x87654321), "87654321");
+	assert(string_from_hex_int(0xFFFFFFFF), "FFFFFFFF");
+	s = {"test"};
+	assert(string_from_hex_int(s, 0), "test0");
+	assert(string_from_hex_int(s, 1), "test01");
+	assert(string_from_hex_int(s, 0xABCDEF), "test01ABCDEF");
+	assert(string_from_hex_int(s, 0x12345678), "test01ABCDEF12345678");
+	assert(string_from_hex_int(s, 0x87654321), "test01ABCDEF1234567887654321");
+	assert(string_from_hex_int(s, 0xFFFFFFFF), "test01ABCDEF1234567887654321FFFFFFFF");
 }
+*/

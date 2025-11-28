@@ -1,0 +1,16 @@
+use "classes";
+
+import "util/common";
+
+// https://amp.dev/documentation/guides-and-tutorials/learn/spec/amphtml
+
+function adjust_document(request: Request, document: Element)
+{
+	var elem = document.query("link[rel='canonical',href]");
+	if (elem) {
+		var normal_url = Link::get_absolute(request.get_url(), elem.get_attr("href"));
+		if (normal_url != request.get_url()) {
+			request.set_redirect(normal_url);
+		}
+	}
+}

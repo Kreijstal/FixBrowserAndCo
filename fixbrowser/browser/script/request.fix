@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -23,11 +23,21 @@ import "io/http/url";
 import "browser/script/handle_types";
 
 const {
+	REQUEST_ACTION_REDIRECT         = 0x01,
+	REQUEST_ACTION_SET_HEADERS      = 0x02,
+	REQUEST_ACTION_CONTENT_REPLACE  = 0x04,
+	REQUEST_ACTION_DOCUMENT_REPLACE = 0x08
+};
+
+const {
 	REQ_url,
+	REQ_allowed_actions,
 	REQ_redirect,
 	REQ_send_headers,
 	REQ_same_domains,
 	REQ_same_domain_urls,
+	REQ_content_replacement_data,
+	REQ_content_replacement_type,
 	REQ_document_replacement,
 	REQ_headers,
 	@REQ_SIZE
@@ -70,6 +80,11 @@ function request_get_query(request)
 	return url_query_to_string(request->REQ_url);
 }
 
+function request_get_param(request, name)
+{
+	return url_get_param(request->REQ_url, name);
+}
+
 function request_get_params(request)
 {
 	return url_params_to_hash(request->REQ_url);
@@ -82,11 +97,17 @@ function request_get_headers(request)
 
 function request_set_redirect(request, url)
 {
+	if ((request->REQ_allowed_actions & REQUEST_ACTION_REDIRECT) == 0) {
+		return 0, error("redirection is not allowed for this handler");
+	}
 	request->REQ_redirect = url;
 }
 
 function request_set_header(request, name, value)
 {
+	if ((request->REQ_allowed_actions & REQUEST_ACTION_SET_HEADERS) == 0) {
+		return 0, error("setting of headers is not allowed for this handler");
+	}
 	if (!request->REQ_send_headers) {
 		request->REQ_send_headers = [];
 	}
@@ -94,8 +115,49 @@ function request_set_header(request, name, value)
 	request->REQ_send_headers[] = value;
 }
 
+function request_append_to_header(request, name, value)
+{
+	if ((request->REQ_allowed_actions & REQUEST_ACTION_SET_HEADERS) == 0) {
+		return 0, error("setting of headers is not allowed for this handler");
+	}
+	if (!request->REQ_send_headers) {
+		request->REQ_send_headers = [];
+	}
+	var send_headers = request->REQ_send_headers;
+	for (var i=length(send_headers)-2; i>=0; i-=2) {
+		if (send_headers[i+0] == name) {
+			if (length(send_headers[i+1]) > 0) {
+				send_headers[i+1] = {send_headers[i+1], ";", value};
+			}
+			else {
+				send_headers[i+1] = value;
+			}
+			return;
+		}
+	}
+	send_headers[] = name;
+	send_headers[] = value;
+}
+
+function request_replace_content(request, content)
+{
+	request_replace_content(request, content, "text/html");
+}
+
+function request_replace_content(request, content, type)
+{
+	if ((request->REQ_allowed_actions & REQUEST_ACTION_CONTENT_REPLACE) == 0) {
+		return 0, error("content replacing is not allowed for this handler");
+	}
+	request->REQ_content_replacement_data = content;
+	request->REQ_content_replacement_type = type;
+}
+
 function request_replace_document(request, document)
 {
+	if ((request->REQ_allowed_actions & REQUEST_ACTION_DOCUMENT_REPLACE) == 0) {
+		return 0, error("document replacing is not allowed for this handler");
+	}
 	request->REQ_document_replacement = document;
 }
 
@@ -136,4 +198,9 @@ function request_set_same_domain_url(request, url)
 	}
 
 	request->REQ_same_domain_urls{url} = true;
+}
+
+function request_is_handled(request)
+{
+	return request->REQ_redirect || request->REQ_content_replacement_data || request->REQ_document_replacement;
 }

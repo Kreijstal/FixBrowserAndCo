@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,6 +19,9 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "classes";
+
+import "io/charset/charset";
 import "browser/css/parser";
 import "browser/css/selector";
 import "browser/css/property";
@@ -26,40 +29,39 @@ import "browser/css/media_query";
 import "browser/css/stylesheet";
 import "util/string";
 
-function css_parse(buf, charset)
+function css_parse(buf: String, charset: Charset): Stylesheet
 {
 	var par = parser_create(buf, charset);
 	return css_parse(par);
 }
 
-function @css_parse(par)
+function @css_parse(par: Parser): Stylesheet
 {
-	var sheet = stylesheet_create();
+	var sheet = Stylesheet::create();
 
-	var rules = parse_stylesheet(par);
-	for (var i=0; i<length(rules); i++) {
-		//dump_rule(rules[i], 0);
+	foreach (var rule in parse_stylesheet(par)) {
+		//dump_rule(rule, 0);
 
-		var name = rules[i]->RULE_name;
+		var name = rule.name;
 		if (name) {
-			name = string_to_lower_case(name);
+			name = name.to_lower_case();
 			
 			if (name == "media") {
-				var buf = rules[i]->RULE_prelude;
+				var buf = rule.prelude;
 				rewind_buffer(buf);
 				if (next_token(buf) != TOKEN_AT_KEYWORD) continue;
 				var media = parse_media_query_list(buf);
 				if (!media) continue;
 
-				var block = rules[i]->RULE_value;
+				var block = rule.value as SimpleBlock;
 				rewind_buffer(block);
 				var media_sheet = css_parse(block);
-				stylesheet_add_rule(sheet, rule_create_media_query(media, media_sheet));
+				sheet.add_rule(MediaQueryRule::create(media, media_sheet));
 				continue;
 			}
 
 			if (name == "import") {
-				var buf = rules[i]->RULE_prelude;
+				var buf = rule.prelude;
 				rewind_buffer(buf);
 				if (next_token(buf) != TOKEN_AT_KEYWORD) continue;
 
@@ -69,7 +71,7 @@ function @css_parse(par)
 				if (token != TOKEN_URL && token != TOKEN_STRING) {
 					continue;
 				}
-				var url = buf->TOKEN_value;
+				var url = buf.value as String;
 
 				consume_whitespace(buf);
 
@@ -80,15 +82,15 @@ function @css_parse(par)
 					continue;
 				}
 
-				stylesheet_add_rule(sheet, rule_create_import(url, media));
+				sheet.add_rule(ImportRule::create(url, media));
 				continue;
 			}
 
-			log({"unhandled at-rule: ", name});
+			log("unhandled at-rule: "+name);
 			continue;
 		}
 
-		var buf = rules[i]->RULE_prelude;
+		var buf = rule.prelude;
 		rewind_buffer(buf);
 		var (group, e) = parse_selectors_group(buf);
 		if (e) {
@@ -99,19 +101,20 @@ function @css_parse(par)
 		//dump_selector_group(group);
 		//log(serialize_selector_group(group));
 
-		var block = rules[i]->RULE_value;
+		var block = rule.value as SimpleBlock;
 		rewind_buffer(block);
 
 		var decls = parse_list_of_declarations(block);
 		var props = parse_properties(decls);
 
-		stylesheet_add_rule(sheet, rule_create_selector(group, props));
+		sheet.add_rule(SelectorRule::create(group, props));
 	}
 
+	//log(sheet.to_string());
 	return sheet;
 }
 
-function css_parse_inline_style(buf)
+function css_parse_inline_style(buf: String): Property[]
 {
 	var par = parser_create(buf, null);
 	var decls = parse_list_of_declarations(par);
@@ -119,7 +122,7 @@ function css_parse_inline_style(buf)
 	return props;
 }
 
-function css_parse_media_query(buf)
+function css_parse_media_query(buf: String): MediaQuery
 {
 	var par = parser_create(buf, null);
 	var comps = parse_list_of_component_values(par);
@@ -127,7 +130,7 @@ function css_parse_media_query(buf)
 	return media;
 }
 
-function css_parse_selectors_group(buf)
+function css_parse_selectors_group(buf: String): Selector[]
 {
 	var par = parser_create(buf, null);
 	var comps = parse_list_of_component_values(par);
@@ -135,16 +138,16 @@ function css_parse_selectors_group(buf)
 	return group;
 }
 
-function css_parse_selector(buf)
+function css_parse_selector(buf: String): Selector
 {
 	var group = css_parse_selectors_group(buf);
-	if (length(group) != 1) {
-		return 0, error("must contain single selector");
+	if (group.length != 1) {
+		throw error("must contain single selector");
 	}
 	return group[0];
 }
 
-function @consume_whitespace(par)
+function @consume_whitespace(par: Parser)
 {
 	var token = next_token(par);
 	while (token == TOKEN_WHITESPACE) {

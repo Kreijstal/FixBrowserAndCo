@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,6 +19,9 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "util/time_literals";
+
+import "io/file";
 import "browser/script/element_funcs";
 import "browser/script/request_funcs";
 import "browser/script/http_funcs";
@@ -27,8 +30,9 @@ import "browser/script/util_funcs";
 import "browser/script/handle_types";
 import "browser/script/request";
 import "util/string";
+import "util/memory_cache";
 
-const @CACHE_TIMEOUT = 60;
+const @CACHE_TIMEOUT = 1 minute;
 
 var @heap;
 
@@ -49,16 +53,16 @@ function is_same_domain(domain1, domain2)
 	}
 
 	var key = ["cache.is_same_domain", domain1, domain2];
-	var result = global_get(key, -1);
+	var result = memory_cache_get(key, -1);
 	if (result != -1) {
-		global_set(key, result, CACHE_TIMEOUT);
+		memory_cache_set(key, result, CACHE_TIMEOUT);
 		return result;
 	}
 	
 	var parts1 = split_domain(domain1);
 	var parts2 = split_domain(domain2);
 	if (!parts1 || !parts2) {
-		global_set(key, false, CACHE_TIMEOUT);
+		memory_cache_set(key, false, CACHE_TIMEOUT);
 		return false;
 	}
 
@@ -70,7 +74,7 @@ function is_same_domain(domain1, domain2)
 		result = script_is_same_domain(parts1, parts2, len1, len2);
 	}
 
-	global_set(key, result, CACHE_TIMEOUT);
+	memory_cache_set(key, result, CACHE_TIMEOUT);
 	return result;
 }
 
@@ -126,9 +130,9 @@ function @get_site_script_dir(domain)
 	}
 
 	var s = {"site/", string_substring(domain, idx+1), "/"};
-	string_append(s, domain, 0, (domain[1] == '.'? 1 : 2));
+	array_append(s, domain, 0, (domain[1] == '.'? 1 : 2));
 	s[] = '/';
-	string_append(s, domain);
+	array_append(s, domain);
 	s[] = '/';
 	return s;
 }
@@ -144,7 +148,7 @@ function @script_is_same_domain(parts1, parts2, len1, len2)
 	var s = {""};
 	for (var i=length(parts1)-len1; i<length(parts1); i++) {
 		if (length(s) > 0) s[] = '.';
-		string_append(s, parts1[i]);
+		array_append(s, parts1[i]);
 	}
 	var script_name = {get_site_script_dir(s), "entry"};
 
@@ -154,12 +158,40 @@ function @script_is_same_domain(parts1, parts2, len1, len2)
 	return script_run_optional(heap, script_name, "is_same_domain#2", [domain1, domain2]);
 }
 
-function script_run_domain_handle_request(request)
+function script_run_handle_request(request)
 {
 	if (!heap) {
 		create_heap();
 	}
-	return script_run_domain(heap, request_get_domain(request), "entry", "handle_request#1", [request_to_handle(request)]);
+	
+	var params = [request_to_handle(request)];
+
+	var (result, e1) = script_run(heap, "dispatch", "dispatch_handle_request#1", params);
+	if (e1) {
+		log("site script error (dispatch):");
+		dump(e1);
+		return;
+	}
+
+	if (result) {
+		for (var i=0; i<length(result); i++) {
+			request->REQ_allowed_actions = REQUEST_ACTION_REDIRECT | REQUEST_ACTION_SET_HEADERS | REQUEST_ACTION_CONTENT_REPLACE;
+			var (result2, e2) = script_run(heap, result[i], "handle_request#1", params);
+			request->REQ_allowed_actions = 0;
+			if (e2) {
+				log({"site script error (", result[i], "):"});
+				dump(e2);
+			}
+			if (request_is_handled(request)) return;
+		}
+	}
+
+	request->REQ_allowed_actions = REQUEST_ACTION_REDIRECT | REQUEST_ACTION_SET_HEADERS | REQUEST_ACTION_CONTENT_REPLACE;
+	var (r, e3) = script_run_domain(heap, request_get_domain(request), "entry", "handle_request#1", params);
+	request->REQ_allowed_actions = 0;
+	if (e3) {
+		return 0, e3;
+	}
 }
 
 function @document_to_handle(doc)
@@ -167,15 +199,7 @@ function @document_to_handle(doc)
 	return script_create_handle(HANDLE_TYPE_ELEMENT, doc);
 }
 
-function script_run_domain_adjust_document(request, document)
-{
-	if (!heap) {
-		create_heap();
-	}
-	script_run_domain(heap, request_get_domain(request), "entry", "adjust_document#2", [request_to_handle(request), document_to_handle(document)]);
-}
-
-function script_run_global_adjust_document(request, document)
+function script_run_adjust_document(request, document)
 {
 	if (!heap) {
 		create_heap();
@@ -183,33 +207,35 @@ function script_run_global_adjust_document(request, document)
 	
 	var params = [request_to_handle(request), document_to_handle(document)];
 
-	var (result, e) = script_run(heap, "dispatch", "dispatch_adjust_document#2", params);
-	if (e) {
+	var (result, e1) = script_run(heap, "dispatch", "dispatch_adjust_document#2", params);
+	if (e1) {
 		log("site script error (dispatch):");
-		dump(e);
+		dump(e1);
 		return;
 	}
 
 	if (result) {
 		for (var i=0; i<length(result); i++) {
+			request->REQ_allowed_actions = REQUEST_ACTION_REDIRECT | REQUEST_ACTION_DOCUMENT_REPLACE;
 			var (result2, e2) = script_run(heap, result[i], "adjust_document#2", params);
+			request->REQ_allowed_actions = 0;
 			if (e2) {
 				log({"site script error (", result[i], "):"});
 				dump(e2);
 			}
+			if (request_is_handled(request)) return;
 		}
 	}
-}
 
-function script_run_domain_handle_redirect(request, new_url)
-{
-	if (!heap) {
-		create_heap();
+	request->REQ_allowed_actions = REQUEST_ACTION_REDIRECT | REQUEST_ACTION_DOCUMENT_REPLACE;
+	var (r, e3) = script_run_domain(heap, request_get_domain(request), "entry", "adjust_document#2", params);
+	request->REQ_allowed_actions = 0;
+	if (e3) {
+		return 0, e3;
 	}
-	return script_run_domain(heap, request_get_domain(request), "entry", "handle_redirect#2", [request_to_handle(request), new_url]);
 }
 
-function script_run_global_handle_redirect(request, new_url)
+function script_run_handle_redirect(request, new_url)
 {
 	if (!heap) {
 		create_heap();
@@ -217,20 +243,29 @@ function script_run_global_handle_redirect(request, new_url)
 	
 	var params = [request_to_handle(request), new_url];
 
-	var (result, e) = script_run(heap, "dispatch", "dispatch_handle_redirect#2", params);
-	if (e) {
+	var (result, e1) = script_run(heap, "dispatch", "dispatch_handle_redirect#2", params);
+	if (e1) {
 		log("site script error (dispatch):");
-		dump(e);
+		dump(e1);
 		return;
 	}
 
 	if (result) {
+		request->REQ_allowed_actions = REQUEST_ACTION_REDIRECT | REQUEST_ACTION_CONTENT_REPLACE;
 		var (result2, e2) = script_run(heap, result, "handle_redirect#2", params);
+		request->REQ_allowed_actions = 0;
 		if (e2) {
 			log({"site script error (", result, "):"});
 			dump(e2);
 		}
-		return result2;
+		if (request_is_handled(request)) return;
+	}
+
+	request->REQ_allowed_actions = REQUEST_ACTION_REDIRECT | REQUEST_ACTION_CONTENT_REPLACE;
+	var (r, e3) = script_run_domain(heap, request_get_domain(request), "entry", "handle_redirect#2", params);
+	request->REQ_allowed_actions = 0;
+	if (e3) {
+		return 0, e3;
 	}
 }
 
@@ -245,7 +280,7 @@ function @script_run_domain(heap, domain, domain_script_name, func_name, params)
 	var s = {""};
 	for (var i=length(parts)-len; i<length(parts); i++) {
 		if (length(s) > 0) s[] = '.';
-		string_append(s, parts[i]);
+		array_append(s, parts[i]);
 	}
 	var script_name = {get_site_script_dir(s), domain_script_name};
 
@@ -291,7 +326,7 @@ function check_scripts()
 
 function @check_scripts(dir)
 {
-	var list = file_list({"scripts/", dir});
+	var list = path_get_file_names(path_create({get_executable_path(), "/scripts/", dir}));
 	for (var i=0; i<length(list); i++) {
 		var fname = list[i];
 		if (fname[length(fname)-1] == '/') {

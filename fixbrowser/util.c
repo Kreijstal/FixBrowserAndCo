@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -31,7 +31,10 @@
 #include <memory.h>
 #include <time.h>
 #include <errno.h>
+#include <limits.h>
 #if defined(_WIN32)
+#define UNICODE
+#define _UNICODE
 #include <windows.h>
 #else
 #include <pthread.h>
@@ -53,7 +56,7 @@ typedef struct {
    void **data;
    uint64_t *expiry_time;
    int size, len, slots;
-} GlobalHash;
+} MemoryCacheHash;
 
 #if defined(_WIN32)
 enum {
@@ -70,13 +73,18 @@ struct dirent {
 #if defined(_WIN32)
 static CRITICAL_SECTION monotonic_clock_section;
 static CRITICAL_SECTION strerror_section;
-static CRITICAL_SECTION global_section;
-static HANDLE global_event;
+static CRITICAL_SECTION memory_cache_section;
+static HANDLE memory_cache_event;
 #else
-static pthread_mutex_t global_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t global_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t memory_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t memory_cache_cond = PTHREAD_COND_INITIALIZER;
 #endif
-static GlobalHash global;
+static MemoryCacheHash memory_cache;
+#if defined(_WIN32)
+static uint16_t *exec_path = NULL;
+#else
+static char *exec_path = NULL;
+#endif
 
 
 #ifdef _WIN32
@@ -253,361 +261,49 @@ static Value clock_get_real_time(Heap *heap, Value *error, int num_params, Value
 }
 
 
-static int is_forbidden_name(const char *name, int len)
+static Value file_rename(Heap *heap, Value *error, int num_params, Value *params, void *data)
 {
-   char buf[4];
-   int i;
-
-   for (i=0; i<len; i++) {
-      if (name[i] == '.') {
-         len = i;
-         break;
-      }
-   }
-
-   if (len < 3 || len > 4) return 0;
-
-   for (i=0; i<len; i++) {
-      if (name[i] >= 'a' && name[i] <= 'z') {
-         buf[i] = name[i] - 'a' + 'A';
-      }
-      else {
-         buf[i] = name[i];
-      }
-   }
-
-   if (len == 3 && memcmp(buf, "CON", 3) == 0) return 1;
-   if (len == 3 && memcmp(buf, "PRN", 3) == 0) return 1;
-   if (len == 3 && memcmp(buf, "AUX", 3) == 0) return 1;
-   if (len == 3 && memcmp(buf, "NUL", 3) == 0) return 1;
-   if (len == 4 && memcmp(buf, "COM", 3) == 0 && buf[3] >= '0' && buf[3] <= '9') return 1;
-   if (len == 4 && memcmp(buf, "LPT", 3) == 0 && buf[3] >= '0' && buf[3] <= '9') return 1;
-   return 0;
-}
-
-
-static int is_valid_path(const char *path)
-{
-   const char *cur = path;
-   const char *last = path;
-
-   if (*path == 0) return 0;
-
-   for (cur = path; *cur; cur++) {
-      if (*cur >= 'A' && *cur <= 'Z') continue;
-      if (*cur >= 'a' && *cur <= 'z') continue;
-      if (*cur >= '0' && *cur <= '9') continue;
-      if (*cur == '-' || *cur == '_' || *cur == ' ') continue;
-
-      if (*cur == '.') {
-         if (cur == last) return 0;
-         if (cur[1] == '/' || cur[1] == 0) return 0;
-         continue;
-      }
-      
-      if (*cur == '/') {
-         if (cur == last) return 0;
-         if (cur[1] == '/') return 0;
-         if (is_forbidden_name(last, cur-last)) return 0;
-         last = cur+1;
-         continue;
-      }
-
-      return 0;
-   }
-
-   if (is_forbidden_name(last, cur-last)) return 0;
-   return 1;
-}
-
-
-static Value file_read(Heap *heap, Value *error, int num_params, Value *params, void *data)
-{
-   int buf_size = 1024;
-   Value ret = fixscript_int(0), array;
-   FILE *f = NULL;
-   char *fname, *s;
-   int err, r, pos;
-   char buf[buf_size];
-
-   array = fixscript_create_string(heap, NULL, 0);
-   if (!array.value) {
-      *error = fixscript_create_error_string(heap, "out of memory");
-      goto error;
-   }
-
-   err = fixscript_get_string(heap, params[0], 0, -1, &fname, NULL);
-   if (err != FIXSCRIPT_SUCCESS) {
-      *error = fixscript_create_error_string(heap, fixscript_get_error_msg(err));
-      goto error;
-   }
-
-   if (!is_valid_path(fname)) {
-      s = string_format("invalid file name '%s'", fname);
-      free(fname);
-      *error = fixscript_create_error_string(heap, s);
-      free(s);
-      goto error;
-   }
-
-   f = fopen(fname, "rb");
-   if (!f) {
-      s = string_format("can't open file '%s'", fname);
-      free(fname);
-      *error = create_stdlib_error(heap, s);
-      free(s);
-      goto error;
-   }
-   free(fname);
-
-   pos = 0;
-   for (;;) {
-      r = fread(buf, 1, buf_size, f);
-      if (ferror(f)) {
-         *error = create_stdlib_error(heap, NULL);
-         goto error;
-      }
-      if (r == 0) break;
-
-      err = fixscript_set_array_length(heap, array, pos + r);
-      if (err != FIXSCRIPT_SUCCESS) {
-         *error = fixscript_create_error_string(heap, fixscript_get_error_msg(err));
-         goto error;
-      }
-
-      err = fixscript_set_array_bytes(heap, array, pos, r, buf);
-      if (err != FIXSCRIPT_SUCCESS) {
-         *error = fixscript_create_error_string(heap, fixscript_get_error_msg(err));
-         goto error;
-      }
-
-      pos += r;
-   }
-
-   ret = array;
-
-error:
-   if (f) {
-      if (fclose(f) != 0 && error->value == 0) {
-         *error = create_stdlib_error(heap, NULL);
-         return fixscript_int(0);
-      }
-   }
-   return ret;
-}
-
-
-static Value file_write(Heap *heap, Value *error, int num_params, Value *params, void *data)
-{
-   int buf_size = 1024;
-   Value array;
-   FILE *f = NULL;
-   char *fname, *s;
-   int err, pos, len, num;
-   char buf[buf_size];
-
-   array = params[1];
-   err = fixscript_get_array_length(heap, array, &len);
-   if (err) {
-      *error = fixscript_create_error_string(heap, fixscript_get_error_msg(err));
-      goto error;
-   }
-
-   err = fixscript_get_string(heap, params[0], 0, -1, &fname, NULL);
-   if (err != FIXSCRIPT_SUCCESS) {
-      *error = fixscript_create_error_string(heap, fixscript_get_error_msg(err));
-      goto error;
-   }
-
-   if (!is_valid_path(fname)) {
-      s = string_format("invalid file name '%s'", fname);
-      free(fname);
-      *error = fixscript_create_error_string(heap, s);
-      free(s);
-      goto error;
-   }
-
-   f = fopen(fname, "wb");
-   if (!f) {
-      s = string_format("can't open file '%s'", fname);
-      free(fname);
-      *error = create_stdlib_error(heap, s);
-      free(s);
-      goto error;
-   }
-   free(fname);
-
-   pos = 0;
-   while (pos < len) {
-      num = MIN(len - pos, buf_size);
-      
-      err = fixscript_get_array_bytes(heap, array, pos, num, buf);
-      if (err != FIXSCRIPT_SUCCESS) {
-         *error = fixscript_create_error_string(heap, fixscript_get_error_msg(err));
-         goto error;
-      }
-
-      if (fwrite(buf, num, 1, f) != 1) {
-         *error = create_stdlib_error(heap, NULL);
-         goto error;
-      }
-
-      pos += num;
-   }
-
-error:
-   if (f) {
-      if (fclose(f) != 0 && error->value == 0) {
-         *error = create_stdlib_error(heap, NULL);
-         return fixscript_int(0);
-      }
-   }
-   return fixscript_int(0);
-}
-
-
 #if defined(_WIN32)
+   Value ret = fixscript_int(0);
+   uint16_t *oldpath = NULL, *newpath = NULL;
+   int err;
 
-static int scandir(const char *dir, struct dirent ***namelist, int(*filter)(const struct dirent *), int(*compar)(const void *, const void *))
-{
-   HANDLE handle;
-   WIN32_FIND_DATAA data;
-   struct dirent **entries = NULL, *ent;
-   int cnt=0, cap=0;
-   char *s;
-   
-   s = malloc(strlen(dir)+2+1);
-   strcpy(s, dir);
-   strcat(s, "/*");
-   handle = FindFirstFileA(s, &data);
-   free(s);
-   if (handle == INVALID_HANDLE_VALUE) {
-      errno = ENOENT;
-      return -1;
+   err = fixscript_get_string_utf16(heap, params[0], 0, -1, &oldpath, NULL);
+   if (!err) {
+      err = fixscript_get_string_utf16(heap, params[1], 0, -1, &newpath, NULL);
    }
-
-   for (;;) {
-      ent = malloc(sizeof(struct dirent));
-      ent->d_type = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)? DT_DIR : DT_REG;
-      strcpy(ent->d_name, data.cFileName);
-
-      if (filter(ent)) {
-         if (cnt == cap) {
-            cap = cap? cap*2 : 8;
-            entries = realloc(entries, cap * sizeof(struct dirent *));
-         }
-         entries[cnt++] = ent;
-      }
-      else {
-         free(ent);
-      }
-
-      if (!FindNextFileA(handle, &data)) break;
-   }
-
-   qsort(entries, cnt, sizeof(struct dirent *), compar);
-
-   FindClose(handle);
-   *namelist = entries;
-   return cnt;
-}
-
-static int alphasort(const void *a, const void *b)
-{
-   const struct dirent *d1 = *((struct dirent **)a);
-   const struct dirent *d2 = *((struct dirent **)b);
-   return strcmp(d1->d_name, d2->d_name);
-}
-
-#endif
-
-
-static int fname_filter(const struct dirent *dirent)
-{
-   const char *fname = dirent->d_name;
-   
-   if (fname[0] == '.') {
-      if (fname[1] == '\0') return 0;
-      if (fname[1] == '.' && fname[2] == '\0') return 0;
-   }
-   return 1;
-}
-
-
-static Value file_list(Heap *heap, Value *error, int num_params, Value *params, void *data)
-{
-   struct dirent **namelist = NULL;
-#if !defined(_WIN32)
-   struct stat buf;
-   char *s;
-#endif
-   Value arr, fname, ret = fixscript_int(0);
-   char *dir = NULL, *full_name = NULL;
-   int i, err, num = 0;
-
-   err = fixscript_get_string(heap, params[0], 0, -1, &dir, NULL);
    if (err) {
       fixscript_error(heap, error, err);
       goto error;
    }
 
-   num = scandir(dir, &namelist, fname_filter, alphasort);
-   if (num < 0) {
-      *error = create_stdlib_error(heap, NULL);
-      goto error;
-   }
-
-   arr = fixscript_create_array(heap, num);
-   if (!arr.value) {
-      fixscript_error(heap, error, FIXSCRIPT_ERR_OUT_OF_MEMORY);
-      goto error;
-   }
-
-   for (i=0; i<num; i++) {
-      fname = fixscript_create_string(heap, namelist[i]->d_name, -1);
-      if (!fname.value) {
-         fixscript_error(heap, error, FIXSCRIPT_ERR_OUT_OF_MEMORY);
-         goto error;
-      }
-
-      free(full_name);
-      full_name = string_format("%s/%s", dir, namelist[i]->d_name);
-
-#if defined(_WIN32)
-      if (namelist[i]->d_type == DT_DIR) {
-#else
-      if (stat(full_name, &buf) != 0) {
-         s = string_format("can't stat file '%s'", full_name);
-         *error = fixscript_create_error_string(heap, s);
-         free(s);
-         goto error;
-      }
-      if (S_ISDIR(buf.st_mode)) {
-#endif
-         err = fixscript_append_array_elem(heap, fname, fixscript_int('/'));
-         if (err) {
-            fixscript_error(heap, error, err);
-            goto error;
-         }
-      }
-
-      err = fixscript_set_array_elem(heap, arr, i, fname);
-      if (err) {
-         fixscript_error(heap, error, err);
-         goto error;
-      }
-   }
-
-   ret = arr;
+   ret = fixscript_int(MoveFileExW(oldpath, newpath, MOVEFILE_REPLACE_EXISTING) != 0);
 
 error:
-   for (i=0; i<num; i++) {
-      free(namelist[i]);
-   }
-   free(namelist);
-   free(dir);
-   free(full_name);
+   free(oldpath);
+   free(newpath);
    return ret;
+#else
+   Value ret = fixscript_int(0);
+   char *oldpath = NULL, *newpath = NULL;
+   int err;
+
+   err = fixscript_get_string(heap, params[0], 0, -1, &oldpath, NULL);
+   if (!err) {
+      err = fixscript_get_string(heap, params[1], 0, -1, &newpath, NULL);
+   }
+   if (err) {
+      fixscript_error(heap, error, err);
+      goto error;
+   }
+
+   ret = fixscript_int(rename(oldpath, newpath) == 0);
+
+error:
+   free(oldpath);
+   free(newpath);
+   return ret;
+#endif
 }
 
 
@@ -648,9 +344,9 @@ static int key_equals(const char *key1, const char *key2)
 }
 
 
-static void *global_hash_set(GlobalHash *hash, char *key, uint32_t keyhash, void *value, uint64_t expiry_time)
+static void *memory_cache_hash_set(MemoryCacheHash *hash, char *key, uint32_t keyhash, void *value, uint64_t expiry_time)
 {
-   GlobalHash new_hash;
+   MemoryCacheHash new_hash;
    int i, idx;
    void *old_val;
    
@@ -669,7 +365,7 @@ static void *global_hash_set(GlobalHash *hash, char *key, uint32_t keyhash, void
       for (i=0; i<hash->size; i+=2) {
          if (hash->data[i+0]) {
             if (hash->data[i+1]) {
-               global_hash_set(&new_hash, hash->data[i+0], compute_hash(hash->data[i+0]), hash->data[i+1], hash->expiry_time[i>>1]);
+               memory_cache_hash_set(&new_hash, hash->data[i+0], compute_hash(hash->data[i+0]), hash->data[i+1], hash->expiry_time[i>>1]);
             }
             else {
                free(hash->data[i+0]);
@@ -719,7 +415,7 @@ static void *global_hash_set(GlobalHash *hash, char *key, uint32_t keyhash, void
 }
 
 
-static void *global_hash_get(GlobalHash *hash, const char *key, int keyhash)
+static void *memory_cache_hash_get(MemoryCacheHash *hash, const char *key, int keyhash)
 {
    int idx;
 
@@ -749,7 +445,7 @@ static void set_serialized_zero(char *buf)
 }
 
 
-static Value global_ops_get(Heap *heap, Value *error, int num_params, Value *params, void *data)
+static Value memory_cache_ops_get(Heap *heap, Value *error, int num_params, Value *params, void *data)
 {
    Value ret_val = fixscript_int(0);
    char *key = NULL, *value_get, *tmp;
@@ -766,15 +462,15 @@ static Value global_ops_get(Heap *heap, Value *error, int num_params, Value *par
    err = FIXSCRIPT_SUCCESS;
 
 #if defined(_WIN32)
-   EnterCriticalSection(&global_section);
+   EnterCriticalSection(&memory_cache_section);
 #else
-   if (pthread_mutex_lock(&global_mutex) != 0) {
-      *error = fixscript_create_error_string(heap, "can't lock global mutex");
+   if (pthread_mutex_lock(&memory_cache_mutex) != 0) {
+      *error = fixscript_create_error_string(heap, "can't lock memory cache mutex");
       goto error;
    }
 #endif
 
-   value_get = global_hash_get(&global, key, hash);
+   value_get = memory_cache_hash_get(&memory_cache, key, hash);
    if (value_get) {
       memcpy(&len, value_get, sizeof(int));
       tmp = malloc(sizeof(int)+len);
@@ -788,9 +484,9 @@ static Value global_ops_get(Heap *heap, Value *error, int num_params, Value *par
    }
 
 #if defined(_WIN32)
-   LeaveCriticalSection(&global_section);
+   LeaveCriticalSection(&memory_cache_section);
 #else
-   pthread_mutex_unlock(&global_mutex);
+   pthread_mutex_unlock(&memory_cache_mutex);
 #endif
 
    if (err) {
@@ -816,7 +512,7 @@ error:
 }
 
 
-static Value global_ops_set(Heap *heap, Value *error, int num_params, Value *params, void *data)
+static Value memory_cache_ops_set(Heap *heap, Value *error, int num_params, Value *params, void *data)
 {
    Value ret_val = fixscript_int(0), timeout;
    char *key = NULL, *value = NULL;
@@ -854,24 +550,24 @@ static Value global_ops_set(Heap *heap, Value *error, int num_params, Value *par
    hash = compute_hash(key);
 
 #if defined(_WIN32)
-   EnterCriticalSection(&global_section);
+   EnterCriticalSection(&memory_cache_section);
 #else
-   if (pthread_mutex_lock(&global_mutex) != 0) {
-      *error = fixscript_create_error_string(heap, "can't lock global mutex");
+   if (pthread_mutex_lock(&memory_cache_mutex) != 0) {
+      *error = fixscript_create_error_string(heap, "can't lock memory cache mutex");
       goto error;
    }
 #endif
 
-   free(global_hash_set(&global, key, hash, value, expiry_time));
+   free(memory_cache_hash_set(&memory_cache, key, hash, value, expiry_time));
    key = NULL;
    value = NULL;
 
 #if defined(_WIN32)
-   SetEvent(global_event);
-   LeaveCriticalSection(&global_section);
+   SetEvent(memory_cache_event);
+   LeaveCriticalSection(&memory_cache_section);
 #else
-   pthread_cond_broadcast(&global_cond);
-   pthread_mutex_unlock(&global_mutex);
+   pthread_cond_broadcast(&memory_cache_cond);
+   pthread_mutex_unlock(&memory_cache_mutex);
 #endif
 
 error:
@@ -881,7 +577,7 @@ error:
 }
 
 
-static Value global_ops_remove(Heap *heap, Value *error, int num_params, Value *params, void *data)
+static Value memory_cache_ops_remove(Heap *heap, Value *error, int num_params, Value *params, void *data)
 {
    Value ret_val = fixscript_int(0);
    char *key = NULL;
@@ -897,23 +593,23 @@ static Value global_ops_remove(Heap *heap, Value *error, int num_params, Value *
    hash = compute_hash(key);
 
 #if defined(_WIN32)
-   EnterCriticalSection(&global_section);
+   EnterCriticalSection(&memory_cache_section);
 #else
-   if (pthread_mutex_lock(&global_mutex) != 0) {
-      *error = fixscript_create_error_string(heap, "can't lock global mutex");
+   if (pthread_mutex_lock(&memory_cache_mutex) != 0) {
+      *error = fixscript_create_error_string(heap, "can't lock memory cache mutex");
       goto error;
    }
 #endif
 
-   free(global_hash_set(&global, key, hash, NULL, 0));
+   free(memory_cache_hash_set(&memory_cache, key, hash, NULL, 0));
    key = NULL;
 
 #if defined(_WIN32)
-   SetEvent(global_event);
-   LeaveCriticalSection(&global_section);
+   SetEvent(memory_cache_event);
+   LeaveCriticalSection(&memory_cache_section);
 #else
-   pthread_cond_broadcast(&global_cond);
-   pthread_mutex_unlock(&global_mutex);
+   pthread_cond_broadcast(&memory_cache_cond);
+   pthread_mutex_unlock(&memory_cache_mutex);
 #endif
 
 error:
@@ -922,7 +618,7 @@ error:
 }
 
 
-static Value global_ops_cond_swap(Heap *heap, Value *error, int num_params, Value *params, void *data)
+static Value memory_cache_ops_cond_swap(Heap *heap, Value *error, int num_params, Value *params, void *data)
 {
    Value ret_val = fixscript_int(0), timeout;
    char *key = NULL, *value = NULL, *expect = NULL, *value_get, *tmp;
@@ -968,28 +664,28 @@ static Value global_ops_cond_swap(Heap *heap, Value *error, int num_params, Valu
    err = FIXSCRIPT_SUCCESS;
 
 #if defined(_WIN32)
-   EnterCriticalSection(&global_section);
+   EnterCriticalSection(&memory_cache_section);
 #else
-   if (pthread_mutex_lock(&global_mutex) != 0) {
-      *error = fixscript_create_error_string(heap, "can't lock global mutex");
+   if (pthread_mutex_lock(&memory_cache_mutex) != 0) {
+      *error = fixscript_create_error_string(heap, "can't lock memory cache mutex");
       goto error;
    }
 #endif
 
-   value_get = global_hash_get(&global, key, hash);
+   value_get = memory_cache_hash_get(&memory_cache, key, hash);
    if (!value_get) {
       set_serialized_zero(buf);
       value_get = buf;
    }
 
    if (key_equals(value_get, expect)) {
-      value_get = global_hash_set(&global, key, hash, value, expiry_time);
+      value_get = memory_cache_hash_set(&memory_cache, key, hash, value, expiry_time);
       key = NULL;
       value = NULL;
 #if defined(_WIN32)
-      SetEvent(global_event);
+      SetEvent(memory_cache_event);
 #else
-      pthread_cond_broadcast(&global_cond);
+      pthread_cond_broadcast(&memory_cache_cond);
 #endif
    }
    else {
@@ -1005,9 +701,9 @@ static Value global_ops_cond_swap(Heap *heap, Value *error, int num_params, Valu
    }
 
 #if defined(_WIN32)
-   LeaveCriticalSection(&global_section);
+   LeaveCriticalSection(&memory_cache_section);
 #else
-   pthread_mutex_unlock(&global_mutex);
+   pthread_mutex_unlock(&memory_cache_mutex);
 #endif
 
    if (err) {
@@ -1032,7 +728,7 @@ error:
 }
 
 
-static Value global_wait(Heap *heap, Value *error, int num_params, Value *params, void *data)
+static Value memory_cache_wait(Heap *heap, Value *error, int num_params, Value *params, void *data)
 {
    char *key = NULL, *expect = NULL, *value_get;
    Value ret_val = fixscript_int(0);
@@ -1055,16 +751,16 @@ static Value global_wait(Heap *heap, Value *error, int num_params, Value *params
    hash = compute_hash(key);
 
 #if defined(_WIN32)
-   EnterCriticalSection(&global_section);
+   EnterCriticalSection(&memory_cache_section);
 #else
-   if (pthread_mutex_lock(&global_mutex) != 0) {
-      *error = fixscript_create_error_string(heap, "can't lock global mutex");
+   if (pthread_mutex_lock(&memory_cache_mutex) != 0) {
+      *error = fixscript_create_error_string(heap, "can't lock memory cache mutex");
       goto error;
    }
 #endif
 
    for (;;) {
-      value_get = global_hash_get(&global, key, hash);
+      value_get = memory_cache_hash_get(&memory_cache, key, hash);
       if (!value_get) {
          set_serialized_zero(buf);
          value_get = buf;
@@ -1074,19 +770,19 @@ static Value global_wait(Heap *heap, Value *error, int num_params, Value *params
       }
 
 #if defined(_WIN32)
-      LeaveCriticalSection(&global_section);
-      WaitForSingleObject(global_event, INFINITE);
-      EnterCriticalSection(&global_section);
+      LeaveCriticalSection(&memory_cache_section);
+      WaitForSingleObject(memory_cache_event, INFINITE);
+      EnterCriticalSection(&memory_cache_section);
 #else
-      pthread_cond_wait(&global_cond, &global_mutex);
+      pthread_cond_wait(&memory_cache_cond, &memory_cache_mutex);
 #endif
    }
 
 error:
 #if defined(_WIN32)
-   LeaveCriticalSection(&global_section);
+   LeaveCriticalSection(&memory_cache_section);
 #else
-   pthread_mutex_unlock(&global_mutex);
+   pthread_mutex_unlock(&memory_cache_mutex);
 #endif
    free(key);
    free(expect);
@@ -1107,32 +803,32 @@ static void *cleanup_thread(void *data)
       time = get_monotonic_time();
 
 #if defined(_WIN32)
-      EnterCriticalSection(&global_section);
+      EnterCriticalSection(&memory_cache_section);
 #else
-      if (pthread_mutex_lock(&global_mutex) != 0) {
-         fprintf(stderr, "can't lock global mutex");
+      if (pthread_mutex_lock(&memory_cache_mutex) != 0) {
+         fprintf(stderr, "can't lock memory cache mutex");
          exit(1);
       }
 #endif
 
-      for (i=0; i<global.size; i+=2) {
-         expiry_time = global.expiry_time[i>>1];
+      for (i=0; i<memory_cache.size; i+=2) {
+         expiry_time = memory_cache.expiry_time[i>>1];
          if (expiry_time != 0 && time >= expiry_time) {
-            if (global.data[i+1]) {
-               free(global.data[i+0]);
-               free(global.data[i+1]);
-               global.data[i+0] = calloc(1, sizeof(int));
-               global.data[i+1] = NULL;
-               global.expiry_time[i>>1] = 0;
-               global.len--;
+            if (memory_cache.data[i+1]) {
+               free(memory_cache.data[i+0]);
+               free(memory_cache.data[i+1]);
+               memory_cache.data[i+0] = calloc(1, sizeof(int));
+               memory_cache.data[i+1] = NULL;
+               memory_cache.expiry_time[i>>1] = 0;
+               memory_cache.len--;
             }
          }
       }
 
 #if defined(_WIN32)
-      LeaveCriticalSection(&global_section);
+      LeaveCriticalSection(&memory_cache_section);
 #else
-      pthread_mutex_unlock(&global_mutex);
+      pthread_mutex_unlock(&memory_cache_mutex);
 #endif
       
 #if defined(_WIN32)
@@ -1155,9 +851,9 @@ void init_critical_sections()
 {
    InitializeCriticalSection(&monotonic_clock_section);
    InitializeCriticalSection(&strerror_section);
-   InitializeCriticalSection(&global_section);
-   global_event = CreateEvent(NULL, FALSE, FALSE, NULL);
-   if (!global_event) {
+   InitializeCriticalSection(&memory_cache_section);
+   memory_cache_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+   if (!memory_cache_event) {
       fprintf(stderr, "event creation failed\n");
       abort();
    }
@@ -1165,7 +861,120 @@ void init_critical_sections()
 #endif
 
 
-void start_global_cleanup_thread()
+#if !defined(_WIN32)
+static char *search_file_on_path(const char *fname)
+{
+   FILE *f;
+   char *path;
+   char *s, *p, *buf;
+
+   if (strchr(fname, '/')) {
+      return strdup(fname);
+   }
+
+   path = strdup(getenv("PATH"));
+   s = path;
+   do {
+      p = strchr(s, ':');
+      if (p) {
+         *p = 0;
+      }
+      buf = string_format("%s/%s", s, fname);
+      if (!buf) {
+         return NULL;
+      }
+      f = fopen(buf, "rb");
+      if (f) {
+         fclose(f);
+         free(path);
+         return buf;
+      }
+      free(buf);
+      if (p) {
+         s = p+1;
+      }
+   }
+   while (p);
+
+   free(path);
+   return NULL;
+}
+#endif
+
+
+#if !defined(_WIN32)
+static char *get_original_file_from_symlink(const char *fname)
+{
+   char *buf;
+   int ret, len=256;
+
+   for (;;) {
+      buf = malloc(len);
+      if (!buf) {
+         return NULL;
+      }
+      ret = readlink(fname, buf, len-1);
+      if (ret < 0) {
+         free(buf);
+         return NULL;
+      }
+      if (ret >= len-1) {
+         free(buf);
+         if (len > INT_MAX/2) {
+            return NULL;
+         }
+         len *= 2;
+         continue;
+      }
+      buf[ret] = '\0';
+      return buf;
+   }
+}
+#endif
+
+
+int init_self_file(const char *argv0)
+{
+#if defined(_WIN32)
+   uint16_t filename[256], *p;
+   DWORD dwret;
+
+   dwret = GetModuleFileNameW(NULL, filename, 255);
+   if (dwret == 0 || dwret >= 254) {
+      return 0;
+   }
+   p = wcsrchr(filename, '\\');
+   if (p) *p = 0;
+   exec_path = wcsdup(filename);
+   return 1;
+#else
+   char *buf, *p, *orig;
+
+   buf = search_file_on_path(argv0);
+   if (buf) {
+      for (;;) {
+         orig = get_original_file_from_symlink(buf);
+         if (!orig) break;
+         free(buf);
+         buf = orig;
+      }
+      p = strrchr(buf, '/');
+      if (p) *p = '\0';
+      if (strlen(buf) == 0) {
+         free(buf);
+         exec_path = strdup(".");
+      }
+      else {
+         exec_path = buf;
+      }
+      return 1;
+   }
+   return 0;
+#endif
+}
+
+
+void start_memory_cache_cleanup_thread()
 {
 #if defined(_WIN32)
    if (!CreateThread(NULL, 0, cleanup_thread, NULL, 0, NULL)) {
@@ -1332,23 +1141,180 @@ static Value date_get_current(Heap *heap, Value *error, int num_params, Value *p
 }
 
 
+static Value get_executable_path(Heap *heap, Value *error, int num_params, Value *params, void *data)
+{
+   Value ret;
+
+   if (!exec_path) {
+      *error = fixscript_create_error_string(heap, "internal error: executable path wasn't initialized");
+      return fixscript_int(0);
+   }
+
+#if defined(_WIN32)
+   ret = fixscript_create_string_utf16(heap, exec_path, -1);
+#else
+   ret = fixscript_create_string(heap, exec_path, -1);
+#endif
+   if (!ret.value) {
+      return fixscript_error(heap, error, FIXSCRIPT_ERR_OUT_OF_MEMORY);
+   }
+   return ret;
+}
+
+
 void register_util_functions(Heap *heap)
 {
    fixscript_register_native_func(heap, "clock_get_real_time#0", clock_get_real_time, NULL);
-   fixscript_register_native_func(heap, "file_read#1", file_read, NULL);
-   fixscript_register_native_func(heap, "file_write#2", file_write, NULL);
-   fixscript_register_native_func(heap, "file_list#1", file_list, NULL);
-   fixscript_register_native_func(heap, "global_get#1", global_ops_get, NULL);
-   fixscript_register_native_func(heap, "global_get#2", global_ops_get, NULL);
-   fixscript_register_native_func(heap, "global_set#2", global_ops_set, NULL);
-   fixscript_register_native_func(heap, "global_set#3", global_ops_set, NULL);
-   fixscript_register_native_func(heap, "global_remove#1", global_ops_remove, NULL);
-   fixscript_register_native_func(heap, "global_cond_swap#3", global_ops_cond_swap, NULL);
-   fixscript_register_native_func(heap, "global_cond_swap#4", global_ops_cond_swap, NULL);
-   fixscript_register_native_func(heap, "global_wait#2", global_wait, NULL);
+   fixscript_register_native_func(heap, "file_rename#2", file_rename, NULL);
+   fixscript_register_native_func(heap, "memory_cache_get#1", memory_cache_ops_get, NULL);
+   fixscript_register_native_func(heap, "memory_cache_get#2", memory_cache_ops_get, NULL);
+   fixscript_register_native_func(heap, "memory_cache_set#2", memory_cache_ops_set, NULL);
+   fixscript_register_native_func(heap, "memory_cache_set#3", memory_cache_ops_set, NULL);
+   fixscript_register_native_func(heap, "memory_cache_remove#1", memory_cache_ops_remove, NULL);
+   fixscript_register_native_func(heap, "memory_cache_cond_swap#3", memory_cache_ops_cond_swap, NULL);
+   fixscript_register_native_func(heap, "memory_cache_cond_swap#4", memory_cache_ops_cond_swap, NULL);
+   fixscript_register_native_func(heap, "memory_cache_wait#2", memory_cache_wait, NULL);
    fixscript_register_native_func(heap, "sleep#1", do_sleep, NULL);
    fixscript_register_native_func(heap, "charset_create_table#1", charset_create_table, NULL);
    fixscript_register_native_func(heap, "date_get_utc#0", date_get_current, (void *)0);
    fixscript_register_native_func(heap, "date_get_local#0", date_get_current, (void *)1);
    fixscript_register_native_func(heap, "date_get_both#0", date_get_current, (void *)2);
+   fixscript_register_native_func(heap, "get_executable_path#0", get_executable_path, NULL);
+}
+
+
+#ifdef _WIN32
+static void append_path_win(uint16_t **dest_ptr, const uint16_t *src, int len)
+{
+   memcpy(*dest_ptr, src, len*2);
+   *dest_ptr += len;
+}
+
+static void append_path_cstr(uint16_t **dest_ptr, const char *src, int len)
+{
+   int i;
+
+   for (i=0; i<len; i++) {
+      if (src[i] == '/') {
+         *(*dest_ptr)++ = '\\';
+      }
+      else {
+         *(*dest_ptr)++ = (uint8_t)src[i];
+      }
+   }
+}
+#endif
+
+
+Script *script_load_file(Heap *heap, const char *name, Value *error, const char *dirname)
+{
+#ifdef _WIN32
+   HANDLE handle = INVALID_HANDLE_VALUE;
+   Script *script = NULL;
+   DWORD read;
+   int len, len1, len2, len3;
+   char *src = NULL, *src_ptr, *sname, *tmp;
+   uint16_t *fname_utf16 = NULL, *fname_ptr;
+
+   sname = string_format("%s.fix", name);
+   script = fixscript_get(heap, sname);
+   if (script) {
+      free(sname);
+      return script;
+   }
+
+   if (!exec_path) {
+      if (error) {
+         *error = fixscript_create_error_string(heap, "internal error: executable path wasn't initialized");
+      }
+      goto error;
+   }
+   
+   if (!dirname) {
+      dirname = ".";
+   }
+
+   len1 = (int)wcslen(exec_path);
+   len2 = (int)strlen(dirname);
+   len3 = (int)strlen(name);
+   fname_utf16 = malloc((len1+1+len2+1+len3+4+1)*2);
+   if (!fname_utf16) {
+      if (error) {
+         fixscript_error(heap, error, FIXSCRIPT_ERR_OUT_OF_MEMORY);
+      }
+      goto error;
+   }
+   fname_ptr = fname_utf16;
+   append_path_win(&fname_ptr, exec_path, len1);
+   *fname_ptr++ = '\\';
+   append_path_cstr(&fname_ptr, dirname, len2);
+   *fname_ptr++ = '\\';
+   append_path_cstr(&fname_ptr, name, len3);
+   append_path_cstr(&fname_ptr, ".fix", 4+1);
+
+   handle = CreateFile(fname_utf16, GENERIC_READ, FILE_SHARE_DELETE | FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+   if (handle == INVALID_HANDLE_VALUE) {
+      if (error) {
+         tmp = string_format("script %s not found", name);
+         *error = fixscript_create_string(heap, tmp, -1);
+         free(tmp);
+      }
+      goto error;
+   }
+   len = GetFileSize(handle, NULL);
+   src = malloc(len+1);
+   if (!src) {
+      goto error;
+   }
+   src_ptr = src;
+   while (len > 0) {
+      if (!ReadFile(handle, src_ptr, len, &read, NULL)) {
+         if (error) {
+            tmp = string_format("reading of script %s failed", name);
+            *error = fixscript_create_string(heap, tmp, -1);
+            free(tmp);
+         }
+         goto error;
+      }
+      src_ptr += read;
+      len -= read;
+   }
+   *src_ptr = 0;
+
+   script = fixscript_load(heap, src, sname, error, (LoadScriptFunc)script_load_file, (void *)dirname);
+
+error:
+   free(fname_utf16);
+   free(src);
+   free(sname);
+   if (handle != INVALID_HANDLE_VALUE) {
+      CloseHandle(handle);
+   }
+   return script;
+#else
+   Script *ret;
+   char *tmp;
+
+   if (!exec_path) {
+      if (error) {
+         *error = fixscript_create_error_string(heap, "internal error: executable path wasn't initialized");
+      }
+      return NULL;
+   }
+
+   if (!dirname) {
+      return fixscript_load_file(heap, name, error, exec_path);
+   }
+
+   tmp = string_format("%s/%s", exec_path, dirname);
+   if (!tmp) { 
+      if (error) {
+         fixscript_error(heap, error, FIXSCRIPT_ERR_OUT_OF_MEMORY);
+      }
+      return NULL;
+   }
+   ret = fixscript_load_file(heap, name, error, tmp);
+   free(tmp);
+   return ret;
+#endif
 }

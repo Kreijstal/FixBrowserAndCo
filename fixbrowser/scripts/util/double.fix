@@ -1,0 +1,1117 @@
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+import "util/long";
+
+const @import_scripts = "util/long";
+const @class_Double = "";
+const @static_Double_create_0 = "(): Double";
+const @static_Double_create_1 = "(Float): Double";
+const @static_Double_create_2 = "(Integer, Integer): Double";
+const @static_Double_from_int_1 = "(Integer): Double";
+const @static_Double_from_long_1 = "(Long): Double";
+const @static_Double_from_string_1 = "(String): Double";
+const @method_Double_set_2 = "(Double): Double";
+const @method_Double_set_int_2 = "(Integer): Double";
+const @method_Double_set_long_2 = "(Long): Double";
+const @method_Double_set_float_2 = "(Float): Double";
+const @method_Double_set_string_2 = "(String): Double";
+const @method_Double_set_raw_3 = "(Integer, Integer): Double";
+const @method_Double_dup_1 = "(): Double";
+const @method_Double_add_2 = "(Double): Double";
+const @method_Double_add_int_2 = "(Integer): Double";
+const @method_Double_add_long_2 = "(Long): Double";
+const @method_Double_add_float_2 = "(Float): Double";
+const @method_Double_sub_2 = "(Double): Double";
+const @method_Double_sub_int_2 = "(Integer): Double";
+const @method_Double_sub_long_2 = "(Long): Double";
+const @method_Double_sub_float_2 = "(Float): Double";
+const @method_Double_mul_2 = "(Double): Double";
+const @method_Double_mul_int_2 = "(Integer): Double";
+const @method_Double_mul_long_2 = "(Long): Double";
+const @method_Double_mul_float_2 = "(Float): Double";
+const @method_Double_div_2 = "(Double): Double";
+const @method_Double_div_int_2 = "(Integer): Double";
+const @method_Double_div_long_2 = "(Long): Double";
+const @method_Double_div_float_2 = "(Float): Double";
+const @method_Double_neg_1 = "(): Double";
+const @method_Double_is_zero_1 = "(): Boolean";
+const @method_Double_cmp_lt_2 = "(Double): Boolean";
+const @method_Double_cmp_lt_int_2 = "(Integer): Boolean";
+const @method_Double_cmp_lt_long_2 = "(Long): Boolean";
+const @method_Double_cmp_lt_float_2 = "(Float): Boolean";
+const @method_Double_cmp_le_2 = "(Double): Boolean";
+const @method_Double_cmp_le_int_2 = "(Integer): Boolean";
+const @method_Double_cmp_le_long_2 = "(Long): Boolean";
+const @method_Double_cmp_le_float_2 = "(Float): Boolean";
+const @method_Double_cmp_gt_2 = "(Double): Boolean";
+const @method_Double_cmp_gt_int_2 = "(Integer): Boolean";
+const @method_Double_cmp_gt_long_2 = "(Long): Boolean";
+const @method_Double_cmp_gt_float_2 = "(Float): Boolean";
+const @method_Double_cmp_ge_2 = "(Double): Boolean";
+const @method_Double_cmp_ge_int_2 = "(Integer): Boolean";
+const @method_Double_cmp_ge_long_2 = "(Long): Boolean";
+const @method_Double_cmp_ge_float_2 = "(Float): Boolean";
+const @method_Double_cmp_eq_2 = "(Double): Boolean";
+const @method_Double_cmp_eq_int_2 = "(Integer): Boolean";
+const @method_Double_cmp_eq_long_2 = "(Long): Boolean";
+const @method_Double_cmp_eq_float_2 = "(Float): Boolean";
+const @method_Double_cmp_ne_2 = "(Double): Boolean";
+const @method_Double_cmp_ne_int_2 = "(Integer): Boolean";
+const @method_Double_cmp_ne_long_2 = "(Long): Boolean";
+const @method_Double_cmp_ne_float_2 = "(Float): Boolean";
+const @method_Double_set_min_3 = "(Double, Double): Double";
+const @method_Double_set_max_3 = "(Double, Double): Double";
+const @method_Double_min_2 = "(Double): Double";
+const @method_Double_min_float_2 = "(Float): Double";
+const @method_Double_max_2 = "(Double): Double";
+const @method_Double_max_float_2 = "(Float): Double";
+const @method_Double_floor_1 = "(): Double";
+const @method_Double_ceil_1 = "(): Double";
+const @method_Double_round_1 = "(): Double";
+const @method_Double_get_round_int_1 = "(): Integer";
+const @method_Double_get_round_long_1 = "(): Long";
+const @method_Double_pow_2 = "(Double): Double";
+const @method_Double_pow_float_2 = "(Float): Double";
+const @method_Double_sqrt_1 = "(): Double";
+const @method_Double_cbrt_1 = "(): Double";
+const @method_Double_exp_1 = "(): Double";
+const @method_Double_ln_1 = "(): Double";
+const @method_Double_log2_1 = "(): Double";
+const @method_Double_log10_1 = "(): Double";
+const @method_Double_sin_1 = "(): Double";
+const @method_Double_cos_1 = "(): Double";
+const @method_Double_asin_1 = "(): Double";
+const @method_Double_acos_1 = "(): Double";
+const @method_Double_tan_1 = "(): Double";
+const @method_Double_atan_1 = "(): Double";
+const @method_Double_atan2_2 = "(Double): Double";
+const @method_Double_set_atan2_3 = "(Double, Double): Double";
+const @method_Double_to_int_1 = "(): Integer";
+const @method_Double_to_long_1 = "(): Long";
+const @method_Double_to_float_1 = "(): Float";
+const @method_Double_to_string_1 = "(): String";
+const @operator_Double_add_1 = "__dup_add (Double, Double)";
+const @operator_Double_add_2 = "__dup_add_int (Double, Integer)";
+const @operator_Double_add_3 = "__dup_add_long (Double, Long)";
+const @operator_Double_add_4 = "__dup_add_float (Double, Float)";
+const @operator_Double_add_5 = "__dup_add_int_rev (Integer, Double)";
+const @operator_Double_add_6 = "__dup_add_long_rev (Long, Double)";
+const @operator_Double_add_7 = "__dup_add_float_rev (Float, Double)";
+const @operator_Double_add_inplace_1 = "add (Double)";
+const @operator_Double_add_inplace_2 = "add_int (Integer)";
+const @operator_Double_add_inplace_3 = "add_long (Long)";
+const @operator_Double_add_inplace_4 = "add_float (Float)";
+const @operator_Double_sub_1 = "__dup_sub (Double, Double)";
+const @operator_Double_sub_2 = "__dup_sub_int (Double, Integer)";
+const @operator_Double_sub_3 = "__dup_sub_long (Double, Long)";
+const @operator_Double_sub_4 = "__dup_sub_float (Double, Float)";
+const @operator_Double_sub_5 = "__dup_sub_int_rev (Integer, Double)";
+const @operator_Double_sub_6 = "__dup_sub_long_rev (Long, Double)";
+const @operator_Double_sub_7 = "__dup_sub_float_rev (Float, Double)";
+const @operator_Double_sub_inplace_1 = "sub (Double)";
+const @operator_Double_sub_inplace_2 = "sub_int (Integer)";
+const @operator_Double_sub_inplace_3 = "sub_long (Long)";
+const @operator_Double_sub_inplace_4 = "sub_float (Float)";
+const @operator_Double_mul_1 = "__dup_mul (Double, Double)";
+const @operator_Double_mul_2 = "__dup_mul_int (Double, Integer)";
+const @operator_Double_mul_3 = "__dup_mul_long (Double, Long)";
+const @operator_Double_mul_4 = "__dup_mul_float (Double, Float)";
+const @operator_Double_mul_5 = "__dup_mul_int_rev (Integer, Double)";
+const @operator_Double_mul_6 = "__dup_mul_long_rev (Long, Double)";
+const @operator_Double_mul_7 = "__dup_mul_float_rev (Float, Double)";
+const @operator_Double_mul_inplace_1 = "mul (Double)";
+const @operator_Double_mul_inplace_2 = "mul_int (Integer)";
+const @operator_Double_mul_inplace_3 = "mul_long (Long)";
+const @operator_Double_mul_inplace_4 = "mul_float (Float)";
+const @operator_Double_div_1 = "__dup_div (Double, Double)";
+const @operator_Double_div_2 = "__dup_div_int (Double, Integer)";
+const @operator_Double_div_3 = "__dup_div_long (Double, Long)";
+const @operator_Double_div_4 = "__dup_div_float (Double, Float)";
+const @operator_Double_div_5 = "__dup_div_int_rev (Integer, Double)";
+const @operator_Double_div_6 = "__dup_div_long_rev (Long, Double)";
+const @operator_Double_div_7 = "__dup_div_float_rev (Float, Double)";
+const @operator_Double_div_inplace_1 = "div (Double)";
+const @operator_Double_div_inplace_2 = "div_int (Integer)";
+const @operator_Double_div_inplace_3 = "div_long (Long)";
+const @operator_Double_div_inplace_4 = "div_float (Float)";
+const @operator_Double_lt_1 = "cmp_lt (Double, Double)";
+const @operator_Double_lt_2 = "cmp_lt_int (Double, Integer)";
+const @operator_Double_lt_3 = "cmp_lt_long (Double, Long)";
+const @operator_Double_lt_4 = "cmp_lt_float (Double, Float)";
+const @operator_Double_lt_5 = "__cmp_lt_int_rev (Integer, Double)";
+const @operator_Double_lt_6 = "__cmp_lt_long_rev (Long, Double)";
+const @operator_Double_lt_7 = "__cmp_lt_float_rev (Float, Double)";
+const @operator_Double_le_1 = "cmp_le (Double, Double)";
+const @operator_Double_le_2 = "cmp_le_int (Double, Integer)";
+const @operator_Double_le_3 = "cmp_le_long (Double, Long)";
+const @operator_Double_le_4 = "cmp_le_float (Double, Float)";
+const @operator_Double_le_5 = "__cmp_le_int_rev (Integer, Double)";
+const @operator_Double_le_6 = "__cmp_le_long_rev (Long, Double)";
+const @operator_Double_le_7 = "__cmp_le_float_rev (Float, Double)";
+const @operator_Double_gt_1 = "cmp_gt (Double, Double)";
+const @operator_Double_gt_2 = "cmp_gt_int (Double, Integer)";
+const @operator_Double_gt_3 = "cmp_gt_long (Double, Long)";
+const @operator_Double_gt_4 = "cmp_gt_float (Double, Float)";
+const @operator_Double_gt_5 = "__cmp_gt_int_rev (Integer, Double)";
+const @operator_Double_gt_6 = "__cmp_gt_long_rev (Long, Double)";
+const @operator_Double_gt_7 = "__cmp_gt_float_rev (Float, Double)";
+const @operator_Double_ge_1 = "cmp_ge (Double, Double)";
+const @operator_Double_ge_2 = "cmp_ge_int (Double, Integer)";
+const @operator_Double_ge_3 = "cmp_ge_long (Double, Long)";
+const @operator_Double_ge_4 = "cmp_ge_float (Double, Float)";
+const @operator_Double_ge_5 = "__cmp_ge_int_rev (Integer, Double)";
+const @operator_Double_ge_6 = "__cmp_ge_long_rev (Long, Double)";
+const @operator_Double_ge_7 = "__cmp_ge_float_rev (Float, Double)";
+const @operator_Double_eq_1 = "cmp_eq (Double, Double)";
+const @operator_Double_eq_2 = "cmp_eq_int (Double, Integer)";
+const @operator_Double_eq_3 = "cmp_eq_long (Double, Long)";
+const @operator_Double_eq_4 = "cmp_eq_float (Double, Float)";
+const @operator_Double_eq_5 = "__cmp_eq_int_rev (Integer, Double)";
+const @operator_Double_eq_6 = "__cmp_eq_long_rev (Long, Double)";
+const @operator_Double_eq_7 = "__cmp_eq_float_rev (Float, Double)";
+const @operator_Double_ne_1 = "cmp_ne (Double, Double)";
+const @operator_Double_ne_2 = "cmp_ne_int (Double, Integer)";
+const @operator_Double_ne_3 = "cmp_ne_long (Double, Long)";
+const @operator_Double_ne_4 = "cmp_ne_float (Double, Float)";
+const @operator_Double_ne_5 = "__cmp_ne_int_rev (Integer, Double)";
+const @operator_Double_ne_6 = "__cmp_ne_long_rev (Long, Double)";
+const @operator_Double_ne_7 = "__cmp_ne_float_rev (Float, Double)";
+const @global_Double_0 = "(): Double";
+const @global_Double_1 = "(Float): Double";
+const @global_Double_2 = "(Integer, Integer): Double";
+
+const {
+	DOUBLE_lo,
+	DOUBLE_hi,
+	DOUBLE_SIZE
+};
+
+function double_create()
+{
+	return [0, 0];
+}
+
+function double_create(value)
+{
+	var (lo, hi) = fconv(value);
+	return [lo, hi];
+}
+
+function double_create(lo, hi)
+{
+	return [lo, hi];
+}
+
+function double_from_int(value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	return [lo, hi];
+}
+
+function double_from_long(value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	return [lo, hi];
+}
+
+function double_from_string(s)
+{
+	var (lo, hi) = string_parse_double(s);
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
+}
+
+function double_set(this, other)
+{
+	this->DOUBLE_lo = other->DOUBLE_lo;
+	this->DOUBLE_hi = other->DOUBLE_hi;
+	return this;
+}
+
+function double_set_int(this, value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_set_long(this, value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_set_float(this, value)
+{
+	var (lo, hi) = fconv(value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_set_string(this, s)
+{
+	var (lo, hi) = string_parse_double(s);
+	if (!is_int(hi)) return 0, hi;
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_set_raw(this, lo, hi)
+{
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_dup(this)
+{
+	return [this->DOUBLE_lo, this->DOUBLE_hi];
+}
+
+function double_add(this, other)
+{
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_add_int(this, value)
+{
+	var (lo1, hi1) = float(value, value >> 31);
+	var (lo2, hi2) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_add_long(this, value)
+{
+	var (lo1, hi1) = float(value->LONG_lo, value->LONG_hi);
+	var (lo2, hi2) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_add_float(this, value)
+{
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_sub(this, other)
+{
+	var (lo, hi) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_sub_int(this, value)
+{
+	var (lo1, hi1) = float(value, value >> 31);
+	var (lo2, hi2) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_sub_long(this, value)
+{
+	var (lo1, hi1) = float(value->LONG_lo, value->LONG_hi);
+	var (lo2, hi2) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_sub_float(this, value)
+{
+	var (lo, hi) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_mul(this, other)
+{
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_mul_int(this, value)
+{
+	var (lo1, hi1) = float(value, value >> 31);
+	var (lo2, hi2) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_mul_long(this, value)
+{
+	var (lo1, hi1) = float(value->LONG_lo, value->LONG_hi);
+	var (lo2, hi2) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_mul_float(this, value)
+{
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_div(this, other)
+{
+	var (lo, hi) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_div_int(this, value)
+{
+	var (lo1, hi1) = float(value, value >> 31);
+	var (lo2, hi2) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_div_long(this, value)
+{
+	var (lo1, hi1) = float(value->LONG_lo, value->LONG_hi);
+	var (lo2, hi2) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, lo1, hi1);
+	this->DOUBLE_lo = lo2;
+	this->DOUBLE_hi = hi2;
+	return this;
+}
+
+function double_div_float(this, value)
+{
+	var (lo, hi) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_neg(this)
+{
+	this->DOUBLE_hi ^= 0x80000000;
+	return this;
+}
+
+function double_is_zero(this)
+{
+	return this->DOUBLE_lo == 0 && (this->DOUBLE_hi & 0x7FFFFFFF) == 0;
+}
+
+function double_cmp_lt(this, other)
+{
+	return fcmp_lt(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+}
+
+function double_cmp_lt_int(this, value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	return fcmp_lt(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_lt_long(this, value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_lt(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_lt_float(this, value)
+{
+	return fcmp_lt(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double_cmp_le(this, other)
+{
+	return fcmp_le(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+}
+
+function double_cmp_le_int(this, value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	return fcmp_le(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_le_long(this, value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_le(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_le_float(this, value)
+{
+	return fcmp_le(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double_cmp_gt(this, other)
+{
+	return fcmp_gt(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+}
+
+function double_cmp_gt_int(this, value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	return fcmp_gt(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_gt_long(this, value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_gt(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_gt_float(this, value)
+{
+	return fcmp_gt(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double_cmp_ge(this, other)
+{
+	return fcmp_ge(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+}
+
+function double_cmp_ge_int(this, value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	return fcmp_ge(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_ge_long(this, value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_ge(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_ge_float(this, value)
+{
+	return fcmp_ge(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double_cmp_eq(this, other)
+{
+	return fcmp_eq(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+}
+
+function double_cmp_eq_int(this, value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	return fcmp_eq(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_eq_long(this, value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_eq(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_eq_float(this, value)
+{
+	return fcmp_eq(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double_cmp_ne(this, other)
+{
+	return fcmp_ne(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+}
+
+function double_cmp_ne_int(this, value)
+{
+	var (lo, hi) = float(value, value >> 31);
+	return fcmp_ne(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_ne_long(this, value)
+{
+	var (lo, hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_ne(this->DOUBLE_lo, this->DOUBLE_hi, lo, hi);
+}
+
+function double_cmp_ne_float(this, value)
+{
+	return fcmp_ne(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double_set_min(this, a, b)
+{
+	var (lo, hi) = fmin(a->DOUBLE_lo, a->DOUBLE_hi, b->DOUBLE_lo, b->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_set_max(this, a, b)
+{
+	var (lo, hi) = fmax(a->DOUBLE_lo, a->DOUBLE_hi, b->DOUBLE_lo, b->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_min(this, other)
+{
+	var (lo, hi) = fmin(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_min_float(this, value)
+{
+	var (lo, hi) = fmin(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_max(this, other)
+{
+	var (lo, hi) = fmax(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_max_float(this, value)
+{
+	var (lo, hi) = fmax(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_floor(this)
+{
+	var (lo, hi) = floor(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_ceil(this)
+{
+	var (lo, hi) = ceil(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_round(this)
+{
+	var (lo, hi) = round(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_get_round_int(this)
+{
+	var (lo1, hi1) = iround(this->DOUBLE_lo, this->DOUBLE_hi);
+	var (lo2, hi2) = int(lo1, hi1);
+	if (hi2 != (lo2 >> 31)) {
+		return 0, error("integer overflow");
+	}
+	return lo2;
+}
+
+function double_get_round_long(this)
+{
+	var (lo, hi) = iround(this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double_pow(this, other)
+{
+	var (lo, hi) = pow(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_pow_float(this, value)
+{
+	var (lo, hi) = pow(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_sqrt(this)
+{
+	var (lo, hi) = sqrt(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_cbrt(this)
+{
+	var (lo, hi) = cbrt(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_exp(this)
+{
+	var (lo, hi) = exp(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_ln(this)
+{
+	var (lo, hi) = ln(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_log2(this)
+{
+	var (lo, hi) = log2(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_log10(this)
+{
+	var (lo, hi) = log10(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_sin(this)
+{
+	var (lo, hi) = sin(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_cos(this)
+{
+	var (lo, hi) = cos(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_asin(this)
+{
+	var (lo, hi) = asin(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_acos(this)
+{
+	var (lo, hi) = acos(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_tan(this)
+{
+	var (lo, hi) = tan(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_atan(this)
+{
+	var (lo, hi) = atan(this->DOUBLE_lo, this->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_atan2(this, x)
+{
+	var (lo, hi) = atan2(this->DOUBLE_lo, this->DOUBLE_hi, x->DOUBLE_lo, x->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_set_atan2(this, y, x)
+{
+	var (lo, hi) = atan2(y->DOUBLE_lo, y->DOUBLE_hi, x->DOUBLE_lo, x->DOUBLE_hi);
+	this->DOUBLE_lo = lo;
+	this->DOUBLE_hi = hi;
+	return this;
+}
+
+function double_to_int(this)
+{
+	var (lo, hi) = int(this->DOUBLE_lo, this->DOUBLE_hi);
+	if (hi != (lo >> 31)) {
+		return 0, error("integer overflow");
+	}
+	return lo;
+}
+
+function double_to_long(this)
+{
+	var (lo, hi) = int(this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double_to_float(this)
+{
+	return fconv(this->DOUBLE_lo, this->DOUBLE_hi);
+}
+
+function double_to_string(this)
+{
+	return string_from_double(this->DOUBLE_lo, this->DOUBLE_hi);
+}
+
+function double___dup_add(this, other)
+{
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_add_int(this, value)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_add_long(this, value)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_add_float(this, value)
+{
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	return [lo, hi];
+}
+
+function double___dup_add_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_add_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_add_float_rev(value, this)
+{
+	var (lo, hi) = fadd(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	return [lo, hi];
+}
+
+function double___dup_sub(this, other)
+{
+	var (lo, hi) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_sub_int(this, value)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_sub_long(this, value)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_sub_float(this, value)
+{
+	var (lo, hi) = fsub(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	return [lo, hi];
+}
+
+function double___dup_sub_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fsub(value_lo, value_hi, this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_sub_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fsub(value_lo, value_hi, this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_sub_float_rev(value, this)
+{
+	var (value_lo, value_hi) = fconv(value);
+	var (lo, hi) = fsub(value_lo, value_hi, this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_mul(this, other)
+{
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_mul_int(this, value)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_mul_long(this, value)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_mul_float(this, value)
+{
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	return [lo, hi];
+}
+
+function double___dup_mul_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_mul_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_mul_float_rev(value, this)
+{
+	var (lo, hi) = fmul(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	return [lo, hi];
+}
+
+function double___dup_div(this, other)
+{
+	var (lo, hi) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, other->DOUBLE_lo, other->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_div_int(this, value)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_div_long(this, value)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+	return [lo, hi];
+}
+
+function double___dup_div_float(this, value)
+{
+	var (lo, hi) = fdiv(this->DOUBLE_lo, this->DOUBLE_hi, value);
+	return [lo, hi];
+}
+
+function double___dup_div_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	var (lo, hi) = fdiv(value_lo, value_hi, this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_div_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	var (lo, hi) = fdiv(value_lo, value_hi, this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___dup_div_float_rev(value, this)
+{
+	var (value_lo, value_hi) = fconv(value);
+	var (lo, hi) = fdiv(value_lo, value_hi, this->DOUBLE_lo, this->DOUBLE_hi);
+	return [lo, hi];
+}
+
+function double___cmp_lt_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	return fcmp_gt(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_lt_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_gt(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_lt_float_rev(value, this)
+{
+	return fcmp_gt(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double___cmp_le_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	return fcmp_ge(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_le_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_ge(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_le_float_rev(value, this)
+{
+	return fcmp_ge(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double___cmp_gt_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	return fcmp_lt(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_gt_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_lt(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_gt_float_rev(value, this)
+{
+	return fcmp_lt(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double___cmp_ge_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	return fcmp_le(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_ge_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_le(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_ge_float_rev(value, this)
+{
+	return fcmp_le(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double___cmp_eq_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	return fcmp_eq(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_eq_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_eq(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_eq_float_rev(value, this)
+{
+	return fcmp_eq(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function double___cmp_ne_int_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value, value >> 31);
+	return fcmp_ne(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_ne_long_rev(value, this)
+{
+	var (value_lo, value_hi) = float(value->LONG_lo, value->LONG_hi);
+	return fcmp_ne(this->DOUBLE_lo, this->DOUBLE_hi, value_lo, value_hi);
+}
+
+function double___cmp_ne_float_rev(value, this)
+{
+	return fcmp_ne(this->DOUBLE_lo, this->DOUBLE_hi, value);
+}
+
+function Double()
+{
+	return [0, 0];
+}
+
+function Double(value)
+{
+	var (lo, hi) = fconv(value);
+	return [lo, hi];
+}
+
+function Double(lo, hi)
+{
+	return [lo, hi];
+}

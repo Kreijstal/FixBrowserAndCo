@@ -1,17 +1,19 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	if (request_get_domain(request) == "www.planetcustodian.com") {
+	if (request.get_domain() == "www.planetcustodian.com") {
 		rewrite_links(document, rewrite#3, null);
 	}
 }
 
-function @rewrite(elem, value, data)
+function @rewrite(elem: Element, value: String, data): String
 {
-	if (string_starts_with(value, "http://www.planetcustodian.com/")) {
-		value = string_substring(value, 5);
+	if (value.starts_with("http://www.planetcustodian.com/")) {
+		value = value.substring(5);
 	}
 	return value;
 }

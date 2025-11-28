@@ -1,6 +1,8 @@
+use "classes";
+
 import "util/common";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	add_style_to_element(document, "body", "width: auto; height: auto");
 	remove_element(document, "body > noscript");

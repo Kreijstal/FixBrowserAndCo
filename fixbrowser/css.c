@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -419,7 +419,7 @@ static Selector *get_selector(Context *ctx, Heap *heap, Value *error, Value sele
    Selector *sel = NULL;
    Value values[SELECTOR_SIZE], sel_val;
    char *p;
-   int i, err;
+   int i, err, selector_size;
 
    if (selector_value.value > 0 && selector_value.value < ctx->object_map_size && ctx->object_map[selector_value.value]) {
       sel = (Selector *)ctx->object_map[selector_value.value];
@@ -430,7 +430,15 @@ static Selector *get_selector(Context *ctx, Heap *heap, Value *error, Value sele
       return sel;
    }
 
-   err = fixscript_get_array_range(heap, selector_value, 0, SELECTOR_SIZE, values);
+   err = fixscript_get_array_length(heap, selector_value, &selector_size);
+   if (!err && selector_size > SELECTOR_SIZE) {
+      *error = fixscript_create_error_string(heap, "internal error: selector object contains more data");
+      goto error;
+   }
+   if (!err) {
+      memset(values, 0, sizeof(values));
+      err = fixscript_get_array_range(heap, selector_value, 0, selector_size, values);
+   }
    if (err) {
       fixscript_error(heap, error, err);
       goto error;

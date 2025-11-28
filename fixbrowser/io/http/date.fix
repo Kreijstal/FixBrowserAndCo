@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -280,32 +280,32 @@ function http_date_to_string(date)
 		case 7: s = {"Sun, "}; break;
 		default: return 0, error("invalid date");
 	}
-	string_append(s, {date->DATE_day, " "});
+	array_append(s, {date->DATE_day, " "});
 	switch (date->DATE_month) {
-		case 1: string_append(s, "Jan"); break;
-		case 2: string_append(s, "Feb"); break;
-		case 3: string_append(s, "Mar"); break;
-		case 4: string_append(s, "Apr"); break;
-		case 5: string_append(s, "May"); break;
-		case 6: string_append(s, "Jun"); break;
-		case 7: string_append(s, "Jul"); break;
-		case 8: string_append(s, "Aug"); break;
-		case 9: string_append(s, "Sep"); break;
-		case 10: string_append(s, "Oct"); break;
-		case 11: string_append(s, "Nov"); break;
-		case 12: string_append(s, "Dec"); break;
+		case 1: array_append(s, "Jan"); break;
+		case 2: array_append(s, "Feb"); break;
+		case 3: array_append(s, "Mar"); break;
+		case 4: array_append(s, "Apr"); break;
+		case 5: array_append(s, "May"); break;
+		case 6: array_append(s, "Jun"); break;
+		case 7: array_append(s, "Jul"); break;
+		case 8: array_append(s, "Aug"); break;
+		case 9: array_append(s, "Sep"); break;
+		case 10: array_append(s, "Oct"); break;
+		case 11: array_append(s, "Nov"); break;
+		case 12: array_append(s, "Dec"); break;
 		default: return 0, error("invalid date");
 	}
 	s[] = ' ';
-	string_append(s, string_pad_left({date->DATE_year}, 4, '0'));
+	array_append(s, string_pad_left({date->DATE_year}, 4, '0'));
 	s[] = ' ';
-	string_append(s, string_pad_left({date->DATE_hour}, 2, '0'));
+	array_append(s, string_pad_left({date->DATE_hour}, 2, '0'));
 	s[] = ':';
-	string_append(s, string_pad_left({date->DATE_minute}, 2, '0'));
+	array_append(s, string_pad_left({date->DATE_minute}, 2, '0'));
 	s[] = ':';
-	string_append(s, string_pad_left({date->DATE_second}, 2, '0'));
+	array_append(s, string_pad_left({date->DATE_second}, 2, '0'));
 	s[] = ' ';
-	string_append(s, date->HTTP_DATE_zone);
+	array_append(s, date->HTTP_DATE_zone);
 	return s;
 }
 

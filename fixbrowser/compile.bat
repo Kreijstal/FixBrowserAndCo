@@ -11,7 +11,7 @@ gcc -Wall -O3 -g -msse2 -mstackrealign -o fiximage.o -c fiximage.c || exit /b
 gcc -Wall -O3 -g -o fixgui.o -c fixgui.c || exit /b
 gcc -Wall -O3 -g -o fixgui_win32.o -c fixgui_win32.c || exit /b
 gcc -Wall -O3 -g -o fixtask.o -c fixtask.c || exit /b
-fixembed.exe -ex scripts . embed_scripts.h embed_scripts || exit /b
+fixembed.exe -ex gateopener -ex scripts . embed_scripts.h embed_scripts || exit /b
 fixembed.exe -bin res embed_resources.h embed_resources || exit /b
 fixembed.exe -bin res_proxy embed_resources_proxy.h embed_resources_proxy || exit /b
 gencharsets.exe charsets embed_charsets.h embed_charsets || exit /b

@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,6 +19,7 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "string_switch";
 use "classes";
 
 import "browser/html/html";
@@ -151,21 +152,16 @@ function @find_styles(ctx: Context, element: Element, stylesheets: Stylesheet[],
 
 function @prepare_sheet(ctx: Context, sheet: Stylesheet)
 {
-	var rules =	sheet.rules;
-
-	for (var i=0; i<length(rules); i++) {
-		var rule = rules[i];
-
+	foreach (var rule in sheet.rules) {
 		switch (rule.type) {
 			case RULE_SELECTOR: {
-				var group = rule.selector;
-				for (var j=0; j<length(group); j++) {
-					var selector = group[j];
+				var selector_rule = rule as SelectorRule;
+				foreach (var selector in selector_rule.selector) {
 					var specificity = calc_specificity(selector, 0);
-					if (!assign_selector(ctx, selector, selector, rule.properties, specificity)) {
+					if (!assign_selector(ctx, selector, selector, selector_rule.properties, specificity)) {
 						var list = ctx.other_list;
 						list[] = selector;
-						list[] = rule.properties;
+						list[] = selector_rule.properties;
 						list[] = specificity;
 						list[] = ctx.cnt;
 					}
@@ -194,7 +190,7 @@ function @assign_selector(ctx: Context, selector: Selector, orig_selector: Selec
 {
 	switch (selector.type) {
 		case SEL_TYPE:
-			if (selector.elem_name == "*") {
+			if ((selector as TypeSelector).name == "*") {
 				var list = ctx.other_list;
 				list[] = orig_selector;
 				list[] = properties;
@@ -202,16 +198,16 @@ function @assign_selector(ctx: Context, selector: Selector, orig_selector: Selec
 				list[] = ctx.cnt;
 			}
 			else {
-				assign_to_map(ctx.type_map, selector.elem_name, orig_selector, properties, specificity, ctx.cnt);
+				assign_to_map(ctx.type_map, (selector as TypeSelector).name, orig_selector, properties, specificity, ctx.cnt);
 			}
 			return true;
 
 		case SEL_ID:
-			assign_to_map(ctx.id_map, selector.id_name, orig_selector, properties, specificity, ctx.cnt);
+			assign_to_map(ctx.id_map, (selector as IDSelector).name, orig_selector, properties, specificity, ctx.cnt);
 			return true;
 
 		case SEL_CLASS:
-			assign_to_map(ctx.class_map, selector.class_name, orig_selector, properties, specificity, ctx.cnt);
+			assign_to_map(ctx.class_map, (selector as ClassSelector).name, orig_selector, properties, specificity, ctx.cnt);
 			return true;
 
 		case SEL_ATTRIB:
@@ -221,7 +217,7 @@ function @assign_selector(ctx: Context, selector: Selector, orig_selector: Selec
 		case SEL_ATTRIB_EXACT:
 		case SEL_ATTRIB_INCLUDE:
 		case SEL_ATTRIB_DASH:
-			assign_to_map(ctx.attrib_map, selector.attrib_name, orig_selector, properties, specificity, ctx.cnt);
+			assign_to_map(ctx.attrib_map, (selector as AttribSelector).name, orig_selector, properties, specificity, ctx.cnt);
 			return true;
 
 		case SEL_PSEUDO_ELEMENT:
@@ -241,7 +237,7 @@ function @assign_selector(ctx: Context, selector: Selector, orig_selector: Selec
 		}
 
 		case SEL_SEQUENCE: {
-			var selectors = selector.selectors;
+			var selectors = (selector as SequenceSelector).selectors;
 			for (var i=length(selectors)-1; i>=0; i--) {
 				if (assign_selector(ctx, selectors[i], orig_selector, properties, specificity)) return true;
 			}
@@ -252,7 +248,7 @@ function @assign_selector(ctx: Context, selector: Selector, orig_selector: Selec
 		case COMB_CHILD:
 		case COMB_NEXT_SIBLING:
 		case COMB_SUBSEQUENT_SIBLING:
-			return assign_selector(ctx, selector.second, orig_selector, properties, specificity);
+			return assign_selector(ctx, (selector as CombinatorSelector).second, orig_selector, properties, specificity);
 	}
 
 	return false;
@@ -262,7 +258,7 @@ function @calc_specificity(selector: Selector, specificity: Integer): Integer
 {
 	switch (selector.type) {
 		case SEL_TYPE:
-			if (selector.elem_name == "*") {
+			if ((selector as TypeSelector).name == "*") {
 				return specificity;
 			}
 			// fallthrough
@@ -297,12 +293,11 @@ function @calc_specificity(selector: Selector, specificity: Integer): Integer
 			return specificity;
 
 		case SEL_NOT:
-			return calc_specificity(selector.not_selector, specificity);
+			return calc_specificity((selector as NotSelector).selector, specificity);
 
 		case SEL_SEQUENCE: {
-			var selectors = selector.selectors;
-			for (var i=0; i<length(selectors); i++) {
-				specificity = calc_specificity(selectors[i], specificity);
+			foreach (var sel in (selector as SequenceSelector).selectors) {
+				specificity = calc_specificity(sel, specificity);
 			}
 			return specificity;
 		}
@@ -311,8 +306,8 @@ function @calc_specificity(selector: Selector, specificity: Integer): Integer
 		case COMB_CHILD:
 		case COMB_NEXT_SIBLING:
 		case COMB_SUBSEQUENT_SIBLING:
-			specificity = calc_specificity(selector.first, specificity);
-			specificity = calc_specificity(selector.second, specificity);
+			specificity = calc_specificity((selector as CombinatorSelector).first, specificity);
+			specificity = calc_specificity((selector as CombinatorSelector).second, specificity);
 			return specificity;
 	}
 
@@ -466,9 +461,9 @@ function @add_property(properties: Property[Integer], prop: Property)
 {
 	var type = prop.type;
 	if (type == PROP_FONT) {
-		var value = prop.value;
-		for (var i=0, n=value.child_count(); i<n; i++) {
-			var value2 = value.child_get(i);
+		var value = prop.value as ListValue;
+		for (var i=0, n=value.get_child_count(); i<n; i++) {
+			var value2 = value.get_child(i);
 			switch (value2.type) {
 				case VALUE_MULTIPLE: {
 					add_property(properties, Property::create(PROP_FONT_FAMILY, "font-family", value2, prop.important));
@@ -476,8 +471,8 @@ function @add_property(properties: Property[Integer], prop: Property)
 				}
 
 				case VALUE_SLASH_GROUP: {
-					add_property(properties, Property::create(PROP_FONT_SIZE, "font-size", value2.child_get(0), prop.important));
-					add_property(properties, Property::create(PROP_LINE_HEIGHT, "line-height", value2.child_get(1), prop.important));
+					add_property(properties, Property::create(PROP_FONT_SIZE, "font-size", (value2 as ListValue).get_child(0), prop.important));
+					add_property(properties, Property::create(PROP_LINE_HEIGHT, "line-height", (value2 as ListValue).get_child(1), prop.important));
 					break;
 				}
 
@@ -515,9 +510,9 @@ function @add_property(properties: Property[Integer], prop: Property)
 	else if (type == PROP_LIST_STYLE) {
 		var type_set = false;
 		var image_set = false;
-		var value = prop.value;
-		for (var i=0, n=value.child_count(); i<n; i++) {
-			var value2 = value.child_get(i);
+		var value = prop.value as ListValue;
+		for (var i=0, n=value.get_child_count(); i<n; i++) {
+			var value2 = value.get_child(i);
 			switch (value2.type) {
 				case VALUE_NONE:
 					if (type_set) {
@@ -580,7 +575,7 @@ function @match_selector(element: Element, selector: Selector): Boolean
 {
 	switch (selector.type) {
 		case SEL_TYPE: {
-			var name = selector.elem_name;
+			var name = (selector as TypeSelector).name;
 			if (name == "*") {
 				return true;
 			}
@@ -594,64 +589,64 @@ function @match_selector(element: Element, selector: Selector): Boolean
 			var elem_value = element.get_attr("id");
 			if (!elem_value) return false;
 
-			var match_value = selector.id_name;
+			var match_value = (selector as IDSelector).name;
 			return elem_value == match_value;
 		}
 
 		case SEL_CLASS: {
-			return element.contains_class(selector.class_name);
+			return element.contains_class((selector as ClassSelector).name);
 		}
 
 		case SEL_ATTRIB: {
-			var elem_value = element.get_attr(selector.attrib_name);
+			var elem_value = element.get_attr((selector as AttribSelector).name);
 			return elem_value != null;
 		}
 
 		case SEL_ATTRIB_PREFIX: {
-			var elem_value = element.get_attr(selector.attrib_name);
+			var elem_value = element.get_attr((selector as AttribSelector).name);
 			if (!elem_value) return false;
 			
-			var match_value = selector.attrib_value;
+			var match_value = (selector as AttribSelector).value;
 			return string_starts_with(elem_value, match_value);
 		}
 
 		case SEL_ATTRIB_SUFFIX: {
-			var elem_value = element.get_attr(selector.attrib_name);
+			var elem_value = element.get_attr((selector as AttribSelector).name);
 			if (!elem_value) return false;
 			
-			var match_value = selector.attrib_value;
+			var match_value = (selector as AttribSelector).value;
 			return string_ends_with(elem_value, match_value);
 		}
 
 		case SEL_ATTRIB_SUBSTRING: {
-			var elem_value = element.get_attr(selector.attrib_name);
+			var elem_value = element.get_attr((selector as AttribSelector).name);
 			if (!elem_value) return false;
 			
-			var match_value = selector.attrib_value;
+			var match_value = (selector as AttribSelector).value;
 			return string_contains(elem_value, match_value);
 		}
 
 		case SEL_ATTRIB_EXACT: {
-			var elem_value = element.get_attr(selector.attrib_name);
+			var elem_value = element.get_attr((selector as AttribSelector).name);
 			if (!elem_value) return false;
 			
-			var match_value = selector.attrib_value;
+			var match_value = (selector as AttribSelector).value;
 			return elem_value == match_value;
 		}
 
 		case SEL_ATTRIB_INCLUDE: {
-			var elem_value = element.get_attr(selector.attrib_name);
+			var elem_value = element.get_attr((selector as AttribSelector).name);
 			if (!elem_value) return false;
 			
-			var match_value = selector.attrib_value;
+			var match_value = (selector as AttribSelector).value;
 			return contains(elem_value, match_value);
 		}
 
 		case SEL_ATTRIB_DASH: {
-			var elem_value = element.get_attr(selector.attrib_name);
+			var elem_value = element.get_attr((selector as AttribSelector).name);
 			if (!elem_value) return false;
 			
-			var match_value = selector.attrib_value;
+			var match_value = (selector as AttribSelector).value;
 			if (elem_value == match_value) return true;
 			if (length(elem_value) > length(match_value) && string_starts_with(elem_value, match_value) && elem_value[length(match_value)] == '-') {
 				return true;
@@ -663,94 +658,84 @@ function @match_selector(element: Element, selector: Selector): Boolean
 			return false;
 
 		case SEL_PSEUDO_CLASS: {
-			var name = string_to_lower_case(selector.pseudo_name);
-			switch (length(name)) {
-				case 4:
-					if (name == "root") {
-						var parent = element.get_parent();
-						if (parent != null && parent.is_type("#document")) {
-							return true;
+			var name = string_to_lower_case((selector as PseudoSelector).name);
+			switch (name) {
+				case "root": {
+					var parent = element.get_parent();
+					if (parent != null && parent.is_type("#document")) {
+						return true;
+					}
+					return false;
+				}
+
+				case "empty": {
+					for (var elem = element.get_first_child(); elem; elem = elem.get_next()) {
+						if (elem.is_type("#comment")) {
+							continue;
+						}
+						if (elem.is_type("#text") && length(elem.get_data()) == 0) {
+							continue;
 						}
 						return false;
 					}
-					break;
+					return true;
+				}
 
-				case 5:
-					if (name == "empty") {
-						for (var elem = element.get_first_child(); elem; elem = elem.get_next()) {
-							if (elem.is_type("#comment")) {
-								continue;
-							}
-							if (elem.is_type("#text") && length(elem.get_data()) == 0) {
-								continue;
-							}
+				case "first-child": {
+					if (!element.get_prev_tag()) {
+						return true;
+					}
+					return false;
+				}
+
+				case "last-child": {
+					if (!element.get_next_tag()) {
+						return true;
+					}
+					return false;
+				}
+
+				case "only-child": {
+					if (!element.get_prev_tag() && !element.get_next_tag()) {
+						return true;
+					}
+					return false;
+				}
+
+				case "first-of-type": {
+					var type = element.get_type();
+					for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
+						if (elem.is_type(type)) {
 							return false;
 						}
-						return true;
 					}
-					break;
+					return true;
+				}
 
-				case 10:
-					if (name == "last-child") {
-						if (!element.get_next_tag()) {
-							return true;
+				case "last-of-type": {
+					var type = element.get_type();
+					for (var elem = element.get_next_tag(); elem; elem = elem.get_next_tag()) {
+						if (elem.is_type(type)) {
+							return false;
 						}
-						return false;
 					}
-					if (name == "only-child") {
-						if (!element.get_prev_tag() && !element.get_next_tag()) {
-							return true;
-						}
-						return false;
-					}
-					break;
+					return true;
+				}
 
-				case 11:
-					if (name == "first-child") {
-						if (!element.get_prev_tag()) {
-							return true;
+				case "only-of-type": {
+					var type = element.get_type();
+					for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
+						if (elem.is_type(type)) {
+							return false;
 						}
-						return false;
 					}
-					break;
-
-				case 12:
-					if (name == "last-of-type") {
-						var type = element.get_type();
-						for (var elem = element.get_next_tag(); elem; elem = elem.get_next_tag()) {
-							if (elem.is_type(type)) {
-								return false;
-							}
+					for (var elem = element.get_next_tag(); elem; elem = elem.get_next_tag()) {
+						if (elem.is_type(type)) {
+							return false;
 						}
-						return true;
 					}
-					if (name == "only-of-type") {
-						var type = element.get_type();
-						for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
-							if (elem.is_type(type)) {
-								return false;
-							}
-						}
-						for (var elem = element.get_next_tag(); elem; elem = elem.get_next_tag()) {
-							if (elem.is_type(type)) {
-								return false;
-							}
-						}
-						return true;
-					}
-					break;
-
-				case 13:
-					if (name == "first-of-type") {
-						var type = element.get_type();
-						for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
-							if (elem.is_type(type)) {
-								return false;
-							}
-						}
-						return true;
-					}
-					break;
+					return true;
+				}
 			}
 			return false;
 		}
@@ -761,12 +746,11 @@ function @match_selector(element: Element, selector: Selector): Boolean
 			return false;
 
 		case SEL_NOT:
-			return !match_selector(element, selector.not_selector);
+			return !match_selector(element, (selector as NotSelector).selector);
 		
 		case SEL_SEQUENCE: {
-			var selectors = selector.selectors;
-			for (var i=0; i<length(selectors); i++) {
-				if (!match_selector(element, selectors[i])) {
+			foreach (var sel in (selector as SequenceSelector).selectors) {
+				if (!match_selector(element, sel)) {
 					return false;
 				}
 			}
@@ -774,42 +758,42 @@ function @match_selector(element: Element, selector: Selector): Boolean
 		}
 
 		case COMB_DESCENDANT: {
-			if (!match_selector(element, selector.second)) return false;
+			if (!match_selector(element, (selector as CombinatorSelector).second)) return false;
 
 			var parent = element;
 			for (;;) {
 				parent = parent.get_parent();
 				if (!parent || parent.is_type("#document")) break;
 
-				if (match_selector(parent, selector.first)) return true;
+				if (match_selector(parent, (selector as CombinatorSelector).first)) return true;
 			}
 			return false;
 		}
 
 		case COMB_CHILD: {
-			if (!match_selector(element, selector.second)) return false;
+			if (!match_selector(element, (selector as CombinatorSelector).second)) return false;
 
 			var parent = element.get_parent();
 			if (!parent || parent.is_type("#document")) {
 				return false;
 			}
-			return match_selector(parent, selector.first);
+			return match_selector(parent, (selector as CombinatorSelector).first);
 		}
 
 		case COMB_NEXT_SIBLING: {
-			if (!match_selector(element, selector.second)) return false;
+			if (!match_selector(element, (selector as CombinatorSelector).second)) return false;
 
 			var prev = element.get_prev_tag();
 			if (!prev) return false;
 
-			return match_selector(prev, selector.first);
+			return match_selector(prev, (selector as CombinatorSelector).first);
 		}
 
 		case COMB_SUBSEQUENT_SIBLING: {
-			if (!match_selector(element, selector.second)) return false;
+			if (!match_selector(element, (selector as CombinatorSelector).second)) return false;
 
 			for (var elem = element.get_prev_tag(); elem; elem = elem.get_prev_tag()) {
-				if (match_selector(elem, selector.first)) return true;
+				if (match_selector(elem, (selector as CombinatorSelector).first)) return true;
 			}
 			return false;
 		}

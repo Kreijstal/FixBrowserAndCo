@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,25 +19,11 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "string_switch";
+use "classes";
+
 import "browser/css/parser";
 import "util/string";
-
-const @class_Selector = "static=create_combinator#3:create_type#2";
-const @field_Selector_type = "Integer";
-const @field_Selector_elem_namespace = "String";
-const @field_Selector_elem_name = "String";
-const @field_Selector_id_name = "String";
-const @field_Selector_class_name = "String";
-const @field_Selector_attrib_namespace = "String";
-const @field_Selector_attrib_name = "String";
-const @field_Selector_attrib_value = "String";
-const @field_Selector_pseudo_name = "String";
-const @field_Selector_func_name = "String";
-const @field_Selector_func_expr = "Dynamic";
-const @field_Selector_not_selector = "Selector";
-const @field_Selector_selectors = "Selector[]";
-const @field_Selector_first = "Selector";
-const @field_Selector_second = "Selector";
 
 // note: synchronize with native code
 const {
@@ -65,69 +51,128 @@ const {
 	COMB_SUBSEQUENT_SIBLING
 };
 
-// note: synchronize with native code
-const {
-	SELECTOR_type = 0,
+// note: synchronize Selector classes with native code
 
-	// type selector:
-	SELECTOR_elem_namespace = 1,
-	SELECTOR_elem_name = 2,
-
-	// id selector:
-	SELECTOR_id_name = 1,
-
-	// class selector:
-	SELECTOR_class_name = 1,
-
-	// attrib selector:
-	SELECTOR_attrib_namespace = 1,
-	SELECTOR_attrib_name = 2,
-	SELECTOR_attrib_value = 3,
-
-	// pseudo selector:
-	SELECTOR_pseudo_name = 1,
-
-	// function selector:
-	SELECTOR_func_name = 1,
-	SELECTOR_func_expr = 2,
-
-	// not selector:
-	SELECTOR_not_selector = 1,
-
-	// selector sequence:
-	SELECTOR_selectors = 1,
-
-	// combinators:
-	SELECTOR_first = 1,
-	SELECTOR_second = 2,
-	
-	@SELECTOR_SIZE = 4
-};
-
-function selector_create_combinator(type, first, second)
+class Selector
 {
-	return create_combinator(type, first, second);
+	var type: Integer;
+
+	constructor @create(type: Integer)
+	{
+		this.type = type;
+	}
 }
 
-function selector_create_type(namespace, name)
+class TypeSelector: Selector
 {
-	var sel = object_create(SELECTOR_SIZE);
-	sel->SELECTOR_type = SEL_TYPE;
-	sel->SELECTOR_elem_namespace = namespace;
-	sel->SELECTOR_elem_name = name;
-	return sel;
+	var namespace: String;
+	var name: String;
+
+	constructor create(namespace: String, name: String)
+	{
+		super::create(SEL_TYPE);
+		this.namespace = namespace;
+		this.name = name;
+	}
 }
 
-function @create_combinator(type, first, second)
+class IDSelector: Selector
 {
-	var sel = object_create(SELECTOR_SIZE);
-	sel->SELECTOR_type = type;
-	sel->SELECTOR_first = first;
-	sel->SELECTOR_second = second;
-	return sel;
+	var name: String;
+
+	constructor @create(name: String)
+	{
+		super::create(SEL_ID);
+		this.name = name;
+	}
 }
 
-function @consume_whitespace(par)
+class ClassSelector: Selector
+{
+	var name: String;
+
+	constructor @create(name: String)
+	{
+		super::create(SEL_CLASS);
+		this.name = name;
+	}
+}
+
+class AttribSelector: Selector
+{
+	var namespace: String;
+	var name: String;
+	var value: String;
+
+	constructor @create(type: Integer, namespace: String, name: String, value: String)
+	{
+		super::create(type);
+		this.namespace = namespace;
+		this.name = name;
+		this.value = value;
+	}
+}
+
+class PseudoSelector: Selector
+{
+	var name: String;
+
+	constructor @create(type: Integer, name: String)
+	{
+		super::create(type);
+		this.name = name;
+	}
+}
+
+class FunctionSelector: Selector
+{
+	var name: String;
+	var expr: Dynamic;
+
+	constructor @create(type: Integer, name: String, expr: Dynamic)
+	{
+		super::create(type);
+		this.name = name;
+		this.expr = expr;
+	}
+}
+
+class NotSelector: Selector
+{
+	var selector: Selector;
+
+	constructor @create(selector: Selector)
+	{
+		super::create(SEL_NOT);
+		this.selector = selector;
+	}
+}
+
+class SequenceSelector: Selector
+{
+	var selectors: Selector[];
+
+	constructor @create(selectors: Selector[])
+	{
+		super::create(SEL_SEQUENCE);
+		this.selectors = selectors;
+	}
+}
+
+class CombinatorSelector: Selector
+{
+	var first: Selector;
+	var second: Selector;
+
+	constructor create(type: Integer, first: Selector, second: Selector)
+	{
+		super::create(type);
+		this.first = first;
+		this.second = second;
+	}
+}
+
+function @consume_whitespace(par: Parser): Boolean
 {
 	var present = false;
 	var token = next_token(par);
@@ -139,9 +184,9 @@ function @consume_whitespace(par)
 	return present;
 }
 
-function parse_selectors_group(par)
+function parse_selectors_group(par: Parser): Selector[]
 {
-	var group = [];
+	var group: Selector[] = [];
 	
 	group[] = parse_selector(par);
 
@@ -151,7 +196,7 @@ function parse_selectors_group(par)
 		var token = next_token(par);
 		if (token == TOKEN_EOF) break;
 		if (token != TOKEN_COMMA) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 
 		consume_whitespace(par);
@@ -161,7 +206,7 @@ function parse_selectors_group(par)
 	return group;
 }
 
-function @parse_selector(par)
+function @parse_selector(par: Parser): Selector
 {
 	var selector = parse_simple_selector_sequence(par);
 
@@ -175,47 +220,47 @@ function @parse_selector(par)
 		}
 
 		if (token == TOKEN_DELIM) {
-			switch (par->TOKEN_value) {
+			switch (par.value as Integer) {
 				case '+':
 					consume_whitespace(par);
-					selector = create_combinator(COMB_NEXT_SIBLING, selector, parse_simple_selector_sequence(par));
+					selector = CombinatorSelector::create(COMB_NEXT_SIBLING, selector, parse_simple_selector_sequence(par));
 					continue;
 
 				case '>':
 					consume_whitespace(par);
-					selector = create_combinator(COMB_CHILD, selector, parse_simple_selector_sequence(par));
+					selector = CombinatorSelector::create(COMB_CHILD, selector, parse_simple_selector_sequence(par));
 					continue;
 
 				case '~':
 					consume_whitespace(par);
-					selector = create_combinator(COMB_SUBSEQUENT_SIBLING, selector, parse_simple_selector_sequence(par));
+					selector = CombinatorSelector::create(COMB_SUBSEQUENT_SIBLING, selector, parse_simple_selector_sequence(par));
 					continue;
 			}
 		}
 
 		if (ws) {
 			back_token(par);
-			selector = create_combinator(COMB_DESCENDANT, selector, parse_simple_selector_sequence(par));
+			selector = CombinatorSelector::create(COMB_DESCENDANT, selector, parse_simple_selector_sequence(par));
 			continue;
 		}
 
-		return 0, error("syntax error");
+		throw error("syntax error");
 	}
 
 	return selector;
 }
 
-function @parse_simple_selector_sequence(par)
+function @parse_simple_selector_sequence(par: Parser): Selector
 {
-	var selectors = [];
+	var selectors: Selector[] = [];
 	
 	var sel = parse_type_selector(par);
 	if (sel) selectors[] = sel;
 
-	if (length(selectors) == 0) {
+	if (selectors.length == 0) {
 		sel = parse_additional_selector(par, true);
 		if (!sel) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 		selectors[] = sel;
 	}
@@ -224,29 +269,26 @@ function @parse_simple_selector_sequence(par)
 		selectors[] = sel;
 	}
 
-	if (length(selectors) == 1) {
+	if (selectors.length == 1) {
 		return selectors[0];
 	}
 
-	sel = object_create(SELECTOR_SIZE);
-	sel->SELECTOR_type = SEL_SEQUENCE;
-	sel->SELECTOR_selectors = selectors;
-	return sel;
+	return SequenceSelector::create(selectors);
 }
 
-function @parse_type_selector(par)
+function @parse_type_selector(par: Parser): Selector
 {
-	var namespace, name;
+	var namespace: String, name: String;
 
 	var token = next_token(par);
-	if (token == TOKEN_DELIM && par->TOKEN_value == '|') {
+	if (token == TOKEN_DELIM && (par.value as Integer) == '|') {
 		back_token(par);
 	}
 	else {
 		if (token == TOKEN_IDENT) {
-			name = par->TOKEN_value;
+			name = par.value as String;
 		}
-		else if (token == TOKEN_DELIM && par->TOKEN_value == '*') {
+		else if (token == TOKEN_DELIM && (par.value as Integer) == '*') {
 			name = "*";
 		}
 		else {
@@ -256,102 +298,91 @@ function @parse_type_selector(par)
 	}
 
 	token = next_token(par);
-	if (token == TOKEN_DELIM && par->TOKEN_value == '|') {
+	if (token == TOKEN_DELIM && (par.value as Integer) == '|') {
 		namespace = name;
 
 		token = next_token(par);
 		if (token == TOKEN_IDENT) {
-			name = par->TOKEN_value;
+			name = par.value as String;
 		}
-		else if (token == TOKEN_DELIM && par->TOKEN_value == '*') {
+		else if (token == TOKEN_DELIM && (par.value as Integer) == '*') {
 			name = "*";
 		}
 		else {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 	}
 	else {
 		back_token(par);
 	}
 
-	var sel = object_create(SELECTOR_SIZE);
-	sel->SELECTOR_type = SEL_TYPE;
-	sel->SELECTOR_elem_namespace = namespace? string_to_lower_case(namespace) : null;
-	sel->SELECTOR_elem_name = string_to_lower_case(name);
-	return sel;
+	return TypeSelector::create(namespace? namespace.to_lower_case() : null, name.to_lower_case());
 }
 
-function @parse_additional_selector(par, handle_not)
+function @parse_additional_selector(par: Parser, handle_not: Boolean): Selector
 {
 	var token = next_token(par);
 	if (token == TOKEN_HASH) {
-		var sel = object_create(SELECTOR_SIZE);
-		sel->SELECTOR_type = SEL_ID;
-		sel->SELECTOR_id_name = par->TOKEN_value;
-		return sel;
+		return IDSelector::create(par.value as String);
 	}
-	else if (token == TOKEN_DELIM && par->TOKEN_value == '.') {
+	else if (token == TOKEN_DELIM && (par.value as Integer) == '.') {
 		token = next_token(par);
 		if (token != TOKEN_IDENT) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
-
-		var sel = object_create(SELECTOR_SIZE);
-		sel->SELECTOR_type = SEL_CLASS;
-		sel->SELECTOR_class_name = par->TOKEN_value;
-		return sel;
+		return ClassSelector::create(par.value as String);
 	}
-	else if (token == COMPONENT_SIMPLE_BLOCK && par->TOKEN_value->SIMPLEBLOCK_associated_token == TOKEN_SQUARE_LBRACKET) {
-		var block = par->TOKEN_value;
+	else if (token == COMPONENT_SIMPLE_BLOCK && (par.value as SimpleBlock).associated_token == TOKEN_SQUARE_LBRACKET) {
+		var block = par.value as SimpleBlock;
 		rewind_buffer(block);
 
 		consume_whitespace(block);
 
-		var namespace, name;
+		var namespace: String, name: String;
 
 		token = next_token(block);
-		if (token == TOKEN_DELIM && block->TOKEN_value == '*') {
+		if (token == TOKEN_DELIM && (block.value as Integer) == '*') {
 			namespace = "*";
 			token = next_token(block);
-			if (token == TOKEN_DELIM && block->TOKEN_value == '|') {
+			if (token == TOKEN_DELIM && (block.value as Integer) == '|') {
 				token = next_token(block);
 				if (token == TOKEN_IDENT) {
-					name = block->TOKEN_value;
+					name = block.value as String;
 				}
 				else {
-					return 0, error("syntax error");
+					throw error("syntax error");
 				}
 			}
 			else {
-				return 0, error("syntax error");
+				throw error("syntax error");
 			}
 		}
 		else {
 			if (token == TOKEN_IDENT) {
-				name = block->TOKEN_value;
+				name = block.value as String;
 
 				token = next_token(block);
-				if (token == TOKEN_DELIM && block->TOKEN_value == '|') {
+				if (token == TOKEN_DELIM && (block.value as Integer) == '|') {
 					namespace = name;
 					token = next_token(block);
 					if (token != TOKEN_IDENT) {
-						return 0, error("syntax error");
+						throw error("syntax error");
 					}
-					name = block->TOKEN_value;
+					name = block.value as String;
 				}
 				else {
 					back_token(block);
 				}
 			}
-			else if (token == TOKEN_DELIM && block->TOKEN_value == '|') {
+			else if (token == TOKEN_DELIM && (block.value as Integer) == '|') {
 				token = next_token(block);
 				if (token != TOKEN_IDENT) {
-					return 0, error("syntax error");
+					throw error("syntax error");
 				}
-				name = block->TOKEN_value;
+				name = block.value as String;
 			}
 			else {
-				return 0, error("syntax error");
+				throw error("syntax error");
 			}
 		}
 
@@ -359,11 +390,7 @@ function @parse_additional_selector(par, handle_not)
 		
 		token = next_token(block);
 		if (token == TOKEN_EOF) {
-			var sel = object_create(SELECTOR_SIZE);
-			sel->SELECTOR_type = SEL_ATTRIB;
-			sel->SELECTOR_attrib_namespace = namespace? string_to_lower_case(namespace) : null;
-			sel->SELECTOR_attrib_name = string_to_lower_case(name);
-			return sel;
+			return AttribSelector::create(SEL_ATTRIB, namespace? namespace.to_lower_case() : null, name.to_lower_case(), null);
 		}
 
 		var type = -1;
@@ -373,7 +400,7 @@ function @parse_additional_selector(par, handle_not)
 			case TOKEN_SUBSTRING_MATCH: type = SEL_ATTRIB_SUBSTRING; break;
 
 			case TOKEN_DELIM:
-				if (block->TOKEN_value == '=') {
+				if ((block.value as Integer) == '=') {
 					type = SEL_ATTRIB_EXACT;
 				}
 				break;
@@ -383,32 +410,27 @@ function @parse_additional_selector(par, handle_not)
 		}
 
 		if (type == -1) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 
 		consume_whitespace(block);
 
-		var value;
+		var value: String;
 		token = next_token(block);
 		if (token == TOKEN_IDENT || token == TOKEN_STRING) {
-			value = block->TOKEN_value;
+			value = block.value as String;
 		}
 		else {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 
 		consume_whitespace(block);
 		token = next_token(block);
 		if (token != TOKEN_EOF) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 
-		var sel = object_create(SELECTOR_SIZE);
-		sel->SELECTOR_type = type;
-		sel->SELECTOR_attrib_namespace = namespace? string_to_lower_case(namespace) : null;
-		sel->SELECTOR_attrib_name = string_to_lower_case(name);
-		sel->SELECTOR_attrib_value = value;
-		return sel;
+		return AttribSelector::create(type, namespace? namespace.to_lower_case() : null, name.to_lower_case(), value);
 	}
 	else if (token == TOKEN_COLON) {
 		var double = false;
@@ -419,79 +441,64 @@ function @parse_additional_selector(par, handle_not)
 		}
 
 		if (token == TOKEN_IDENT) {
-			var name = par->TOKEN_value;
+			var name = par.value as String;
 			if (!double && is_compat_pseudo_element(name)) {
 				double = true;
 			}
-			var sel = object_create(SELECTOR_SIZE);
-			sel->SELECTOR_type = double? SEL_PSEUDO_ELEMENT : SEL_PSEUDO_CLASS;
-			sel->SELECTOR_pseudo_name = string_to_lower_case(name);
-			return sel;
+			return PseudoSelector::create(double? SEL_PSEUDO_ELEMENT : SEL_PSEUDO_CLASS, name.to_lower_case());
 		}
 
 		if (double || token != COMPONENT_FUNCTION) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 
-		var func = par->TOKEN_value;
-		var name = string_to_lower_case(func->FUNCTION_name);
+		var func = par.value as Function;
+		var name = func.name.to_lower_case();
 
 		rewind_buffer(func);
 		consume_whitespace(func);
 
-		if (handle_not && length(name) == 3 && string_to_lower_case(name) == "not") {
+		if (handle_not && name.length == 3 && name.to_lower_case() == "not") {
 			var not_sel = parse_type_selector(func);
 			if (!not_sel) {
 				not_sel = parse_additional_selector(func, false);
-				if (!not_sel) return 0, error("syntax error");
+				if (!not_sel) throw error("syntax error");
 			}
 
 			consume_whitespace(func);
 
 			token = next_token(func);
 			if (token != TOKEN_EOF) {
-				return 0, error("syntax error");
+				throw error("syntax error");
 			}
 
-			var sel = object_create(SELECTOR_SIZE);
-			sel->SELECTOR_type = SEL_NOT;
-			sel->SELECTOR_not_selector = not_sel;
-			return sel;
+			return NotSelector::create(not_sel);
 		}
 
-		var sel = null;
+		var sel: Selector;
 
 		token = next_token(func);
 
 		if (is_anb_syntax_start(func)) {
 			back_token(func);
-			sel = object_create(SELECTOR_SIZE);
-			sel->SELECTOR_type = SEL_FUNCTION_ANB;
-			sel->SELECTOR_func_name = name;
-			sel->SELECTOR_func_expr = parse_anb_syntax(func);
+			sel = FunctionSelector::create(SEL_FUNCTION_ANB, name, parse_anb_syntax(func));
 		}
 		else if (token == TOKEN_IDENT) {
-			sel = object_create(SELECTOR_SIZE);
-			sel->SELECTOR_type = SEL_FUNCTION_IDENT;
-			sel->SELECTOR_func_name = name;
-			sel->SELECTOR_func_expr = func->TOKEN_value;
+			sel = FunctionSelector::create(SEL_FUNCTION_IDENT, name, func.value as String);
 		}
 		else if (token == TOKEN_STRING) {
-			sel = object_create(SELECTOR_SIZE);
-			sel->SELECTOR_type = SEL_FUNCTION_STRING;
-			sel->SELECTOR_func_name = name;
-			sel->SELECTOR_func_expr = func->TOKEN_value;
+			sel = FunctionSelector::create(SEL_FUNCTION_STRING, name, func.value as String);
 		}
 
 		if (!sel) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 
 		consume_whitespace(func);
 
 		token = next_token(func);
 		if (token != TOKEN_EOF) {
-			return 0, error("syntax error");
+			throw error("syntax error");
 		}
 
 		return sel;
@@ -501,32 +508,32 @@ function @parse_additional_selector(par, handle_not)
 	return null;
 }
 
-function @is_compat_pseudo_element(name)
+function @is_compat_pseudo_element(name: String): Boolean
 {
-	switch (length(name)) {
-		case 5: if (string_to_lower_case(name) == "after") return true;
-		case 6: if (string_to_lower_case(name) == "before") return true;
-		case 10: if (string_to_lower_case(name) == "first-line") return true;
-		case 12: if (string_to_lower_case(name) == "first-letter") return true;
+	switch (name.to_lower_case()) {
+		case "before":       return true;
+		case "after":        return true;
+		case "first-line":   return true;
+		case "first-letter": return true;
 	}
 	return false;
 }
 
-function dump_selector_group(group)
+function dump_selector_group(group: Selector[])
 {
-	for (var i=0; i<length(group); i++) {
-		log({"group ", i, ":"});
+	for (var i=0; i<group.length; i++) {
+		log("group "+i+":");
 		dump_selector(group[i], 1);
 	}
 }
 
-function @str(s)
+function @str(s: String): String
 {
 	if (!s) return "(none)";
-	return {"'", s, "'"};
+	return "'"+s+"'";
 }
 
-function dump_selector(sel, level)
+function dump_selector(sel: Selector, level: Integer)
 {
 	var prefix = {""};
 	for (var i=0; i<level; i++) {
@@ -534,124 +541,124 @@ function dump_selector(sel, level)
 		prefix[] = ' ';
 	}
 
-	switch (sel->SELECTOR_type) {
+	switch (sel.type) {
 		case SEL_TYPE:
-			log({prefix, "type ns=", str(sel->SELECTOR_elem_namespace), " name=", str(sel->SELECTOR_elem_name)});
+			log(prefix+"type ns="+str((sel as TypeSelector).namespace)+" name="+str((sel as TypeSelector).name));
 			break;
 
 		case SEL_ID:
-			log({prefix, "id name=", str(sel->SELECTOR_id_name)});
+			log(prefix+"id name="+str((sel as IDSelector).name));
 			break;
 
 		case SEL_CLASS:
-			log({prefix, "class name=", str(sel->SELECTOR_class_name)});
+			log(prefix+"class name="+str((sel as ClassSelector).name));
 			break;
 
 		case SEL_ATTRIB:
-			log({prefix, "attrib ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name)});
+			log(prefix+"attrib ns="+str((sel as AttribSelector).namespace)+" name="+str((sel as AttribSelector).name));
 			break;
 
 		case SEL_ATTRIB_PREFIX:
-			log({prefix, "attrib prefix ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			log(prefix+"attrib prefix ns="+str((sel as AttribSelector).namespace)+" name="+str((sel as AttribSelector).name)+" value="+str((sel as AttribSelector).value));
 			break;
 
 		case SEL_ATTRIB_SUFFIX:
-			log({prefix, "attrib suffix ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			log(prefix+"attrib suffix ns="+str((sel as AttribSelector).namespace)+" name="+str((sel as AttribSelector).name)+" value="+str((sel as AttribSelector).value));
 			break;
 
 		case SEL_ATTRIB_SUBSTRING:
-			log({prefix, "attrib substring ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			log(prefix+"attrib substring ns="+str((sel as AttribSelector).namespace)+" name="+str((sel as AttribSelector).name)+" value="+str((sel as AttribSelector).value));
 			break;
 
 		case SEL_ATTRIB_EXACT:
-			log({prefix, "attrib exact ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			log(prefix+"attrib exact ns="+str((sel as AttribSelector).namespace)+" name="+str((sel as AttribSelector).name)+" value="+str((sel as AttribSelector).value));
 			break;
 
 		case SEL_ATTRIB_INCLUDE:
-			log({prefix, "attrib include ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			log(prefix+"attrib include ns="+str((sel as AttribSelector).namespace)+" name="+str((sel as AttribSelector).name)+" value="+str((sel as AttribSelector).value));
 			break;
 
 		case SEL_ATTRIB_DASH:
-			log({prefix, "attrib dash ns=", str(sel->SELECTOR_attrib_namespace), " name=", str(sel->SELECTOR_attrib_name), " value=", str(sel->SELECTOR_attrib_value)});
+			log(prefix+"attrib dash ns="+str((sel as AttribSelector).namespace)+" name="+str((sel as AttribSelector).name)+" value="+str((sel as AttribSelector).value));
 			break;
 
 		case SEL_PSEUDO_ELEMENT:
-			log({prefix, "pseudo element name=", str(sel->SELECTOR_pseudo_name)});
+			log(prefix+"pseudo element name="+str((sel as PseudoSelector).name));
 			break;
 
 		case SEL_PSEUDO_CLASS:
-			log({prefix, "pseudo class name=", str(sel->SELECTOR_pseudo_name)});
+			log(prefix+"pseudo class name="+str((sel as PseudoSelector).name));
 			break;
 
 		case SEL_FUNCTION_IDENT:
-			log({prefix, "function name=", str(sel->SELECTOR_func_name), " ident=", sel->SELECTOR_func_expr});
+			log(prefix+"function name="+str((sel as FunctionSelector).name)+" ident="+(sel as FunctionSelector).expr);
 			break;
 
 		case SEL_FUNCTION_STRING:
-			log({prefix, "function name=", str(sel->SELECTOR_func_name), " string=", str(sel->SELECTOR_func_expr)});
+			log(prefix+"function name="+str((sel as FunctionSelector).name)+" string="+str((sel as FunctionSelector).expr));
 			break;
 
 		case SEL_FUNCTION_ANB:
-			log({prefix, "function name=", str(sel->SELECTOR_func_name), " anb=", serialize_anb_syntax(sel->SELECTOR_func_expr)});
+			log(prefix+"function name="+str((sel as FunctionSelector).name)+" anb="+serialize_anb_syntax((sel as FunctionSelector).expr));
 			break;
 
 		case SEL_NOT:
-			log({prefix, "negation:"});
-			dump_selector(sel->SELECTOR_not_selector, level+1);
+			log(prefix+"negation:");
+			dump_selector((sel as NotSelector).selector, level+1);
 			break;
 
 		case SEL_SEQUENCE:
-			log({prefix, "sequence:"});
-			for (var i=0; i<length(sel->SELECTOR_selectors); i++) {
-				dump_selector(sel->SELECTOR_selectors[i], level+1);
+			log(prefix+"sequence:");
+			foreach (var s in (sel as SequenceSelector).selectors) {
+				dump_selector(s, level+1);
 			}
 			break;
 
 		case COMB_DESCENDANT:
-			log({prefix, "descendant combinator:"});
-			dump_selector(sel->SELECTOR_first, level+1);
-			dump_selector(sel->SELECTOR_second, level+1);
+			log(prefix+"descendant combinator:");
+			dump_selector((sel as CombinatorSelector).first, level+1);
+			dump_selector((sel as CombinatorSelector).second, level+1);
 			break;
 
 		case COMB_CHILD:
-			log({prefix, "child combinator:"});
-			dump_selector(sel->SELECTOR_first, level+1);
-			dump_selector(sel->SELECTOR_second, level+1);
+			log(prefix+"child combinator:");
+			dump_selector((sel as CombinatorSelector).first, level+1);
+			dump_selector((sel as CombinatorSelector).second, level+1);
 			break;
 
 		case COMB_NEXT_SIBLING:
-			log({prefix, "next sibling combinator:"});
-			dump_selector(sel->SELECTOR_first, level+1);
-			dump_selector(sel->SELECTOR_second, level+1);
+			log(prefix+"next sibling combinator:");
+			dump_selector((sel as CombinatorSelector).first, level+1);
+			dump_selector((sel as CombinatorSelector).second, level+1);
 			break;
 
 		case COMB_SUBSEQUENT_SIBLING:
-			log({prefix, "subsequent sibling combinator:"});
-			dump_selector(sel->SELECTOR_first, level+1);
-			dump_selector(sel->SELECTOR_second, level+1);
+			log(prefix+"subsequent sibling combinator:");
+			dump_selector((sel as CombinatorSelector).first, level+1);
+			dump_selector((sel as CombinatorSelector).second, level+1);
 			break;
 
 		default:
-			log({prefix, "unknown selector type ", sel->SELECTOR_type});
+			log(prefix+"unknown selector type "+sel.type);
 			break;
 	}
 }
 
-function @serialize_selector(s, sel)
+function @serialize_selector(s: String, sel: Selector)
 {
-	switch (sel->SELECTOR_type) {
+	switch (sel.type) {
 		case SEL_TYPE:
-			string_append(s, css_serialize_type(sel->SELECTOR_elem_name));
+			s += css_serialize_type((sel as TypeSelector).name);
 			break;
 
 		case SEL_ID:
 			s[] = '#';
-			string_append(s, css_escape(sel->SELECTOR_id_name));
+			s += css_escape((sel as IDSelector).name);
 			break;
 
 		case SEL_CLASS:
 			s[] = '.';
-			string_append(s, css_escape(sel->SELECTOR_class_name));
+			s += css_escape((sel as ClassSelector).name);
 			break;
 
 		case SEL_ATTRIB:
@@ -662,137 +669,137 @@ function @serialize_selector(s, sel)
 		case SEL_ATTRIB_INCLUDE:
 		case SEL_ATTRIB_DASH:
 			s[] = '[';
-			if (sel->SELECTOR_attrib_namespace) {
-				string_append(s, css_serialize_namespace(sel->SELECTOR_attrib_namespace));
+			if ((sel as AttribSelector).namespace) {
+				s += css_serialize_namespace((sel as AttribSelector).namespace);
 				s[] = '|';
 			}
-			string_append(s, css_escape(sel->SELECTOR_attrib_name));
-			if (sel->SELECTOR_type != SEL_ATTRIB) {
-				switch (sel->SELECTOR_type) {
-					case SEL_ATTRIB_PREFIX:    string_append(s, "^="); break;
-					case SEL_ATTRIB_SUFFIX:    string_append(s, "$="); break;
-					case SEL_ATTRIB_SUBSTRING: string_append(s, "*="); break;
-					case SEL_ATTRIB_EXACT:     string_append(s, "="); break;
-					case SEL_ATTRIB_INCLUDE:   string_append(s, "~="); break;
-					case SEL_ATTRIB_DASH:      string_append(s, "|="); break;
+			s += css_escape((sel as AttribSelector).name);
+			if (sel.type != SEL_ATTRIB) {
+				switch (sel.type) {
+					case SEL_ATTRIB_PREFIX:    s += "^="; break;
+					case SEL_ATTRIB_SUFFIX:    s += "$="; break;
+					case SEL_ATTRIB_SUBSTRING: s += "*="; break;
+					case SEL_ATTRIB_EXACT:     s += "="; break;
+					case SEL_ATTRIB_INCLUDE:   s += "~="; break;
+					case SEL_ATTRIB_DASH:      s += "|="; break;
 				}
-				string_append(s, css_serialize_string(sel->SELECTOR_attrib_value));
+				s += css_serialize_string((sel as AttribSelector).value);
 			}
 			s[] = ']';
 			break;
 
 		case SEL_PSEUDO_ELEMENT:
 			s[] = ':';
-			if (!is_compat_pseudo_element(sel->SELECTOR_pseudo_name)) {
+			if (!is_compat_pseudo_element((sel as PseudoSelector).name)) {
 				s[] = ':';
 			}
-			string_append(s, css_escape(sel->SELECTOR_pseudo_name));
+			s += css_escape((sel as PseudoSelector).name);
 			break;
 
 		case SEL_PSEUDO_CLASS:
 			s[] = ':';
-			string_append(s, css_escape(sel->SELECTOR_pseudo_name));
+			s += css_escape((sel as PseudoSelector).name);
 			break;
 
 		case SEL_FUNCTION_IDENT:
 			s[] = ':';
-			string_append(s, css_escape(sel->SELECTOR_func_name));
+			s += css_escape((sel as FunctionSelector).name);
 			s[] = '(';
-			string_append(s, css_escape(sel->SELECTOR_func_expr));
+			s += css_escape((sel as FunctionSelector).expr as String);
 			s[] = ')';
 			break;
 
 		case SEL_FUNCTION_STRING:
 			s[] = ':';
-			string_append(s, css_escape(sel->SELECTOR_func_name));
+			s += css_escape((sel as FunctionSelector).name);
 			s[] = '(';
-			string_append(s, css_serialize_string(sel->SELECTOR_func_expr));
+			s += css_serialize_string((sel as FunctionSelector).expr as String);
 			s[] = ')';
 			break;
 
 		case SEL_FUNCTION_ANB:
 			s[] = ':';
-			string_append(s, css_escape(sel->SELECTOR_func_name));
+			s += css_escape((sel as FunctionSelector).name);
 			s[] = '(';
-			string_append(s, serialize_anb_syntax(sel->SELECTOR_func_expr));
+			s += serialize_anb_syntax((sel as FunctionSelector).expr as ANB);
 			s[] = ')';
 			break;
 
 		case SEL_NOT:
-			string_append(s, ":not(");
-			serialize_selector(s, sel->SELECTOR_not_selector);
+			s += ":not(";
+			serialize_selector(s, (sel as NotSelector).selector);
 			s[] = ')';
 			break;
 
 		case SEL_SEQUENCE:
-			for (var i=0; i<length(sel->SELECTOR_selectors); i++) {
-				serialize_selector(s, sel->SELECTOR_selectors[i]);
+			foreach (var sel2 in (sel as SequenceSelector).selectors) {
+				serialize_selector(s, sel2);
 			}
 			break;
 
 		case COMB_DESCENDANT:
-			serialize_selector(s, sel->SELECTOR_first);
+			serialize_selector(s, (sel as CombinatorSelector).first);
 			s[] = ' ';
-			serialize_selector(s, sel->SELECTOR_second);
+			serialize_selector(s, (sel as CombinatorSelector).second);
 			break;
 
 		case COMB_CHILD:
-			serialize_selector(s, sel->SELECTOR_first);
+			serialize_selector(s, (sel as CombinatorSelector).first);
 			s[] = ' ';
 			s[] = '>';
 			s[] = ' ';
-			serialize_selector(s, sel->SELECTOR_second);
+			serialize_selector(s, (sel as CombinatorSelector).second);
 			break;
 
 		case COMB_NEXT_SIBLING:
-			serialize_selector(s, sel->SELECTOR_first);
+			serialize_selector(s, (sel as CombinatorSelector).first);
 			s[] = ' ';
 			s[] = '+';
 			s[] = ' ';
-			serialize_selector(s, sel->SELECTOR_second);
+			serialize_selector(s, (sel as CombinatorSelector).second);
 			break;
 
 		case COMB_SUBSEQUENT_SIBLING:
-			serialize_selector(s, sel->SELECTOR_first);
+			serialize_selector(s, (sel as CombinatorSelector).first);
 			s[] = ' ';
 			s[] = '~';
 			s[] = ' ';
-			serialize_selector(s, sel->SELECTOR_second);
+			serialize_selector(s, (sel as CombinatorSelector).second);
 			break;
 
 		default:
-			return 0, error({"unknown selector type ", sel->SELECTOR_type});
+			throw error("unknown selector type "+sel.type);
 	}
 }
 
-function serialize_selector(sel)
+function serialize_selector(sel: Selector): String
 {
 	var s = {""};
 	serialize_selector(s, sel);
 	return s;
 }
 
-function serialize_selector_group(group)
+function serialize_selector_group(group: Selector[]): String
 {
 	var s = {""};
-	for (var i=0; i<length(group); i++) {
-		if (length(s) > 0) {
+	foreach (var sel in group) {
+		if (s.length > 0) {
 			s[] = ',';
 			s[] = ' ';
 		}
-		serialize_selector(s, group[i]);
+		serialize_selector(s, sel);
 	}
 	return s;
 }
 
-function selector_get_child_count(sel)
+function selector_get_child_count(sel: Selector): Integer
 {
-	switch (sel->SELECTOR_type) {
+	switch (sel.type) {
 		case SEL_NOT:
 			return 1;
 			
 		case SEL_SEQUENCE:
-			return length(sel->SELECTOR_selectors);
+			return (sel as SequenceSelector).selectors.length;
 
 		case COMB_DESCENDANT:
 		case COMB_CHILD:
@@ -803,23 +810,23 @@ function selector_get_child_count(sel)
 	return 0;
 }
 
-function selector_get_child(sel, idx)
+function selector_get_child(sel: Selector, idx: Integer): Selector
 {
-	switch (sel->SELECTOR_type) {
+	switch (sel.type) {
 		case SEL_NOT:
-			if (idx == 0) return sel->SELECTOR_not_selector;
+			if (idx == 0) return (sel as NotSelector).selector;
 			break;
 			
 		case SEL_SEQUENCE:
-			return sel->SELECTOR_selectors[idx];
+			return (sel as SequenceSelector).selectors[idx];
 
 		case COMB_DESCENDANT:
 		case COMB_CHILD:
 		case COMB_NEXT_SIBLING:
 		case COMB_SUBSEQUENT_SIBLING:
-			if (idx == 0) return sel->SELECTOR_first;
-			if (idx == 1) return sel->SELECTOR_second;
+			if (idx == 0) return (sel as CombinatorSelector).first;
+			if (idx == 1) return (sel as CombinatorSelector).second;
 			break;
 	}
-	return 0, error("invalid child selector index");
+	throw error("invalid child selector index");
 }

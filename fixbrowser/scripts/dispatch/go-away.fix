@@ -1,0 +1,41 @@
+use "classes";
+
+import "util/common";
+import "util/json";
+import "dispatch/gateopener";
+
+function handle_request(request: Request)
+{
+	var gk = GateKeeper::get(request.get_domain());
+	if (gk) {
+		var user_agent = gk.opt("go-away_user_agent").as_string();
+		if (user_agent.length > 0) {
+			request.set_header("User-Agent", user_agent);
+		}
+		var cookies = gk.opt("go-away_cookies").as_object();
+		foreach (var name, value in cookies) {
+			request.append_to_header("Cookie", name+"="+value);
+		}
+	}
+}
+
+function adjust_document(request: Request, document: Element)
+{
+	var url = request.get_url();
+
+	var result = GateOpener::process({
+		"type": "generic",
+		"url": url
+	});
+	if (result) {
+		dump(result);
+		GateKeeper::set(request.get_domain(), "go-away", {
+			"go-away_user_agent": result.get("user_agent"),
+			"go-away_cookies": result.get("cookies")
+		});
+		request.set_redirect(url);
+	}
+	else {
+		show_gateopener_info(request, "\"go-away\"");
+	}
+}

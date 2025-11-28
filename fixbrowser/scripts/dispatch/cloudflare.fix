@@ -1,15 +1,41 @@
-import "util/common";
-import "util/archive";
+use "classes";
 
-function adjust_document(request, document)
+import "util/common";
+import "util/json";
+import "dispatch/gateopener";
+
+function handle_request(request: Request)
 {
-	var url = request_get_url(request);
-	var content = {
-		"<div style=\"font-family: sans-serif; font-size: 16px\">",
-		"<b>Error: This website is crippled by Cloudflare CDN service.</b><br><br>",
-		"You may look it up on <a href=\"", get_archive_org_link(request, url), "\">Internet Archive</a> ",
-		"or on <a href=\"", get_archive_today_link(request, url), "\">Archive Today</a>.",
-		"</div>"
-	};
-	request_replace_document(request, document_parse(content));
+	var gk = GateKeeper::get(request.get_domain());
+	if (gk) {
+		var cookies = gk.opt("cloudflare_cookies").as_object();
+		foreach (var name, value in cookies) {
+			request.append_to_header("Cookie", name+"="+value);
+		}
+	}
+}
+
+function adjust_document(request: Request, document: Element)
+{
+	var url = request.get_url();
+
+	var result = GateOpener::process({
+		"type": "cloudflare",
+		"url": url
+	});
+	if (result) {
+		dump(result);
+		if (result.get("direct_response", JSONBoolean::get(false)).as_boolean()) {
+			log("error: got direct response without Cloudflare challenge");
+		}
+		else {
+			GateKeeper::set(request.get_domain(), "cloudflare", {
+				"cloudflare_cookies": result.get("cookies")
+			});
+			request.set_redirect(url);
+		}
+	}
+	else {
+		show_gateopener_info(request, "Cloudflare");
+	}
 }

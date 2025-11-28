@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -18,6 +18,9 @@
  *    misrepresented as being the original software.
  * 3. This notice may not be removed or altered from any source distribution.
  */
+
+use "string_switch";
+use "classes";
 
 import "browser/css/parser";
 import "browser/css/property";
@@ -49,42 +52,48 @@ const {
 	CMP_MAX
 };
 
-const {
-	MEDIA_type = 0,
-
+// TODO: make it better
+class MediaQuery
+{
+	var type: Integer;
+	
 	// values:
-	MEDIA_cmp = 1,
-	MEDIA_value = 2,
+	var cmp: Integer;
+	var value: Value;
 
 	// logical:
-	MEDIA_first = 1,
-	MEDIA_second = 2,
+	var first: MediaQuery;
+	var second: MediaQuery;
 
-	@MEDIA_SIZE = 3
-};
+	constructor create(type: Integer)
+	{
+		this.type = type;
+	}
+
+	constructor create_values(type: Integer, cmp: Integer, value: Value)
+	{
+		this.type = type;
+		this.cmp = cmp;
+		this.value = value;
+	}
+
+	constructor create_logical(type: Integer, first: MediaQuery)
+	{
+		this.type = type;
+		this.first = first;
+	}
+
+	constructor create_logical(type: Integer, first: MediaQuery, second: MediaQuery)
+	{
+		this.type = type;
+		this.first = first;
+		this.second = second;
+	}
+}
 
 const @UNKNOWN_FEATURE = -1;
 
-function media_create(type)
-{
-	return media_create(type, null, null);
-}
-
-function media_create(type, first)
-{
-	return media_create(type, first, null);
-}
-
-function media_create(type, cmp_or_first, value_or_second)
-{
-	var media = object_create(MEDIA_SIZE);
-	media->MEDIA_type = type;
-	media->MEDIA_cmp = cmp_or_first;
-	media->MEDIA_value = value_or_second;
-	return media;
-}
-
-function @consume_whitespace(par)
+function @consume_whitespace(par: Parser)
 {
 	var token = next_token(par);
 	while (token == TOKEN_WHITESPACE) {
@@ -93,9 +102,9 @@ function @consume_whitespace(par)
 	back_token(par);
 }
 
-function parse_media_query_list(par)
+function parse_media_query_list(par: Parser): MediaQuery
 {
-	var media;
+	var media: MediaQuery;
 	
 	for (;;) {
 		consume_whitespace(par);
@@ -104,7 +113,7 @@ function parse_media_query_list(par)
 
 		back_token(par);
 		var media2 = parse_media_query(par);
-		media = media? media_create(MEDIA_OR, media, media2) : media2;
+		media = media? MediaQuery::create_logical(MEDIA_OR, media, media2) : media2;
 
 		if (next_token(par) != TOKEN_COMMA) break;
 	}
@@ -112,7 +121,7 @@ function parse_media_query_list(par)
 	return media;
 }
 
-function @flush(par)
+function @flush(par: Parser)
 {
 	for (;;) {
 		var token = next_token(par);
@@ -121,7 +130,7 @@ function @flush(par)
 	back_token(par);
 }
 
-function @expect_ident_or_flush(par)
+function @expect_ident_or_flush(par: Parser): Boolean
 {
 	if (next_token(par) != TOKEN_IDENT) {
 		back_token(par);
@@ -131,26 +140,26 @@ function @expect_ident_or_flush(par)
 	return true;
 }
 
-function @parse_media_query(par)
+function @parse_media_query(par: Parser): MediaQuery
 {
-	if (next_token(par) == COMPONENT_SIMPLE_BLOCK && par->TOKEN_value->SIMPLEBLOCK_associated_token == TOKEN_LBRACKET) {
+	if (next_token(par) == COMPONENT_SIMPLE_BLOCK && (par.value as SimpleBlock).associated_token == TOKEN_LBRACKET) {
 		back_token(par);
 		var media = parse_expression(par);
 		if (!media) return null;
 		
 		if (media == UNKNOWN_FEATURE) {
-			return media_create(MEDIA_NOT, media_create(MEDIA_ALL));
+			return MediaQuery::create_logical(MEDIA_NOT, MediaQuery::create(MEDIA_ALL));
 		}
 
 		for (;;) {
-			if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "and") {
+			if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "and") {
 				consume_whitespace(par);
 				var expr = parse_expression(par);
 				if (!expr) return null;
 				if (expr == UNKNOWN_FEATURE) {
-					return media_create(MEDIA_NOT, media_create(MEDIA_ALL));
+					return MediaQuery::create_logical(MEDIA_NOT, MediaQuery::create(MEDIA_ALL));
 				}
-				media = media_create(MEDIA_AND, media, expr);
+				media = MediaQuery::create_logical(MEDIA_AND, media, expr);
 			}
 			else {
 				back_token(par);
@@ -167,29 +176,24 @@ function @parse_media_query(par)
 
 	var use_only = false, use_not = false;
 
-	var name = string_to_lower_case(par->TOKEN_value);
+	var name = (par.value as String).to_lower_case();
 	if (name == "only") {
 		use_only = true;
 		consume_whitespace(par);
 		if (!expect_ident_or_flush(par)) return null;
-		name = string_to_lower_case(par->TOKEN_value);
+		name = (par.value as String).to_lower_case();
 	}
 	else if (name == "not") {
 		use_not = true;
 		consume_whitespace(par);
 		if (!expect_ident_or_flush(par)) return null;
-		name = string_to_lower_case(par->TOKEN_value);
+		name = (par.value as String).to_lower_case();
 	}
 
 	var type = -1;
-	switch (length(name)) {
-		case 3:
-			if (name == "all") { type = MEDIA_ALL; break; }
-			break;
-
-		case 6:
-			if (name == "screen") { type = MEDIA_SCREEN; break; }
-			break;
+	switch (name) {
+		case "all":    type = MEDIA_ALL; break;
+		case "screen": type = MEDIA_SCREEN; break;
 	}
 
 	if (type == -1) {
@@ -198,19 +202,19 @@ function @parse_media_query(par)
 		use_only = false;
 	}
 
-	var media = media_create(type);
+	var media = MediaQuery::create(type);
 
 	consume_whitespace(par);
 	
 	for (;;) {
-		if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "and") {
+		if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "and") {
 			consume_whitespace(par);
 			var expr = parse_expression(par);
 			if (!expr) return null;
 			if (expr == UNKNOWN_FEATURE) {
-				return media_create(MEDIA_NOT, media_create(MEDIA_ALL));
+				return MediaQuery::create_logical(MEDIA_NOT, MediaQuery::create(MEDIA_ALL));
 			}
-			media = media_create(MEDIA_AND, media, expr);
+			media = MediaQuery::create_logical(MEDIA_AND, media, expr);
 		}
 		else {
 			back_token(par);
@@ -219,23 +223,23 @@ function @parse_media_query(par)
 	}
 
 	if (use_only) {
-		media = media_create(MEDIA_ONLY, media);
+		media = MediaQuery::create_logical(MEDIA_ONLY, media);
 	}
 	if (use_not) {
-		media = media_create(MEDIA_NOT, media);
+		media = MediaQuery::create_logical(MEDIA_NOT, media);
 	}
 	return media;
 }
 
-function @parse_expression(par)
+function @parse_expression(par: Parser): Dynamic
 {
 	if (next_token(par) != COMPONENT_SIMPLE_BLOCK) {
 		flush(par);
 		return null;
 	}
 
-	var block = par->TOKEN_value;
-	if (block->SIMPLEBLOCK_associated_token != TOKEN_LBRACKET) {
+	var block = par.value as SimpleBlock;
+	if (block.associated_token != TOKEN_LBRACKET) {
 		flush(par);
 		return null;
 	}
@@ -247,44 +251,27 @@ function @parse_expression(par)
 		flush(par);
 		return null;
 	}
-	var name = string_to_lower_case(block->TOKEN_value);
+	var name = (block.value as String).to_lower_case();
 
-	var type = -1, cmp = CMP_EXISTS, value;
+	var type = -1, cmp = CMP_EXISTS, value: Value;
 
-	if (string_starts_with(name, "min-")) {
+	if (name.starts_with("min-")) {
 		cmp = CMP_MIN;
-		array_remove(name, 0, 4);
+		name.remove(0, 4);
 	}
-	else if (string_starts_with(name, "max-")) {
+	else if (name.starts_with("max-")) {
 		cmp = CMP_MAX;
-		array_remove(name, 0, 4);
+		name.remove(0, 4);
 	}
 	
-	switch (length(name)) {
-		case 5:
-			if (name == "width") { type = MEDIA_WIDTH; break; }
-			break;
-
-		case 6:
-			if (name == "height") { type = MEDIA_HEIGHT; break; }
-			break;
-
-		case 11:
-			if (name == "orientation") { type = MEDIA_ORIENTATION; break; }
-			break;
-
-		case 12:
-			if (name == "device-width") { type = MEDIA_DEVICE_WIDTH; break; }
-			if (name == "aspect-ratio") { type = MEDIA_ASPECT_RATIO; break; }
-			break;
-
-		case 13:
-			if (name == "device-height") { type = MEDIA_DEVICE_HEIGHT; break; }
-			break;
-
-		case 19:
-			if (name == "device-aspect-ratio") { type = MEDIA_DEVICE_ASPECT_RATIO; break; }
-			break;
+	switch (name) {
+		case "width":               type = MEDIA_WIDTH; break;
+		case "height":              type = MEDIA_HEIGHT; break;
+		case "device-width":        type = MEDIA_DEVICE_WIDTH; break;
+		case "device-height":       type = MEDIA_DEVICE_HEIGHT; break;
+		case "orientation":         type = MEDIA_ORIENTATION; break;
+		case "aspect-ratio":        type = MEDIA_ASPECT_RATIO; break;
+		case "device-aspect-ratio": type = MEDIA_DEVICE_ASPECT_RATIO; break;
 	}
 
 	if (type == -1) {
@@ -309,7 +296,7 @@ function @parse_expression(par)
 					flush(par);
 					return null;
 				}
-				if ({len->VALUE_value < 0.0}) {
+				if (len.value < 0.0) {
 					flush(par);
 					return null;
 				}
@@ -326,12 +313,12 @@ function @parse_expression(par)
 					flush(par);
 					return null;
 				}
-				var orient = string_to_lower_case(block->TOKEN_value);
+				var orient = (block.value as String).to_lower_case();
 				if (orient == "portrait") {
-					value = value_create(VALUE_PORTRAIT);
+					value = Value::create(VALUE_PORTRAIT);
 				}
 				else if (orient == "landscape") {
-					value = value_create(VALUE_LANDSCAPE);
+					value = Value::create(VALUE_LANDSCAPE);
 				}
 				else {
 					flush(par);
@@ -346,9 +333,9 @@ function @parse_expression(par)
 					flush(par);
 					return null;
 				}
-				var v1 = block->TOKEN_value;
+				var v1 = block.value as Number;
 				consume_whitespace(block);
-				if (next_token(block) != TOKEN_DELIM || block->TOKEN_value != '/') {
+				if (next_token(block) != TOKEN_DELIM || (block.value as Integer) != '/') {
 					flush(par);
 					return null;
 				}
@@ -357,16 +344,16 @@ function @parse_expression(par)
 					flush(par);
 					return null;
 				}
-				var v2 = block->TOKEN_value;
-				if (v1[2] || v2[2] || v1[1] < 1 || v2[1] < 1) {
+				var v2 = block.value as Number;
+				if (v1.is_number || v2.is_number || (v1.value as Integer) < 1 || (v2.value as Integer) < 1) {
 					flush(par);
 					return null;
 				}
-				value = value_create_slash_group(value_create_integer(v1[1]), value_create_integer(v2[1]));
+				value = SlashGroupValue::create(IntegerValue::create(v1.value as Integer), IntegerValue::create(v2.value as Integer));
 				break;
 			}
 
-			default: return 0, error("unhandled case");
+			default: throw error("unhandled case");
 		}
 	}
 	else {
@@ -385,49 +372,49 @@ function @parse_expression(par)
 	}
 
 	consume_whitespace(par);
-	return media_create(type, cmp, value);
+	return MediaQuery::create_values(type, cmp, value);
 }
 
-function serialize_media_query(media)
+function serialize_media_query(media: MediaQuery): String
 {
-	switch (media->MEDIA_type) {
+	switch (media.type) {
 		case MEDIA_ALL:    return "all";
 		case MEDIA_SCREEN: return "screen";
 
 		case MEDIA_ONLY:
-			return {"only ", serialize_media_query(media->MEDIA_first)};
+			return "only "+serialize_media_query(media.first);
 
 		case MEDIA_NOT:
-			return {"not ", serialize_media_query(media->MEDIA_first)};
+			return "not "+serialize_media_query(media.first);
 
 		case MEDIA_AND:
-			return {serialize_media_query(media->MEDIA_first), " and ", serialize_media_query(media->MEDIA_second)};
+			return serialize_media_query(media.first)+" and "+serialize_media_query(media.second);
 
 		case MEDIA_OR:
-			return {serialize_media_query(media->MEDIA_first), ", ", serialize_media_query(media->MEDIA_second)};
+			return serialize_media_query(media.first)+", "+serialize_media_query(media.second);
 	}
 
 	var s = {"("};
-	switch (media->MEDIA_cmp) {
+	switch (media.cmp) {
 		case CMP_EXISTS, CMP_EXACT: break;
-		case CMP_MIN: string_append(s, "min-"); break;
-		case CMP_MAX: string_append(s, "max-"); break;
-		default: return 0, error("unknown compare type");
+		case CMP_MIN: s += "min-"; break;
+		case CMP_MAX: s += "max-"; break;
+		default: throw error("unknown compare type");
 	}
-	switch (media->MEDIA_type) {
-		case MEDIA_WIDTH:               string_append(s, "width"); break;
-		case MEDIA_HEIGHT:              string_append(s, "height"); break;
-		case MEDIA_DEVICE_WIDTH:        string_append(s, "device-width"); break;
-		case MEDIA_DEVICE_HEIGHT:       string_append(s, "device-height"); break;
-		case MEDIA_ORIENTATION:         string_append(s, "orientation"); break;
-		case MEDIA_ASPECT_RATIO:        string_append(s, "aspect-ratio"); break;
-		case MEDIA_DEVICE_ASPECT_RATIO: string_append(s, "device-aspect-ratio"); break;
-		default: return 0, error("unknown media type");
+	switch (media.type) {
+		case MEDIA_WIDTH:               s += "width"; break;
+		case MEDIA_HEIGHT:              s += "height"; break;
+		case MEDIA_DEVICE_WIDTH:        s += "device-width"; break;
+		case MEDIA_DEVICE_HEIGHT:       s += "device-height"; break;
+		case MEDIA_ORIENTATION:         s += "orientation"; break;
+		case MEDIA_ASPECT_RATIO:        s += "aspect-ratio"; break;
+		case MEDIA_DEVICE_ASPECT_RATIO: s += "device-aspect-ratio"; break;
+		default: throw error("unknown media type");
 	}
-	if (media->MEDIA_cmp != CMP_EXISTS) {
+	if (media.cmp != CMP_EXISTS) {
 		s[] = ':';
 		s[] = ' ';
-		string_append(s, value_to_string(media->MEDIA_value));
+		s += media.value.to_string();
 	}
 	s[] = ')';
 	return s;

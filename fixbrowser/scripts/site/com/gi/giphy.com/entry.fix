@@ -1,0 +1,16 @@
+use "classes";
+
+import "util/common";
+import "util/string";
+
+function handle_request(request: Request)
+{
+	if (request.get_path().starts_with("/media/")) {
+		request.set_header("Accept", "*/*");
+	}
+}
+
+function adjust_document(request: Request, document: Element)
+{
+	remove_all_elements(document, "div.absolute");
+}

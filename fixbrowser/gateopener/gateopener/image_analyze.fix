@@ -1,0 +1,185 @@
+/*
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "io/file";
+import "image/image";
+import "image/rect";
+
+function @find_top_bottom(img: Image, step: Integer, min_width: Integer, min_height: Integer, debug: Boolean): Integer[]
+{
+	var width = img.get_width();
+	var height = img.get_height();
+	var stride = img.get_stride();
+	var pixels = img.get_pixels();
+
+	var background_color = pixels[0];
+	var histogram: Integer[] = Array::create(height, 4);
+
+	for (var i=0; i<width-step+1; i+=step) {
+		for (var j=0; j<height; j++) {
+			var off = j*stride+i;
+			var color = pixels[off];
+			if (color == background_color) continue;
+			var match = true;
+			for (var k=1; k<step; k++) {
+				if (pixels[off+k] != color) {
+					match = false;
+					break;
+				}
+			}
+			if (match) {
+				histogram[j]++;
+				if (debug) {
+					pixels[off] = 0xFFFF00FF;
+				}
+			}
+		}
+	}
+
+	var top = -1;
+
+	for (var i=0; i<height-step+1; i+=step) {
+		var match = true;
+		for (var j=0; j<step; j++) {
+			if (histogram[i] < min_width / step) {
+				match = false;
+				break;
+			}
+		}
+		if (match) {
+			top = i;
+			if (debug) {
+				for (var j=0; j<100; j++) {
+					pixels[i*stride+j] = 0xFFFF0000;
+				}
+			}
+			break;
+		}
+	}
+
+	if (top < 0) {
+		return null;
+	}
+
+	var bottom = top;
+
+	for (var i=top; i<height; i++) {
+		if (histogram[i] == 0) {
+			bottom = i-1;
+			if (debug) {
+				for (var j=0; j<100; j++) {
+					pixels[bottom*stride+j] = 0xFFFF0000;
+				}
+			}
+			break;
+		}
+	}
+
+	if (bottom - top + 1 < min_height) {
+		return null;
+	}
+
+	if (debug) {
+		for (var i=0; i<height; i++) {
+			for (var j=0; j<histogram[i]; j++) {
+				pixels[i*stride+j] = 0xFF0000FF;
+			}
+		}
+	}
+
+	return [top, bottom];
+}
+
+function @get_transpose(img: Image): Image
+{
+	var new_img = Image::create(img.get_height(), img.get_width());
+	var p = Painter::create(new_img);
+	var tr = Transform::create();
+	tr.m00 = 0.0;
+	tr.m01 = 1.0;
+	tr.m10 = 1.0;
+	tr.m11 = 0.0;
+	p.fill_rect(0, 0, new_img.get_width(), new_img.get_height(), Shader {
+		replace(sample_nearest(img, tr));
+	});
+	return new_img;
+}
+
+function @draw_rect(img: Image, rect: Rect, color: Integer)
+{
+	var p = Painter::create(img);
+	p.translate(0.5, 0.5);
+	p.fill_shape(Shape::rect(rect.get_x(), rect.get_y(), rect.get_width()-1, rect.get_height()-1).get_outline(), color);
+}
+
+function @with_margin(rect: Rect, margin: Integer): Rect
+{
+	rect = clone(rect);
+	rect.x1 += margin;
+	rect.y1 += margin;
+	rect.x2 -= margin;
+	rect.y2 -= margin;
+	return rect;
+}
+
+function @set_width(rect: Rect, width: Integer)
+{
+	rect.x2 = rect.x1 + width;
+}
+
+function @find_box(img: Image, step: Integer, min_width: Integer, min_height: Integer): Rect
+{
+	var vert = find_top_bottom(img, step, min_width, min_height, false);
+	if (!vert) {
+		return null;
+	}
+
+	var img2 = get_transpose(img.get_subimage(0, vert[0], img.get_width(), vert[1]-vert[0]+1));
+	var horiz = find_top_bottom(img2, max(2, step/2), min_height, min_width, false);
+	if (!horiz) {
+		return null;
+	}
+
+	return Rect(horiz[0], vert[0], horiz[1]-horiz[0]+1, vert[1]-vert[0]+1);
+}
+
+function find_cloudflare_checkbox(img: Image): Rect
+{
+	var rect = find_box(img, 8, 250, 45);
+	if (!rect) {
+		return null;
+	}
+
+	var inner_rect = with_margin(rect, 5);
+	set_width(inner_rect, inner_rect.get_height());
+
+	var box_img = img.get_subimage(inner_rect);
+	var button_rect = find_box(box_img, 2, 16, 16);
+	if (!button_rect) {
+		return null;
+	}
+	button_rect.translate(inner_rect.get_x(), inner_rect.get_y());
+
+	return button_rect;
+}

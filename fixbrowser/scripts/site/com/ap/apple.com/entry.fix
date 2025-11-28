@@ -1,6 +1,8 @@
+use "classes";
+
 import "util/common";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "mzstatic.com")) return true;
 	return false;

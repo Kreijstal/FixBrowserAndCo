@@ -1,0 +1,793 @@
+/*
+ * FixScript Util v0.4 - https://www.fixscript.org/
+ * Copyright (c) 2021-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const @class_Long = "";
+const @static_Long_create_0 = "(): Long";
+const @static_Long_create_1 = "(Integer): Long";
+const @static_Long_create_2 = "(Integer, Integer): Long";
+const @static_Long_from_string_1 = "(String): Long";
+const @method_Long_set_2 = "(Long): Long";
+const @method_Long_set_int_2 = "(Integer): Long";
+const @method_Long_set_string_2 = "(String): Long";
+const @method_Long_set_raw_3 = "(Integer, Integer): Long";
+const @method_Long_dup_1 = "(): Long";
+const @method_Long_add_2 = "(Long): Long";
+const @method_Long_add_int_2 = "(Integer): Long";
+const @method_Long_add_mod_2 = "(Long): Long";
+const @method_Long_add_mod_int_2 = "(Integer): Long";
+const @method_Long_sub_2 = "(Long): Long";
+const @method_Long_sub_int_2 = "(Integer): Long";
+const @method_Long_sub_mod_2 = "(Long): Long";
+const @method_Long_sub_mod_int_2 = "(Integer): Long";
+const @method_Long_mul_2 = "(Long): Long";
+const @method_Long_mul_int_2 = "(Integer): Long";
+const @method_Long_mul_mod_2 = "(Long): Long";
+const @method_Long_mul_mod_int_2 = "(Integer): Long";
+const @method_Long_div_2 = "(Long): Long";
+const @method_Long_div_int_2 = "(Integer): Long";
+const @method_Long_rem_2 = "(Long): Long";
+const @method_Long_rem_int_2 = "(Integer): Long";
+const @method_Long_and_2 = "(Long): Long";
+const @method_Long_and_3 = "(Integer, Integer): Long";
+const @method_Long_or_2 = "(Long): Long";
+const @method_Long_or_3 = "(Integer, Integer): Long";
+const @method_Long_xor_2 = "(Long): Long";
+const @method_Long_xor_3 = "(Integer, Integer): Long";
+const @method_Long_not_1 = "(): Long";
+const @method_Long_shl_2 = "(Integer): Long";
+const @method_Long_shr_2 = "(Integer): Long";
+const @method_Long_ushr_2 = "(Integer): Long";
+const @method_Long_is_zero_1 = "(): Boolean";
+const @method_Long_cmp_2 = "(Long): Integer";
+const @method_Long_cmp_int_2 = "(Integer): Integer";
+const @method_Long_to_int_1 = "(): Integer";
+const @method_Long_to_unsigned_int_1 = "(): Integer";
+const @method_Long_to_string_1 = "(): String";
+const @operator_Long_add_1 = "__dup_add (Long, Long)";
+const @operator_Long_add_2 = "__dup_add_int (Long, Integer)";
+const @operator_Long_add_3 = "__dup_add_int_rev (Integer, Long)";
+const @operator_Long_add_inplace_1 = "add (Long)";
+const @operator_Long_add_inplace_2 = "add_int (Integer)";
+const @operator_Long_sub_1 = "__dup_sub (Long, Long)";
+const @operator_Long_sub_2 = "__dup_sub_int (Long, Integer)";
+const @operator_Long_sub_3 = "__dup_sub_int_rev (Integer, Long)";
+const @operator_Long_sub_inplace_1 = "sub (Long)";
+const @operator_Long_sub_inplace_2 = "sub_int (Integer)";
+const @operator_Long_mul_1 = "__dup_mul (Long, Long)";
+const @operator_Long_mul_2 = "__dup_mul_int (Long, Integer)";
+const @operator_Long_mul_3 = "__dup_mul_int_rev (Integer, Long)";
+const @operator_Long_mul_inplace_1 = "mul (Long)";
+const @operator_Long_mul_inplace_2 = "mul_int (Integer)";
+const @operator_Long_div_1 = "__dup_div (Long, Long)";
+const @operator_Long_div_2 = "__dup_div_int (Long, Integer)";
+const @operator_Long_div_3 = "__dup_div_int_rev (Integer, Long)";
+const @operator_Long_div_inplace_1 = "div (Long)";
+const @operator_Long_div_inplace_2 = "div_int (Integer)";
+const @operator_Long_rem_1 = "__dup_rem (Long, Long)";
+const @operator_Long_rem_2 = "__dup_rem_int (Long, Integer)";
+const @operator_Long_rem_3 = "__dup_rem_int_rev (Integer, Long)";
+const @operator_Long_rem_inplace_1 = "rem (Long)";
+const @operator_Long_rem_inplace_2 = "rem_int (Integer)";
+const @operator_Long_and_1 = "__dup_and (Long, Long)";
+const @operator_Long_and_2 = "__dup_and_int (Long, Integer)";
+const @operator_Long_and_3 = "__dup_and_int_rev (Integer, Long)";
+const @operator_Long_and_inplace_1 = "and (Long)";
+const @operator_Long_or_1 = "__dup_or (Long, Long)";
+const @operator_Long_or_2 = "__dup_or_int (Long, Integer)";
+const @operator_Long_or_3 = "__dup_or_int_rev (Integer, Long)";
+const @operator_Long_or_inplace_1 = "or (Long)";
+const @operator_Long_xor_1 = "__dup_xor (Long, Long)";
+const @operator_Long_xor_2 = "__dup_xor_int (Long, Integer)";
+const @operator_Long_xor_3 = "__dup_xor_int_rev (Integer, Long)";
+const @operator_Long_xor_inplace_1 = "xor (Long)";
+const @operator_Long_shl_1 = "__dup_shl (Long, Integer)";
+const @operator_Long_shl_inplace_1 = "shl (Integer)";
+const @operator_Long_shr_1 = "__dup_shr (Long, Integer)";
+const @operator_Long_shr_inplace_1 = "shr (Integer)";
+const @operator_Long_ushr_1 = "__dup_ushr (Long, Integer)";
+const @operator_Long_ushr_inplace_1 = "ushr (Integer)";
+const @operator_Long_cmp_1 = "cmp (Long, Long)";
+const @operator_Long_cmp_2 = "cmp_int (Long, Integer)";
+const @operator_Long_cmp_3 = "__cmp_int_rev (Integer, Long)";
+const @global_Long_0 = "(): Long";
+const @global_Long_1 = "(Integer): Long";
+const @global_Long_2 = "(Integer, Integer): Long";
+
+const {
+	LONG_lo,
+	LONG_hi,
+	LONG_SIZE
+};
+
+function long_create()
+{
+	return [0, 0];
+}
+
+function long_create(value)
+{
+	return [value, value >> 31];
+}
+
+function long_create(lo, hi)
+{
+	return [lo, hi];
+}
+
+function long_from_string(s)
+{
+	var (lo, hi) = string_parse_long(s);
+	if (!is_int(hi)) return 0, hi;
+	return [lo, hi];
+}
+
+function long_set(this, other)
+{
+	this->LONG_lo = other->LONG_lo;
+	this->LONG_hi = other->LONG_hi;
+	return this;
+}
+
+function long_set_int(this, value)
+{
+	this->LONG_lo = value;
+	this->LONG_hi = value >> 31;
+	return this;
+}
+
+function long_set_string(this, s)
+{
+	var (lo, hi) = string_parse_long(s);
+	if (!is_int(hi)) return 0, hi;
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_set_raw(this, lo, hi)
+{
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_dup(this)
+{
+	return [this->LONG_lo, this->LONG_hi];
+}
+
+function long_add(this, other)
+{
+	var (lo, c) = add32(this->LONG_lo, other->LONG_lo);
+	var hi = this->LONG_hi;
+	if (hi < 0x7FFFFFFF) {
+		hi = (hi + c) + other->LONG_hi;
+	}
+	else {
+		hi = hi + (other->LONG_hi + c);
+	}
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_add_int(this, value)
+{
+	var (lo, c) = add32(this->LONG_lo, value);
+	var hi = this->LONG_hi + (value >> 31) + c;
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_add_mod(this, other)
+{
+	var (lo, hi) = add64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_add_mod_int(this, value)
+{
+	var (lo, hi) = add64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_sub(this, other)
+{
+	var (lo, b) = sub32(this->LONG_lo, other->LONG_lo);
+	var hi = this->LONG_hi;
+	if (hi > 0x80000000) {
+		hi = (hi - b) - other->LONG_hi;
+	}
+	else {
+		hi = hi - (other->LONG_hi + b);
+	}
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_sub_int(this, value)
+{
+	var (lo, b) = sub32(this->LONG_lo, value);
+	var hi = this->LONG_hi - ((value >> 31) + b);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_sub_mod(this, other)
+{
+	var (lo, hi) = sub64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_sub_mod_int(this, value)
+{
+	var (lo, hi) = sub64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_mul(this, other)
+{
+	if (other->LONG_lo == 0 && other->LONG_hi == 0) {
+		this->LONG_lo = 0;
+		this->LONG_hi = 0;
+		return this;
+	}
+	var (lo1, hi1) = mul64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	var (lo2, hi2) = div64(lo1, hi1, other->LONG_lo, other->LONG_hi);
+	if (lo2 != this->LONG_lo || hi2 != this->LONG_hi) {
+		return 0, error("integer overflow");
+	}
+	this->LONG_lo = lo1;
+	this->LONG_hi = hi1;
+	return this;
+}
+
+function long_mul_int(this, value)
+{
+	if (value == 0) {
+		this->LONG_lo = 0;
+		this->LONG_hi = 0;
+		return this;
+	}
+	var (lo1, hi1) = mul64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	var (lo2, hi2) = div64(lo1, hi1, value, value >> 31);
+	if (lo2 != this->LONG_lo || hi2 != this->LONG_hi) {
+		return 0, error("integer overflow");
+	}
+	this->LONG_lo = lo1;
+	this->LONG_hi = hi1;
+	return this;
+}
+
+function long_mul_mod(this, other)
+{
+	var (lo, hi) = mul64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_mul_mod_int(this, value)
+{
+	var (lo, hi) = mul64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_div(this, other)
+{
+	var (lo, hi) = div64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_div_int(this, value)
+{
+	var (lo, hi) = div64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_rem(this, other)
+{
+	var (lo, hi) = rem64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_rem_int(this, value)
+{
+	var (lo, hi) = rem64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	this->LONG_lo = lo;
+	this->LONG_hi = hi;
+	return this;
+}
+
+function long_and(this, other)
+{
+	this->LONG_lo &= other->LONG_lo;
+	this->LONG_hi &= other->LONG_hi;
+	return this;
+}
+
+function long_and(this, lo, hi)
+{
+	this->LONG_lo &= lo;
+	this->LONG_hi &= hi;
+	return this;
+}
+
+function long_or(this, other)
+{
+	this->LONG_lo |= other->LONG_lo;
+	this->LONG_hi |= other->LONG_hi;
+	return this;
+}
+
+function long_or(this, lo, hi)
+{
+	this->LONG_lo |= lo;
+	this->LONG_hi |= hi;
+	return this;
+}
+
+function long_xor(this, other)
+{
+	this->LONG_lo ^= other->LONG_lo;
+	this->LONG_hi ^= other->LONG_hi;
+	return this;
+}
+
+function long_xor(this, lo, hi)
+{
+	this->LONG_lo ^= lo;
+	this->LONG_hi ^= hi;
+	return this;
+}
+
+function long_not(this)
+{
+	this->LONG_lo = ~this->LONG_lo;
+	this->LONG_hi = ~this->LONG_hi;
+	return this;
+}
+
+function long_shl(this, amount)
+{
+	amount &= 63;
+	if (amount >= 32) {
+		this->LONG_hi = this->LONG_lo << (amount - 32);
+		this->LONG_lo = 0;
+		return this;
+	}
+	else {
+		if (amount == 0) return this;
+		this->LONG_hi = (this->LONG_hi << amount) | (this->LONG_lo >>> (32-amount));
+		this->LONG_lo <<= amount;
+		return this;
+	}
+}
+
+function long_shr(this, amount)
+{
+	amount &= 63;
+	if (amount >= 32) {
+		this->LONG_lo = this->LONG_hi >> (amount - 32);
+		this->LONG_hi = this->LONG_lo >> 31;
+		return this;
+	}
+	else {
+		if (amount == 0) return this;
+		this->LONG_lo = (this->LONG_lo >>> amount) | (this->LONG_hi << (32-amount));
+		this->LONG_hi >>= amount;
+		return this;
+	}
+}
+
+function long_ushr(this, amount)
+{
+	amount &= 63;
+	if (amount >= 32) {
+		this->LONG_lo = this->LONG_hi >>> (amount - 32);
+		this->LONG_hi = 0;
+		return this;
+	}
+	else {
+		if (amount == 0) return this;
+		this->LONG_lo = (this->LONG_lo >>> amount) | (this->LONG_hi << (32-amount));
+		this->LONG_hi >>>= amount;
+		return this;
+	}
+}
+
+function long_is_zero(this)
+{
+	return this->LONG_lo == 0 && this->LONG_hi == 0;
+}
+
+function long_cmp(this, other)
+{
+	var lo1 = this->LONG_lo;
+	var hi1 = this->LONG_hi;
+	var lo2 = other->LONG_lo;
+	var hi2 = other->LONG_hi;
+
+	if (lo1 == lo2 && hi1 == hi2) {
+		return 0;
+	}
+	if (hi1 < hi2) {
+		return -1;
+	}
+	if (hi1 > hi2) {
+		return +1;
+	}
+	if (lo1 ^ 0x80000000 < lo2 ^ 0x80000000) {
+		return -1;
+	}
+	else {
+		return +1;
+	}
+}
+
+function long_cmp_int(this, value)
+{
+	var lo1 = this->LONG_lo;
+	var hi1 = this->LONG_hi;
+	var lo2 = value;
+	var hi2 = value >> 31;
+
+	if (lo1 == lo2 && hi1 == hi2) {
+		return 0;
+	}
+	if (hi1 < hi2) {
+		return -1;
+	}
+	if (hi1 > hi2) {
+		return +1;
+	}
+	if (lo1 ^ 0x80000000 < lo2 ^ 0x80000000) {
+		return -1;
+	}
+	else {
+		return +1;
+	}
+}
+
+function long_to_int(this)
+{
+	var lo = this->LONG_lo;
+	if (this->LONG_hi != (lo >> 31)) {
+		return 0, error("integer overflow");
+	}
+	return lo;
+}
+
+function long_to_unsigned_int(this)
+{
+	var lo = this->LONG_lo;
+	if (this->LONG_hi != 0) {
+		return 0, error("integer overflow");
+	}
+	return lo;
+}
+
+function long_to_string(this)
+{
+	return string_from_long(this->LONG_lo, this->LONG_hi);
+}
+
+function long___dup_add(this, other)
+{
+	var (lo, c) = add32(this->LONG_lo, other->LONG_lo);
+	var hi = this->LONG_hi;
+	if (hi < 0x7FFFFFFF) {
+		hi = (hi + c) + other->LONG_hi;
+	}
+	else {
+		hi = hi + (other->LONG_hi + c);
+	}
+	return [lo, hi];
+}
+
+function long___dup_add_int(this, value)
+{
+	var (lo, c) = add32(this->LONG_lo, value);
+	var hi = this->LONG_hi + (value >> 31) + c;
+	return [lo, hi];
+}
+
+function long___dup_add_int_rev(value, this)
+{
+	var (lo, c) = add32(this->LONG_lo, value);
+	var hi = this->LONG_hi + (value >> 31) + c;
+	return [lo, hi];
+}
+
+function long___dup_sub(this, other)
+{
+	var (lo, b) = sub32(this->LONG_lo, other->LONG_lo);
+	var hi = this->LONG_hi;
+	if (hi > 0x80000000) {
+		hi = (hi - b) - other->LONG_hi;
+	}
+	else {
+		hi = hi - (other->LONG_hi + b);
+	}
+	return [lo, hi];
+}
+
+function long___dup_sub_int(this, value)
+{
+	var (lo, b) = sub32(this->LONG_lo, value);
+	var hi = this->LONG_hi - ((value >> 31) + b);
+	return [lo, hi];
+}
+
+function long___dup_sub_int_rev(value, this)
+{
+	var (lo, b) = sub32(value, this->LONG_lo);
+	var hi = (value >> 31) - (this->LONG_hi + b);
+	return [lo, hi];
+}
+
+function long___dup_mul(this, other)
+{
+	if (other->LONG_lo == 0 && other->LONG_hi == 0) {
+		return [0, 0];
+	}
+	var (lo1, hi1) = mul64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	var (lo2, hi2) = div64(lo1, hi1, other->LONG_lo, other->LONG_hi);
+	if (lo2 != this->LONG_lo || hi2 != this->LONG_hi) {
+		return 0, error("integer overflow");
+	}
+	return [lo1, hi1];
+}
+
+function long___dup_mul_int(this, value)
+{
+	if (value == 0) {
+		return [0, 0];
+	}
+	var (lo1, hi1) = mul64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	var (lo2, hi2) = div64(lo1, hi1, value, value >> 31);
+	if (lo2 != this->LONG_lo || hi2 != this->LONG_hi) {
+		return 0, error("integer overflow");
+	}
+	return [lo1, hi1];
+}
+
+function long___dup_mul_int_rev(value, this)
+{
+	if (value == 0) {
+		return [0, 0];
+	}
+	var (lo1, hi1) = mul64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	var (lo2, hi2) = div64(lo1, hi1, value, value >> 31);
+	if (lo2 != this->LONG_lo || hi2 != this->LONG_hi) {
+		return 0, error("integer overflow");
+	}
+	return [lo1, hi1];
+}
+
+function long___dup_div(this, other)
+{
+	var (lo, hi) = div64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	return [lo, hi];
+}
+
+function long___dup_div_int(this, value)
+{
+	var (lo, hi) = div64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	return [lo, hi];
+}
+
+function long___dup_div_int_rev(value, this)
+{
+	var (lo, hi) = div64(value, value >> 31, this->LONG_lo, this->LONG_hi);
+	return [lo, hi];
+}
+
+function long___dup_rem(this, other)
+{
+	var (lo, hi) = rem64(this->LONG_lo, this->LONG_hi, other->LONG_lo, other->LONG_hi);
+	return [lo, hi];
+}
+
+function long___dup_rem_int(this, value)
+{
+	var (lo, hi) = rem64(this->LONG_lo, this->LONG_hi, value, value >> 31);
+	return [lo, hi];
+}
+
+function long___dup_rem_int_rev(value, this)
+{
+	var (lo, hi) = rem64(value, value >> 31, this->LONG_lo, this->LONG_hi);
+	return [lo, hi];
+}
+
+function long___dup_and(this, other)
+{
+	return [
+		this->LONG_lo & other->LONG_lo,
+		this->LONG_hi & other->LONG_hi
+	];
+}
+
+function long___dup_and_int(this, value)
+{
+	return [
+		this->LONG_lo & value,
+		this->LONG_hi & (value >> 31)
+	];
+}
+
+function long___dup_and_int_rev(value, this)
+{
+	return [
+		this->LONG_lo & value,
+		this->LONG_hi & (value >> 31)
+	];
+}
+
+function long___dup_or(this, other)
+{
+	return [
+		this->LONG_lo | other->LONG_lo,
+		this->LONG_hi | other->LONG_hi
+	];
+}
+
+function long___dup_or_int(this, value)
+{
+	return [
+		this->LONG_lo | value,
+		this->LONG_hi | (value >> 31)
+	];
+}
+
+function long___dup_or_int_rev(value, this)
+{
+	return [
+		this->LONG_lo | value,
+		this->LONG_hi | (value >> 31)
+	];
+}
+
+function long___dup_xor(this, other)
+{
+	return [
+		this->LONG_lo ^ other->LONG_lo,
+		this->LONG_hi ^ other->LONG_hi
+	];
+}
+
+function long___dup_xor_int(this, value)
+{
+	return [
+		this->LONG_lo ^ value,
+		this->LONG_hi ^ (value >> 31)
+	];
+}
+
+function long___dup_xor_int_rev(value, this)
+{
+	return [
+		this->LONG_lo ^ value,
+		this->LONG_hi ^ (value >> 31)
+	];
+}
+
+function long___dup_shl(this, amount)
+{
+	amount &= 63;
+	if (amount >= 32) {
+		return [0, this->LONG_lo << (amount - 32)];
+	}
+	else {
+		if (amount == 0) {
+			return [this->LONG_lo, this->LONG_hi];
+		}
+		return [this->LONG_lo << amount, (this->LONG_hi << amount) | (this->LONG_lo >>> (32-amount))];
+	}
+}
+
+function long___dup_shr(this, amount)
+{
+	amount &= 63;
+	if (amount >= 32) {
+		var lo = this->LONG_hi >> (amount - 32);
+		return [lo, lo >> 31];
+	}
+	else {
+		if (amount == 0) {
+			return [this->LONG_lo, this->LONG_hi];
+		}
+		return [(this->LONG_lo >>> amount) | (this->LONG_hi << (32-amount)), this->LONG_hi >> amount];
+	}
+}
+
+function long___dup_ushr(this, amount)
+{
+	amount &= 63;
+	if (amount >= 32) {
+		return [this->LONG_hi >>> (amount - 32), 0];
+	}
+	else {
+		if (amount == 0) {
+			return [this->LONG_lo, this->LONG_hi];
+		}
+		return [(this->LONG_lo >>> amount) | (this->LONG_hi << (32-amount)), this->LONG_hi >>> amount];
+	}
+}
+
+function long___cmp_int_rev(value, this)
+{
+	var lo1 = value;
+	var hi1 = value >> 31;
+	var lo2 = this->LONG_lo;
+	var hi2 = this->LONG_hi;
+
+	if (lo1 == lo2 && hi1 == hi2) {
+		return 0;
+	}
+	if (hi1 < hi2) {
+		return -1;
+	}
+	if (hi1 > hi2) {
+		return +1;
+	}
+	if (lo1 ^ 0x80000000 < lo2 ^ 0x80000000) {
+		return -1;
+	}
+	else {
+		return +1;
+	}
+}
+
+function Long()
+{
+	return [0, 0];
+}
+
+function Long(value)
+{
+	return [value, value >> 31];
+}
+
+function Long(lo, hi)
+{
+	return [lo, hi];
+}

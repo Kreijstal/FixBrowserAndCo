@@ -1,20 +1,21 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 
-function handle_request(request)
+function handle_request(request: Request)
 {
-	var domain = request_get_domain(request);
+	var domain = request.get_domain();
 	if (domain == "www.elm-lang.org" || domain == "elm-lang.org") {
-		var path = request_get_path(request);
-		if (string_search_char(path, '.') == -1) {
-			request_set_redirect(request, "https://guide.elm-lang.org/");
-			return null;
+		var path = request.get_path();
+		if (path.search_char('.') == -1) {
+			request.set_redirect("https://guide.elm-lang.org/");
+			return;
 		}
 	}
-	return null;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	add_style_to_element(document, "div.book-summary", "left: 0px");
 	add_style_to_element(document, "div.book-body", "left: 300px");

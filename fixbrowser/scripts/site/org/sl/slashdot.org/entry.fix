@@ -1,28 +1,30 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/json";
 import "util/extract";
 
-const {
-	@POST_id,
-	@POST_pid,
-	@POST_html,
-	@POST_children,
-	@POST_SIZE
-};
+class @Post
+{
+	var id: String;
+	var pid: String;
+	var html: String;
+	var children: Post[];
+}
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "fsdn.com")) return true;
 	return false;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	var discussion_id = extract_discussion_id(document);
 	if (discussion_id) {
-		var comments = element_query(document, "ul#commentlisting");
-		var json = json_parse(http_get({"https://", request_get_domain(request), "/ajax.pl"}, {
+		var comments = document.query("ul#commentlisting");
+		var json = JSON::parse(Http::get("https://"+request.get_domain()+"/ajax.pl", {
 			"op": "comments_fetch",
 			"d2_seen": "1",
 			"threshold": "-1",
@@ -31,32 +33,31 @@ function adjust_document(request, document)
 			"abbreviated": "",
 			"pieces": "",
 			"fetch_all": "1"
-		}));
+		}).content, false);
 		var posts = extract_posts(json);
-		var num_posts = posts[0];
-		element_remove_all(comments);
-		remove_spam(posts[1]);
-		insert_posts(comments, posts[1]);
+		var num_posts = posts[0] as Integer;
+		comments.remove_all();
+		remove_spam(posts[1] as Post[]);
+		insert_posts(comments, posts[1] as Post[]);
 
-		var loaded_span = element_query(document, "span.loadedcommentcnt");
+		var loaded_span = document.query("span.loadedcommentcnt");
 		if (loaded_span) {
-			element_set_text(loaded_span, {num_posts});
+			loaded_span.set_text({num_posts});
 		}
 
-		var noscript = element_get_next_tag(comments);
-		if (noscript && element_get_type(noscript) == "noscript") {
-			element_remove(noscript);
+		var noscript = comments.get_next_tag();
+		if (noscript != null && noscript.get_type() == "noscript") { //XXX
+			noscript.remove();
 		}
 
 		remove_element(document, "a#d2loadall");
 	}
 }
 
-function @extract_discussion_id(document)
+function @extract_discussion_id(document: Element): String
 {
-	var scripts = element_query_all(document, "script");
-	for (var i=0; i<length(scripts); i++) {
-		var script = element_extract_text(scripts[i]);
+	foreach (var elem in document.query_all("script")) {
+		var script = elem.extract_text();
 		var discussion_id = extract_string(script, "D2.discussion_id(", ");");
 		if (discussion_id) {
 			return discussion_id;
@@ -65,93 +66,89 @@ function @extract_discussion_id(document)
 	return null;
 }
 
-function @extract_posts(json)
+function @extract_posts(json: JSON): Dynamic[]
 {
-	var html = json_get_object(json, "html");
-	var keys = json_get_keys(html);
-	var comment_html = {};
-	for (var i=0; i<length(keys); i++) {
-		comment_html{keys[i]} = json_get_string(html, keys[i]);
+	var comment_html: String[String] = {};
+	foreach (var key, value in json.get("html").as_object()) {
+		comment_html[key] = value.as_string();
 	}
 
-	var update_data = json_get_object(json, "update_data");
-	var total_comments = json_get_int(update_data, "totalcommentcnt", -1);
-	var new_cids_order = json_get_array(update_data, "new_cids_order");
-	var new_cids_data = json_get_array(update_data, "new_cids_data");
+	var update_data = json.get("update_data");
+	var total_comments = update_data.get("totalcommentcnt", -1).as_int();
+	var new_cids_order = update_data.get("new_cids_order");
+	var new_cids_data = update_data.get("new_cids_data");
 
-	var posts = [];
-	var posts_by_id = {};
-	for (var i=0, n=json_length(new_cids_order); i<n; i++) {
-		var data = json_get_object(new_cids_data, i);
+	var posts: Post[] = [];
+	var posts_by_id: Post[String] = {};
+	for (var i=0, n=new_cids_order.length(); i<n; i++) {
+		var data = new_cids_data.get(i);
 
-		var post = object_create(POST_SIZE);
-		post->POST_id = json_get_number(new_cids_order, i);
-		post->POST_pid = json_get_number(data, "pid");
-		post->POST_html = hash_get(comment_html, {"comment_", post->POST_id}, "");
+		var post = new Post;
+		post.id = new_cids_order.get(i).as_long().to_string();
+		post.pid = data.get("pid").as_long().to_string();
+		post.html = comment_html.get("comment_"+post.id, "");
 		posts[] = post;
-		posts_by_id{post->POST_id} = post;
+		posts_by_id[post.id] = post;
 	}
 
-	var num_posts = length(posts);
-	for (var i=0; i<length(posts); i++) {
+	var num_posts = posts.length;
+	for (var i=0; i<posts.length; i++) {
 		var post = posts[i];
-		var parent = hash_get(posts_by_id, post->POST_pid, null);
+		var parent = posts_by_id.get(post.pid, null);
 		if (parent) {
-			if (!parent->POST_children) {
-				parent->POST_children = [];
+			if (!parent.children) {
+				parent.children = [];
 			}
-			parent->POST_children[] = post;
-			array_remove(posts, i--);
+			parent.children[] = post;
+			posts.remove(i--);
 			continue;
 		}
 	}
 	return [num_posts, posts];
 }
 
-function @remove_spam(posts)
+function @remove_spam(posts: Post[])
 {
-	for (var i=0; i<length(posts); i++) {
+	for (var i=0; i<posts.length; i++) {
 		var post = posts[i];
-		var html = post->POST_html;
+		var html = post.html;
 
-		if (string_search_string(html, "\"Real coders don't need either GUIs or automatic memory management. Delphi is dead\" <b>by BarbaraHudson</b>") != -1) {
-			array_remove(posts, i--);
+		if (html.search_string("\"Real coders don't need either GUIs or automatic memory management. Delphi is dead\" <b>by BarbaraHudson</b>") != -1) {
+			posts.remove(i--);
 			continue;
 		}
 
-		if (string_search_string(html, "itQMMMMMW6iiiiiiiitKMMMMMMMMMMKtiiiiicSMMMMMMMMHJi") != -1) {
-			array_remove(posts, i--);
+		if (html.search_string("itQMMMMMW6iiiiiiiitKMMMMMMMMMMKtiiiiicSMMMMMMMMHJi") != -1) {
+			posts.remove(i--);
 			continue;
 		}
 
-		if (post->POST_children) {
-			remove_spam(post->POST_children);
+		if (post.children) {
+			remove_spam(post.children);
 		}
 	}
 }
 
-function @insert_posts(container, posts)
+function @insert_posts(container: Element, posts: Post[])
 {
-	for (var i=0; i<length(posts); i++) {
-		var post = posts[i];
+	foreach (var post in posts) {
+		var li = Element::create("li");
+		li.set_attr("id", "tree_"+post.id);
+		li.set_attr("class", "comment full contain");
 
-		var li = element_create("li");
-		element_set_attr(li, "id", {"tree_", post->POST_id});
-		element_set_attr(li, "class", "comment full contain");
+		var comment_div = Element::create("div");
+		comment_div.set_attr("id", "comment_"+post.id);
+		comment_div.set_attr("class", "cw");
+		comment_div.set_html(post.html);
+		li.append_child(comment_div);
 
-		var comment_div = element_create("div");
-		element_set_attr(comment_div, "id", {"comment_", post->POST_id});
-		element_set_attr(comment_div, "class", "cw");
-		element_set_html(comment_div, post->POST_html);
-		element_append_child(li, comment_div);
-
-		if (post->POST_children) {
-			var ul = element_create("ul");
-			element_set_attr(li, "id", {"commtree_", post->POST_id});
-			insert_posts(ul, post->POST_children);
-			element_append_child(li, ul);
+		if (post.children) {
+			var ul = Element::create("ul");
+			li.set_attr("id", "commtree_"+post.id);
+			insert_posts(ul, post.children);
+			li.append_child(ul);
 		}
 		
-		element_append_child(container, li);
+		container.append_child(li);
 	}
 }

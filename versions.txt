@@ -1,4 +1,6 @@
-fixbrowser=0.1
+bindiff=20240505
+cellsplit=0.2
+fixbrowser=0.4
 fixbuild=0.6
 fixgui=0.8
 fiximage=0.7
@@ -11,9 +13,7 @@ fixscript-optional=0.3
 fixscript-unpack=0.4
 fixtask=0.6
 fixutil=0.4
-cellsplit=0.2
 mathlib=20240605
-bindiff=20240505
 mathlib-webdemo=20240605
 png=20190922
 zcomp=20190922

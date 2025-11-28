@@ -1,9 +1,11 @@
+use "classes";
+
 import "util/common";
 import "util/archive";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var url = request_get_url(request);
+	var url = request.get_url();
 	var content = {
 		"<div style=\"font-family: sans-serif; font-size: 16px\">",
 		"<b>Error: This website is totally crippled beyond repair by Imperva Incapsula \"CDN\" service.</b><br><br>",
@@ -12,5 +14,5 @@ function adjust_document(request, document)
 		"or on <a href=\"", get_archive_today_link(request, url), "\">Archive Today</a>.",
 		"</div>"
 	};
-	request_replace_document(request, document_parse(content));
+	request.replace_document(Document::parse(content));
 }

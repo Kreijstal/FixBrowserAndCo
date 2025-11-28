@@ -1,78 +1,79 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var elems = element_query_all(document, "link[rel='stylesheet'][href]");
-	for (var i=0; i<length(elems); i++) {
-		var href = element_get_attr(elems[i], "href");
+	foreach (var elem in document.query_all("link[rel='stylesheet'][href]")) {
+		var href = elem.get_attr("href");
 
-		if (string_contains(href, "purecss")) {
-			if (string_starts_with(href, "https://unpkg.com/purecss@1.")) {
-				replace_css(elems[i], "pure-min-1.0.0.css");
+		if (href.contains("purecss")) {
+			if (href.starts_with("https://unpkg.com/purecss@1.")) {
+				replace_css(elem, "pure-min-1.0.0.css");
 			}
-			else if (string_starts_with(href, "https://unpkg.com/purecss@0.6.")) {
-				replace_css(elems[i], "pure-min-0.6.2.css");
+			else if (href.starts_with("https://unpkg.com/purecss@0.6.")) {
+				replace_css(elem, "pure-min-0.6.2.css");
 			}
-			else if (string_starts_with(href, "http://yui.yahooapis.com/pure/0.5.")) {
-				replace_css(elems[i], "pure-min-0.5.0.css");
+			else if (href.starts_with("http://yui.yahooapis.com/pure/0.5.")) {
+				replace_css(elem, "pure-min-0.5.0.css");
 			}
 			else {
-				replace_css(elems[i], "pure-min-0.4.2.css");
+				replace_css(elem, "pure-min-0.4.2.css");
 			}
 		}
-		else if (string_contains(href, "bootstrap")) {
+		else if (href.contains("bootstrap")) {
 			href = strip_bootstrap_prefix(href);
 			if (!href) continue;
 
-			if (string_starts_with(href, "4.3.")) {
-				replace_css(elems[i], "bootstrap.min-4.3.1.css");
+			if (href.starts_with("4.3.")) {
+				replace_css(elem, "bootstrap.min-4.3.1.css");
 			}
-			else if (string_starts_with(href, "4.2.")) {
-				replace_css(elems[i], "bootstrap.min-4.2.1.css");
+			else if (href.starts_with("4.2.")) {
+				replace_css(elem, "bootstrap.min-4.2.1.css");
 			}
-			else if (string_starts_with(href, "4.")) {
-				replace_css(elems[i], "bootstrap.min-4.0.0.css");
+			else if (href.starts_with("4.")) {
+				replace_css(elem, "bootstrap.min-4.0.0.css");
 			}
-			else if (string_starts_with(href, "3.4.")) {
-				replace_css(elems[i], "bootstrap.min-3.4.1.css");
+			else if (href.starts_with("3.4.")) {
+				replace_css(elem, "bootstrap.min-3.4.1.css");
 			}
-			else if (string_starts_with(href, "3.3.")) {
-				replace_css(elems[i], "bootstrap.min-3.3.7.css");
+			else if (href.starts_with("3.3.")) {
+				replace_css(elem, "bootstrap.min-3.3.7.css");
 			}
 			else {
-				replace_css(elems[i], "bootstrap.min-2.3.2.css");
+				replace_css(elem, "bootstrap.min-2.3.2.css");
 			}
 		}
-		else if (string_contains(href, "materialize")) {
-			replace_css(elems[i], "materialize.min-1.0.0.css");
+		else if (href.contains("materialize")) {
+			replace_css(elem, "materialize.min-1.0.0.css");
 		}
 	}
 }
 
-function @strip_prefix(url, prefixes)
+function @strip_prefix(url: String, prefixes: String[]): String
 {
-	for (var i=0; i<length(prefixes); i++) {
-		if (string_starts_with(url, prefixes[i])) {
-			return string_substring(url, length(prefixes[i]));
+	foreach (var prefix in prefixes) {
+		if (url.starts_with(prefix)) {
+			return url.substring(prefix.length);
 		}
 	}
 	return null;
 }
 
-function @strip_single_prefix(url, prefix)
+function @strip_single_prefix(url: String, prefix: String): String
 {
-	if (string_starts_with(url, prefix)) {
-		return string_substring(url, length(prefix));
+	if (url.starts_with(prefix)) {
+		return url.substring(prefix.length);
 	}
 	return null;
 }
 
-function @strip_bootstrap_prefix(url)
+function @strip_bootstrap_prefix(input_url: String): String
 {
-	url = url_create(url);
-	var domain = url_get_host(url);
-	var path = url_path_to_string(url);
+	var url = URL::create(input_url);
+	var domain = url.get_host();
+	var path = url.path_to_string();
 
 	if (domain_ends_with(domain, "bootstrapcdn.com")) return strip_single_prefix(path, "/bootstrap/");
 	if (domain == "ajax.aspnetcdn.com") return strip_single_prefix(path, "/ajax/bootstrap/");
@@ -80,11 +81,11 @@ function @strip_bootstrap_prefix(url)
 	return null;
 }
 
-function @replace_css(elem, name)
+function @replace_css(elem: Element, name: String)
 {
-	var style = element_create("style");
-	var text = element_create_text(resource_get({"dispatch/css/", name}));
-	element_append_child(style, text);
-	element_insert_after(element_get_parent(elem), style, elem);
-	element_remove(elem);
+	var style = Element::create("style");
+	var text = Element::create_text(resource_get_string("dispatch/css/"+name));
+	style.append_child(text);
+	elem.get_parent().insert_after(style, elem);
+	elem.remove();
 }

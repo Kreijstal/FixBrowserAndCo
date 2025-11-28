@@ -1,13 +1,14 @@
+use "classes";
+
 import "util/common";
 import "util/extract";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var comments_list = element_query(document, "div.comments-list");
+	var comments_list = document.query("div.comments-list");
 	if (comments_list) {
-		var scripts = element_query_all(document, "script");
-		for (var i=0; i<length(scripts); i++) {
-			var text = element_extract_text(scripts[i]);
+		foreach (var script in document.query_all("script")) {
+			var text = script.extract_text();
 			var value = extract_string(text, "aid: ", ",");
 			if (value) {
 				load_comments(comments_list, value);
@@ -17,9 +18,9 @@ function adjust_document(request, document)
 	}
 }
 
-function @load_comments(list, id)
+function @load_comments(list: Element, id: String)
 {
-	var html = http_get({"https://www.rockpapershotgun.com/wp-admin/admin-ajax.php?action=fetch_comments&id=", id});
-	element_set_html(list, html);
+	var html = String::from_utf8(Http::get("https://www.rockpapershotgun.com/wp-admin/admin-ajax.php?action=fetch_comments&id="+id).content);
+	list.set_html(html);
 	remove_element(list, "div.comment-tools");
 }

@@ -1,8 +1,10 @@
+use "classes";
+
 import "util/common";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	// TODO: CSS returned empty from server *.wp.com
-	request_add_same_domain(request, "wp.com");
-	request_add_same_domain(request, "wordpress.com");
+	request.add_same_domain("wp.com");
+	request.add_same_domain("wordpress.com");
 }

@@ -1,0 +1,1440 @@
+/*
+ * FixScript Image v0.7 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "image/shaders";
+use "classes";
+
+import "image/rect";
+
+const {
+	CAP_BUTT,
+	CAP_ROUND,
+	CAP_SQUARE
+};
+
+const {
+	JOIN_BEVEL,
+	JOIN_ROUND,
+	JOIN_MITER
+};
+
+const {
+	SUBPIXEL_RGB,
+	SUBPIXEL_BGR
+};
+
+const {
+	@FLAGS_SUBPIXEL_RENDERING = 0x01,
+	@FLAGS_SUBPIXEL_REVERSED  = 0x02
+};
+
+const {
+	PART_MOVE_TO,
+	PART_LINE_TO,
+	PART_QUAD_TO,
+	PART_CUBIC_TO,
+	PART_CLOSE_PATH
+};
+
+const {
+	@TYPE_GENERAL,
+	@TYPE_SIMPLE,
+	@TYPE_RECHECK
+};
+
+const @PI = 3.14159265;
+const @QUARTER_CIRCLE = 0.55228;
+
+var @blend_gamma_cache: Byte[][Float];
+
+class Image
+{
+	var @to_string_func;
+	var @data: Integer[];
+	var @width: Integer;
+	var @height: Integer;
+	var @stride: Integer;
+
+	static function create(width: Integer, height: Integer): Image;
+
+	static function load(data: Byte[]): Image;
+
+	function get_width(): Integer
+	{
+		return width;
+	}
+
+	function get_height(): Integer
+	{
+		return height;
+	}
+
+	function get_stride(): Integer
+	{
+		return stride;
+	}
+
+	function get_pixels(): Integer[]
+	{
+		return data;
+	}
+
+	function clone(): Image;
+
+	function get_subimage(rect: Rect): Image
+	{
+		return get_subimage(rect.x1, rect.y1, rect.get_width(), rect.get_height());
+	}
+
+	function get_subimage(x: Integer, y: Integer, width: Integer, height: Integer): Image;
+
+	function to_png(): Byte[];
+
+	function downscale(): Image
+	{
+		var img = create((width+1)/2, (height+1)/2);
+		var p = Painter::create(img);
+		var tr = Transform::create();
+		tr.scale(img.get_width() / float(width), img.get_height() / float(height));
+		p.fill_rect(0, 0, img.get_width(), img.get_height(), Shader {
+			replace(sample_bilinear(this, tr));
+		});
+		return img;
+	}
+
+	function downscale(steps: Integer): Image
+	{
+		var img = this;
+		for (var i=0; i<steps; i++) {
+			img = img.downscale();
+		}
+		return img;
+	}
+
+	function blur(radius: Float)
+	{
+		if (radius < 3.0) {
+			radius = pow(radius / 3.0, 2.0) * 3.0;
+		}
+		radius = radius / 3.0;
+		blur_box(radius, radius, 2);
+	}
+
+	/*
+	function blur_fast(steps: Integer, radius: Float)
+	{
+		var img = downscale(steps);
+		img.blur(radius);
+		var p = Painter::create(this);
+		var tr = Transform::create();
+		tr.scale(float(width) / img.get_width(), float(height) / img.get_height());
+		p.fill_rect(0, 0, width, height, Shader {
+			replace(sample_bilinear(img, tr));
+		});
+	}
+	*/
+
+	function blur_box(radius: Float)
+	{
+		blur_box(radius, radius, 1);
+	}
+
+	function blur_box(rx: Float, ry: Float, steps: Integer);
+
+	function blur_gaussian(radius: Float)
+	{
+		var sigma = radius / 3.0;
+		var n = 4;
+		var w = sqrt((12.0 * sigma * sigma) / n + 1.0);
+		var r = (w-1.0)*0.5;
+		blur_box(r, r, n);
+	}
+
+	function remap_color_ramps(table: Byte[]);
+
+	function apply_gamma(value: Float)
+	{
+		value = 1.0 / value;
+		var table: Byte[] = Array::create_shared(256, 1);
+		for (var i=0; i<256; i++) {
+			table[i] = iround(pow(i/255.0, value)*255.0);
+		}
+		remap_color_ramps(table);
+	}
+
+	function @to_string(): String
+	{
+		return "Image(width="+width+",height="+height+")";
+	}
+}
+
+class Painter
+{
+	var @m00: Float;
+	var @m01: Float;
+	var @m02: Float;
+	var @m10: Float;
+	var @m11: Float;
+	var @m12: Float;
+	var @type: Integer;
+	var @clip_x1: Integer;
+	var @clip_y1: Integer;
+	var @clip_x2: Integer;
+	var @clip_y2: Integer;
+	var @clip_shapes: Shape;
+	var @clip_count: Integer;
+	var @flags: Integer;
+	var @blend_table: Byte[];
+	
+	var @handle;
+	var @image: Image;
+	var @states: Dynamic[];
+
+	static function create(img: Image): Painter
+	{
+		return [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, TYPE_SIMPLE, 0, 0, img.get_width(), img.get_height(), null, 0, 0, null, @painter_create(img), img, null] as Painter;
+	}
+
+	function get_image(): Image
+	{
+		return image;
+	}
+
+	function get_transform(): Transform
+	{
+		if (type == TYPE_SIMPLE) {
+			type = TYPE_RECHECK;
+		}
+		return this as Transform;
+	}
+
+	function @is_simple(): Boolean
+	{
+		if (type == TYPE_RECHECK) {
+			if (m00 >= 1.0 && m00 == int(m00) && m01 == 0.0 && m10 == 0.0 && m11 >= 1.0 && m11 == int(m11) && m02 == int(m02) && m12 == int(m12)) {
+				type = TYPE_SIMPLE;
+			}
+			else {
+				type = TYPE_GENERAL;
+			}
+		}
+		return type == TYPE_SIMPLE;
+	}
+
+	function push()
+	{
+		if (!states) {
+			states = [];
+		}
+		states.append(this as Dynamic[], 0, 15);
+		clip_shapes = clone(clip_shapes);
+	}
+
+	function pop()
+	{
+		var states = this.states;
+		var len = states.length-15;
+		Array::copy(this as Dynamic[], 0, states, len, 15);
+		states.set_length(len);
+	}
+
+	function set_subpixel_rendering(enabled: Boolean)
+	{
+		if (enabled) {
+			flags |= FLAGS_SUBPIXEL_RENDERING;
+		}
+		else {
+			flags &= ~FLAGS_SUBPIXEL_RENDERING;
+		}
+	}
+
+	function set_subpixel_order(value: Integer)
+	{
+		if (value == SUBPIXEL_BGR) {
+			flags |= FLAGS_SUBPIXEL_REVERSED;
+		}
+		else {
+			flags &= ~FLAGS_SUBPIXEL_REVERSED;
+		}
+	}
+
+	function set_blend_gamma(value: Float)
+	{
+		if (value == 1.0) {
+			blend_table = null;
+			return;
+		}
+		if (!blend_gamma_cache) {
+			blend_gamma_cache = {};
+		}
+		var table = blend_gamma_cache.get(value, null);
+		if (!table) {
+			var inv_value = 1.0 / value;
+			table = Array::create_shared(512, 1);
+			for (var i=0; i<256; i++) {
+				table[i] = iround(pow(i/255.0, value)*255.0);
+				table[i+256] = iround(pow(i/255.0, inv_value)*255.0);
+			}
+			blend_gamma_cache[value] = table;
+			if (blend_gamma_cache.length > 5) {
+				var (k, v) = blend_gamma_cache.entry(0);
+				blend_gamma_cache.remove(k);
+			}
+		}
+		blend_table = table;
+	}
+	
+	function translate(tx: Float, ty: Float)
+	{
+		m02 = m02 + m00 * tx + m01 * ty;
+		m12 = m12 + m10 * tx + m11 * ty;
+		if (type == TYPE_SIMPLE) {
+			if (m02 != int(m02) || m12 != int(m12)) {
+				type = TYPE_GENERAL;
+			}
+		}
+	}
+	
+	function rotate(angle: Float)
+	{
+		var vcos = cos(angle);
+		var vsin = sin(angle);
+		var r00 = m00 * vcos + m01 * vsin;
+		var r01 = m01 * vcos - m00 * vsin;
+		var r10 = m10 * vcos + m11 * vsin;
+		var r11 = m11 * vcos - m10 * vsin;
+		m00 = r00;
+		m01 = r01;
+		m10 = r10;
+		m11 = r11;
+		type = TYPE_GENERAL;
+	}
+	
+	function scale(s: Float)
+	{
+		scale(s, s);
+	}
+	
+	function scale(sx: Float, sy: Float)
+	{
+		m00 = m00 * sx;
+		m01 = m01 * sy;
+		m10 = m10 * sx;
+		m11 = m11 * sy;
+		if (type == TYPE_SIMPLE) {
+			if (m00 < 1.0 || m00 != int(m00) || m11 < 1.0 || m11 != int(m11)) {
+				type = TYPE_GENERAL;
+			}
+		}
+	}
+	
+	function shear(sx: Float, sy: Float)
+	{
+		var r00 = m00 + m01 * sy;
+		var r01 = m00 * sx + m01;
+		var r10 = m10 + m11 * sy;
+		var r11 = m10 * sx + m11;
+		m00 = r00;
+		m01 = r01;
+		m10 = r10;
+		m11 = r11;
+		type = TYPE_GENERAL;
+	}
+	
+	function apply(tr: Transform)
+	{
+		var r00 = this.m00 * tr.m00 + this.m01 * tr.m10;
+		var r01 = this.m00 * tr.m01 + this.m01 * tr.m11;
+		var r02 = this.m00 * tr.m02 + this.m01 * tr.m12 + this.m02;
+		var r10 = this.m10 * tr.m00 + this.m11 * tr.m10;
+		var r11 = this.m10 * tr.m01 + this.m11 * tr.m11;
+		var r12 = this.m10 * tr.m02 + this.m11 * tr.m12 + this.m12;
+		m00 = r00;
+		m01 = r01;
+		m02 = r02;
+		m10 = r10;
+		m11 = r11;
+		m12 = r12;
+		if (type == TYPE_SIMPLE) {
+			type = TYPE_RECHECK;
+		}
+	}
+
+	function clip(rect: Rect)
+	{
+		clip(rect.x1, rect.y1, rect.get_width(), rect.get_height());
+	}
+
+	function clip(x: Integer, y: Integer, width: Integer, height: Integer)
+	{
+		if (is_simple()) {
+			var sx = int(m00);
+			var sy = int(m11);
+			var offset_x = int(m02);
+			var offset_y = int(m12);
+			clip_x1 = max(clip_x1, offset_x+x*sx);
+			clip_y1 = max(clip_y1, offset_y+y*sy);
+			clip_x2 = min(clip_x2, offset_x+(x+width)*sx);
+			clip_y2 = min(clip_y2, offset_y+(y+height)*sy);
+		}
+		else {
+			clip_shape(Shape::rect(x, y, width, height));
+		}
+	}
+
+	function clip_shape(shape: Shape)
+	{
+		if (!clip_shapes) {
+			clip_shapes = Shape::create();
+		}
+		var idx = length(clip_shapes as Dynamic[]);
+		clip_shapes.append(shape, get_transform());
+		clip_count++;
+		var bounds = clip_shapes.get_bounds(idx, length(clip_shapes as Dynamic[]));
+		clip_x1 = max(clip_x1, ifloor(bounds[0])-1);
+		clip_y1 = max(clip_y1, ifloor(bounds[1]));
+		clip_x2 = min(clip_x2, iceil(bounds[2])+1);
+		clip_y2 = min(clip_y2, iceil(bounds[3]));
+		type = TYPE_GENERAL;
+	}
+
+	function get_clip_rect(): Rect
+	{
+		if (is_simple()) {
+			var scale_x = m00;
+			var scale_y = m11;
+			var offset_x = m02;
+			var offset_y = m12;
+			if (scale_x == 1.0 && scale_y == 1.0) {
+				var x = int(offset_x);
+				var y = int(offset_y);
+				return [clip_x1 - x, clip_y1 - y, clip_x2 - x, clip_y2 - y] as Rect;
+			}
+			var x = m02;
+			var y = m12;
+			return [
+				ifloor((clip_x1 - x) / scale_x),
+				ifloor((clip_y1 - y) / scale_y),
+				iceil((clip_x2 - x) / scale_x),
+				iceil((clip_y2 - y) / scale_y)
+			] as Rect;
+		}
+
+		var tr = Transform::create();
+		tr.invert(get_transform());
+
+		var min_x = 1000000.0;
+		var min_y = 1000000.0;
+		var max_x = -1000000.0;
+		var max_y = -1000000.0;
+		var x: Float, y: Float;
+
+		x = tr.transform_x(clip_x1, clip_y1);
+		y = tr.transform_y(clip_x1, clip_y1);
+		min_x = fmin(min_x, x);
+		min_y = fmin(min_y, y);
+		max_x = fmax(max_x, x);
+		max_y = fmax(max_y, y);
+
+		x = tr.transform_x(clip_x2, clip_y1);
+		y = tr.transform_y(clip_x2, clip_y1);
+		min_x = fmin(min_x, x);
+		min_y = fmin(min_y, y);
+		max_x = fmax(max_x, x);
+		max_y = fmax(max_y, y);
+
+		x = tr.transform_x(clip_x2, clip_y2);
+		y = tr.transform_y(clip_x2, clip_y2);
+		min_x = fmin(min_x, x);
+		min_y = fmin(min_y, y);
+		max_x = fmax(max_x, x);
+		max_y = fmax(max_y, y);
+
+		x = tr.transform_x(clip_x1, clip_y2);
+		y = tr.transform_y(clip_x1, clip_y2);
+		min_x = fmin(min_x, x);
+		min_y = fmin(min_y, y);
+		max_x = fmax(max_x, x);
+		max_y = fmax(max_y, y);
+
+		return [
+			ifloor(min_x),
+			ifloor(min_y),
+			iceil(max_x),
+			iceil(max_y)
+		] as Rect;
+	}
+
+	/*
+	function get_paint_rect(): Rect
+	{
+		var x = offset_x;
+		var y = offset_y;
+		var w = clip_x2 - clip_x1;
+		var h = clip_y2 - clip_y1;
+		return [-x, -y, -x + w, -y + h];
+	}
+	*/
+
+	function clear_rect(rect: Rect, color: Integer)
+	{
+		clear_rect(rect.x1, rect.y1, rect.get_width(), rect.get_height(), color);
+	}
+	
+	function fill_rect(rect: Rect, color: Integer)
+	{
+		fill_rect(rect.x1, rect.y1, rect.get_width(), rect.get_height(), color);
+	}
+
+	function clear_rect(x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)
+	{
+		if (is_simple()) {
+			var sx = int(m00);
+			var sy = int(m11);
+			@painter_clear_rect(this, x*sx, y*sy, width*sx, height*sy, color);
+		}
+		else {
+			fill_shape(Shape::rect(x, y, width, height), Shader {
+				replace(color);
+			});
+		}
+	}
+
+	function fill_rect(x: Integer, y: Integer, width: Integer, height: Integer, color: Integer)
+	{
+		if (is_simple()) {
+			var sx = int(m00);
+			var sy = int(m11);
+			@painter_fill_rect(this, x*sx, y*sy, width*sx, height*sy, color);
+		}
+		else {
+			fill_shape(Shape::rect(x, y, width, height), Shader {
+				blend(color);
+			});
+		}
+	}
+
+	function fill_rect(x: Integer, y: Integer, width: Integer, height: Integer, shader, inputs)
+	{
+		if (is_simple()) {
+			var sx = int(m00);
+			var sy = int(m11);
+			@painter_fill_rect(this, x*sx, y*sy, width*sx, height*sy, shader, inputs);
+		}
+		else {
+			fill_shape(Shape::rect(x, y, width, height), shader, inputs);
+		}
+	}
+
+	function fill_shape(shape: Shape, color: Integer);
+	function fill_shape(shape: Shape, shader, inputs);
+
+	function draw_image(x: Integer, y: Integer, img: Image)
+	{
+		var tr = Transform::create();
+		tr.translate(x, y);
+		if (is_simple() && int(m00) == 1 && int(m11) == 1) {
+			fill_rect(x, y, img.get_width(), img.get_height(), Shader {
+				blend(sample_nearest(img, tr));
+			});
+		}
+		else {
+			fill_rect(x, y, img.get_width(), img.get_height(), Shader {
+				blend(sample_bilinear(img, tr, CLAMP));
+			});
+		}
+	}
+
+	function batch_begin();
+	function batch_flush();
+	function batch_end();
+}
+
+function @painter_create(img);
+function @painter_clear_rect(p, x, y, width, height, color);
+function @painter_fill_rect(p, x, y, width, height, color);
+function @painter_fill_rect(p, x, y, width, height, shader, inputs);
+
+class Shape
+{
+	static function create(): Shape
+	{
+		return [] as Shape;
+	}
+
+	static function line(x1: Float, y1: Float, x2: Float, y2: Float): Shape
+	{
+		var shape = create();
+		shape.move_to(x1, y1);
+		shape.line_to(x2, y2);
+		return shape;
+	}
+
+	static function rect(x: Float, y: Float, width: Float, height: Float): Shape
+	{
+		var shape = create();
+		shape.move_to(x, y);
+		shape.line_to(x+width, y);
+		shape.line_to(x+width, y+height);
+		shape.line_to(x, y+height);
+		shape.close_path();
+		return shape;
+	}
+
+	static function circle(cx: Float, cy: Float, radius: Float): Shape
+	{
+		return ellipse_rect(cx-radius, cy-radius, radius*2.0, radius*2.0);
+	}
+
+	static function ellipse(cx: Float, cy: Float, rx: Float, ry: Float): Shape
+	{
+		return ellipse_rect(cx-rx, cy-ry, rx*2.0, ry*2.0);
+	}
+
+	static function ellipse_rect(x: Float, y: Float, w: Float, h: Float): Shape
+	{
+		var rx = w*0.5;
+		var ry = h*0.5;
+		var fx = QUARTER_CIRCLE * rx;
+		var fy = QUARTER_CIRCLE * ry;
+		var cx = x+rx;
+		var cy = y+ry;
+
+		var shape = create();
+		shape.move_to(cx, y);
+		shape.cubic_to(cx+fx, y, x+w, cy-fy, x+w, cy);
+		shape.cubic_to(x+w, cy+fy, cx+fx, y+h, cx, y+h);
+		shape.cubic_to(cx-fx, y+h, x, cy+fy, x, cy);
+		shape.cubic_to(x, cy-fy, cx-fx, y, cx, y);
+		shape.close_path();
+		return shape;
+	}
+
+	static function round_rect(x: Float, y: Float, w: Float, h: Float, arcw: Float, arch: Float): Shape
+	{
+		if (arcw * 2.0 > w) {
+			var f = w * 0.5 / arcw;
+			arcw = arcw * f;
+			arch = arch * f;
+		}
+		if (arch * 2.0 > h) {
+			var f = h * 0.5 / arch;
+			arcw = arcw * f;
+			arch = arch * f;
+		}
+		var rx = arcw;
+		var ry = arch;
+		var fx = QUARTER_CIRCLE * rx;
+		var fy = QUARTER_CIRCLE * ry;
+		
+		var shape = create();
+		shape.move_to(x+rx, y);
+		shape.line_to(x+w-rx, y);
+		shape.cubic_to(x+w-rx+fx, y, x+w, y+ry-fy, x+w, y+ry);
+		shape.line_to(x+w, y+h-ry);
+		shape.cubic_to(x+w, y+h-ry+fy, x+w-rx+fx, y+h, x+w-rx, y+h);
+		shape.line_to(x+rx, y+h);
+		shape.cubic_to(x+rx-fx, y+h, x, y+h-ry+fy, x, y+h-ry);
+		shape.line_to(x, y+ry);
+		shape.cubic_to(x, y+ry-fy, x+rx-fx, y, x+rx, y);
+		shape.close_path();
+		return shape;
+	}
+
+	function clear()
+	{
+		(this as Dynamic[]).clear();
+	}
+
+	function move_to(x: Float, y: Float)
+	{
+		this[] = PART_MOVE_TO;
+		this[] = x;
+		this[] = y;
+	}
+
+	function line_to(x: Float, y: Float)
+	{
+		this[] = PART_LINE_TO;
+		this[] = x;
+		this[] = y;
+	}
+
+	function quad_to(x1: Float, y1: Float, x2: Float, y2: Float)
+	{
+		this[] = PART_QUAD_TO;
+		this[] = x1;
+		this[] = y1;
+		this[] = x2;
+		this[] = y2;
+	}
+
+	function cubic_to(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float)
+	{
+		this[] = PART_CUBIC_TO;
+		this[] = x1;
+		this[] = y1;
+		this[] = x2;
+		this[] = y2;
+		this[] = x3;
+		this[] = y3;
+	}
+
+	function arc_to(cx: Float, cy: Float, x2: Float, y2: Float)
+	{
+		var x1 = (this as Float[])[length(this as Dynamic[])-2];
+		var y1 = (this as Float[])[length(this as Dynamic[])-1];
+		var angle1 = atan2(y1 - cy, x1 - cx);
+		var angle2 = atan2(y2 - cy, x2 - cx);
+		var dx = x1 - cx;
+		var dy = y1 - cy;
+		var radius = sqrt(dx*dx + dy*dy);
+		
+		if (angle2 < angle1) {
+			angle2 = angle2 + 2.0*PI;
+		}
+		
+		if (angle2 - angle1 > PI*0.51) {
+			var angle = angle1 + PI*0.5;
+			arc_to(cx, cy, cx + cos(angle) * radius, cy + sin(angle) * radius);
+			arc_to(cx, cy, x2, y2);
+			return;
+		}
+		
+		var f = (4.0/3.0) * tan((angle2-angle1)/4.0);
+		var cos1 = cos(angle1);
+		var sin1 = sin(angle1);
+		var cos2 = cos(angle2);
+		var sin2 = sin(angle2);
+		cubic_to(
+			cx + (cos1 + (-f)*sin1) * radius, cy + (sin1 - (-f)*cos1) * radius,
+			cx + (cos2 + f*sin2) * radius, cy + (sin2 - f*cos2) * radius,
+			x2, y2
+		);
+	}
+
+	function arc_to_neg(cx: Float, cy: Float, x2: Float, y2: Float)
+	{
+		var x1 = (this as Float[])[length(this as Dynamic[])-2];
+		var y1 = (this as Float[])[length(this as Dynamic[])-1];
+		var angle2 = atan2(y1 - cy, x1 - cx);
+		var angle1 = atan2(y2 - cy, x2 - cx);
+		var dx = x1 - cx;
+		var dy = y1 - cy;
+		var radius = sqrt(dx*dx + dy*dy);
+		
+		if (angle2 < angle1) {
+			angle2 = angle2 + 2.0*PI;
+		}
+		
+		if (angle2 - angle1 > PI*0.51) {
+			var angle = angle1 + PI*0.5;
+			arc_to_neg(cx, cy, cx + cos(angle) * radius, cy + sin(angle) * radius);
+			arc_to_neg(cx, cy, x2, y2);
+			return;
+		}
+		
+		var f = (4.0/3.0) * tan((angle2-angle1)/4.0);
+		var cos1 = cos(angle1);
+		var sin1 = sin(angle1);
+		var cos2 = cos(angle2);
+		var sin2 = sin(angle2);
+		cubic_to(
+			cx + (cos2 + f*sin2) * radius, cy + (sin2 - f*cos2) * radius,
+			cx + (cos1 + (-f)*sin1) * radius, cy + (sin1 - (-f)*cos1) * radius,
+			x2, y2
+		);
+	}
+
+	function close_path()
+	{
+		this[] = PART_CLOSE_PATH;
+	}
+	
+	function get_bounds(): Float[]
+	{
+		return get_bounds(0, length(this as Dynamic[]));
+	}
+
+	function @get_bounds(start: Integer, end: Integer): Float[]
+	{
+		var min_x = +1000000.0;
+		var min_y = +1000000.0;
+		var max_x = -1000000.0;
+		var max_y = -1000000.0;
+
+		var arr = this as Dynamic[];
+
+		for (var i=start; i<end; i++) {
+			switch (arr[i]) {
+				case PART_MOVE_TO, PART_LINE_TO: {
+					var x = arr[++i] as Float;
+					var y = arr[++i] as Float;
+
+					min_x = fmin(min_x, x);
+					min_y = fmin(min_y, y);
+					max_x = fmax(max_x, x);
+					max_y = fmax(max_y, y);
+					continue;
+				}
+
+				case PART_QUAD_TO: {
+					var x1 = arr[++i] as Float;
+					var y1 = arr[++i] as Float;
+					var x2 = arr[++i] as Float;
+					var y2 = arr[++i] as Float;
+
+					min_x = fmin(min_x, x1);
+					min_y = fmin(min_y, y1);
+					max_x = fmax(max_x, x1);
+					max_y = fmax(max_y, y1);
+
+					min_x = fmin(min_x, x2);
+					min_y = fmin(min_y, y2);
+					max_x = fmax(max_x, x2);
+					max_y = fmax(max_y, y2);
+					continue;
+				}
+
+				case PART_CUBIC_TO: {
+					var x1 = arr[++i] as Float;
+					var y1 = arr[++i] as Float;
+					var x2 = arr[++i] as Float;
+					var y2 = arr[++i] as Float;
+					var x3 = arr[++i] as Float;
+					var y3 = arr[++i] as Float;
+
+					min_x = fmin(min_x, x1);
+					min_y = fmin(min_y, y1);
+					max_x = fmax(max_x, x1);
+					max_y = fmax(max_y, y1);
+
+					min_x = fmin(min_x, x2);
+					min_y = fmin(min_y, y2);
+					max_x = fmax(max_x, x2);
+					max_y = fmax(max_y, y2);
+
+					min_x = fmin(min_x, x3);
+					min_y = fmin(min_y, y3);
+					max_x = fmax(max_x, x3);
+					max_y = fmax(max_y, y3);
+					continue;
+				}
+			}
+		}
+		return [min_x, min_y, max_x, max_y];
+	}
+
+	function transform(tr: Transform)
+	{
+		transform(tr, 0, length(this as Dynamic[]));
+	}
+
+	function @transform(tr: Transform, start: Integer, end: Integer)
+	{
+		var arr = this as Dynamic[];
+		var m00 = tr.m00;
+		var m01 = tr.m01;
+		var m02 = tr.m02;
+		var m10 = tr.m10;
+		var m11 = tr.m11;
+		var m12 = tr.m12;
+
+		for (var i=start; i<end; i++) {
+			switch (arr[i]) {
+				case PART_MOVE_TO, PART_LINE_TO: {
+					var j = i;
+					var x1 = arr[++j] as Float;
+					var y1 = arr[++j] as Float;
+					arr[++i] = x1 * m00 + y1 * m01 + m02;
+					arr[++i] = x1 * m10 + y1 * m11 + m12;
+					continue;
+				}
+
+				case PART_QUAD_TO: {
+					var j = i;
+					var x1 = arr[++j] as Float;
+					var y1 = arr[++j] as Float;
+					var x2 = arr[++j] as Float;
+					var y2 = arr[++j] as Float;
+					arr[++i] = x1 * m00 + y1 * m01 + m02;
+					arr[++i] = x1 * m10 + y1 * m11 + m12;
+					arr[++i] = x2 * m00 + y2 * m01 + m02;
+					arr[++i] = x2 * m10 + y2 * m11 + m12;
+					continue;
+				}
+
+				case PART_CUBIC_TO: {
+					var j = i;
+					var x1 = arr[++j] as Float;
+					var y1 = arr[++j] as Float;
+					var x2 = arr[++j] as Float;
+					var y2 = arr[++j] as Float;
+					var x3 = arr[++j] as Float;
+					var y3 = arr[++j] as Float;
+					arr[++i] = x1 * m00 + y1 * m01 + m02;
+					arr[++i] = x1 * m10 + y1 * m11 + m12;
+					arr[++i] = x2 * m00 + y2 * m01 + m02;
+					arr[++i] = x2 * m10 + y2 * m11 + m12;
+					arr[++i] = x3 * m00 + y3 * m01 + m02;
+					arr[++i] = x3 * m10 + y3 * m11 + m12;
+					continue;
+				}
+			}
+		}
+	}
+
+	function append(shape: Shape)
+	{
+		(this as Dynamic[]).append(shape as Dynamic[]);
+	}
+
+	function append(shape: Shape, tr: Transform)
+	{
+		var off = length(this as Dynamic[]);
+		(this as Dynamic[]).append(shape as Dynamic[]);
+		transform(tr, off, length(this as Dynamic[]));
+	}
+
+	function hit_test(x: Float, y: Float): Boolean;
+
+	function @offset_subdivide(max_dist: Float, tangents: Float[]): Shape;
+	function @reverse(out: Shape, strip_move_to: Boolean): Shape;
+
+	static function @line_intersection(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float, x4: Float, y4: Float): Dynamic
+	{
+		var a = (x4 - x3)*(y1 - y3) - (y4 - y3)*(x1 - x3);
+		var b = (y4 - y3)*(x2 - x1) - (x4 - x3)*(y2 - y1);
+		var u = a / b;
+		return x1 + u*(x2 - x1), y1 + u*(y2 - y1);
+	}
+
+	function get_reversed(): Shape
+	{
+		return reverse([] as Shape, false);
+	}
+
+	function get_outline(): Shape
+	{
+		return get_outline(1.0, CAP_SQUARE, JOIN_MITER, 10.0);
+	}
+
+	function get_outline(width: Float): Shape
+	{
+		return get_outline(width, CAP_SQUARE, JOIN_MITER, 10.0);
+	}
+
+	function get_outline(width: Float, cap: Integer, join: Integer): Shape
+	{
+		return get_outline(width, cap, join, 10.0);
+	}
+
+	function get_outline(width: Float, cap: Integer, join: Integer, miter_limit: Float): Shape
+	{
+		var half_width = width * 0.5;
+		var miter_limit_sqr = miter_limit * miter_limit * half_width * half_width;
+		var tangents: Float[] = [];
+		var arr = offset_subdivide(25.0 / width, tangents) as Dynamic[];
+		var outline = [];
+		var opposite = [];
+
+		var first_x = 0.0, first_y = 0.0, x0 = 0.0, y0 = 0.0, j=0, first_nx=0.0, first_ny=0.0, last_nx=0.0, last_ny=0.0;
+		var first = true;
+
+		for (var i=0; i<arr.length; i++) {
+			var type = arr[i];
+			if (type == PART_MOVE_TO) {
+				first_x = arr[++i] as Float;
+				first_y = arr[++i] as Float;
+				x0 = first_x;
+				y0 = first_y;
+				first = true;
+				continue;
+			}
+
+			var ny1 = -tangents[j++] * half_width;
+			var nx1 = tangents[j++] * half_width;
+			if (first) {
+				outline[] = PART_MOVE_TO;
+				outline[] = x0 + nx1;
+				outline[] = y0 + ny1;
+				opposite[] = PART_MOVE_TO;
+				opposite[] = x0 - nx1;
+				opposite[] = y0 - ny1;
+				first_nx = nx1;
+				first_ny = ny1;
+			}
+			else if (fabs(nx1 - last_nx) + fabs(ny1 - last_ny) > 0.001) {
+				if (join == JOIN_BEVEL) {
+					outline[] = PART_LINE_TO;
+					outline[] = x0 + nx1;
+					outline[] = y0 + ny1;
+					opposite[] = PART_LINE_TO;
+					opposite[] = x0 - nx1;
+					opposite[] = y0 - ny1;
+				}
+				else if (join == JOIN_ROUND) {
+					var tx = -last_ny;
+					var ty = last_nx;
+					if ((tx*nx1 + ty*ny1) > 0.0) {
+						(outline as Shape).arc_to(x0, y0, x0 + nx1, y0 + ny1);
+						(opposite as Shape).arc_to(x0, y0, x0 - nx1, y0 - ny1);
+					}
+					else {
+						(outline as Shape).arc_to_neg(x0, y0, x0 + nx1, y0 + ny1);
+						(opposite as Shape).arc_to_neg(x0, y0, x0 - nx1, y0 - ny1);
+					}
+				}
+				else if (join == JOIN_MITER) {
+					var tx1 = -last_ny;
+					var ty1 = last_nx;
+					var tx2 = -ny1;
+					var ty2 = nx1;
+					var (cx, cy) = line_intersection(
+						x0+last_nx, y0+last_ny, x0+last_nx+tx1, y0+last_ny+ty1,
+						x0+nx1, y0+ny1, x0+nx1+tx2, y0+ny1+ty2
+					);
+					var dx = (cx as Float) - x0; //XXX
+					var dy = (cy as Float) - y0; //XXX
+					if ((dx*dx + dy*dy) < miter_limit_sqr) { //XXX
+						outline[] = PART_LINE_TO;
+						outline[] = cx;
+						outline[] = cy;
+						opposite[] = PART_LINE_TO;
+						opposite[] = x0 - ((cx as Float) - x0);
+						opposite[] = y0 - ((cy as Float) - y0);
+					}
+					outline[] = PART_LINE_TO;
+					outline[] = x0 + nx1;
+					outline[] = y0 + ny1;
+					opposite[] = PART_LINE_TO;
+					opposite[] = x0 - nx1;
+					opposite[] = y0 - ny1;
+				}
+			}
+
+			switch (type) {
+				case PART_LINE_TO: {
+					var x1 = arr[++i] as Float;
+					var y1 = arr[++i] as Float;
+					outline[] = PART_LINE_TO;
+					outline[] = x1 + nx1;
+					outline[] = y1 + ny1;
+					opposite[] = PART_LINE_TO;
+					opposite[] = x1 - nx1;
+					opposite[] = y1 - ny1;
+					x0 = x1;
+					y0 = y1;
+					last_nx = nx1;
+					last_ny = ny1;
+					first = false;
+					break;
+				}
+
+				case PART_QUAD_TO: {
+					var x1 = arr[++i] as Float;
+					var y1 = arr[++i] as Float;
+					var x2 = arr[++i] as Float;
+					var y2 = arr[++i] as Float;
+					var ny2 = -tangents[j++] * half_width;
+					var nx2 = tangents[j++] * half_width;
+					var ny3 = -tangents[j++] * half_width;
+					var nx3 = tangents[j++] * half_width;
+					outline[] = PART_QUAD_TO;
+					outline[] = x1 + nx2;
+					outline[] = y1 + ny2;
+					outline[] = x2 + nx3;
+					outline[] = y2 + ny3;
+					opposite[] = PART_QUAD_TO;
+					opposite[] = x1 - nx2;
+					opposite[] = y1 - ny2;
+					opposite[] = x2 - nx3;
+					opposite[] = y2 - ny3;
+					x0 = x2;
+					y0 = y2;
+					last_nx = nx3;
+					last_ny = ny3;
+					first = false;
+					break;
+				}
+
+				case PART_CUBIC_TO: {
+					var x1 = arr[++i] as Float;
+					var y1 = arr[++i] as Float;
+					var x2 = arr[++i] as Float;
+					var y2 = arr[++i] as Float;
+					var x3 = arr[++i] as Float;
+					var y3 = arr[++i] as Float;
+					var ny2 = -tangents[j++] * half_width;
+					var nx2 = tangents[j++] * half_width;
+					var ny3 = -tangents[j++] * half_width;
+					var nx3 = tangents[j++] * half_width;
+					outline[] = PART_CUBIC_TO;
+					outline[] = x1 + nx2;
+					outline[] = y1 + ny2;
+					outline[] = x2 + nx2;
+					outline[] = y2 + ny2;
+					outline[] = x3 + nx3;
+					outline[] = y3 + ny3;
+					opposite[] = PART_CUBIC_TO;
+					opposite[] = x1 - nx2;
+					opposite[] = y1 - ny2;
+					opposite[] = x2 - nx2;
+					opposite[] = y2 - ny2;
+					opposite[] = x3 - nx3;
+					opposite[] = y3 - ny3;
+					x0 = x3;
+					y0 = y3;
+					last_nx = nx3;
+					last_ny = ny3;
+					first = false;
+					break;
+				}
+
+				case PART_CLOSE_PATH: {
+					outline[] = PART_CLOSE_PATH;
+					(opposite as Shape).reverse(outline as Shape, false);
+					opposite.clear();
+					outline[] = PART_CLOSE_PATH;
+					x0 = first_x;
+					y0 = first_y;
+					last_nx = nx1;
+					last_ny = ny1;
+					first = true;
+					break;
+				}
+
+				default: throw error("garbled coordinate values");
+			}
+
+			if (!first && (i == (arr.length-1) || arr[i+1] == PART_MOVE_TO)) { //XXX
+				if (cap == CAP_BUTT) {
+					outline[] = PART_LINE_TO;
+					outline[] = x0 - last_nx;
+					outline[] = y0 - last_ny;
+				}
+				else if (cap == CAP_ROUND) {
+					(outline as Shape).arc_to(x0, y0, x0 - last_nx, y0 - last_ny);
+				}
+				else if (cap == CAP_SQUARE) {
+					var tx = -last_ny;
+					var ty = last_nx;
+					outline[] = PART_LINE_TO;
+					outline[] = x0 + last_nx + tx;
+					outline[] = y0 + last_ny + ty;
+					outline[] = PART_LINE_TO;
+					outline[] = x0 - last_nx + tx;
+					outline[] = y0 - last_ny + ty;
+					outline[] = PART_LINE_TO;
+					outline[] = x0 - last_nx;
+					outline[] = y0 - last_ny;
+				}
+				(opposite as Shape).reverse(outline as Shape, true);
+				opposite.clear();
+				if (cap == CAP_ROUND) {
+					(outline as Shape).arc_to(first_x, first_y, first_x + first_nx, first_y + first_ny);
+				}
+				else if (cap == CAP_SQUARE) {
+					var tx = -first_ny;
+					var ty = first_nx;
+					outline[] = PART_LINE_TO;
+					outline[] = first_x - first_nx - tx;
+					outline[] = first_y - first_ny - ty;
+					outline[] = PART_LINE_TO;
+					outline[] = first_x + first_nx - tx;
+					outline[] = first_y + first_ny - ty;
+				}
+				outline[] = PART_CLOSE_PATH;
+			}
+		}
+
+		return outline as Shape;
+	}
+}
+
+class Transform
+{
+	var m00: Float;
+	var m01: Float;
+	var m02: Float;
+	var m10: Float;
+	var m11: Float;
+	var m12: Float;
+
+	static function create(): Transform
+	{
+		return [1.0, 0.0, 0.0, 0.0, 1.0, 0.0] as Transform;
+	}
+
+	function reset()
+	{
+		m00 = 1.0;
+		m01 = 0.0;
+		m02 = 0.0;
+		m10 = 0.0;
+		m11 = 1.0;
+		m12 = 0.0;
+	}
+
+	function mul(tr: Transform)
+	{
+		mul(this, tr);
+	}
+	
+	function mul(tr1: Transform, tr2: Transform)
+	{
+		var r00 = tr1.m00 * tr2.m00 + tr1.m01 * tr2.m10;
+		var r01 = tr1.m00 * tr2.m01 + tr1.m01 * tr2.m11;
+		var r02 = tr1.m00 * tr2.m02 + tr1.m01 * tr2.m12 + tr1.m02;
+		var r10 = tr1.m10 * tr2.m00 + tr1.m11 * tr2.m10;
+		var r11 = tr1.m10 * tr2.m01 + tr1.m11 * tr2.m11;
+		var r12 = tr1.m10 * tr2.m02 + tr1.m11 * tr2.m12 + tr1.m12;
+		m00 = r00;
+		m01 = r01;
+		m02 = r02;
+		m10 = r10;
+		m11 = r11;
+		m12 = r12;
+	}
+
+	function invert()
+	{
+		invert(this);
+	}
+	
+	function invert(tr: Transform)
+	{
+		var r00 = tr.m11;
+		var r01 = -tr.m01;
+		var r10 = -tr.m10;
+		var r11 = tr.m00;
+		var invdet = 1.0 / (tr.m00*tr.m11 - tr.m01*tr.m10);
+		r00 = r00 * invdet;
+		r01 = r01 * invdet;
+		r10 = r10 * invdet;
+		r11 = r11 * invdet;
+		var r02 = -tr.m02*r00 - tr.m12*r01;
+		var r12 = -tr.m02*r10 - tr.m12*r11;
+		m00 = r00;
+		m01 = r01;
+		m10 = r10;
+		m11 = r11;
+		m02 = r02;
+		m12 = r12;
+	}
+	
+	function translate(tx: Float, ty: Float)
+	{
+		m02 = m02 + m00 * tx + m01 * ty;
+		m12 = m12 + m10 * tx + m11 * ty;
+	}
+	
+	function rotate(angle: Float)
+	{
+		var vcos = cos(angle);
+		var vsin = sin(angle);
+		var r00 = m00 * vcos + m01 * vsin;
+		var r01 = m01 * vcos - m00 * vsin;
+		var r10 = m10 * vcos + m11 * vsin;
+		var r11 = m11 * vcos - m10 * vsin;
+		m00 = r00;
+		m01 = r01;
+		m10 = r10;
+		m11 = r11;
+	}
+	
+	function scale(scale: Float)
+	{
+		m00 = m00 * scale;
+		m01 = m01 * scale;
+		m10 = m10 * scale;
+		m11 = m11 * scale;
+	}
+	
+	function scale(sx: Float, sy: Float)
+	{
+		m00 = m00 * sx;
+		m01 = m01 * sy;
+		m10 = m10 * sx;
+		m11 = m11 * sy;
+	}
+	
+	function shear(sx: Float, sy: Float)
+	{
+		var r00 = m00 + m01 * sy;
+		var r01 = m00 * sx + m01;
+		var r10 = m10 + m11 * sy;
+		var r11 = m10 * sx + m11;
+		m00 = r00;
+		m01 = r01;
+		m10 = r10;
+		m11 = r11;
+	}
+
+	function transform_x(x: Float, y: Float): Float
+	{
+		return x * m00 + y * m01 + m02;
+	}
+
+	function transform_y(x: Float, y: Float): Float
+	{
+		return x * m10 + y * m11 + m12;
+	}
+}
+
+function rgb(value: Integer): Integer
+{
+	return value | 0xFF000000;
+}
+
+function argb(value: Integer): Integer
+{
+	var ca = value >>> 24;
+	var cr = (value >>> 16) & 0xFF;
+	var cg = (value >>> 8) & 0xFF;
+	var cb = value & 0xFF;
+	cr = (cr * ca) / 255;
+	cg = (cg * ca) / 255;
+	cb = (cb * ca) / 255;
+	return (ca << 24) | (cr << 16) | (cg << 8) | cb;
+}
+
+function hsv_to_rgb(hue: Float, saturation: Float, value: Float): Integer
+{
+	if (hue >= 360.0) hue = hue - 360.0;
+	var chroma = value * saturation;
+	var hue1 = hue / 60.0;
+	var hue2 = ((hue1*0.5) - floor(hue1*0.5)) * 2.0;
+	var x = chroma * (1.0 - fabs(hue2 - 1.0));
+	var r1 = 0.0, g1 = 0.0, b1 = 0.0;
+	switch (int(hue1)) {
+		case 0: r1 = chroma; g1 = x; break;
+		case 1: r1 = x; g1 = chroma; break;
+		case 2: g1 = chroma; b1 = x; break;
+		case 3: g1 = x; b1 = chroma; break;
+		case 4: b1 = chroma; r1 = x; break;
+		case 5: b1 = x; r1 = chroma; break;
+	}
+	var m = value - chroma;
+	var r = r1 + m;
+	var g = g1 + m;
+	var b = b1 + m;
+	return 0xFF000000 | (iround(r*255.0) << 16) | (iround(g*255.0) << 8) | iround(b*255.0);
+}
+
+function rgb_to_hsv(rgb: Integer): Float[]
+{
+	return rgb_to_hsv(rgb, [0.0, 0.0, 0.0]);
+}
+
+function rgb_to_hsv(rgb: Integer, out: Float[]): Float[]
+{
+	var r = float((rgb >> 16) & 0xFF) / 255.0;
+	var g = float((rgb >> 8) & 0xFF) / 255.0;
+	var b = float(rgb & 0xFF) / 255.0;
+	var min_comp = fmin(fmin(r, g), b);
+	var max_comp = fmax(fmax(r, g), b);
+	var hue = 0.0;
+	if (max_comp > min_comp) {
+		if (max_comp == r) {
+			hue = 60.0 * (0.0 + (g - b) / (max_comp - min_comp));
+		}
+		else if (max_comp == g) {
+			hue = 60.0 * (2.0 + (b - r) / (max_comp - min_comp));
+		}
+		else if (max_comp == b) {
+			hue = 60.0 * (4.0 + (r - g) / (max_comp - min_comp));
+		}
+	}
+	if (hue < 0.0) {
+		hue = hue + 360.0;
+	}
+	var saturation = 0.0;
+	if (max_comp > 0.0) {
+		saturation = (max_comp - min_comp) / max_comp;
+	}
+	var value = max_comp;
+	out[0] = hue;
+	out[1] = saturation;
+	out[2] = value;
+	return out;
+}
+
+function hsl_to_rgb(hue: Float, saturation: Float, lightness: Float): Integer
+{
+	if (hue >= 360.0) hue = hue - 360.0;
+	var chroma = (1.0 - fabs(2.0 * lightness - 1.0)) * saturation;
+	var hue1 = hue / 60.0;
+	var hue2 = ((hue1*0.5) - floor(hue1*0.5)) * 2.0;
+	var x = chroma * (1.0 - fabs(hue2 - 1.0));
+	var r1 = 0.0, g1 = 0.0, b1 = 0.0;
+	switch (int(hue1)) {
+		case 0: r1 = chroma; g1 = x; break;
+		case 1: r1 = x; g1 = chroma; break;
+		case 2: g1 = chroma; b1 = x; break;
+		case 3: g1 = x; b1 = chroma; break;
+		case 4: b1 = chroma; r1 = x; break;
+		case 5: b1 = x; r1 = chroma; break;
+	}
+	var m = lightness - chroma * 0.5;
+	var r = r1 + m;
+	var g = g1 + m;
+	var b = b1 + m;
+	return 0xFF000000 | (iround(r*255.0) << 16) | (iround(g*255.0) << 8) | iround(b*255.0);
+}
+
+function rgb_to_hsl(rgb: Integer): Float[]
+{
+	return rgb_to_hsl(rgb, [0.0, 0.0, 0.0]);
+}
+
+function rgb_to_hsl(rgb: Integer, out: Float[]): Float[]
+{
+	var r = float((rgb >> 16) & 0xFF) / 255.0;
+	var g = float((rgb >> 8) & 0xFF) / 255.0;
+	var b = float(rgb & 0xFF) / 255.0;
+	var min_comp = fmin(fmin(r, g), b);
+	var max_comp = fmax(fmax(r, g), b);
+	var hue = 0.0;
+	if (max_comp > min_comp) {
+		if (max_comp == r) {
+			hue = 60.0 * (0.0 + (g - b) / (max_comp - min_comp));
+		}
+		else if (max_comp == g) {
+			hue = 60.0 * (2.0 + (b - r) / (max_comp - min_comp));
+		}
+		else if (max_comp == b) {
+			hue = 60.0 * (4.0 + (r - g) / (max_comp - min_comp));
+		}
+	}
+	if (hue < 0.0) {
+		hue = hue + 360.0;
+	}
+	var lightness = (max_comp + min_comp) * 0.5;
+	var saturation = 0.0;
+	if (max_comp > 0.0 && min_comp < 1.0) {
+		saturation = (max_comp - lightness) / fmin(lightness, 1.0 - lightness);
+	}
+	out[0] = hue;
+	out[1] = saturation;
+	out[2] = lightness;
+	return out;
+}

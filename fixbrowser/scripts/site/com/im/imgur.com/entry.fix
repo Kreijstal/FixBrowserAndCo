@@ -1,25 +1,191 @@
+use "util/time_literals";
+use "classes";
+
 import "util/common";
+import "util/string";
+import "util/extract";
+import "util/json";
+import "util/template";
+import "util/long";
 
-function adjust_document(request, document)
+function handle_request(request: Request)
 {
-	var elems = element_query_all(document, "div.post-image-container[id]");
-	for (var i=0; i<length(elems); i++) {
-		var id = element_get_attr(elems[i], "id");
-		var div = element_query(elems[i], "div.post-image");
-		if (div) {
-			var src = {"https://i.imgur.com/", id, ".jpg"};
-
-			var img = element_create("img");
-			element_set_attr(img, "src", src);
-			element_set_attr(img, "class", "post-image-placeholder");
-			element_set_attr(img, "style", "opacity: 1");
-			element_set_attr(img, "border", "0");
-
-			var link = element_create("a");
-			element_set_attr(link, "href", src);
-			element_append_child(link, img);
-			
-			element_append_child(div, link);
+	var domain = request.get_domain();
+	if (domain == "imgur.com") {
+		var path = request.get_path();
+		if (path == "/") {
+			handle_title_page(request);
+		}
+		else if (path.starts_with("/gallery/")) {
+			handle_album(request, path.substring("/gallery/".length));
+		}
+		else if (path.starts_with("/a/")) {
+			handle_album(request, path.substring("/a/".length));
+		}
+		else if (path.search_char('/', 1) < 0) {
+			var img_code = path.substring(1);
+			redirect_image(request, Document::parse_from_http("https://imgur.com/"+img_code));
 		}
 	}
+	else if (domain == "i.imgur.com") {
+		if (request.get_query() != null) {
+			request.set_redirect(Link::strip_params(request.get_url()));
+			return;
+		}
+		request.set_header("Accept", "*/*");
+	}
+}
+
+function @get_client_id(doc: Element): String
+{
+	foreach (var elem in doc.query_all("script")) {
+		var src = elem.get_attr("src");
+		if (src != null && src.starts_with("https://s.imgur.com/desktop-assets/js/main.")) {
+			var key = ["client_id", src];
+			var value = DataStore::get("imgur.com", key);
+			if (value) {
+				return value.get("value").as_string();
+			}
+			var script = String::from_utf8(Http::get(src).content);
+			var client_id = extract_string(script, "apiClientId:\"", "\"");
+			if (client_id) {
+				DataStore::set("imgur.com", key, {"value": client_id}, 180 days);
+				foreach (var old_key in DataStore::get_keys("imgur.com", ["client_id", null])) {
+					if (old_key != key) {
+						DataStore::remove("imgur.com", old_key);
+					}
+				}
+			}
+			return client_id;
+		}
+	}
+	return null;
+}
+
+function @handle_title_page(request: Request)
+{
+	var doc = Document::parse_from_http("https://imgur.com/");
+
+	var client_id = get_client_id(doc);
+	if (client_id) {
+		var json = JSON::parse(Http::get("https://api.imgur.com/post/v1/posts?client_id="+client_id+"&filter%5Bsection%5D=eq%3Ahot&include=adtiles%2Cadconfig%2Ccover%2Ctags%2Cviral&location=desktophome&page=1&sort=-time", null, {
+			"Origin": "https://imgur.com"
+		}).content);
+		//request.replace_with_html(show_json(json)); return;
+
+		var tpl = Template::create("site/com/im/imgur.com/title.tpl");
+		tpl.set("style", html_escape(resource_get_string("site/com/im/imgur.com/style.css")));
+
+		tpl.begin("media");
+		foreach (var post in json.as_array()) {
+			tpl.set("title", html_escape(post.get("title").as_string()));
+			tpl.set("url", html_escape(post.get("url").as_string()));
+			var media = post.get("cover");
+			var width = media.get("width").as_int();
+			var height = media.get("height").as_int();
+			var aspect_ratio = float(width) / float(height);
+			var box_width = 300;
+			var box_height = iceil(box_width / aspect_ratio);
+			tpl.set("width", {box_width});
+			tpl.set("height", {box_height});
+			var type = media.get("type").as_string();
+			if (type == "image") {
+				tpl.set("image_url", html_escape(media.get("url").as_string()));
+			}
+			else if (type == "video") {
+				tpl.set("video_url", html_escape(media.get("url").as_string()));
+				tpl.set("mime_type", html_escape(media.get("mime_type").as_string()));
+			}
+			else {
+				continue;
+			}
+			tpl.next_record();
+		}
+		tpl.end();
+
+		request.replace_with_html(tpl.process());
+	}
+}
+
+function @handle_album(request: Request, name: String)
+{
+	var idx = name.rev_search_char('-');
+	var album_code = idx >= 0? name.substring(idx+1) : name;
+	var doc = Document::parse_from_http("https://imgur.com/a/"+album_code);
+
+	var client_id = get_client_id(doc);
+	if (client_id) {
+		var json = JSON::parse(Http::get("https://api.imgur.com/post/v1/albums/"+album_code+"?client_id="+client_id+"&include=media%2Cadconfig%2Caccount%2Ctags", null, {
+			"Origin": "https://imgur.com"
+		}).content);
+		//request.replace_with_html(show_json(json)); return;
+
+		var tpl = Template::create("site/com/im/imgur.com/album.tpl");
+		tpl.set("style", html_escape(resource_get_string("site/com/im/imgur.com/style.css")));
+		tpl.set("title", html_escape(json.get("title").as_string()));
+		tpl.set("views", html_escape(adjust_views(json.get("view_count").as_long().to_string())));
+		tpl.set("created", html_escape(adjust_date(get_either(json, "updated_at", "created_at").as_string())));
+
+		tpl.begin("media");
+		foreach (var media in json.get("media").as_array()) {
+			var width = media.get("width").as_int();
+			var height = media.get("height").as_int();
+			tpl.set("orientation", width >= iround(height*1.33)? "horiz" : "vert");
+			var type = media.get("type").as_string();
+			if (type == "image") {
+				tpl.set("image_url", html_escape(media.get("url").as_string()));
+			}
+			else if (type == "video") {
+				tpl.set("video_url", html_escape(media.get("url").as_string()));
+				tpl.set("mime_type", html_escape(media.get("mime_type").as_string()));
+			}
+			else {
+				continue;
+			}
+			tpl.next_record();
+		}
+		tpl.end();
+		
+		request.replace_with_html(tpl.process());
+	}
+	else {
+		redirect_image(request, doc);
+	}
+}
+
+function @redirect_image(request: Request, doc: Element)
+{
+	var image = doc.query("meta[property='og:image']");
+	if (image) {
+		var url = Link::strip_params(image.get_attr("content"));
+		request.set_redirect(url);
+	}
+}
+
+function @get_either(json: JSON, key1: String, key2: String): JSON
+{
+	var value = json.opt(key1);
+	if (value.has_value() && !JSONNull::is_instance(value)) {
+		return value;
+	}
+	return json.get(key2);
+}
+
+function @adjust_views(s: String): String
+{
+	s = {s};
+	for (var i=s.length-3; i>0; i-=3) {
+		s.insert_char(i, ',');
+	}
+	return s;
+}
+
+function @adjust_date(s: String): String
+{
+	if (s.length == 20 && s[10] == 'T' && s[19] == 'Z') {
+		s = s.substring(0, 19)+" UTC";
+		s[10] = ' ';
+		return s;
+	}
+	return s;
 }

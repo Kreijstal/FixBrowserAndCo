@@ -1,0 +1,112 @@
+/*
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/file";
+import "io/tcp";
+import "io/process";
+import "task/global";
+import "task/task";
+import "util/string";
+import "util/json";
+import "gateopener/handler";
+import "gateopener/handler_types";
+
+var @browser_process: Process;
+
+function @prepare_browser()
+{
+	if (browser_process) {
+		browser_process.kill();
+		browser_process = null;
+		Task::sleep(config.get("firefox_kill_wait").as_int()*1000);
+	}
+
+	var workdir = config.get("work_dir").as_string();
+	var profile_template = config.get("profile_template").as_string();
+	var profile_dir = workdir+"/instance-"+instance_id;
+	Process::run(["mkdir", "-p", workdir]);
+	Process::run(["rm", "-rf", profile_dir]);
+	Process::run(["cp", "-a", profile_template, profile_dir]);
+
+	var prefs_path = Path(profile_dir, "prefs.js");
+	var prefs = File::read_whole(prefs_path, {""}) as String;
+	var socks_port = config.get("socks_port_base").as_int() + instance_id;
+	prefs += "user_pref(\"network.proxy.socks\", \"127.0.0.1\");\n";
+	prefs += "user_pref(\"network.proxy.socks_port\", "+socks_port+");\n";
+	prefs += "user_pref(\"network.proxy.type\", 1);\n";
+	prefs += "user_pref(\"network.proxy.allow_hijacking_localhost\", true);\n";
+	prefs += "user_pref(\"browser.cache.disk.enable\", false);\n";
+	prefs += "user_pref(\"browser.cache.memory.enable\", true);\n";
+	prefs += "user_pref(\"browser.cache.disk_cache_ssl\", false);\n";
+	prefs += "user_pref(\"network.captive-portal-service.enabled\", false);\n";
+	File::write_whole(prefs_path, prefs);
+
+	var firefox_binary = config.get("firefox_binary").as_string();
+	var firefox_parameters = config.get("firefox_parameters").as_array() as String[];
+	var bidi_port = config.get("bidi_port_base").as_int() + instance_id;
+	var args = [firefox_binary];
+	args[] = "--profile";
+	args[] = profile_dir;
+	args[] = "--remote-debugging-port";
+	args[] = {bidi_port};
+	args[] = "--remote-allow-origins";
+	args[] = "http://localhost:"+bidi_port;
+	args.append(firefox_parameters);
+	browser_process = Process::create(args, null, null, REDIR_NONE);
+	Task::sleep(config.get("firefox_start_wait").as_int()*1000);
+	
+	reset_id_counter();
+}
+
+function @custom_log(value)
+{
+	log("[instance-"+instance_id+"] "+value);
+}
+
+function main(server: TCPServer, _instance_id: Integer)
+{
+	config = Global::get("config");
+	instance_id = _instance_id;
+
+	set_log_function(custom_log#1);
+	restart_browser = true;
+
+	for (;;) {
+		if (restart_browser) {
+			prepare_browser();
+			restart_browser = false;
+		}
+		var (conn, e) = server.accept();
+		if (e) {
+			dump(e);
+		}
+		else if (conn) {
+			var (r, e2) = handle_connection(conn, get_handler#1);
+			if (e2) {
+				dump(e2);
+			}
+		}
+		heap_collect();
+	}
+}

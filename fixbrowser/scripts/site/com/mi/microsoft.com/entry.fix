@@ -1,6 +1,8 @@
+use "classes";
+
 import "util/common";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "s-microsoft.com")) return true;
 	if (domain_ends_with(dest, "s-msft.com")) return true;
@@ -10,7 +12,7 @@ function is_same_domain(src, dest)
 	return false;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	remove_element(document, "div#msccBanner");
 	add_style_to_element(document, "header#azure-header", "position: static");

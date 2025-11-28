@@ -1,0 +1,33 @@
+use "classes";
+
+import "util/common";
+
+function show_gateopener_info(request: Request, gatekeeper_name: String)
+{
+	show_gateopener_info(request, gatekeeper_name, null);
+}
+
+function show_gateopener_info(request: Request, gatekeeper_name: String, additional_info: String)
+{
+	if (!additional_info) {
+		additional_info = "";
+	}
+	var content = {
+		"<style>",
+		"body { font-family: sans-serif; font-size: 16px; background: #FFF; color: #000; margin: 0; padding: 0; line-height: 1.3; }",
+		"#box { margin: 0 auto; margin-top: 100px; max-width: 600px; border: 1px solid #CCC; border-radius: 5px; background: #EEE; padding: 10px; }",
+		"h1 { margin-top: 0; font-size: 26px; text-align: center; }",
+		"p { margin-bottom: 0; }",
+		"</style>",
+		"<div id=\"box\">",
+		"<h1>Error</h1>",
+		"<p><b>This website is protected by "+gatekeeper_name+" gatekeeper.</b></p>",
+		additional_info,
+		"<p>",
+		"You can use the <b>GateOpener</b> service to bypass the protection. Access is available to supporters of the FixBrowser project.<br><br>",
+		"You can donate on <a href=\""+make_same_domain_link(request, "https://www.fixbrowser.org/")+"\">the homepage</a>.",
+		"</p>",
+		"</div>"
+	};
+	request.replace_document(Document::parse(content));
+}

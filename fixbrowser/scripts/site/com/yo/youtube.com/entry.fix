@@ -1,10 +1,12 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/extract";
 import "util/json";
 import "util/template";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "ytimg.com")) return true;
 	if (domain_ends_with(dest, "youtube-nocookie.com")) return true;
@@ -40,130 +42,124 @@ function dump(value)
 }
 
 /*
-function handle_request(request)
+function handle_request(request: Request)
 {
-	var path = request_get_path(request);
-	if (string_search_char(path, '.') == -1) {
-		if (hash_get(request_get_params(request), "disable_polymer", null) == null) {
-			var url = link_with_params(request_get_url(request), {"disable_polymer": "1"});
-			request_set_redirect(request, url);
+	var path = request.get_path();
+	if (path.search_char('.') == -1) {
+		if (request.get_param("disable_polymer") == null) {
+			var url = Link::with_params(request.get_url(), {"disable_polymer": "1"});
+			request.set_redirect(url);
 			return;
 		}
 	}
 }
 */
 
-function @parse_initial_data(data)
+function @parse_initial_data(data: JSON): String[String][]
 {
-	var contents = json_get_object(data, "contents");
-	var renderer = json_get_object(contents, "twoColumnBrowseResultsRenderer");
-	var tabs = json_get_array(renderer, "tabs");
-	var videos = [];
-	//log({"num_tabs=", json_length(tabs)});
-	for (var i=0; i<json_length(tabs); i++) {
-		var tab = json_get_object(tabs, i);
-		var renderer2 = json_get_object(tab, "tabRenderer");
-		var content = json_get_object(renderer2, "content");
-		var renderer3 = json_get_object(content, "richGridRenderer");
-		var contents2 = json_get_array(renderer3, "contents");
+	var contents = data.get("contents");
+	var renderer = contents.get("twoColumnBrowseResultsRenderer");
+	var tabs = renderer.get("tabs").as_array();
+	var videos: String[String][] = [];
+	//log("num_tabs="+tabs.length);
+	foreach (var tab in tabs) {
+		var renderer2 = tab.get("tabRenderer");
+		var content = renderer2.get("content");
+		var renderer3 = content.get("richGridRenderer");
+		var contents2 = renderer3.get("contents");
 		parse_contents(contents2, videos);
 	}
 	return videos;
 }
 
-function @parse_contents(data, videos)
+function @parse_contents(data: JSON, videos: String[String][])
 {
-	for (var i=0; i<json_length(data); i++) {
-		var content = json_get_object(data, i);
-		//log({"keys=", json_get_keys(content)});
-		var item = json_get_object(content, "richItemRenderer");
-		if (item) {
+	for (var i=0; i<data.length(); i++) {
+		var content = data.get(i);
+		//log("keys="+content.get_keys());
+		var item = content.opt("richItemRenderer");
+		if (item.has_value()) {
 			parse_item_renderer(item, videos);
 		}
-		var section = json_get_object(content, "richSectionRenderer");
-		if (section) {
+		var section = content.opt("richSectionRenderer");
+		if (section.has_value()) {
 			parse_section_renderer(section, videos);
 		}
 	}
 }
 
-function @parse_item_renderer(data, videos)
+function @parse_item_renderer(data: JSON, videos: String[String][])
 {
-	var content = json_get_object(data, "content");
-	var renderer = json_get_object(content, "videoRenderer");
+	var content = data.get("content");
+	var renderer = content.get("videoRenderer");
 	parse_video(renderer, videos);
 }
 
-function @parse_section_renderer(data, videos)
+function @parse_section_renderer(data: JSON, videos: String[String][])
 {
-	var content = json_get_object(data, "content");
-	var renderer = json_get_object(content, "richShelfRenderer");
-	var title = json_get_string(json_get_object(json_get_array(json_get_object(renderer, "title"), "runs"), 0), "text");
-	var contents = json_get_array(renderer, "contents");
+	var content = data.get("content");
+	var renderer = content.get("richShelfRenderer");
+	var title = renderer.get("title").get("runs").get(0).get("text");
+	var contents = renderer.get("contents");
 	parse_contents(contents, videos);
 }
 
-function @parse_video(data, videos)
+function @parse_video(data: JSON, videos: String[String][])
 {
-	var video_id = json_get_string(data, "videoId");
-	var title = json_get_string(json_get_object(json_get_array(json_get_object(data, "title"), "runs"), 0), "text");
-	var thumbnail = json_get_string(json_get_object(json_get_array(json_get_object(data, "thumbnail"), "thumbnails"), 0), "url");
-	if (video_id && title && thumbnail) {
-		videos[] = {
-			"id": video_id,
-			"title": title,
-			"thumbnail": thumbnail
-		};
-	}
+	var video_id = data.get("videoId").as_string();
+	var title = data.get("title").get("runs").get(0).get("text").as_string();
+	var thumbnail = data.get("thumbnail").get("thumbnails").get(0).get("url").as_string();
+	videos[] = {
+		"id": video_id,
+		"title": title,
+		"thumbnail": thumbnail
+	};
 }
 
-function adjust_title_page(request, document)
+function adjust_title_page(request: Request, document: Element)
 {
-	var videos = null;
+	var videos: String[String][];
 
-	var scripts = element_query_all(document, "script");
-	for (var i=0; i<length(scripts); i++) {
-		var script = scripts[i];
-		var code = element_extract_text(script);
-		var short_code = length(code) > 100? array_extract(code, 0, 100) : code;
-		//log({"script=", short_code});
+	foreach (var script in document.query_all("script")) {
+		var code = script.extract_text();
+		var short_code = code.length > 100? code.extract(0, 100) : code;
+		//log("script="+short_code);
 		
-		var idx = string_search_string(short_code, "window[\"ytInitialData\"] = ");
+		var idx = short_code.search_string("window[\"ytInitialData\"] = ");
 		if (idx != -1) {
-			idx += length("window[\"ytInitialData\"] = ");
-			var idx2 = string_search_string(code, "window[\"ytInitialPlayerResponse\"]", length(code)-1000);
+			idx += "window[\"ytInitialData\"] = ".length;
+			var idx2 = code.search_string("window[\"ytInitialPlayerResponse\"]", code.length-1000);
 			if (idx2 != -1) {
-				idx2 = string_rev_search_char(code, ';', length(code)-1000, idx2);
+				idx2 = code.rev_search_char(';', code.length-1000, idx2);
 				if (idx2 != -1) {
-					code = string_substring(code, idx, idx2);
+					code = code.substring(idx, idx2);
 					var data = json_parse(code);
 					videos = parse_initial_data(data);
-					//show_json(element_query(document, "#search-container"), data);
+					//show_json(document.query("#search-container"), data);
 				}
 			}
 		}
 	}
 
-	var tpl = template_create("site/com/yo/youtube.com/title.tpl");
-	template_set(tpl, "data", html_escape(to_string(videos, true)));
+	var tpl = Template::create("site/com/yo/youtube.com/title.tpl");
+	tpl.set("data", html_escape(to_string(videos, true)));
 	
-	template_begin(tpl, "videos");
-	for (var i=0; i<length(videos); i++) {
-		var video = videos[i];
-		template_set(tpl, "id", video{"id"});
-		template_set(tpl, "url", {"https://www.youtube.com/watch?v=", video{"id"}});
-		template_set(tpl, "title", html_escape(video{"title"}));
-		template_set(tpl, "thumbnail", video{"thumbnail"});
-		template_next_record(tpl);
+	tpl.begin("videos");
+	foreach (var video in videos) {
+		tpl.set("id", video["id"]);
+		tpl.set("url", "https://www.youtube.com/watch?v="+video["id"]);
+		tpl.set("title", html_escape(video["title"]));
+		tpl.set("thumbnail", video["thumbnail"]);
+		tpl.next_record();
 	}
-	template_end(tpl);
+	tpl.end();
 
-	request_replace_document(request, document_parse(template_process(tpl)));
+	request.replace_document(Document::parse(template_process(tpl)));
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var path = request_get_path(request);
+	var path = request.get_path();
 	if (path == "/") {
 		adjust_title_page(request, document);
 	}

@@ -1,0 +1,31 @@
+{
+	"localhost": false,
+	"port": 12345,
+	"socks_port_base": 12345,
+	"bidi_port_base": 12345,
+	"profile_template": "/path/to/profile",
+	"work_dir": "/path/to/work_dir",
+	"firefox_binary": "firefox-esr",
+	"firefox_parameters": [],
+	"firefox_start_wait": 5,
+	"firefox_kill_wait": 2,
+	"num_instances": 1,
+	"request_time_limit": 2,
+	"session_time_limit": 30,
+	"viewport_origin": [0, 0],
+	"blocked_domains": [
+		"mozilla.com",
+		"mozilla.net",
+		"mozilla.org",
+		"firefox.com",
+		"openh264.org",
+		"getpocket.com",
+		"gvt1.com",
+		"google.com",
+		"googleapis.com",
+		"googleusercontent.com",
+		"googlesyndication.com",
+		"google-analytics.com",
+		"google"
+	]
+}

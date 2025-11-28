@@ -1,0 +1,703 @@
+/*
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "io/stream";
+import "io/file";
+import "io/tcp";
+import "io/websocket";
+import "io/time";
+import "io/crypto/sha256";
+import "image/image";
+import "task/global";
+import "task/channel";
+import "util/json";
+import "util/base64";
+import "util/long";
+
+const {
+	@PACKET_ERROR,
+	@PACKET_SUCCESS,
+	@PACKET_CONNECT,
+	@PACKET_CONNECT_SUCCESS,
+	@PACKET_CONNECT_FAILURE,
+	@PACKET_DISCONNECT,
+	@PACKET_DATA
+};
+
+const {
+	ALLOW_PASS   = 1,
+	ALLOW_REJECT = 0,
+	ALLOW_IGNORE = -1
+};
+
+var config: JSON;
+var instance_id: Integer;
+var restart_browser: Boolean;
+
+var @buf: Byte[];
+var @id_counter: Integer;
+
+function @append_short(buf: Byte[], value: Short)
+{
+	buf[] = value & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+}
+
+function @append_int(buf: Byte[], value: Integer)
+{
+	buf[] = value & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = (value >>> 16) & 0xFF;
+	buf[] = value >>> 24;
+}
+
+function @get_short(buf: Byte[], off: Integer): Short
+{
+	return buf[off+0] | (buf[off+1] << 8);
+}
+
+function @get_int(buf: Byte[], off: Integer): Integer
+{
+	return buf[off+0] | (buf[off+1] << 8) | (buf[off+2] << 16) | (buf[off+3] << 24);
+}
+
+function @read_data(conn: TCPConnection, buf: Byte[], off: Integer, len: Integer, init_time: Integer, time_limit: Integer)
+{
+	while (len > 0) {
+		if (sub32(Monotonic::get_time(), init_time) >= time_limit) {
+			throw error("request time limit reached");
+		}
+		var read = conn.read_part(buf, off, len, 100);
+		if (read < 0) throw error("unexpected end of stream");
+		off += read;
+		len -= read;
+	}
+}
+
+function @write_data(conn: TCPConnection, buf: Byte[], off: Integer, len: Integer, init_time: Integer, time_limit: Integer)
+{
+	while (len > 0) {
+		if (sub32(Monotonic::get_time(), init_time) >= time_limit) {
+			throw error("request time limit reached");
+		}
+		var written = conn.write_part(buf, off, len, 100);
+		off += written;
+		len -= written;
+	}
+}
+
+function @domain_ends_with(domain: String, match: String): Boolean
+{
+	if (domain == match) return true;
+	var len = match.length;
+	if (domain.length < len+1) return false;
+	if (domain[domain.length-len-1] != '.') return false;
+	return domain.extract(domain.length-len, len) == match;
+}
+
+function @to_hex(value)
+{
+	var hex = {""};
+	var len = length(value);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}
+
+function @send_command(socket: WebSocket, method: String, params: Dynamic): Integer
+{
+	var id = id_counter++;
+	var request = {
+		"id": id,
+		"method": method,
+		"params": params
+	};
+	socket.send_text((request as JSON).to_bytes());
+	return id;
+}
+
+function @receive_response(socket: WebSocket, timeout: Integer): JSON
+{
+	var msg = socket.receive_wait(timeout);
+	if (!msg) {
+		return null;
+	}
+	return JSON::parse(msg);
+}
+
+function @run_command(socket: WebSocket, method: String, params: Dynamic): JSON
+{
+	var id = send_command(socket, method, params);
+	for (;;) {
+		var response = receive_response(socket, -1);
+		var type = response.get("type").as_string();
+		if (type == "event") continue;
+		if (response.get("id").as_int() == id) {
+			if (type != "success") {
+				if (type != "error") {
+					throw error("got unexpected response type: "+type);
+				}
+				throw error(response.get("error").as_string()+" ("+response.get("message").as_string()+")");
+			}
+			log(response.get("result").to_string());
+			return response.get("result");
+		}
+	}
+}
+
+macro @conn_read(buf, off, len)
+{
+	read_data(conn, buf, off, len, init_time, time_limit);
+}
+
+macro @conn_write(buf)
+{
+	write_data(conn, buf, 0, (buf).length, init_time, time_limit);
+}
+
+class Handler
+{
+	var @conn: TCPConnection;
+	var @init_time: Integer;
+	var @time_limit: Integer;
+	var client_request: JSON;
+	var @socket: WebSocket;
+	var @context: String;
+	var @quit: Boolean;
+	var @screenshot_id: Integer;
+	var @input_id: Integer;
+	var @input_request: Dynamic;
+
+	constructor create()
+	{
+		screenshot_id = -1;
+		input_id = -1;
+	}
+
+	function process(conn: TCPConnection, init_time: Integer, client_request: JSON)
+	{
+		this.conn = conn;
+		this.init_time = init_time;
+		this.time_limit = config.get("session_time_limit").as_int()*1000;
+		this.client_request = client_request;
+
+		var socks_port = config.get("socks_port_base").as_int() + instance_id;
+		var socks_server = TCPServer::create_local(socks_port);
+		var bidi_port = config.get("bidi_port_base").as_int() + instance_id;
+
+		var conn_map: ProxyConnection[Byte] = {};
+
+		this.socket = WebSocket::create_client(TCPConnection::open("localhost", bidi_port), "localhost:"+bidi_port, "/session");
+		run_command(socket, "session.new", {"capabilities": {}});
+		this.context = run_command(socket, "browsingContext.create", {"type": "tab"}).get("context").as_string();
+		run_command(socket, "session.subscribe", {"events": ["network.beforeRequestSent", "network.responseStarted"]});
+		var intercept = run_command(socket, "network.addIntercept", {"phases": ["beforeRequestSent", "responseStarted"]}).get("intercept").as_string();
+
+		init();
+
+		var first_time = sub32(Monotonic::get_time(), init_time);
+
+		log("main loop, SOCKS5 at "+socks_port);
+		while (!quit) {
+			var rel_time = sub32(Monotonic::get_time(), init_time);
+			if (rel_time >= time_limit) {
+				throw error("request time limit reached");
+			}
+
+			handle_periodic(rel_time - first_time);
+
+			var socks_conn = socks_server.accept(10);
+			if (socks_conn) {
+				socks_conn.read(buf, 0, 2);
+				if (buf[0] != 5) {
+					throw error("unsupported SOCKS version");
+				}
+				var num_methods = buf[1];
+				socks_conn.read(buf, 0, num_methods);
+				var found = false;
+				for (var i=0; i<num_methods; i++) {
+					if (buf[i] == 0) {
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					var packet = [5, 0xFF];
+					socks_conn.write(packet);
+					socks_conn.close();
+				}
+				else {
+					var packet = [5, 0];
+					socks_conn.write(packet);
+					socks_conn.flush();
+
+					socks_conn.read(buf, 0, 4);
+					if (buf[0] != 5) {
+						throw error("unsupported SOCKS version");
+					}
+					var cmd = buf[1];
+					var hostname: String;
+					var port: Integer;
+					if (buf[3] == 0x01) { // IPv4
+						socks_conn.read(buf, 0, 4+2);
+						hostname = buf[0]+"."+buf[1]+"."+buf[2]+"."+buf[3];
+						port = (buf[4] << 8) | buf[5];
+					}
+					else if (buf[3] == 0x03) { // domain
+						socks_conn.read(buf, 0, 1);
+						var len = buf[0];
+						socks_conn.read(buf, 0, len+2);
+						hostname = {""};
+						hostname.append(buf as String, 0, len);
+						port = (buf[len+0] << 8) | buf[len+1];
+					}
+					else if (buf[4] == 0x04) { // IPv6
+						socks_conn.read(buf, 0, 16+2);
+					}
+					else {
+						throw error("unknown address type");
+					}
+					if (!hostname) {
+						packet = [5, 0x08, 0, 0x01, 0, 0, 0, 0, 0, 0]; // address type not supported
+						socks_conn.write(packet);
+						socks_conn.close();
+					}
+					else {
+						if (cmd == 0x01) { // connect
+							var blocked = false;
+							foreach (var domain in config.opt("blocked_domains").as_array() as String[]) {
+								if (domain_ends_with(hostname, domain)) {
+									blocked = true;
+									break;
+								}
+							}
+							if (blocked) {
+								log("blocked connect to "+hostname+":"+port);
+								packet = [5, 0x05, 0, 0x01, 0, 0, 0, 0, 0, 0]; // connection refused
+								socks_conn.write(packet);
+								socks_conn.close();
+							}
+							else {
+								var conn_id = -1;
+								for (var i=0; i<256; i++) {
+									if (!conn_map.contains(i)) {
+										conn_id = i;
+										break;
+									}
+								}
+								log("connect "+conn_id+" to "+hostname+":"+port);
+								if (conn_id == -1) {
+									throw error("too many connections");
+								}
+								packet = [PACKET_CONNECT, conn_id, hostname.length];
+								packet.append(hostname as String);
+								append_short(packet, port);
+								conn_write(packet);
+								conn_map[conn_id] = ProxyConnection::create(socks_conn);
+							}
+						}
+						else {
+							packet = [5, 0x07, 0, 0x01, 0, 0, 0, 0, 0, 0]; // command not supported
+							socks_conn.write(packet);
+							socks_conn.close();
+						}
+					}
+				}
+			}
+
+			var read = conn.read_part(buf, 0, 1, 0);
+			if (read < 0) {
+				break;
+			}
+			if (read == 1) {
+				switch (buf[0]) {
+					case PACKET_CONNECT_SUCCESS: {
+						conn_read(buf, 0, 1);
+						var conn_id = buf[0];
+						log("connect_success "+conn_id);
+						conn_map[conn_id].connect(conn_id, conn, true);
+						break;
+					}
+
+					case PACKET_CONNECT_FAILURE: {
+						conn_read(buf, 0, 1);
+						var conn_id = buf[0];
+						log("connect_failure "+conn_id);
+						conn_map[conn_id].connect(conn_id, conn, false);
+						conn_map.remove(conn_id);
+						break;
+					}
+
+					case PACKET_DISCONNECT: {
+						conn_read(buf, 0, 1);
+						var conn_id = buf[0];
+						log("disconnect confirm "+conn_id);
+						conn_map.remove(conn_id);
+						break;
+					}
+
+					case PACKET_DATA: {
+						conn_read(buf, 0, 3);
+						var conn_id = buf[0];
+						var len = buf[1] | (buf[2] << 8);
+						//log("data in "+conn_id+" len="+len);
+						if (buf.length < len) {
+							buf = Array::create_shared(len, 1);
+						}
+						var proxy_conn = conn_map[conn_id];
+						if (len == 0) {
+							if (proxy_conn) {
+								proxy_conn.close();
+								conn_map[conn_id] = null;
+								log("disconnect request "+conn_id);
+								var packet = [PACKET_DISCONNECT, conn_id];
+								conn_write(packet);
+							}
+						}
+						else {
+							conn_read(buf, 0, len);
+							if (proxy_conn) {
+								if (!proxy_conn.send(conn_id, conn, buf, 0, len, init_time, time_limit)) {
+									conn_map[conn_id] = null;
+								}
+							}
+						}
+						break;
+					}
+				}
+			}
+
+			foreach (var conn_id, proxy_conn in conn_map) {
+				if (proxy_conn) {
+					if (!proxy_conn.receive(conn_id, conn, init_time, time_limit)) {
+						conn_map[conn_id] = null;
+					}
+				}
+			}
+
+			for (;;) {
+				var response = receive_response(socket, 0);
+				if (!response) break;
+				var type = response.get("type").as_string();
+				if (type == "event" && response.get("method").as_string() == "network.beforeRequestSent") {
+					var params = response.get("params");
+					var request = params.get("request");
+					var request_id = request.get("request").as_string();
+					var url = request.get("url").as_string();
+					log("event beforeRequestSent for "+url);
+					var allow = handle_before_request_sent(params);
+					if (allow == ALLOW_PASS) {
+						send_command(socket, "network.continueRequest", {"request": request_id});
+					}
+					else if (allow == ALLOW_REJECT) {
+						send_command(socket, "network.failRequest", {"request": request_id});
+					}
+				}
+				else if (type == "event" && response.get("method").as_string() == "network.responseStarted") {
+					var params = response.get("params");
+					var request = params.get("request");
+					var request_id = request.get("request").as_string();
+					var url = request.get("url").as_string();
+					log("event responseStarted for "+url);
+					handle_response_started(params);
+					send_command(socket, "network.continueResponse", {"request": request_id});
+				}
+				else if (type == "success" && response.get("id").as_int() == screenshot_id) {
+					handle_screenshot(Image::load(Base64::decode(response.get("result").get("data").as_string())));
+					screenshot_id = -1;
+				}
+				else if (response.get("id").as_int() == input_id) {
+					if (type == "success") {
+						log("input "+input_id+" was successful time="+Clock::get_time());
+						input_id = -1;
+						input_request = null;
+					}
+					else {
+						log("input "+input_id+" error="+response.to_string());
+						log("retrying... time="+Clock::get_time());
+						input_id = send_command(socket, "input.performActions", input_request);
+					}
+				}
+				else {
+					log("got response="+response.to_string());
+				}
+			}
+		}
+
+		run_command(socket, "network.removeIntercept", {"intercept": intercept});
+		run_command(socket, "session.end", {});
+		socket.close();
+
+		foreach (var conn_id, proxy_conn in conn_map) {
+			if (proxy_conn) {
+				proxy_conn.close();
+			}
+		}
+		conn.close();
+	}
+
+	function open_url(url: String)
+	{
+		send_command(socket, "browsingContext.navigate", {"context": context, "url": url});
+	}
+
+	function take_screenshot()
+	{
+		if (screenshot_id == -1) {
+			screenshot_id = send_command(socket, "browsingContext.captureScreenshot", {"context": context, "format": {"type": "image/png"}});
+		}
+	}
+
+	function mouse_action(start_x: Integer, start_y: Integer, target_x: Integer, target_y: Integer, move_duration: Integer, press_duration: Integer)
+	{
+		var mouse_channel = Global::get("mouse_channel") as Channel;
+		mouse_channel.send([0, start_x, start_y, target_x, target_y, move_duration, press_duration]);
+		return;
+
+		if (input_id == -1) {
+			input_request = {
+				"context": context,
+				"actions": [
+					{
+						"type": "pointer",
+						"id": "mouse_action",
+						"actions": [
+							{
+								"type": "pointerMove",
+								"x": start_x,
+								"y": start_y,
+								"origin": "viewport"
+							},
+							{
+								"type": "pointerMove",
+								"x": target_x,
+								"y": target_y,
+								"origin": "viewport",
+								"duration": move_duration
+							},
+							{
+								"type": "pointerDown",
+								"button": 0
+							},
+							{
+								"type": "pause",
+								"duration": press_duration
+							},
+							{
+								"type": "pointerUp",
+								"button": 0
+							}
+						]
+					}
+				]
+			};
+			input_id = send_command(socket, "input.performActions", input_request);
+			log("input_id="+input_id+" time="+Clock::get_time());
+		}
+	}
+
+	function is_input_done(): Boolean
+	{
+		return input_id == -1;
+	}
+
+	function send_response(client_response)
+	{
+		var client_response_data = (client_response as JSON).to_bytes();
+		var packet = [PACKET_SUCCESS];
+		append_int(packet, client_response_data.length);
+		packet.append(client_response_data);
+		conn_write(packet);
+		quit = true;
+	}
+
+	virtual function init()
+	{
+	}
+
+	virtual function handle_periodic(time: Integer)
+	{
+	}
+	
+	virtual function handle_before_request_sent(params: JSON): Integer
+	{
+		return ALLOW_PASS;
+	}
+	
+	virtual function handle_response_started(params: JSON)
+	{
+	}
+
+	virtual function handle_screenshot(img: Image)
+	{
+	}
+}
+
+class @ProxyConnection
+{
+	var @socks_conn: TCPConnection;
+	var @connected: Boolean;
+
+	constructor create(socks_conn: TCPConnection)
+	{
+		this.socks_conn = socks_conn;
+	}
+
+	function close()
+	{
+		var (r, e) = socks_conn.close();
+		if (e) {
+			dump(e);
+		}
+	}
+
+	function connect(conn_id: Byte, conn: TCPConnection, success: Boolean)
+	{
+		var packet = [5, success? 0x00 : 0x05, 0, 0x01, 0, 0, 0, 0, 0, 0]; // 0x05 = connection refused
+		socks_conn.write(packet);
+		socks_conn.flush();
+		connected = success;
+	}
+
+	function send(conn_id: Byte, conn: TCPConnection, buf: Byte[], off: Integer, len: Integer, init_time: Integer, time_limit: Integer): Boolean
+	{
+		var (r, e) = socks_conn.write(buf, off, len);
+		if (e) {
+			dump(e);
+			log("disconnect request "+conn_id);
+			var packet = [PACKET_DISCONNECT, conn_id];
+			write_data(conn, packet, 0, packet.length, init_time, time_limit);
+			close();
+			return false;
+		}
+		return true;
+	}
+
+	function receive(conn_id: Byte, conn: TCPConnection, init_time: Integer, time_limit: Integer): Boolean
+	{
+		if (!connected) {
+			return true;
+		}
+
+		var read = socks_conn.read_part(buf, 0, min(buf.length, 65536), 0);
+		if (read < 0) {
+			log("disconnect request "+conn_id);
+			var packet = [PACKET_DISCONNECT, conn_id];
+			write_data(conn, packet, 0, packet.length, init_time, time_limit);
+			close();
+			return false;
+		}
+		if (read > 0) {
+			//log("data out "+conn_id+" len="+read);
+			var packet = [PACKET_DATA, conn_id];
+			append_short(packet, read);
+			write_data(conn, packet, 0, packet.length, init_time, time_limit);
+			write_data(conn, buf, 0, read, init_time, time_limit);
+		}
+		return true;
+	}
+}
+
+function reset_id_counter()
+{
+	id_counter = 0;
+}
+
+function handle_connection(conn: TCPConnection, get_handler_func)
+{
+	if (!buf) {
+		buf = Array::create_shared(4096, 1);
+	}
+
+	var init_time = Monotonic::get_time();
+	var time_limit = config.get("request_time_limit").as_int()*1000;
+
+	log("client connected");
+
+	conn_read(buf, 0, 5);
+	var version = get_int(buf, 0);
+	if (version != 1) {
+		var msg = "unsupported version".to_utf8();
+		var packet = [PACKET_ERROR];
+		append_short(packet, msg.length);
+		packet.append(msg);
+		conn_write(packet);
+		conn.close();
+		return;
+	}
+
+	var access_token_len = buf[4];
+	var access_token = Array::create(access_token_len, 1);
+	conn_read(access_token, 0, access_token_len);
+
+	var access_tokens_path = Path("access_tokens.json");
+	if (access_tokens_path.exists()) {
+		var tokens = JSON::parse(File::read_whole(access_tokens_path)).as_object() as Dynamic[String];
+		if (!tokens.contains(to_hex(sha256(access_token)))) {
+			log("invalid access token");
+			var msg = "invalid access token".to_utf8();
+			var packet = [PACKET_ERROR];
+			append_short(packet, msg.length);
+			packet.append(msg);
+			conn_write(packet);
+			conn.close();
+			return;
+		}
+	}
+
+	conn_read(buf, 0, 2);
+	var client_request_len = get_short(buf, 0);
+	var client_request_data = Array::create_shared(client_request_len, 1);
+	conn_read(client_request_data, 0, client_request_data.length);
+	var (client_request, e) = JSON::parse(client_request_data);
+	var handler: Handler;
+	if (!e) {
+		var (r, e2) = get_handler_func(client_request);
+		if (e2) {
+			e = e2;
+		}
+		else {
+			handler = r;
+		}
+	}
+	if (e) {
+		dump(e);
+		var msg = "invalid request".to_utf8();
+		var packet = [PACKET_ERROR];
+		append_short(packet, msg.length);
+		packet.append(msg);
+		conn_write(packet);
+		conn.close();
+		return;
+	}
+	dump(client_request);
+
+	restart_browser = true;
+	handler.process(conn, init_time, client_request);
+}

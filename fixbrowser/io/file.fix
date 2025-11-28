@@ -1,0 +1,627 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "optional";
+use "classes";
+
+import "io/stream";
+import "util/long";
+
+optional "native/native";
+
+const {
+	FILE_READ      = 0x01,
+	FILE_WRITE     = 0x02,
+	FILE_CREATE    = 0x04,
+	FILE_TRUNCATE  = 0x08,
+	FILE_APPEND    = 0x10,
+
+	FILE_OPEN_EXISTING = 0x03, // FILE_READ | FILE_WRITE
+	FILE_OPEN_ALWAYS   = 0x07, // FILE_READ | FILE_WRITE | FILE_CREATE
+	FILE_OPEN_NEW      = 0x0F, // FILE_READ | FILE_WRITE | FILE_CREATE | FILE_TRUNCATE
+	FILE_OPEN_APPEND   = 0x16  // FILE_WRITE | FILE_CREATE | FILE_APPEND
+};
+
+const {
+	@TYPE_FILE      = 0,
+	@TYPE_DIRECTORY = 1,
+	@TYPE_SPECIAL   = 2,
+	@TYPE_SYMLINK   = 0x80
+};
+
+class Path
+{
+	var @to_string_func;
+	var @prefix: String;
+	var @string_rep: String;
+	var @type: Integer;
+
+	static function create(path: String): Path
+	{
+		var sep = path_get_separator();
+		if (sep != '/') {
+			path = {path};
+			for (var i=0; i<path.length; i++) {
+				if (path[i] == '/') {
+					path[i] = sep;
+				}
+			}
+		}
+		var len = path_get_prefix_length(path);
+		var parts = [Path::dump_to_string#1, len > 0? path.extract(0, len) : null, null, -1];
+		var p = {""};
+		for (var i=len; i<path.length; i++) {
+			var c = path[i];
+			if (c == sep || c == '/') {
+				if (p != "" && p != ".") {
+					parts[] = p;
+				}
+				p = {""};
+			}
+			else {
+				p[] = c;
+			}
+		}
+		if (p.length > 0) {
+			parts[] = p;
+		}
+		for (var i=Path::SIZE; i<parts.length; i++) {
+			if (!path_is_valid_name(parts[i])) {
+				throw error("file name part '"+parts[i]+"' is not valid in path '"+path+"'");
+			}
+			if (i > Path::SIZE && parts[i] == ".." && parts[i-1] != "..") {
+				parts.remove(i--);
+				parts.remove(i--);
+				continue;
+			}
+		}
+		if ((parts as Path).prefix) {
+			if (parts.length > Path::SIZE && parts[parts.length-1] == ".") {
+				parts.set_length(parts.length-1);
+			}
+			for (var i=Path::SIZE; i<parts.length; i++) {
+				if (parts[i] == "..") {
+					throw error("absolute paths can't contain relative parts");
+				}
+			}
+		}
+		else {
+			if (parts.length > (Path::SIZE+1) && parts[parts.length-1] == ".") { //XXX
+				parts.set_length(parts.length-1);
+			}
+		}
+		return parts as Path;
+	}
+
+	static function create(path: String, child: String): Path
+	{
+		return create(path).merge(create(child));
+	}
+
+	static function get_current(): Path
+	{
+		return create(@path_get_current());
+	}
+
+	static function get_roots(): String[];
+
+	function merge(child: Path or String): Path
+	{
+		var p1 = this as String[];
+		var p2 = is_string(child)? create(child) as String[] : child;
+		
+		if ((p2 as Path).prefix != null) {
+			return p2 as Path;
+		}
+		p1 = clone(p1);
+		(p1 as Path).string_rep = null;
+		(p1 as Path).type = -1;
+		if (p1.length > Path::SIZE && p1[p1.length-1] == ".") {
+			p1.set_length(p1.length-1);
+		}
+		for (var i=Path::SIZE; i<p2.length; i++) {
+			var part = p2[i];
+			if (part == "..") {
+				if (p1.length > Path::SIZE && p1[p1.length-1] != "..") {
+					p1.set_length(p1.length-1);
+				}
+				else if (p1.length == Path::SIZE && (p1 as Path).prefix != null) {
+					throw error("invalid relative path");
+				}
+				else {
+					p1[] = part;
+				}
+			}
+			else {
+				p1[] = part;
+			}
+		}
+		return p1 as Path;
+	}
+
+	function create_directory()
+	{
+		@path_create_directory(to_string());
+	}
+
+	function create_directories()
+	{
+		var list: Path[] = [];
+		var path = this;
+		var test = 0;
+		while (!path.is_empty() && !path.is_root()) {
+			if (path.exists()) {
+				break;
+			}
+			list[] = path;
+			path = path.get_parent();
+		}
+		for (var i=list.length-1; i>=0; i--) {
+			list[i].create_directory();
+		}
+	}
+
+	function delete_file()
+	{
+		@path_delete_file(to_string());
+	}
+
+	function delete_directory()
+	{
+		@path_delete_directory(to_string());
+	}
+
+	function get_file_name(): String
+	{
+		var parts = this as String[];
+		if (parts.length > Path::SIZE) {
+			var last = parts[parts.length-1];
+			if (last == ".") return null;
+			if (last == "..") return null;
+			return {last};
+		}
+		return null;
+	}
+
+	function get_parent(): Path
+	{
+		return merge([Path::dump_to_string#1, null, null, -1, ".."] as Path);
+	}
+
+	function is_absolute(): Boolean
+	{
+		return prefix != null;
+	}
+
+	function is_relative(): Boolean
+	{
+		return prefix == null;
+	}
+
+	function is_root(): Boolean
+	{
+		return (this as Dynamic[]).length == Path::SIZE && prefix != null;
+	}
+
+	function is_empty(): Boolean
+	{
+		return (this as Dynamic[]).length == Path::SIZE && prefix == null;
+	}
+
+	function get_absolute(): Path
+	{
+		if (is_absolute()) return this;
+		return get_current().merge(this);
+	}
+
+	function get_files(): Path[]
+	{
+		var paths = [];
+		foreach (var fname in @path_get_files(to_string())) {
+			paths[] = merge(create(fname));
+		}
+		return paths;
+	}
+
+	function get_file_names(): String[]
+	{
+		return @path_get_files(to_string());
+	}
+	
+	function exists(): Boolean
+	{
+		return @path_exists(to_string());
+	}
+	
+	function @get_type(): Integer
+	{
+		if (type == -1) {
+			type = @path_get_type(to_string());
+		}
+		return type;
+	}
+
+	function is_file(): Boolean
+	{
+		return (get_type() & 0x0F) == TYPE_FILE;
+	}
+
+	function is_directory(): Boolean
+	{
+		return (get_type() & 0x0F) == TYPE_DIRECTORY;
+	}
+
+	function is_special(): Boolean
+	{
+		return (get_type() & 0x0F) == TYPE_SPECIAL;
+	}
+
+	function is_symlink(): Boolean
+	{
+		return (get_type() & TYPE_SYMLINK) != 0;
+	}
+	
+	function get_length(): Long
+	{
+		var (lo, hi) = @path_get_length(to_string());
+		if (!is_int(hi)) throw hi;
+		return [lo, hi] as Long;
+	}
+
+	function get_modification_time(): Long
+	{
+		var (lo, hi) = @path_get_modification_time(to_string());
+		if (!is_int(hi)) throw hi;
+		return [lo, hi] as Long;
+	}
+
+	function get_symlink(): Path
+	{
+		var path = @path_get_symlink(to_string());
+		if (!path) return null;
+		return Path::create(path);
+	}
+
+	function to_string(): String
+	{
+		if (this == null) return null;
+		if (string_rep) {
+			return {string_rep};
+		}
+		var sep = path_get_separator();
+		var parts = this as String[];
+		var s = prefix? {prefix} : {""};
+		for (var i=Path::SIZE; i<parts.length; i++) {
+			var p = parts[i];
+			if (!p) continue;
+			if (i > Path::SIZE) {
+				s[] = sep;
+			}
+			s += p;
+		}
+		string_rep = s;
+		return {s};
+	}
+
+	function @dump_to_string(): String
+	{
+		return "Path("+@to_string(to_string())+")";
+	}
+
+	operator + (path1: Path, path2: Path)
+	{
+		return path1.merge(path2);
+	}
+
+	operator + (path1: Path, path2: String)
+	{
+		return path1.merge(create(path2));
+	}
+
+	operator + (path1: String, path2: Path)
+	{
+		return create(path1).merge(path2);
+	}
+}
+
+function Path(path: String): Path
+{
+	return Path::create(path);
+}
+
+function Path(path: String, child: String): Path
+{
+	return Path::create(path, child);
+}
+
+class File: Stream
+{
+	constructor create()
+	{
+	}
+
+	static function open(path: Path or String, mode: Integer): File
+	{
+		if (is_string(path)) {
+			path = Path::create(path);
+		}
+		return NativeFile::create(@file_open((path as Path).to_string(), mode));
+	}
+
+	static function read_whole(path: Path or String): Byte[]
+	{
+		var file = File::open(path, FILE_READ);
+		var len = file.get_length().to_int();
+		var buf = Array::create_shared(len, 1);
+		file.read(buf);
+		file.close();
+		return buf;
+	}
+
+	static function read_whole(path: Path or String, buf: Byte[]): Byte[]
+	{
+		var file = File::open(path, FILE_READ);
+		var len = file.get_length().to_int();
+		var pos = buf.length;
+		buf.set_length(pos+len);
+		file.read(buf, pos, len);
+		file.close();
+		return buf;
+	}
+
+	static function write_whole(path: Path or String, buf: Byte[])
+	{
+		write_whole(path, buf, 0, buf.length);
+	}
+
+	static function write_whole(path: Path or String, buf: Byte[], off: Integer, len: Integer)
+	{
+		var file = File::open(path, FILE_WRITE | FILE_CREATE | FILE_TRUNCATE);
+		file.write(buf, off, len);
+		file.close();
+	}
+
+	virtual function get_length(): Long
+	{
+		throw error("unimplemented");
+	}
+	
+	virtual function set_length(len: Long)
+	{
+		throw error("setting length is not supported");
+	}
+
+	virtual function get_position(): Long
+	{
+		throw error("unimplemented");
+	}
+
+	virtual function set_position(pos: Long)
+	{
+		throw error("unimplemented");
+	}
+
+	virtual function sync()
+	{
+	}
+
+	virtual function lock(exclusive: Boolean, timeout: Integer): Boolean
+	{
+		return true;
+	}
+
+	virtual function unlock()
+	{
+	}
+
+	function seek_rel(offset: Integer)
+	{
+		set_position(get_position().add_int(offset));
+	}
+
+	function seek_set(offset: Integer)
+	{
+		set_position(Long::create(offset));
+	}
+
+	function seek_end(offset: Integer)
+	{
+		set_position(get_length().add_int(offset));
+	}
+
+	function lock(exclusive: Boolean)
+	{
+		lock(exclusive, -1);
+	}
+
+	override function skip(len: Integer)
+	{
+		set_position(get_position().add_int(len));
+	}
+
+	optional "native/native"
+	{
+		function get_native_descriptor(): Integer
+		{
+			return @file_get_native_descriptor((this as NativeFile).handle);
+		}
+
+		function get_native_handle(): Pointer
+		{
+			var (lo, hi) = @file_get_native_handle((this as NativeFile).handle);
+			if (!is_int(hi)) throw hi;
+			return Pointer::create(lo, hi);
+		}
+	}
+}
+
+class @NativeFile: File
+{
+	var @handle;
+
+	constructor create(handle)
+	{
+		this.handle = handle;
+	}
+
+	override function close()
+	{
+		@file_close(handle);
+	}
+	
+	override function get_length(): Long
+	{
+		var (lo, hi) = @file_get_length(handle);
+		if (!is_int(hi)) throw hi;
+		return [lo, hi] as Long;
+	}
+
+	override function set_length(len: Long)
+	{
+		@file_set_length(handle, len.lo, len.hi);
+	}
+	
+	override function get_position(): Long
+	{
+		var (lo, hi) = @file_get_position(handle);
+		if (!is_int(hi)) throw hi;
+		return [lo, hi] as Long;
+	}
+
+	override function set_position(pos: Long)
+	{
+		@file_set_position(handle, pos.lo, pos.hi);
+	}
+
+	override function sync()
+	{
+		@file_sync(handle);
+	}
+
+	override function lock(exclusive: Boolean, timeout: Integer): Boolean
+	{
+		return @file_lock(handle, exclusive, timeout);
+	}
+
+	override function unlock()
+	{
+		@file_unlock(handle);
+	}
+	
+	override function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		return @file_read(handle, buf, off, len);
+	}
+
+	override function write_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		return @file_write(handle, buf, off, len);
+	}
+}
+
+function @path_get_separator(): Byte;
+function @path_get_prefix_length(path: String): Integer;
+function @path_is_valid_name(name: String): Boolean;
+function @path_get_current(): String;
+function @path_get_files(path: String): String[];
+function @path_exists(path: String): Boolean;
+function @path_get_type(path: String): Integer;
+function @path_get_length(path: String);
+function @path_get_modification_time(path: String);
+function @path_get_symlink(path: String): String;
+function @path_create_directory(path: String);
+function @path_delete_file(path: String);
+function @path_delete_directory(path: String);
+
+function @file_open(path, mode);
+function @file_close(handle);
+function @file_read(handle, buf, off, len);
+function @file_write(handle, buf, off, len);
+function @file_get_length(handle);
+function @file_set_length(handle, lo, hi);
+function @file_get_position(handle);
+function @file_set_position(handle, lo, hi);
+function @file_sync(handle);
+function @file_lock(handle, exclusive, timeout);
+function @file_unlock(handle);
+function @file_get_native_descriptor(handle);
+function @file_get_native_handle(handle);
+
+function @test_path(path: String, expect: String, file_name: String)
+{
+	var parts = Path::create(path);
+	var result = parts.to_string();
+	//log("'"+path+"' => "+parts+" => '"+result+"'");
+	if (expect != null && result != expect) {
+		throw error("error");
+	}
+	if (parts.get_file_name() != file_name) {
+		throw error("error");
+	}
+}
+
+function @test_path_fail(path: String, expect: String)
+{
+	var (r, e) = test_path(path, null, null);
+	if (!e || e[0] != expect) {
+		throw error("error");
+	}
+}
+
+function @test_merge(parent: String, child: String, expect: String)
+{
+	var result = Path::create(parent, child);
+	//log("'"+parent+"' ("+Path::create(parent)+") + '"+child+"' ("+Path::create(child)+") => '"+result.to_string()+"'");
+	if (expect != null && result.to_string() != expect) {
+		throw error("error");
+	}
+}
+
+function @test_merge_fail(parent: String, child: String, expect: String)
+{
+	var (r, e) = test_merge(parent, child, null);
+	if (!e || e[0] != expect) {
+		throw error("error");
+	}
+}
+
+function test_path()
+{
+	test_path("aaa/bbb/ccc", "aaa/bbb/ccc", "ccc");
+	test_path("/aaa/bbb/ccc/", "/aaa/bbb/ccc", "ccc");
+	test_path("/", "/", null);
+	test_path("", "", null);
+	test_path("./", "", null);
+	test_path("./../../../", "../../..", null);
+	test_path("../../aaa/bbb/../../", "../..", null);
+	test_path(".", ".", null);
+	test_path("./.", ".", null);
+	test_path("aaa/.", "aaa", "aaa");
+	test_path("aaa/./bbb", "aaa/bbb", "bbb");
+	test_path("/.", "/", null);
+	test_path_fail("/..", "absolute paths can't contain relative parts");
+	test_merge("aaa/bbb", "xxx", "aaa/bbb/xxx");
+	test_merge("aaa/bbb", "../../../../xxx", "../../xxx");
+	test_merge("/aaa/bbb", "xxx", "/aaa/bbb/xxx");
+	test_merge("/aaa/bbb", "../../xxx", "/xxx");
+	test_merge(".", "aaa", "aaa");
+	test_merge_fail("/aaa/bbb", "../../../xxx", "invalid relative path");
+}

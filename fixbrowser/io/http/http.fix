@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,6 +19,8 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "util/time_literals";
+
 import "io/stream";
 import "io/tcp";
 import "io/gzip";
@@ -34,12 +36,13 @@ import "io/tls/root_certs";
 import "util/html";
 import "util/string";
 import "util/date";
+import "util/memory_cache";
 import "browser/worker/result";
 
 const @DEBUG_CACHE = true;
-const @TLS_SESSION_WAIT = 30;
-const @TLS_NON_RESUMABLE_TIMEOUT = 3600;
-const @TLS_VALID_CERT_TIMEOUT = 3600;
+const @TLS_SESSION_WAIT = 30 seconds;
+const @TLS_NON_RESUMABLE_TIMEOUT = 1 hour;
+const @TLS_VALID_CERT_TIMEOUT = 1 hour;
 
 const {
 	@HTTP_stream = STREAM_SIZE,
@@ -142,10 +145,10 @@ function http_set_post_params(http, params)
 		if (i > 0) {
 			s[] = '&';
 		}
-		string_append(s, percent_encode_query(name));
+		array_append(s, percent_encode_query(name));
 		if (value) {
 			s[] = '=';
-			string_append(s, percent_encode_query(value));
+			array_append(s, percent_encode_query(value));
 		}
 	}
 	http_set_post_data(http, "application/x-www-form-urlencoded; charset=UTF-8", s);
@@ -182,18 +185,18 @@ function http_connect(http, status_func, status_data)
 		if (http->HTTP_is_https) {
 			var key = ["https.connecting", http->HTTP_hostname, http->HTTP_port];
 
-			var value = global_cond_swap(key, 0, TLS_CONNECTING_FIRST, TLS_SESSION_WAIT);
+			var value = memory_cache_cond_swap(key, 0, TLS_CONNECTING_FIRST, TLS_SESSION_WAIT);
 			if (value == TLS_CONNECTING_FIRST) {
-				global_wait(key, value);
+				memory_cache_wait(key, value);
 			}
 
 			var (r, e) = http_open_tls_stream(http, key, status_func, status_data);
 			if (e) {
-				global_cond_swap(key, TLS_CONNECTING_FIRST, 0, TLS_SESSION_WAIT);
+				memory_cache_cond_swap(key, TLS_CONNECTING_FIRST, 0, TLS_SESSION_WAIT);
 				return 0, e;
 			}
 
-			global_cond_swap(key, TLS_CONNECTING_FIRST, TLS_CONNECTING_RESUMABLE, TLS_SESSION_WAIT);
+			memory_cache_cond_swap(key, TLS_CONNECTING_FIRST, TLS_CONNECTING_RESUMABLE, TLS_SESSION_WAIT);
 		}
 		else {
 			http->HTTP_stream = tcp_connection_open(http->HTTP_hostname, http->HTTP_port);
@@ -211,16 +214,16 @@ function http_connect(http, status_func, status_data)
 		var (name, value) = hash_entry(headers, i);
 		if (name == "Set-Cookie") {
 			for (var j=0; j<length(value); j++) {
-				string_append(s, {name, ": ", value[j], "\r\n"});
+				array_append(s, {name, ": ", value[j], "\r\n"});
 			}
 		}
 		else {
-			string_append(s, {name, ": ", value, "\r\n"});
+			array_append(s, {name, ": ", value, "\r\n"});
 		}
 	}
-	string_append(s, "\r\n");
+	array_append(s, "\r\n");
 	if (post_data) {
-		string_append(s, post_data);
+		array_append(s, post_data);
 	}
 	stream_write(stream, s);
 	if (post_data) {
@@ -286,10 +289,10 @@ function http_set_valid_certificate(hostname, hash, permanent)
 {
 	var cached_key = ["valid certificate", hostname, hash];
 	if (permanent) {
-		global_set(cached_key, true);
+		memory_cache_set(cached_key, true);
 	}
 	else {
-		global_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
+		memory_cache_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
 	}
 }
 
@@ -297,8 +300,8 @@ function @http_check_certificate(http, tls)
 {
 	var hash = sha256(tls_get_cert_binary(tls, 0));
 	var cached_key = ["valid certificate", http->HTTP_hostname, hash];
-	if (global_get(cached_key)) {
-		global_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
+	if (memory_cache_get(cached_key)) {
+		memory_cache_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
 		return;
 	}
 
@@ -393,7 +396,7 @@ function @http_check_certificate(http, tls)
 		}
 	}
 
-	global_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
+	memory_cache_set(cached_key, true, TLS_VALID_CERT_TIMEOUT);
 }
 
 function @check_validity(cert)
@@ -433,7 +436,7 @@ function @http_open_tls_stream(http, conn_key, status_func, status_data)
 	if (tls_is_session_resumed(tls)) {
 		var (stream, e) = tls_open_stream(tls, status_func, status_data);
 		if (e) {
-			global_set(conn_key, TLS_CONNECTING_NON_RESUMABLE, TLS_NON_RESUMABLE_TIMEOUT);
+			memory_cache_set(conn_key, TLS_CONNECTING_NON_RESUMABLE, TLS_NON_RESUMABLE_TIMEOUT);
 			tls_abort_resumed_session(tls);
 			log("aborting resumed session due to error:");
 			dump(e);
