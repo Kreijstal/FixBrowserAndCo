@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,19 +19,10 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "classes";
+
 import "browser/css/parser";
 import "util/string";
-
-const @class_Value = "";
-const @field_Value_type = "Integer";
-const @field_Value_value = "Dynamic";
-const @method_Value_is_color_1 = "(): Boolean";
-const @method_Value_child_count_1 = "(): Integer";
-const @method_Value_child_get_2 = "(Integer): Value";
-const @method_Value_to_string_1 = "(): String";
-
-const @class_ValueLength = "struct=VALUE_LENGTH,parent=Value";
-const @field_ValueLength_unit = "Integer";
 
 const {
 	VALUE_INITIAL,
@@ -253,6 +244,19 @@ const {
 	//VALUE_BASELINE,
 	VALUE_STRETCH,
 
+	// cursor:
+	//VALUE_AUTO,
+	VALUE_DEFAULT,
+	VALUE_HELP,
+	VALUE_POINTER,
+	VALUE_PROGRESS,
+	VALUE_WAIT,
+	VALUE_TEXT,
+	VALUE_MOVE,
+	VALUE_NOT_ALLOWED,
+	VALUE_ZOOM_IN,
+	VALUE_ZOOM_OUT,
+
 	VALUE_MULTIPLE,
 	VALUE_GROUP,
 	VALUE_SLASH_GROUP,
@@ -271,18 +275,9 @@ const {
 	VALUE_FONT_WEIGHT,
 	VALUE_NUMBER,
 	VALUE_INTEGER,
-	VALUE_CONTENT_TEXT
-};
-
-const {
-	VALUE_type,
-	VALUE_value,
-	VALUE_SIZE
-};
-
-const {
-	VALUE_LENGTH_unit = VALUE_SIZE,
-	@VALUE_LENGTH_SIZE
+	VALUE_CONTENT_TEXT,
+	VALUE_VARIABLE,
+	VALUE_SUBSTITUTION
 };
 
 const {
@@ -310,440 +305,695 @@ const {
 	UNIT_TURN
 };
 
-function value_create(type)
+class Value
 {
-	return value_create(type, 0);
-}
+	var type: Integer;
 
-function @value_create(type, value)
-{
-	var val = object_create(VALUE_SIZE);
-	val->VALUE_type = type;
-	val->VALUE_value = value;
-	return val;
-}
-
-function value_create_multiple()
-{
-	return [VALUE_MULTIPLE];
-}
-
-function value_create_group()
-{
-	return [VALUE_GROUP];
-}
-
-function value_create_group(v1, v2)
-{
-	return [VALUE_GROUP, v1, v2];
-}
-
-function value_create_slash_group(v1, v2)
-{
-	return [VALUE_SLASH_GROUP, v1, v2];
-}
-
-function value_create_rect(top, right, bottom, left)
-{
-	return [VALUE_RECT, top, right, bottom, left];
-}
-
-function value_create_linear_gradient(angle)
-{
-	return [VALUE_LINEAR_GRADIENT, angle];
-}
-
-function value_create_color_rgb(value)
-{
-	return value_create(VALUE_COLOR_RGB, value);
-}
-
-function value_create_color_rgba(value)
-{
-	return value_create(VALUE_COLOR_RGBA, value);
-}
-
-function value_create_color_current()
-{
-	return value_create(VALUE_COLOR_CURRENT, 0);
-}
-
-function value_create_url(url)
-{
-	return value_create(VALUE_URL, url);
-}
-
-function value_create_length(len, unit)
-{
-	var val = object_create(VALUE_LENGTH_SIZE);
-	val->VALUE_type = VALUE_LENGTH;
-	val->VALUE_value = len;
-	val->VALUE_LENGTH_unit = unit;
-	return val;
-}
-
-function value_create_angle(len, unit)
-{
-	var val = object_create(VALUE_LENGTH_SIZE);
-	val->VALUE_type = VALUE_ANGLE;
-	val->VALUE_value = len;
-	val->VALUE_LENGTH_unit = unit;
-	return val;
-}
-
-function value_create_opacity(opacity)
-{
-	return value_create(VALUE_OPACITY, opacity);
-}
-
-function value_create_font_family_name(name)
-{
-	return value_create(VALUE_FONT_FAMILY_NAME, name);
-}
-
-function value_create_font_family_generic(name)
-{
-	return value_create(VALUE_FONT_FAMILY_GENERIC, name);
-}
-
-function value_create_font_weight(weight)
-{
-	return value_create(VALUE_FONT_WEIGHT, weight);
-}
-
-function value_create_number(value)
-{
-	return value_create(VALUE_NUMBER, value);
-}
-
-function value_create_integer(value)
-{
-	return value_create(VALUE_INTEGER, value);
-}
-
-function value_create_content_text(value)
-{
-	return value_create(VALUE_CONTENT_TEXT, value);
-}
-
-function value_is_color(value)
-{
-	switch (value->VALUE_type) {
-		case VALUE_COLOR_RGB:
-		case VALUE_COLOR_RGBA:
-		case VALUE_COLOR_CURRENT:
-			return true;
+	constructor create(type: Integer)
+	{
+		this.type = type;
 	}
-	return false;
-}
 
-function value_child_add(value, child)
-{
-	switch (value->VALUE_type) {
-		case VALUE_MULTIPLE:
-		case VALUE_GROUP:
-		case VALUE_SLASH_GROUP:
-		case VALUE_LINEAR_GRADIENT:
-			value[] = child;
-			return;
-	}
-	return 0, error("not multiple or group");
-}
+	function to_string(): String
+	{
+		switch (type) {
+			case VALUE_INITIAL:              return "initial";
+			case VALUE_INHERIT:              return "inherit";
+			case VALUE_UNSET:                return "unset";
+			case VALUE_NONE:                 return "none";
 
-function value_child_remove(value, idx)
-{
-	switch (value->VALUE_type) {
-		case VALUE_MULTIPLE:
-		case VALUE_GROUP:
-		case VALUE_SLASH_GROUP:
-		case VALUE_LINEAR_GRADIENT:
-			array_remove(value, idx+1);
-			return;
-	}
-	return 0, error("not multiple or group");
-}
+			case VALUE_REPEAT:               return "repeat";
+			case VALUE_NO_REPEAT:            return "no-repeat";
+			case VALUE_SPACE:                return "space";
+			case VALUE_ROUND:                return "round";
 
-function value_child_insert(value, idx, child)
-{
-	switch (value->VALUE_type) {
-		case VALUE_MULTIPLE:
-		case VALUE_GROUP:
-		case VALUE_SLASH_GROUP:
-		case VALUE_LINEAR_GRADIENT:
-			array_insert(value, idx+1, child);
-			return;
-	}
-	return 0, error("not multiple or group");
-}
+			case VALUE_FIXED:                return "fixed";
+			case VALUE_LOCAL:                return "local";
+			case VALUE_SCROLL:               return "scroll";
 
-function value_child_count(value)
-{
-	switch (value->VALUE_type) {
-		case VALUE_MULTIPLE:
-		case VALUE_GROUP:
-		case VALUE_SLASH_GROUP:
-		case VALUE_RECT:
-		case VALUE_LINEAR_GRADIENT:
-			return length(value)-1;
-	}
-	return 0;
-}
+			case VALUE_LEFT:                 return "left";
+			case VALUE_CENTER:               return "center";
+			case VALUE_RIGHT:                return "right";
+			case VALUE_TOP:                  return "top";
+			case VALUE_BOTTOM:               return "bottom";
 
-function value_child_get(value, idx)
-{
-	switch (value->VALUE_type) {
-		case VALUE_MULTIPLE:
-		case VALUE_GROUP:
-		case VALUE_SLASH_GROUP:
-		case VALUE_RECT:
-		case VALUE_LINEAR_GRADIENT:
-			return value[idx+1];
-	}
-	return 0, error("not multiple or group");
-}
+			case VALUE_BORDER_BOX:           return "border-box";
+			case VALUE_PADDING_BOX:          return "padding-box";
+			case VALUE_CONTENT_BOX:          return "content-box";
 
-function value_to_string(value)
-{
-	switch (value->VALUE_type) {
-		case VALUE_INITIAL:   return "initial";
-		case VALUE_INHERIT:   return "inherit";
-		case VALUE_UNSET:     return "unset";
-		case VALUE_NONE:      return "none";
+			case VALUE_COVER:                return "cover";
+			case VALUE_CONTAIN:              return "contain";
+			case VALUE_AUTO:                 return "auto";
 
-		case VALUE_REPEAT:    return "repeat";
-		case VALUE_NO_REPEAT: return "no-repeat";
-		case VALUE_SPACE:     return "space";
-		case VALUE_ROUND:     return "round";
+			case VALUE_HIDDEN:               return "hidden";
+			case VALUE_DOTTED:               return "dotted";
+			case VALUE_DASHED:               return "dashed";
+			case VALUE_SOLID:                return "solid";
+			case VALUE_DOUBLE:               return "double";
+			case VALUE_GROOVE:               return "groove";
+			case VALUE_RIDGE:                return "ridge";
+			case VALUE_INSET:                return "inset";
+			case VALUE_OUTSET:               return "outset";
 
-		case VALUE_FIXED:     return "fixed";
-		case VALUE_LOCAL:     return "local";
-		case VALUE_SCROLL:    return "scroll";
-	
-		case VALUE_LEFT:      return "left";
-		case VALUE_CENTER:    return "center";
-		case VALUE_RIGHT:     return "right";
-		case VALUE_TOP:       return "top";
-		case VALUE_BOTTOM:    return "bottom";
+			case VALUE_THIN:                 return "thin";
+			case VALUE_MEDIUM:               return "medium";
+			case VALUE_THICK:                return "thick";
 
-		case VALUE_BORDER_BOX:  return "border-box";
-		case VALUE_PADDING_BOX: return "padding-box";
-		case VALUE_CONTENT_BOX: return "content-box";
+			case VALUE_COLLAPSE:             return "collapse";
+			case VALUE_SEPARATE:             return "separate";
 
-		case VALUE_COVER:     return "cover";
-		case VALUE_CONTAIN:   return "contain";
-		case VALUE_AUTO:      return "auto";
+			case VALUE_BOLDER:               return "bolder";
+			case VALUE_LIGHTER:              return "lighter";
 
-		case VALUE_HIDDEN:    return "hidden";
-		case VALUE_DOTTED:    return "dotted";
-		case VALUE_DASHED:    return "dashed";
-		case VALUE_SOLID:     return "solid";
-		case VALUE_DOUBLE:    return "double";
-		case VALUE_GROOVE:    return "groove";
-		case VALUE_RIDGE:     return "ridge";
-		case VALUE_INSET:     return "inset";
-		case VALUE_OUTSET:    return "outset";
+			case VALUE_NORMAL:               return "normal";
+			case VALUE_ITALIC:               return "italic";
+			case VALUE_OBLIQUE:              return "oblique";
 
-		case VALUE_THIN:      return "thin";
-		case VALUE_MEDIUM:    return "medium";
-		case VALUE_THICK:     return "thick";
+			case VALUE_XX_SMALL:             return "xx-small";
+			case VALUE_X_SMALL:              return "x-small";
+			case VALUE_SMALL:                return "small";
+			case VALUE_LARGE:                return "large";
+			case VALUE_X_LARGE:              return "x-large";
+			case VALUE_XX_LARGE:             return "xx-large";
+			case VALUE_LARGER:               return "larger";
+			case VALUE_SMALLER:              return "smaller";
 
-		case VALUE_COLLAPSE:  return "collapse";
-		case VALUE_SEPARATE:  return "separate";
-	
-		case VALUE_BOLDER:    return "bolder";
-		case VALUE_LIGHTER:   return "lighter";
+			case VALUE_INLINE:               return "inline";
+			case VALUE_BLOCK:                return "block";
+			case VALUE_LIST_ITEM:            return "list-item";
+			case VALUE_INLINE_BLOCK:         return "inline-block";
+			case VALUE_TABLE:                return "table";
+			case VALUE_INLINE_TABLE:         return "inline-table";
+			case VALUE_TABLE_ROW_GROUP:      return "table-row-group";
+			case VALUE_TABLE_HEADER_GROUP:   return "table-header-group";
+			case VALUE_TABLE_FOOTER_GROUP:   return "table-footer-group";
+			case VALUE_TABLE_ROW:            return "table-row";
+			case VALUE_TABLE_COLUMN_GROUP:   return "table-column-group";
+			case VALUE_TABLE_COLUMN:         return "table-column";
+			case VALUE_TABLE_CELL:           return "table-cell";
+			case VALUE_TABLE_CAPTION:        return "table-caption";
+			case VALUE_FLEX:                 return "flex";
+			case VALUE_INLINE_FLEX:          return "inline-flex";
 
-		case VALUE_NORMAL:    return "normal";
-		case VALUE_ITALIC:    return "italic";
-		case VALUE_OBLIQUE:   return "oblique";
+			case VALUE_STATIC:               return "static";
+			case VALUE_RELATIVE:             return "relative";
+			case VALUE_ABSOLUTE:             return "absolute";
 
-		case VALUE_XX_SMALL:  return "xx-small";
-		case VALUE_X_SMALL:   return "x-small";
-		case VALUE_SMALL:     return "small";
-		case VALUE_LARGE:     return "large";
-		case VALUE_X_LARGE:   return "x-large";
-		case VALUE_XX_LARGE:  return "xx-large";
-		case VALUE_LARGER:    return "larger";
-		case VALUE_SMALLER:   return "smaller";
+			case VALUE_BOTH:                 return "both";
 
-		case VALUE_INLINE:             return "inline";
-		case VALUE_BLOCK:              return "block";
-		case VALUE_LIST_ITEM:          return "list-item";
-		case VALUE_INLINE_BLOCK:       return "inline-block";
-		case VALUE_TABLE:              return "table";
-		case VALUE_INLINE_TABLE:       return "inline-table";
-		case VALUE_TABLE_ROW_GROUP:    return "table-row-group";
-		case VALUE_TABLE_HEADER_GROUP: return "table-header-group";
-		case VALUE_TABLE_FOOTER_GROUP: return "table-footer-group";
-		case VALUE_TABLE_ROW:          return "table-row";
-		case VALUE_TABLE_COLUMN_GROUP: return "table-column-group";
-		case VALUE_TABLE_COLUMN:       return "table-column";
-		case VALUE_TABLE_CELL:         return "table-cell";
-		case VALUE_TABLE_CAPTION:      return "table-caption";
-		case VALUE_FLEX:               return "flex";
-		case VALUE_INLINE_FLEX:        return "inline-flex";
+			case VALUE_BASELINE:             return "baseline";
+			case VALUE_SUB:                  return "sub";
+			case VALUE_SUPER:                return "super";
+			case VALUE_TEXT_TOP:             return "text-top";
+			case VALUE_MIDDLE:               return "middle";
+			case VALUE_TEXT_BOTTOM:          return "text-bottom";
 
-		case VALUE_STATIC:       return "static";
-		case VALUE_RELATIVE:     return "relative";
-		case VALUE_ABSOLUTE:     return "absolute";
-	
-		case VALUE_BOTH:         return "both";
+			case VALUE_JUSTIFY:              return "justify";
 
-		case VALUE_BASELINE:     return "baseline";
-		case VALUE_SUB:          return "sub";
-		case VALUE_SUPER:        return "super";
-		case VALUE_TEXT_TOP:     return "text-top";
-		case VALUE_MIDDLE:       return "middle";
-		case VALUE_TEXT_BOTTOM:  return "text-bottom";
-	
-		case VALUE_JUSTIFY:      return "justify";
+			case VALUE_UNDERLINE:            return "underline";
+			case VALUE_OVERLINE:             return "overline";
+			case VALUE_LINE_THROUGH:         return "line-through";
+			case VALUE_BLINK:                return "blink";
 
-		case VALUE_UNDERLINE:    return "underline";
-		case VALUE_OVERLINE:     return "overline";
-		case VALUE_LINE_THROUGH: return "line-through";
-		case VALUE_BLINK:        return "blink";
+			case VALUE_CAPITALIZE:           return "capitalize";
+			case VALUE_UPPERCASE:            return "uppercase";
+			case VALUE_LOWERCASE:            return "lowercase";
 
-		case VALUE_CAPITALIZE:   return "capitalize";
-		case VALUE_UPPERCASE:    return "uppercase";
-		case VALUE_LOWERCASE:    return "lowercase";
+			case VALUE_PRE:                  return "pre";
+			case VALUE_NOWRAP:               return "nowrap";
+			case VALUE_PRE_WRAP:             return "pre-wrap";
+			case VALUE_PRE_LINE:             return "pre-line";
 
-		case VALUE_PRE:          return "pre";
-		case VALUE_NOWRAP:       return "nowrap";
-		case VALUE_PRE_WRAP:     return "pre-wrap";
-		case VALUE_PRE_LINE:     return "pre-line";
-	
-		case VALUE_VISIBLE:      return "visible";
+			case VALUE_VISIBLE:              return "visible";
 
-		case VALUE_TO_TOP:          return "to top";
-		case VALUE_TO_RIGHT:        return "to right";
-		case VALUE_TO_BOTTOM:       return "to bottom";
-		case VALUE_TO_LEFT:         return "to left";
-		case VALUE_TO_TOP_RIGHT:    return "to top right";
-		case VALUE_TO_BOTTOM_RIGHT: return "to bottom right";
-		case VALUE_TO_BOTTOM_LEFT:  return "to bottom left";
-		case VALUE_TO_TOP_LEFT:     return "to top left";
+			case VALUE_TO_TOP:               return "to top";
+			case VALUE_TO_RIGHT:             return "to right";
+			case VALUE_TO_BOTTOM:            return "to bottom";
+			case VALUE_TO_LEFT:              return "to left";
+			case VALUE_TO_TOP_RIGHT:         return "to top right";
+			case VALUE_TO_BOTTOM_RIGHT:      return "to bottom right";
+			case VALUE_TO_BOTTOM_LEFT:       return "to bottom left";
+			case VALUE_TO_TOP_LEFT:          return "to top left";
 
-		case VALUE_DISC:                 return "disc";
-		case VALUE_CIRCLE:               return "circle";
-		case VALUE_SQUARE:               return "square";
-		case VALUE_DECIMAL:              return "decimal";
-		case VALUE_DECIMAL_LEADING_ZERO: return "decimal-leading-zero";
-		case VALUE_LOWER_ROMAN:          return "lower-roman";
-		case VALUE_UPPER_ROMAN:          return "upper-roman";
-		case VALUE_LOWER_GREEK:          return "lower-greek";
-		case VALUE_LOWER_LATIN:          return "lower-latin";
-		case VALUE_UPPER_LATIN:          return "upper-latin";
-		case VALUE_ARMENIAN:             return "armenian";
-		case VALUE_GEORGIAN:             return "georgian";
-		case VALUE_LOWER_ALPHA:          return "lower-alpha";
-		case VALUE_UPPER_ALPHA:          return "upper-alpha";
+			case VALUE_DISC:                 return "disc";
+			case VALUE_CIRCLE:               return "circle";
+			case VALUE_SQUARE:               return "square";
+			case VALUE_DECIMAL:              return "decimal";
+			case VALUE_DECIMAL_LEADING_ZERO: return "decimal-leading-zero";
+			case VALUE_LOWER_ROMAN:          return "lower-roman";
+			case VALUE_UPPER_ROMAN:          return "upper-roman";
+			case VALUE_LOWER_GREEK:          return "lower-greek";
+			case VALUE_LOWER_LATIN:          return "lower-latin";
+			case VALUE_UPPER_LATIN:          return "upper-latin";
+			case VALUE_ARMENIAN:             return "armenian";
+			case VALUE_GEORGIAN:             return "georgian";
+			case VALUE_LOWER_ALPHA:          return "lower-alpha";
+			case VALUE_UPPER_ALPHA:          return "upper-alpha";
 
-		case VALUE_INSIDE:       return "inside";
-		case VALUE_OUTSIDE:      return "outside";
-	
-		case VALUE_PORTRAIT:     return "portrait";
-		case VALUE_LANDSCAPE:    return "landscape";
+			case VALUE_INSIDE:               return "inside";
+			case VALUE_OUTSIDE:              return "outside";
 
-		case VALUE_ROW:            return "row";
-		case VALUE_ROW_REVERSE:    return "row-reverse";
-		case VALUE_COLUMN:         return "column";
-		case VALUE_COLUMN_REVERSE: return "column-reverse";
-	
-		case VALUE_WRAP:         return "wrap";
-		case VALUE_WRAP_REVERSE: return "wrap-reverse";
+			case VALUE_PORTRAIT:             return "portrait";
+			case VALUE_LANDSCAPE:            return "landscape";
 
-		case VALUE_CONTENT:      return "content";
-	
-		case VALUE_FLEX_START:    return "flex-start";
-		case VALUE_FLEX_END:      return "flex-end";
-		case VALUE_SPACE_BETWEEN: return "space-between";
-		case VALUE_SPACE_AROUND:  return "space-around";
-	
-		case VALUE_STRETCH:      return "stretch";
+			case VALUE_ROW:                  return "row";
+			case VALUE_ROW_REVERSE:          return "row-reverse";
+			case VALUE_COLUMN:               return "column";
+			case VALUE_COLUMN_REVERSE:       return "column-reverse";
 
-		case VALUE_MULTIPLE:
-		case VALUE_GROUP:
-		case VALUE_SLASH_GROUP:
-		case VALUE_RECT:
-		case VALUE_LINEAR_GRADIENT: {
-			var s = {""}, delim;
-			switch (value->VALUE_type) {
-				default:
-				case VALUE_MULTIPLE: delim = ", "; break;
-				case VALUE_GROUP: delim = " "; break;
-				case VALUE_SLASH_GROUP: delim = " / "; break;
+			case VALUE_WRAP:                 return "wrap";
+			case VALUE_WRAP_REVERSE:         return "wrap-reverse";
 
-				case VALUE_RECT:
-				case VALUE_LINEAR_GRADIENT:
-					delim = ", ";
-					break;
-			}
-			for (var i=0; i<value_child_count(value); i++) {
-				if (length(s) > 0) string_append(s, delim);
-				string_append(s, value_to_string(value_child_get(value, i)));
-			}
-			switch (value->VALUE_type) {
-				case VALUE_RECT: s = {"rect(", s, ")"}; break;
-				case VALUE_LINEAR_GRADIENT: s = {"linear-gradient(", s, ")"}; break;
-			}
-			return s;
+			case VALUE_CONTENT:              return "content";
+
+			case VALUE_FLEX_START:           return "flex-start";
+			case VALUE_FLEX_END:             return "flex-end";
+			case VALUE_SPACE_BETWEEN:        return "space-between";
+			case VALUE_SPACE_AROUND:         return "space-around";
+
+			case VALUE_STRETCH:              return "stretch";
+
+			case VALUE_DEFAULT:              return "default";
+			case VALUE_HELP:                 return "help";
+			case VALUE_POINTER:              return "pointer";
+			case VALUE_PROGRESS:             return "progress";
+			case VALUE_WAIT:                 return "wait";
+			case VALUE_TEXT:                 return "text";
+			case VALUE_MOVE:                 return "move";
+			case VALUE_NOT_ALLOWED:          return "not-allowed";
+			case VALUE_ZOOM_IN:              return "zoom-in";
+			case VALUE_ZOOM_OUT:             return "zoom-out";
+
+			case VALUE_MULTIPLE:
+			case VALUE_GROUP:
+			case VALUE_SLASH_GROUP:
+			case VALUE_LINEAR_GRADIENT:
+				return (this as ListValue).to_string();
+
+			case VALUE_RECT:
+				return (this as RectValue).to_string();
+
+			case VALUE_COLOR_RGB:
+			case VALUE_COLOR_RGBA:
+			case VALUE_COLOR_CURRENT:
+				return (this as ColorValue).to_string();
+
+			case VALUE_URL:
+				return (this as URLValue).to_string();
+
+			case VALUE_LENGTH:
+			case VALUE_ANGLE:
+				return (this as MeasurementValue).to_string();
+
+			case VALUE_OPACITY:
+				return (this as OpacityValue).to_string();
+
+			case VALUE_FONT_FAMILY_NAME:
+			case VALUE_FONT_FAMILY_GENERIC:
+				return (this as FontFamilyValue).to_string();
+
+			case VALUE_FONT_WEIGHT:
+				return (this as FontWeightValue).to_string();
+
+			case VALUE_NUMBER:
+				return (this as NumberValue).to_string();
+
+			case VALUE_INTEGER:
+				return (this as IntegerValue).to_string();
+
+			case VALUE_CONTENT_TEXT:
+				return (this as ContentTextValue).to_string();
+
+			case VALUE_VARIABLE:
+				return (this as VariableValue).to_string();
+
+			case VALUE_SUBSTITUTION:
+				return (this as SubstitutionValue).to_string();
 		}
 
-		case VALUE_COLOR_RGB:
-			return {"#", string_pad_left(string_int_hex(value->VALUE_value), 6, '0')};
-
-		case VALUE_COLOR_RGBA: {
-			var rgb = value->VALUE_value;
-			var a = (rgb >> 24) & 0xFF;
-			var r = (rgb >> 16) & 0xFF;
-			var g = (rgb >>  8) & 0xFF;
-			var b = (rgb >>  0) & 0xFF;
-			a = {float(a) / 255.0};
-			return {"rgba(", r, ", ", g, ", ", b, ", ", a, ")"};
-		}
-
-		case VALUE_COLOR_CURRENT:
-			return "currentColor";
-			
-		case VALUE_URL:
-			return {"url(", css_serialize_string(value->VALUE_value), ")"};
-			
-		case VALUE_LENGTH:
-		case VALUE_ANGLE: {
-			var s = {value->VALUE_value};
-			if (length(s) > 2 && s[length(s)-2] == '.' && s[length(s)-1] == '0') {
-				array_set_length(s, length(s)-2);
-			}
-			return {s, unit_to_string(value->VALUE_LENGTH_unit)};
-		}
-
-		case VALUE_OPACITY: {
-			return {value->VALUE_value};
-		}
-
-		case VALUE_FONT_FAMILY_NAME:
-			return css_serialize_string(value->VALUE_value);
-
-		case VALUE_FONT_FAMILY_GENERIC:
-			return value->VALUE_value;
-
-		case VALUE_FONT_WEIGHT:
-			return {value->VALUE_value};
-
-		case VALUE_NUMBER:
-			return {value->VALUE_value};
-
-		case VALUE_INTEGER:
-			return {value->VALUE_value};
-
-		case VALUE_CONTENT_TEXT:
-			return css_serialize_string(value->VALUE_value);
+		throw error("unknown value type");
 	}
-
-	return 0, error("unknown value type");
 }
 
-function unit_to_string(unit)
+class ListValue: Value
+{
+	constructor create(type: Integer)
+	{
+		super::create(type);
+	}
+
+	static function is_instance(value: Value): Boolean
+	{
+		switch (value.type) {
+			case VALUE_MULTIPLE:
+			case VALUE_GROUP:
+			case VALUE_SLASH_GROUP:
+			case VALUE_LINEAR_GRADIENT:
+				return true;
+		}
+		return false;
+	}
+
+	function add_child(child: Value)
+	{
+		switch (type) {
+			case VALUE_MULTIPLE:
+			case VALUE_GROUP:
+			case VALUE_SLASH_GROUP:
+			case VALUE_LINEAR_GRADIENT:
+				(this as Dynamic[])[] = child;
+				return;
+		}
+		throw error("not multiple or group");
+	}
+
+	function remove_child(idx: Integer)
+	{
+		if (idx < 0) throw error("invalid index");
+		switch (type) {
+			case VALUE_MULTIPLE:
+			case VALUE_GROUP:
+			case VALUE_SLASH_GROUP:
+				(this as Dynamic[]).remove(ListValue::SIZE+idx);
+				return;
+
+			case VALUE_LINEAR_GRADIENT:
+				(this as Dynamic[]).remove(LinearGradientValue::SIZE+idx);
+				return;
+		}
+		throw error("not multiple or group");
+	}
+
+	function insert_child(idx: Integer, child: Value)
+	{
+		if (idx < 0) throw error("invalid index");
+		switch (type) {
+			case VALUE_MULTIPLE:
+			case VALUE_GROUP:
+			case VALUE_SLASH_GROUP:
+				(this as Dynamic[]).insert(ListValue::SIZE+idx, child);
+				return;
+
+			case VALUE_LINEAR_GRADIENT:
+				(this as Dynamic[]).insert(LinearGradientValue::SIZE+idx, child);
+				return;
+		}
+		throw error("not multiple or group");
+	}
+
+	function get_child_count(): Integer
+	{
+		switch (type) {
+			case VALUE_MULTIPLE:
+			case VALUE_GROUP:
+			case VALUE_SLASH_GROUP:
+				return (this as Dynamic[]).length-ListValue::SIZE;
+
+			case VALUE_LINEAR_GRADIENT:
+				return (this as Dynamic[]).length-LinearGradientValue::SIZE;
+		}
+		throw error("not multiple or group");
+	}
+
+	function get_child(idx: Integer): Value
+	{
+		if (idx < 0) throw error("invalid index");
+		switch (type) {
+			case VALUE_MULTIPLE:
+			case VALUE_GROUP:
+			case VALUE_SLASH_GROUP:
+				return (this as Dynamic[])[ListValue::SIZE+idx];
+
+			case VALUE_LINEAR_GRADIENT:
+				return (this as Dynamic[])[LinearGradientValue::SIZE+idx];
+		}
+		throw error("not multiple or group");
+	}
+
+	function to_string(): String
+	{
+		var s = {""}, delim: String;
+		switch (type) {
+			default:
+			case VALUE_MULTIPLE: delim = ", "; break;
+			case VALUE_GROUP: delim = " "; break;
+			case VALUE_SLASH_GROUP: delim = " / "; break;
+			case VALUE_LINEAR_GRADIENT: delim = ", "; break;
+		}
+		for (var i=0, n=get_child_count(); i<n; i++) {
+			if (s.length > 0) s += delim;
+			s += get_child(i).to_string();
+		}
+		switch (type) {
+			case VALUE_LINEAR_GRADIENT: s = "linear-gradient("+s+")"; break;
+		}
+		return s;
+	}
+}
+
+class MultipleValue: ListValue
+{
+	constructor create()
+	{
+		super::create(VALUE_MULTIPLE);
+	}
+}
+
+class GroupValue: ListValue
+{
+	constructor create()
+	{
+		super::create(VALUE_GROUP);
+	}
+
+	constructor create(v1: Value, v2: Value)
+	{
+		super::create(VALUE_GROUP);
+		add_child(v1);
+		add_child(v2);
+	}
+}
+
+class SlashGroupValue: GroupValue
+{
+	constructor create(v1: Value, v2: Value)
+	{
+		super::create();
+		this.type = VALUE_SLASH_GROUP;
+		add_child(v1);
+		add_child(v2);
+	}
+}
+
+class RectValue: Value
+{
+	var top: Value;
+	var right: Value;
+	var bottom: Value;
+	var left: Value;
+
+	constructor create(top: Value, right: Value, bottom: Value, left: Value)
+	{
+		super::create(VALUE_RECT);
+		this.top = top;
+		this.right = right;
+		this.bottom = bottom;
+		this.left = left;
+	}
+
+	function to_string(): String
+	{
+		return "rect("+top.to_string()+", "+right.to_string()+", "+bottom.to_string()+", "+left.to_string()+")";
+	}
+}
+
+class LinearGradientValue: ListValue
+{
+	var angle: Value;
+
+	constructor create(angle: Value)
+	{
+		super::create(VALUE_LINEAR_GRADIENT);
+		this.angle = angle;
+	}
+}
+
+class ColorValue: Value
+{
+	var color: Integer;
+
+	constructor create_rgb(color: Integer)
+	{
+		super::create(VALUE_COLOR_RGB);
+		this.color = color;
+	}
+
+	constructor create_rgba(color: Integer)
+	{
+		super::create(VALUE_COLOR_RGBA);
+		this.color = color;
+	}
+
+	static function create_current(): Value
+	{
+		return Value::create(VALUE_COLOR_CURRENT);
+	}
+
+	static function is_instance(value: Value): Boolean
+	{
+		switch (value.type) {
+			case VALUE_COLOR_RGB:
+			case VALUE_COLOR_RGBA:
+			case VALUE_COLOR_CURRENT:
+				return true;
+		}
+		return false;
+	}
+
+	function to_string(): String
+	{
+		switch (type) {
+			case VALUE_COLOR_RGB:
+				return "#"+String::from_hex_int(color).pad_left(6, '0');
+
+			case VALUE_COLOR_RGBA: {
+				var argb = color;
+				var a = (argb >> 24) & 0xFF;
+				var r = (argb >> 16) & 0xFF;
+				var g = (argb >>  8) & 0xFF;
+				var b = (argb >>  0) & 0xFF;
+				return "rgba("+r+", "+g+", "+b+", "+(a / 255.0)+")";
+			}
+
+			case VALUE_COLOR_CURRENT:
+				return "currentColor";
+		}
+		throw error("invalid color value");
+	}
+}
+
+class URLValue: Value
+{
+	var url: String;
+
+	constructor create(url: String)
+	{
+		super::create(VALUE_URL);
+		this.url = url;
+	}
+
+	function to_string(): String
+	{
+		return "url("+css_serialize_string(url)+")";
+	}
+}
+
+class MeasurementValue: Value
+{
+	var value: Float;
+	var unit: Integer;
+
+	constructor create(type: Integer, value: Float, unit: Integer)
+	{
+		super::create(type);
+		this.value = value;
+		this.unit = unit;
+	}
+
+	function to_string(): String
+	{
+		var s = {value};
+		if (s.length > 2 && s[s.length-2] == '.' && s[s.length-1] == '0') {
+			s.set_length(s.length-2);
+		}
+		s += unit_to_string(unit);
+		return s;
+	}
+}
+
+class LengthValue: MeasurementValue
+{
+	constructor create(value: Float, unit: Integer)
+	{
+		super::create(VALUE_LENGTH, value, unit);
+	}
+
+	function to_pixels(screen_width: Integer, screen_height: Integer): Integer
+	{
+		var font_size = 16.0;
+
+		switch (unit) {
+			case UNIT_ZERO: return 0;
+			case UNIT_EM:   return iround(value * font_size);
+			case UNIT_EX:   return iround(value * font_size * 0.625);
+			case UNIT_CH:   return iround(value * font_size * 0.5);
+			case UNIT_REM:  return iround(value * font_size);
+			case UNIT_VW:   return iround(value / 100.0 * screen_width);
+			case UNIT_VH:   return iround(value / 100.0 * screen_height);
+			case UNIT_VMIN: return iround(value / 100.0 * min(screen_width, screen_height));
+			case UNIT_VMAX: return iround(value / 100.0 * max(screen_width, screen_height));
+			case UNIT_CM:   return iround(value * 96.0 / 2.54);
+			case UNIT_MM:   return iround(value * 96.0 / 2.54 / 10.0);
+			case UNIT_Q:    return iround(value * 96.0 / 2.54 / 40.0);
+			case UNIT_IN:   return iround(value * 96.0);
+			case UNIT_PC:   return iround(value * 96.0 / 6.0);
+			case UNIT_PT:   return iround(value * 96.0 / 72.0);
+			case UNIT_PX:   return iround(value);
+		}
+		throw error("unsupported length unit");
+	}
+}
+
+class AngleValue: MeasurementValue
+{
+	constructor create(value: Float, unit: Integer)
+	{
+		super::create(VALUE_ANGLE, value, unit);
+	}
+}
+
+class OpacityValue: Value
+{
+	var opacity: Float;
+
+	constructor create(opacity: Float)
+	{
+		super::create(VALUE_OPACITY);
+		this.opacity = opacity;
+	}
+
+	function to_string(): String
+	{
+		return {opacity};
+	}
+}
+
+class FontFamilyValue: Value
+{
+	var name: String;
+
+	constructor create(name: String)
+	{
+		super::create(VALUE_FONT_FAMILY_NAME);
+		this.name = name;
+	}
+
+	constructor create_generic(name: String)
+	{
+		super::create(VALUE_FONT_FAMILY_GENERIC);
+		this.name = name;
+	}
+
+	function to_string(): String
+	{
+		switch (type) {
+			case VALUE_FONT_FAMILY_NAME:
+				return css_serialize_string(name);
+
+			case VALUE_FONT_FAMILY_GENERIC:
+				return name;
+		}
+		throw error("invalid font family value");
+	}
+}
+
+class FontWeightValue: Value
+{
+	var weight: Integer;
+
+	constructor create(weight: Integer)
+	{
+		super::create(VALUE_FONT_WEIGHT);
+		this.weight = weight;
+	}
+
+	function to_string(): String
+	{
+		return {weight};
+	}
+}
+
+class NumberValue: Value
+{
+	var value: Float;
+
+	constructor create(value: Float)
+	{
+		super::create(VALUE_NUMBER);
+		this.value = value;
+	}
+
+	function to_string(): String
+	{
+		return {value};
+	}
+}
+
+class IntegerValue: Value
+{
+	var value: Integer;
+
+	constructor create(value: Integer)
+	{
+		super::create(VALUE_INTEGER);
+		this.value = value;
+	}
+
+	function to_string(): String
+	{
+		return {value};
+	}
+}
+
+class ContentTextValue: Value
+{
+	var text: String;
+
+	constructor create(text: String)
+	{
+		super::create(VALUE_CONTENT_TEXT);
+		this.text = text;
+	}
+
+	function to_string(): String
+	{
+		return css_serialize_string(text);
+	}
+}
+
+class VariableValue: Value
+{
+	var tokens: Parser;
+
+	constructor create(tokens: Parser)
+	{
+		super::create(VALUE_VARIABLE);
+		this.tokens = tokens;
+	}
+
+	function to_string(): String
+	{
+		return serialize_css_tokens(tokens);
+	}
+}
+
+class SubstitutionValue: Value
+{
+	var tokens: Parser;
+
+	constructor create(tokens: Parser)
+	{
+		super::create(VALUE_SUBSTITUTION);
+		this.tokens = tokens;
+	}
+
+	function to_string(): String
+	{
+		return serialize_css_tokens(tokens);
+	}
+}
+
+function @unit_to_string(unit: Integer): String
 {
 	switch (unit) {
 		case UNIT_ZERO:    return "";
@@ -770,31 +1020,5 @@ function unit_to_string(unit)
 		case UNIT_TURN:    return "turn";
 	}
 
-	return 0, error("unknown unit type");
-}
-
-function length_to_pixels(value, screen_width, screen_height)
-{
-	var font_size = 16.0;
-	var len = value->VALUE_value;
-
-	switch (value->VALUE_LENGTH_unit) {
-		case UNIT_ZERO: return 0;
-		case UNIT_EM:   return iround({len * font_size});
-		case UNIT_EX:   return iround({len * font_size * 0.625});
-		case UNIT_CH:   return iround({len * font_size * 0.5});
-		case UNIT_REM:  return iround({len * font_size});
-		case UNIT_VW:   return iround({len / 100.0 * float(screen_width)});
-		case UNIT_VH:   return iround({len / 100.0 * float(screen_height)});
-		case UNIT_VMIN: return iround({len / 100.0 * float(min(screen_width, screen_height))});
-		case UNIT_VMAX: return iround({len / 100.0 * float(max(screen_width, screen_height))});
-		case UNIT_CM:   return iround({len * 96.0 / 2.54});
-		case UNIT_MM:   return iround({len * 96.0 / 2.54 / 10.0});
-		case UNIT_Q:    return iround({len * 96.0 / 2.54 / 40.0});
-		case UNIT_IN:   return iround({len * 96.0});
-		case UNIT_PC:   return iround({len * 96.0 / 6.0});
-		case UNIT_PT:   return iround({len * 96.0 / 72.0});
-		case UNIT_PX:   return iround(len);
-	}
-	return 0, error("unsupported length unit");
+	throw error("unknown unit type");
 }

@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -35,6 +35,7 @@ import "io/crypto/sha256";
 import "io/crypto/sha512";
 import "math/bigint";
 import "util/array";
+import "util/memory_cache";
 
 const @SESSION_TIMEOUT = 300;
 
@@ -64,6 +65,7 @@ const {
 	@TLS_server_write_seq_hi,
 	@TLS_encrypt_state,
 	@TLS_decrypt_state,
+	@TLS_timeout,
 	@TLS_SIZE
 };
 
@@ -81,6 +83,7 @@ function tls_create(stream, hostname, port)
 	tls->TLS_hostname = hostname;
 	tls->TLS_sni_hostname = hostname;
 	tls->TLS_port = port;
+	tls->TLS_timeout = -1;
 	return tls;
 }
 
@@ -125,7 +128,7 @@ function tls_connect(tls, status_func, status_data)
 
 	var session_id = 0;
 	var session_key = create_session_key(tls);
-	var session_data = global_get(session_key);
+	var session_data = memory_cache_get(session_key);
 	if (session_data) {
 		session_id = session_data[0];
 		tls->TLS_master_secret = session_data[1];
@@ -167,7 +170,7 @@ function tls_connect(tls, status_func, status_data)
 		return;
 	}
 	else {
-		global_remove(session_key);
+		memory_cache_remove(session_key);
 	}
 
 	type = read_handshake_packet(record, buf);
@@ -303,9 +306,6 @@ function @create_encrypted_packet(tls, client, content_type, msg, msg_off, msg_l
 	var cs = tls->TLS_cipher_suite;
 
 	if (cipher_suite_is_aead(cs)) {
-		if (msg_off == 0 && msg_len == length(msg)) {
-			return msg;
-		}
 		return array_extract(msg, msg_off, msg_len);
 	}
 	else {
@@ -472,7 +472,7 @@ function @receive_encrypted_message(tls, content_type, msg)
 	var version = record_get_version(tls->TLS_record);
 	var cs = tls->TLS_cipher_suite;
 
-	var ct = record_read_packet(tls->TLS_record, msg);
+	var ct = record_read_packet(tls->TLS_record, msg, tls->TLS_timeout);
 	if (ct < 0) return ct;
 	if (content_type >= 0 && ct != content_type) {
 		return 0, error({"expected content type ", content_type, " but got ", ct});
@@ -716,7 +716,7 @@ function tls_open_stream(tls, status_func, status_data)
 			return 0, error({"expected change cipher suite packet (got ", ct_type, ")"});
 		}
 
-		ct_type = record_read_packet(tls->TLS_record, buf);
+		ct_type = record_read_packet(tls->TLS_record, buf, -1);
 		if (ct_type != CT_HANDSHAKE) {
 			return 0, error({"expected finished message (got ", ct_type, ")"});
 		}
@@ -798,7 +798,7 @@ function tls_open_stream(tls, status_func, status_data)
 			status_func(status_data, "Finished TLS handshake.");
 		}
 
-		global_set(create_session_key(tls), [tls->TLS_session_id, tls->TLS_master_secret, tls->TLS_certs], SESSION_TIMEOUT);
+		memory_cache_set(create_session_key(tls), [tls->TLS_session_id, tls->TLS_master_secret, tls->TLS_certs], SESSION_TIMEOUT);
 
 		var tls_stream = object_extend(stream_create(), STR_SIZE);
 		tls_stream->STREAM__vfunc__read_part__4 = read_part#4;
@@ -816,7 +816,7 @@ function tls_open_stream(tls, status_func, status_data)
 
 function tls_abort_resumed_session(tls)
 {
-	global_remove(create_session_key(tls));
+	memory_cache_remove(create_session_key(tls));
 	tls_force_close(tls);
 }
 
@@ -828,6 +828,21 @@ function tls_close(tls)
 function tls_force_close(tls)
 {
 	var (r, e) = record_force_close(tls->TLS_record);
+}
+
+function tls_read_part(tls_stream, buf, off, len, timeout)
+{
+	tls_stream->STR_tls->TLS_timeout = timeout;
+	var (r, e) = read_part(tls_stream, buf, off, len);
+	tls_stream->STR_tls->TLS_timeout = -1;
+	if (e) {
+		if (e == record_read_timeout_marker#0) {
+			tls_stream->STR_read_pos = length(tls_stream->STR_read_buf);
+			return 0;
+		}
+		return 0, e;
+	}
+	return r;
 }
 
 function @read_part(tls_stream, buf, off, len)
@@ -869,7 +884,7 @@ function @write_part(tls_stream, buf, off, len)
 	var total_len = len;
 	var tls = tls_stream->STR_tls;
 	while (len > 0) {
-		var num = min(len, 16384);
+		var num = min(len, 4096);
 		send_encrypted_message(tls, CT_APPLICATION_DATA, buf, off, num);
 		off += num;
 		len -= num;

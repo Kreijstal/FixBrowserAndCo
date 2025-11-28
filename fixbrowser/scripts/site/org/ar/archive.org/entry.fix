@@ -1,22 +1,41 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/template";
 import "util/json";
 
-function adjust_document(request, document)
+function handle_request(request: Request)
 {
-	var parts = string_split(request_get_path(request), '/');
+	if (request.get_domain() == "web.archive.org" && request.get_path() == "/timeline") {
+		var url = request.get_param("url");
+		var year = String::parse_int(request.get_param("year"));
 
-	if (request_get_domain(request) == "web.archive.org") {
-		if (length(parts) > 3 && parts[1] == "web" && parts[2] == "*") {
-			array_remove(parts, 0, 3);
-			var url = string_join(parts, "/");
-			var query = request_get_query(request);
+		var tpl = Template::create("site/org/ar/archive.org/timeline.tpl");
+		var (r, e) = populate_year(tpl, url, year);
+		if (e) {
+			dump(e);
+			tpl.set("fail", "true");
+		}
+		request.replace_with_html(tpl.process());
+		return;
+	}
+}
+
+function adjust_document(request: Request, document: Element)
+{
+	var parts = request.get_path().split('/');
+
+	if (request.get_domain() == "web.archive.org") {
+		if (parts.length > 3 && parts[1] == "web" && parts[2] == "*") {
+			parts.remove(0, 3);
+			var url = String::join(parts, "/");
+			var query = request.get_query();
 			if (query) {
-				url = {url, "?", query};
+				url = url+"?"+query;
 			}
 
-			var search_div = element_query(document, "div#react-wayback-search");
+			var search_div = document.query("div#react-wayback-search");
 			if (search_div) {
 				handle_search_page(request, document, search_div, url);
 			}
@@ -24,80 +43,83 @@ function adjust_document(request, document)
 	}
 }
 
-function @handle_search_page(request, document, content_div, url)
+function @handle_search_page(request: Request, document: Element, content_div: Element, url: String)
 {
 	remove_all_elements(document, "noscript");
 
-	var json = json_parse(http_get(link_with_params("https://web.archive.org/__wb/sparkline", {
+	var json = JSON::parse(Http::get(Link::with_params("https://web.archive.org/__wb/sparkline", {
 		"url": url,
 		"collection": "web",
 		"output": "json"
-	})));
+	}), null, {"Referer": "https://web.archive.org/"}).content);
 	if (!json) {
-		element_set_html(content_div, "No results.");
+		content_div.set_html("No results.");
 		return;
 	}
 
-	var tpl = template_create("site/org/ar/archive.org/search.tpl");
-	template_set(tpl, "url", html_escape(url));
+	var tpl = Template::create("site/org/ar/archive.org/search.tpl");
+	tpl.set("url", html_escape(url));
 
-	var years = json_get_object(json, "years");
-	var keys = json_get_keys(years);
+	var years = json.get("years").as_object();
 	var min_year = 9999, max_year = 0;
-	for (var i=0; i<length(keys); i++) {
-		var year = string_parse_int(keys[i]);
-		var months = json_get_array(years, keys[i]);
+	foreach (var key, value in years) {
+		var year = String::parse_int(key);
+		var months = value.as_array();
 		min_year = min(min_year, year);
 		max_year = max(max_year, year);
 	}
 
 	if (min_year <= max_year) {
-		template_begin(tpl, "years");
-		for (var i=max_year; i>=min_year; i--) {
-			template_set(tpl, "year", {i});
-			if (json_has_key(years, {i})) {
-				var (r, e) = populate_year(tpl, url, i);
-				if (e) {
-					dump(e);
-					template_set(tpl, "fail", true);
-				}
+		var latest_link: String;
+		tpl.begin("years");
+		for (var i=min_year; i<=max_year; i++) {
+			if (years.contains({i})) {
+				var link = Link::with_params("/timeline", {"url": url, "year": {i}});
+				request.set_same_domain_url(link); // required to force direct loading because it contains embedded URL
+				tpl.set("year", {i});
+				tpl.set("link", html_escape(link));
+				tpl.next_record();
+				latest_link = link;
 			}
-			template_next_record(tpl);
 		}
-		template_end(tpl);
+		tpl.end();
+
+		if (latest_link) {
+			tpl.set("latest_link", html_escape(latest_link));
+		}
 	}
 
-	element_set_html(content_div, template_process(tpl));
+	content_div.set_html(tpl.process());
 }
 
-function @populate_year(tpl, url, year)
+function @populate_year(tpl: Template, url: String, year: Integer)
 {
-	var json = json_parse(http_get(link_with_params("https://web.archive.org/__wb/calendarcaptures", {
+	var json = JSON::parse(Http::get(Link::with_params("https://web.archive.org/__wb/calendarcaptures", {
 		"url": url,
 		"selected_year": {year}
-	})));
+	})).content);
 	if (!json) {
 		return;
 	}
 	
-	var timestamps = {};
+	var timestamps: String[][String] = {};
 
-	for (var i=0, n1=json_length(json); i<n1; i++) {
-		var arr = json_get_array(json, i);
-		for (var j=0, n2=json_length(arr); j<n2; j++) {
-			var arr2 = json_get_array(arr, j);
-			for (var k=0, n3=json_length(arr2); k<n3; k++) {
-				var obj = json_get_object(arr2, k);
-				if (obj) {
-					var ts_arr = json_get_array(obj, "ts");
-					if (ts_arr) {
-						for (var m=0, n4=json_length(ts_arr); m<n4; m++) {
-							var ts = json_get_number(ts_arr, m);
-							var key = string_substring(ts, 0, 8);
-							var list = hash_get(timestamps, key, null);
+	for (var i=0, n1=json.length(); i<n1; i++) {
+		var arr = json.get(i);
+		for (var j=0, n2=arr.length(); j<n2; j++) {
+			var arr2 = arr.get(j);
+			for (var k=0, n3=arr2.length(); k<n3; k++) {
+				var obj = arr2.opt(k);
+				if (obj.has_value()) {
+					var ts_arr = obj.opt("ts");
+					if (ts_arr.has_value()) {
+						for (var m=0, n4=ts_arr.length(); m<n4; m++) {
+							var ts = ts_arr.get(m).as_long().to_string();
+							var key = ts.substring(0, 8);
+							var list = timestamps.get(key, null);
 							if (!list) {
 								list = [];
-								timestamps{key} = list;
+								timestamps[key] = list;
 							}
 							list[] = ts;
 						}
@@ -107,26 +129,26 @@ function @populate_year(tpl, url, year)
 		}
 	}
 
-	template_begin(tpl, "days");
-	for (var i=length(timestamps)-1; i>=0; i--) {
-		var (k, v) = hash_entry(timestamps, i);
+	tpl.begin("days");
+	for (var i=0; i<timestamps.length; i++) {
+		var (k, v) = timestamps.entry(i);
 		var date = {k};
-		array_insert(date, 6, '/');
-		array_insert(date, 4, '/');
-		template_set(tpl, "date", date);
+		date.insert_char(6, '/');
+		date.insert_char(4, '/');
+		tpl.set("date", date);
 
-		template_begin(tpl, "times");
-		for (var j=0; j<length(v); j++) {
-			var time = string_substring(v[j], 8);
-			array_insert(time, 4, ':');
-			array_insert(time, 2, ':');
-			template_set(tpl, "time", time);
-			template_set(tpl, "link", html_escape({"https://web.archive.org/web/", v[j], "/", url}));
-			template_next_record(tpl);
+		tpl.begin("times");
+		foreach (var val in v) {
+			var time = val.substring(8);
+			time.insert_char(4, ':');
+			time.insert_char(2, ':');
+			tpl.set("time", time);
+			tpl.set("link", html_escape("https://web.archive.org/web/"+val+"/"+url));
+			tpl.next_record();
 		}
-		template_end(tpl);
+		tpl.end();
 
-		template_next_record(tpl);
+		tpl.next_record();
 	}
-	template_end(tpl);
+	tpl.end();
 }

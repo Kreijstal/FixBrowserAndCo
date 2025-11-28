@@ -1,23 +1,25 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/template";
 import "util/json";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "iggcdn.com")) return true;
 	return false;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var elem = element_query(document, "html > head > meta[property='og:url'][content]");
+	var elem = document.query("html > head > meta[property='og:url'][content]");
 	if (elem) {
-		var value = element_get_attr(elem, "content");
+		var value = elem.get_attr("content");
 		var prefix = "https://www.indiegogo.com/projects/";
-		if (string_starts_with(value, prefix)) {
-			var project_id = string_substring(value, length(prefix));
-			if (length(project_id) > 0) {
+		if (value.starts_with(prefix)) {
+			var project_id = value.substring(prefix.length);
+			if (project_id.length > 0) {
 				var data = extract_data(document);
 				show_project_page(request, document, project_id, data);
 			}
@@ -25,141 +27,139 @@ function adjust_document(request, document)
 	}
 }
 
-function @show_project_page(request, document, project_id, data)
+function @show_project_page(request: Request, document: Element, project_id: String, data: String[String])
 {
-	//log({"project_id=", project_id});
-	//dump(hash_keys(data));
-	var body = element_query(document, "body");
+	//log("project_id="+project_id);
+	//dump(data.get_keys());
+	var body = document.query("body");
 
-	var page_title = element_extract_text(element_query(document, "html > head > title"));
+	var page_title = document.query("html > head > title").extract_text();
 
-	var json = json_parse(string_from_utf8(http_get({"https://www.indiegogo.com/private_api/campaigns/", project_id, "/description"})));
-	var desc_html = json_get_string(json_get_object(json, "response"), "description_html");
-	//element_set_html(body, desc_html);
+	var json = JSON::parse(Http::get("https://www.indiegogo.com/private_api/campaigns/"+project_id+"/description").content);
+	var desc_html = json.get("response").get("description_html").as_string();
+	//body.set_html(desc_html);
 
-	var campaign_data = json_parse(data{"campaign"});
-	var title = json_get_string(campaign_data, "title");
-	var tagline = json_get_string(campaign_data, "tagline");
-	var owner_name = json_get_string(campaign_data, "owner_name");
-	var city = json_get_string(campaign_data, "city");
-	var country = json_get_string(campaign_data, "country");
-	var team_members = json_get_array(campaign_data, "team_members");
-	var owner_image = null;
-	if (json_length(team_members) > 0) {
-		var member = json_get_object(team_members, 0);
-		owner_image = json_get_string(member, "avatar_url");
+	var campaign_data = JSON::parse_string(data["campaign"]);
+	var title = campaign_data.get("title").as_string();
+	var tagline = campaign_data.get("tagline").as_string();
+	var owner_name = campaign_data.get("owner_name").as_string();
+	var city = campaign_data.get("city").as_string();
+	var country = campaign_data.get("country").as_string();
+	var team_members = campaign_data.get("team_members");
+	var owner_image: String;
+	if (team_members.length() > 0) {
+		var member = team_members.get(0);
+		owner_image = member.get("avatar_url").as_string();
 	}
-	var currency_data = json_get_object(campaign_data, "currency");
-	var currency_code = json_get_string(currency_data, "iso_code");
-	var currency_symbol = json_get_string(currency_data, "symbol");
-	var raised = json_get_int(campaign_data, "units_toward_goal", -1);
-	var raised_percentage = json_get_int(campaign_data, "goal_percentage", -1);
-	var raised_goal = json_get_int(campaign_data, "target_goal", -1);
-	var funding_type = json_get_string(campaign_data, "funding_type");
-	var date_start = json_get_string(campaign_data, "funding_started_at");
-	var date_end = json_get_string(campaign_data, "funding_ends_at");
-	var category = json_get_string(json_get_object(campaign_data, "category"), "name");
-	var overview = json_get_string(campaign_data, "overview");
-	var overview_image = json_get_string(campaign_data, "overview_image_url");
+	var currency_data = campaign_data.get("currency");
+	var currency_code = currency_data.get("iso_code").as_string();
+	var currency_symbol = currency_data.get("symbol").as_string();
+	var raised = campaign_data.get("units_toward_goal", -1).as_int();
+	var raised_percentage = campaign_data.get("goal_percentage", -1).as_int();
+	var raised_goal = campaign_data.get("target_goal", -1).as_int();
+	var funding_type = campaign_data.get("funding_type").as_string();
+	var date_start = campaign_data.get("funding_started_at").as_string();
+	var date_end = campaign_data.get("funding_ends_at").as_string();
+	var category = campaign_data.get("category").get("name").as_string();
+	var overview = campaign_data.get("overview").as_string();
+	var overview_image = campaign_data.get("overview_image_url").as_string();
 	//show_json(body, campaign_data);return;
 
-	var perks_data = json_parse(data{"perks"});
+	var perks_data = JSON::parse_string(data["perks"]);
 	//show_json(body, perks_data);return;
 
-	var tpl = template_create("site/com/in/indiegogo.com/project.tpl");
-	template_set(tpl, "page_title", html_escape(page_title));
-	template_set(tpl, "title", html_escape(title));
-	template_set(tpl, "tagline", html_escape(tagline));
-	template_set(tpl, "owner_name", html_escape(owner_name));
-	template_set(tpl, "owner_location", html_escape({city, ", ", country}));
+	var tpl = Template::create("site/com/in/indiegogo.com/project.tpl");
+	tpl.set("page_title", html_escape(page_title));
+	tpl.set("title", html_escape(title));
+	tpl.set("tagline", html_escape(tagline));
+	tpl.set("owner_name", html_escape(owner_name));
+	tpl.set("owner_location", html_escape(city+", "+country));
 	if (owner_image) {
-		template_set(tpl, "owner_image", html_escape(owner_image));
+		tpl.set("owner_image", html_escape(owner_image));
 	}
-	template_set(tpl, "currency_code", html_escape(currency_code));
-	template_set(tpl, "currency_symbol", html_escape(currency_symbol));
-	template_set(tpl, "raised", price_to_string(raised, currency_symbol));
-	template_set(tpl, "raised_goal", price_to_string(raised_goal, currency_symbol));
-	template_set(tpl, "raised_percentage", {raised_percentage});
-	template_set(tpl, "funding_type", html_escape(funding_type));
-	template_set(tpl, "date_start", html_escape(string_replace_char(date_start, 'T', ' ')));
-	template_set(tpl, "date_end", html_escape(string_replace_char(date_end, 'T', ' ')));
-	template_set(tpl, "overview", html_escape(overview));
-	template_set(tpl, "overview_image", html_escape(overview_image));
-	template_set(tpl, "description", desc_html);
-	//template_set(tpl, "description", "description");
+	tpl.set("currency_code", html_escape(currency_code));
+	tpl.set("currency_symbol", html_escape(currency_symbol));
+	tpl.set("raised", price_to_string(raised, currency_symbol));
+	tpl.set("raised_goal", price_to_string(raised_goal, currency_symbol));
+	tpl.set("raised_percentage", {raised_percentage});
+	tpl.set("funding_type", html_escape(funding_type));
+	tpl.set("date_start", html_escape(date_start.replace_char('T', ' ')));
+	tpl.set("date_end", html_escape(date_end.replace_char('T', ' ')));
+	tpl.set("overview", html_escape(overview));
+	tpl.set("overview_image", html_escape(overview_image));
+	tpl.set("description", desc_html);
+	//tpl.set("description", "description");
 
-	template_begin(tpl, "perks");
-	for (var i=0; i<json_length(perks_data); i++) {
-		var perk = json_get_object(perks_data, i);
-		var image = {"https://c1.iggcdn.com/indiegogo-media-prod-cld/image/upload/c_fill,h_506,w_726/", json_get_string(perk, "perk_image_public_id"), ".jpg"};
-		var price = json_get_int(perk, "amount", -1);
-		var label = json_get_string(perk, "label");
-		var delivery = get_date_only(json_get_string(perk, "estimated_delivery_date"));
-		var number_claimed = json_get_int(perk, "number_claimed", -1);
-		var number_available = json_get_int(perk, "number_available", -1);
-		template_set(tpl, "image", html_escape(image));
-		template_set(tpl, "price", price_to_string(price, currency_symbol));
-		template_set(tpl, "label", html_escape(label));
-		template_set(tpl, "delivery", html_escape(delivery));
-		template_set(tpl, "number_claimed", {number_claimed});
-		template_set(tpl, "number_available", {number_available});
-		template_next_record(tpl);
+	tpl.begin("perks");
+	foreach (var perk in perks_data.as_array()) {
+		var image = "https://c1.iggcdn.com/indiegogo-media-prod-cld/image/upload/c_fill,h_506,w_726/"+perk.get("perk_image_public_id").as_string()+".jpg";
+		var price = perk.get("amount", -1).as_int();
+		var label = perk.get("label").as_string();
+		var delivery = get_date_only(perk.get("estimated_delivery_date").as_string());
+		var number_claimed = perk.get("number_claimed", -1).as_int();
+		var number_available = perk.get("number_available", -1).as_int();
+		tpl.set("image", html_escape(image));
+		tpl.set("price", price_to_string(price, currency_symbol));
+		tpl.set("label", html_escape(label));
+		tpl.set("delivery", html_escape(delivery));
+		tpl.set("number_claimed", {number_claimed});
+		tpl.set("number_available", {number_available});
+		tpl.next_record();
 	}
-	template_end(tpl);
+	tpl.end();
 
-	request_replace_document(request, document_parse(template_process(tpl)));
+	request.replace_document(Document::parse(tpl.process()));
 }
 
-function @extract_data(document)
+function @extract_data(document: Element): String[String]
 {
-	var scripts = element_query_all(document, "script");
-	for (var i=0; i<length(scripts); i++) {
-		var text = element_extract_text(scripts[i]);
-		if (string_contains(text, "window.gon={};")) {
+	foreach (var script in document.query_all("script")) {
+		var text = script.extract_text();
+		if (text.contains("window.gon={};")) {
 			return parse_list(text);
 		}
 	}
 	return null;
 }
 
-function @parse_list(s)
+function @parse_list(s: String): String[String]
 {
-	var result = {};
+	var result: String[String] = {};
 	var off = 0;
-	var key = null;
+	var key: String;
 	for (;;) {
 		var idx = json_aware_search_string(s, "gon.", off);
 		if (idx == -1) break;
 
 		if (key) {
-			result{key} = strip_off_tail(string_substring(s, off, idx));
+			result[key] = strip_off_tail(s.substring(off, idx));
 		}
 
-		var idx2 = string_search_char(s, '=', idx+4);
+		var idx2 = s.search_char('=', idx+4);
 		if (idx2 == -1) break;
 
-		key = string_substring(s, idx+4, idx2);
+		key = s.substring(idx+4, idx2);
 		off = idx2+1;
 	}
 	if (key) {
-		result{key} = strip_off_tail(string_substring(s, off));
+		result[key] = strip_off_tail(s.substring(off));
 	}
 	return result;
 }
 
-function @strip_off_tail(s)
+function @strip_off_tail(s: String): String
 {
-	var idx = string_rev_search_char(s, ';');
+	var idx = s.rev_search_char(';');
 	if (idx != -1) {
-		array_set_length(s, idx);
+		s.set_length(idx);
 	}
 	return s;
 }
 
-function @json_aware_search_string(s, search, off)
+function @json_aware_search_string(s: String, search: String, off: Integer): Integer
 {
-	var len1 = length(s);
-	var len2 = length(search);
+	var len1 = s.length;
+	var len2 = search.length;
 	if (len2 == 0) return -1;
 
 	var c0 = search[0];
@@ -193,20 +193,20 @@ function @json_aware_search_string(s, search, off)
 	return -1;
 }
 
-function @price_to_string(price, symbol)
+function @price_to_string(price: Integer, symbol: String): String
 {
 	var s = {price};
-	for (var i=length(s)-3; i>0; i-=3) {
-		array_insert(s, i, ',');
+	for (var i=s.length-3; i>0; i-=3) {
+		s.insert_char(i, ',');
 	}
-	return {html_escape(symbol), s};
+	return html_escape(symbol)+s;
 }
 
-function @get_date_only(date)
+function @get_date_only(date: String): String
 {
-	var idx = string_search_char(date, 'T');
+	var idx = date.search_char('T');
 	if (idx != -1) {
-		return string_substring(date, 0, idx);
+		return date.substring(0, idx);
 	}
 	return date;
 }

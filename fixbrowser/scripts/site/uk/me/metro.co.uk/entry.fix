@@ -1,16 +1,16 @@
+use "classes";
+
 import "util/common";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "wp.com")) return true;
 	return false;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var imgs = element_query_all(document, "img[data-src]");
-	for (var i=0; i<length(imgs); i++) {
-		var img = imgs[i];
-		element_set_attr(img, "src", element_get_attr(img, "data-src"));
+	foreach (var img in document.query_all("img[data-src]")) {
+		img.set_attr("src", img.get_attr("data-src"));
 	}
 }

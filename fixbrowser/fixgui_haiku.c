@@ -1,5 +1,5 @@
 /*
- * FixScript GUI v0.8 - https://www.fixscript.org/
+ * FixScript GUI v0.8 (modified) - https://www.fixscript.org/
  * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
@@ -34,11 +34,17 @@ enum {
    MSG_WINDOW_RESIZED,
    MSG_WINDOW_CLOSE,
    MSG_DRAW_CANVAS,
+   MSG_CANVAS_MOUSE_EVENT,
+   MSG_CANVAS_MOUSE_WHEEL_EVENT,
+   MSG_CANVAS_KEY_EVENT,
+   MSG_CANVAS_KEY_TYPED_EVENT,
    MSG_BUTTON_CLICKED,
    MSG_MENU_ITEM_ACTION,
    MSG_POPUP_MENU_DELETED,
    MSG_POPUP_ACTION,
-   MSG_POPUP_MENU
+   MSG_POPUP_MENU,
+   MSG_PROCESS_TIMERS,
+   MSG_WORKER_NOTIFY
 };
 
 enum {
@@ -70,7 +76,17 @@ struct Menu {
 
 struct Worker {
    WorkerCommon common;
+   pthread_mutex_t mutex;
+   pthread_cond_t cond;
 };
+
+typedef struct Timer {
+   Heap *heap;
+   Value instance;
+   int interval;
+   uint32_t next_time;
+   struct Timer *next;
+} Timer;
 
 struct NotifyIcon {
    NotifyIconCommon common;
@@ -81,14 +97,20 @@ struct SystemFont {
 };
 
 void fixgui__tls_init();
+static pthread_condattr_t cond_attr;
 static pthread_mutex_t mutex;
 static pthread_cond_t cond;
 static void *script_looper;
 static void **fixwindow_vtable = NULL;
 static void **fixwindowview_vtable = NULL;
+static void (*fixcanvas_orig_message_received)(void *view, void *msg);
 static void **fixcanvas_vtable = NULL;
 static void **fixpopupmenu_vtable = NULL;
 static void *app;
+static pthread_mutex_t timer_mutex;
+static pthread_cond_t timer_cond;
+static pthread_cond_t timer_cond_processed;
+static Timer *active_timers = NULL;
 
 #define VTABLE(ptr, slot) (((void **)(*(void **)ptr))[slot])
 
@@ -246,9 +268,42 @@ enum {
    B_FONT_ALL = 0x000001FF
 };
 
+enum {
+   B_MOUSE_DOWN          = '_MDN',
+   B_MOUSE_WHEEL_CHANGED = '_MWC',
+   B_KEY_DOWN            = '_KYD',
+   B_KEY_UP              = '_KYU',
+};
+
+enum {
+   B_STRING_TYPE         = 'CSTR',
+   B_MIME_TYPE           = 'MIME'
+};
+
+enum {
+   B_POINTER_EVENTS = 0x00000001
+};
+
+enum {
+   B_ENTERED_VIEW = 0,
+   B_INSIDE_VIEW,
+   B_EXITED_VIEW,
+   B_OUTSIDE_VIEW
+};
+
+enum {
+   B_LOCK_WINDOW_FOCUS    = 0x00000001,
+   B_SUSPEND_WINDOW_FOCUS = 0x00000002,
+   B_NO_POINTER_HISTORY   = 0x00000004,
+   B_FULL_POINTER_HISTORY = 0x00000008
+};
+
 typedef uint8_t bool;
 typedef int32_t status_t;
 typedef int32_t thread_id;
+
+#define B_FONT_FAMILY_LENGTH 63
+typedef char font_family[B_FONT_FAMILY_LENGTH+1];
 
 typedef struct {
    void **vtable;
@@ -280,6 +335,8 @@ typedef struct {
    float leading;
 } font_height;
 
+typedef struct BClipboard BClipboard;
+
 static void *(*operator_new)(unsigned long);
 static void (*operator_delete)(void *p);
 
@@ -291,6 +348,7 @@ static void (*BLooper_MessageReceived)(void *, void *);
 static inline thread_id BLooper_Run(void *obj) { return ((thread_id (*)(void *))VTABLE(obj, 19))(obj); }
 static bool (*BLooper_Lock)(void *);
 static void (*BLooper_Unlock)(void *);
+static void *(*BLooper_CurrentMessage)(void *);
 static void (*BMessage_new)(void *, uint32_t);
 static status_t (*BMessage_AddInt32)(void *, const char *, int32_t);
 static status_t (*BMessage_AddPointer)(void *, const char *, const void *);
@@ -300,6 +358,9 @@ static int32_t (*BMessage_GetInt32)(void *, const char *, int32_t);
 static void *(*BMessage_GetPointer)(void *, const char *, const void *);
 static bool (*BMessage_GetBool)(void *, const char *, bool);
 static status_t (*BMessage_FindData)(void *, const char *, uint32_t, void **, ssize_t *);
+static status_t (*BMessage_FindPoint)(void *, const char *, BPoint *);
+static status_t (*BMessage_FindFloat)(void *, const char *, float *);
+static void (*BMessage_PrintToStream)(void *);
 static void (*BWindow_new)(void *, BRect *, const char *, int, uint32_t, uint32_t);
 static inline void BWindow_Show(void *obj) { ((void (*)(void *))VTABLE(obj, 43))(obj); }
 static inline void BWindow_Hide(void *obj) { ((void (*)(void *))VTABLE(obj, 44))(obj); }
@@ -342,6 +403,8 @@ static inline void BView_SetViewColor(void *obj, rgb_color c) { ((void (*)(void 
 static void (*BView_DrawBitmap)(void *, void *, BRect *);
 static inline void BView_SetFlags(void *obj, uint32_t f) { ((void (*)(void *, uint32_t))VTABLE(obj, 40))(obj, f); }
 static uint32_t (*BView_Flags)(void *);
+static status_t (*BView_SetMouseEventMask)(void *, uint32_t mask, uint32_t options);
+static uint32_t (*modifiers)();
 static void (*BView_Invalidate)(void *);
 static void (*BView_Invalidate_rect)(void *, BRect *);
 static void (*BView_ConvertToScreen)(void *, BPoint *);
@@ -349,6 +412,7 @@ static inline void BView_SetHighColor(void *obj, rgb_color p) { ((void (*)(void 
 static inline void BView_SetFont(void *obj, void *p1, uint32_t p2) { ((void (*)(void *, void *, uint32_t))VTABLE(obj, 39))(obj, p1, p2); }
 static void (*BView_DrawString)(void *, const char *, BPoint *, void *);
 static void (*BView_Sync)(void *);
+static void *(*BView_Window)(void *);
 static void (*BBitmap_new)(void *, BRect *, int, bool, bool);
 #ifdef __LP64__
 static BRect *(*BBitmap_Bounds)(BRect *, void *);
@@ -403,6 +467,14 @@ static float (*BFont_Size)(void *);
 static void (*BFont_GetHeight)(void *, font_height *);
 static float (*BFont_StringWidth)(void *, const char *);
 static rgb_color *B_TRANSPARENT_COLOR;
+static int32_t (*count_font_families)();
+static status_t (*get_font_family)(int32_t index, font_family *name, uint32_t flags);
+static BClipboard *be_clipboard;
+static bool (*BClipboard_Lock)(void *);
+static void (*BClipboard_Unlock)(void *);
+static status_t (*BClipboard_Clear)(void *);
+static BMessage *(*BClipboard_Data)(void *);
+static status_t (*BClipboard_Commit)(void *);
 
 typedef struct {
    uint8_t data[BWINDOW_SIZE];
@@ -417,6 +489,8 @@ typedef struct {
 typedef struct {
    uint8_t data[BVIEW_SIZE];
    View *view;
+   int last_x, last_y;
+   int last_buttons;
 } FixCanvas;
 
 typedef struct {
@@ -424,6 +498,23 @@ typedef struct {
    void (*orig_destructor)(void *);
    Menu *menu;
 } FixPopUpMenu;
+
+
+static int pthread_cond_timedwait_relative(pthread_cond_t *cond, pthread_mutex_t *mutex, int64_t timeout)
+{
+   struct timespec ts;
+
+   if (timeout == 0) return 0;
+   if (timeout < 0) {
+      return pthread_cond_wait(cond, mutex);
+   }
+
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   ts.tv_nsec += timeout % 1000000000;
+   ts.tv_sec += ts.tv_nsec / 1000000000 + timeout / 1000000000;
+   ts.tv_nsec %= 1000000000;
+   return pthread_cond_timedwait(cond, mutex, &ts);
+}
 
 
 static inline void *new(size_t size)
@@ -647,6 +738,7 @@ static void script_looper_message_received(void *looper, BMessage *msg)
          }
          break;
       }
+
       case MSG_WINDOW_CLOSE: {
          View *view = BMessage_GetPointer(msg, "view", NULL);
          call_view_callback(view, CALLBACK_WINDOW_CLOSE);
@@ -710,6 +802,46 @@ static void script_looper_message_received(void *looper, BMessage *msg)
          break;
       }
 
+      case MSG_CANVAS_MOUSE_EVENT: {
+         View *view = BMessage_GetPointer(msg, "view", NULL);
+         int type = BMessage_GetInt32(msg, "type", 0);
+         int x = BMessage_GetInt32(msg, "x", 0);
+         int y = BMessage_GetInt32(msg, "y", 0);
+         int button = BMessage_GetInt32(msg, "button", 0);
+         int mod = BMessage_GetInt32(msg, "mod", 0);
+         int click_count = BMessage_GetInt32(msg, "click_count", 0);
+         call_mouse_event_callback(view, type, x, y, button, mod, click_count, 0);
+         break;
+      }
+
+      case MSG_CANVAS_MOUSE_WHEEL_EVENT: {
+         View *view = BMessage_GetPointer(msg, "view", NULL);
+         int x = BMessage_GetInt32(msg, "x", 0);
+         int y = BMessage_GetInt32(msg, "y", 0);
+         int mod = BMessage_GetInt32(msg, "mod", 0);
+         int wheel_y = BMessage_GetInt32(msg, "wheel_y", 0);
+         call_mouse_wheel_callback(view, x, y, mod, 0, wheel_y/1000.0f, 0, 0);
+         break;
+      }
+
+      case MSG_CANVAS_KEY_EVENT: {
+         View *view = BMessage_GetPointer(msg, "view", NULL);
+         int type = BMessage_GetInt32(msg, "type", 0);
+         int key = BMessage_GetInt32(msg, "key", 0);
+         int mod = BMessage_GetInt32(msg, "mod", 0);
+         call_key_event_callback(view, type, key, mod);
+         break;
+      }
+
+      case MSG_CANVAS_KEY_TYPED_EVENT: {
+         View *view = BMessage_GetPointer(msg, "view", NULL);
+         char *chars = BMessage_GetPointer(msg, "chars", NULL);
+         int mod = BMessage_GetInt32(msg, "mod", 0);
+         call_key_typed_event_callback(view, chars, mod);
+         free(chars);
+         break;
+      }
+
       case MSG_BUTTON_CLICKED: {
          View *view = BMessage_GetPointer(msg, "view", NULL);
          call_action_callback(view, CALLBACK_BUTTON_ACTION);
@@ -761,6 +893,30 @@ static void script_looper_message_received(void *looper, BMessage *msg)
          break;
       }
       */
+
+      case MSG_PROCESS_TIMERS: {
+         Timer *timer, *next_timer;
+         uint32_t time;
+
+         pthread_mutex_lock(&timer_mutex);
+         time = timer_get_time();
+         for (timer = active_timers; timer; timer = next_timer) {
+            next_timer = timer->next;
+            if (timer->interval == 0 || time >= timer->next_time) {
+               timer->next_time = time + timer->interval;
+               timer_run(timer->heap, timer->instance);
+            }
+         }
+         pthread_cond_broadcast(&timer_cond_processed);
+         pthread_mutex_unlock(&timer_mutex);
+         break;
+      }
+
+      case MSG_WORKER_NOTIFY: {
+         Worker *worker = BMessage_GetPointer(msg, "worker", NULL);
+         worker->common.notify_func(worker);
+         break;
+      }
 
       default:
          BLooper_MessageReceived(looper, msg);
@@ -867,6 +1023,314 @@ static void fixcanvas_draw(FixCanvas *canvas, BRect *update_rect)
 }
 
 
+static void send_converted_mouse_message(View *view, int type, int x, int y, int button, int mod, int click_count)
+{
+   void *msg;
+
+   msg = new(BMESSAGE_SIZE);
+   BMessage_new(msg, MSG_CANVAS_MOUSE_EVENT);
+   BMessage_AddPointer(msg, "view", view);
+   BMessage_AddInt32(msg, "type", type);
+   BMessage_AddInt32(msg, "x", x);
+   BMessage_AddInt32(msg, "y", y);
+   BMessage_AddInt32(msg, "button", button);
+   BMessage_AddInt32(msg, "mod", mod);
+   BMessage_AddInt32(msg, "click_count", click_count);
+   BLooper_PostMessage(script_looper, msg);
+}
+
+
+static int convert_modifiers(int buttons, int modifiers)
+{
+   int mod = 0;
+
+   if (modifiers & 1) mod |= SCRIPT_MOD_SHIFT;
+   if (modifiers & 2) mod |= SCRIPT_MOD_ALT;
+   if (modifiers & 4) mod |= SCRIPT_MOD_CTRL;
+
+   if (buttons & 1) mod |= SCRIPT_MOD_LBUTTON;
+   if (buttons & 2) mod |= SCRIPT_MOD_RBUTTON;
+   if (buttons & 4) mod |= SCRIPT_MOD_MBUTTON;
+
+   return mod;
+}
+
+
+static void send_mouse_message(View *view, int type, int x, int y, int new_buttons, int old_buttons, int modifiers, int click_count)
+{
+   int mod = convert_modifiers(new_buttons, modifiers);
+
+   if (new_buttons != old_buttons) {
+      if ((new_buttons ^ old_buttons) & 1) {
+         send_converted_mouse_message(view, type, x, y, MOUSE_BUTTON_LEFT, mod, click_count);
+      }
+      if ((new_buttons ^ old_buttons) & 2) {
+         send_converted_mouse_message(view, type, x, y, MOUSE_BUTTON_RIGHT, mod, click_count);
+      }
+      if ((new_buttons ^ old_buttons) & 4) {
+         send_converted_mouse_message(view, type, x, y, MOUSE_BUTTON_MIDDLE, mod, click_count);
+      }
+   }
+   else {
+      send_converted_mouse_message(view, type, x, y, -1, mod, click_count);
+   }
+}
+
+
+static void fixcanvas_mouse_down(FixCanvas *canvas, BPoint where)
+{
+   void *win, *msg;
+   BPoint coord;
+   int32_t buttons, modifiers, clicks;
+
+   win = BView_Window(canvas);
+   msg = BLooper_CurrentMessage(win);
+   BMessage_FindPoint(msg, "where", &coord);
+   buttons = BMessage_GetInt32(msg, "buttons", 0);
+   modifiers = BMessage_GetInt32(msg, "modifiers", 0);
+   clicks = BMessage_GetInt32(msg, "clicks", 0);
+
+   send_mouse_message(canvas->view, EVENT_MOUSE_DOWN, (int)coord.x, (int)coord.y, buttons, canvas->last_buttons, modifiers, clicks);
+
+   canvas->last_x = (int)coord.x;
+   canvas->last_y = (int)coord.y;
+   canvas->last_buttons = buttons;
+
+   BView_SetMouseEventMask(canvas, B_POINTER_EVENTS, B_LOCK_WINDOW_FOCUS | B_NO_POINTER_HISTORY);
+}
+
+
+static void fixcanvas_mouse_up(FixCanvas *canvas, BPoint where)
+{
+   void *win, *msg;
+   BPoint coord;
+   int32_t buttons, modifiers, clicks;
+
+   win = BView_Window(canvas);
+   msg = BLooper_CurrentMessage(win);
+   BMessage_FindPoint(msg, "where", &coord);
+   buttons = BMessage_GetInt32(msg, "buttons", 0);
+   modifiers = BMessage_GetInt32(msg, "modifiers", 0);
+   clicks = BMessage_GetInt32(msg, "clicks", 0);
+
+   send_mouse_message(canvas->view, EVENT_MOUSE_UP, (int)coord.x, (int)coord.y, buttons, canvas->last_buttons, modifiers, clicks);
+
+   canvas->last_x = (int)coord.x;
+   canvas->last_y = (int)coord.y;
+   canvas->last_buttons = buttons;
+}
+
+
+static void fixcanvas_mouse_moved(FixCanvas *canvas, BPoint where, uint32_t code, BMessage *msg)
+{
+   void *win;
+   BPoint coord;
+   int32_t buttons, modifiers, transit;
+
+   win = BView_Window(canvas);
+   msg = BLooper_CurrentMessage(win);
+   BMessage_FindPoint(msg, "where", &coord);
+   buttons = BMessage_GetInt32(msg, "buttons", 0);
+   modifiers = BMessage_GetInt32(msg, "modifiers", 0);
+   transit = BMessage_GetInt32(msg, "be:transit", 0);
+
+   if (transit == B_ENTERED_VIEW && buttons == 0) {
+      send_mouse_message(canvas->view, EVENT_MOUSE_ENTER, (int)coord.x, (int)coord.y, buttons, buttons, modifiers, 0);
+   }
+
+   send_mouse_message(canvas->view, buttons != 0? EVENT_MOUSE_DRAG : EVENT_MOUSE_MOVE, (int)coord.x, (int)coord.y, buttons, buttons, modifiers, 0);
+
+   if (transit == B_EXITED_VIEW && buttons == 0) {
+      send_mouse_message(canvas->view, EVENT_MOUSE_LEAVE, 0, 0, 0, 0, 0, 0);
+   }
+
+   canvas->last_x = (int)coord.x;
+   canvas->last_y = (int)coord.y;
+   canvas->last_buttons = buttons;
+}
+
+
+static int convert_key(int key)
+{
+   switch (key) {
+      case 0x01: key = KEY_ESCAPE; break;
+      case 0x02: key = KEY_F1; break;
+      case 0x03: key = KEY_F2; break;
+      case 0x04: key = KEY_F3; break;
+      case 0x05: key = KEY_F4; break;
+      case 0x06: key = KEY_F5; break;
+      case 0x07: key = KEY_F6; break;
+      case 0x08: key = KEY_F7; break;
+      case 0x09: key = KEY_F8; break;
+      case 0x0A: key = KEY_F9; break;
+      case 0x0B: key = KEY_F10; break;
+      case 0x0C: key = KEY_F11; break;
+      case 0x0D: key = KEY_F12; break;
+      //case : key = KEY_PRINT_SCREEN; break;
+      case 0x0F: key = KEY_SCROLL_LOCK; break;
+      //case : key = KEY_PAUSE; break;
+      case 0x11: key = KEY_GRAVE; break;
+      case 0x12: key = KEY_NUM1; break;
+      case 0x13: key = KEY_NUM2; break;
+      case 0x14: key = KEY_NUM3; break;
+      case 0x15: key = KEY_NUM4; break;
+      case 0x16: key = KEY_NUM5; break;
+      case 0x17: key = KEY_NUM6; break;
+      case 0x18: key = KEY_NUM7; break;
+      case 0x19: key = KEY_NUM8; break;
+      case 0x1A: key = KEY_NUM9; break;
+      case 0x1B: key = KEY_NUM0; break;
+      case 0x1C: key = KEY_MINUS; break;
+      case 0x1D: key = KEY_EQUAL; break;
+      case 0x1E: key = KEY_BACKSPACE; break;
+      case 0x26: key = KEY_TAB; break;
+      case 0x27: key = KEY_Q; break;
+      case 0x28: key = KEY_W; break;
+      case 0x29: key = KEY_E; break;
+      case 0x2A: key = KEY_R; break;
+      case 0x2B: key = KEY_T; break;
+      case 0x2C: key = KEY_Y; break;
+      case 0x2D: key = KEY_U; break;
+      case 0x2E: key = KEY_I; break;
+      case 0x2F: key = KEY_O; break;
+      case 0x30: key = KEY_P; break;
+      case 0x31: key = KEY_LBRACKET; break;
+      case 0x32: key = KEY_RBRACKET; break;
+      case 0x33: key = KEY_BACKSLASH; break;
+      //case : key = KEY_CAPS_LOCK; break;
+      case 0x3C: key = KEY_A; break;
+      case 0x3D: key = KEY_S; break;
+      case 0x3E: key = KEY_D; break;
+      case 0x3F: key = KEY_F; break;
+      case 0x40: key = KEY_G; break;
+      case 0x41: key = KEY_H; break;
+      case 0x42: key = KEY_J; break;
+      case 0x43: key = KEY_K; break;
+      case 0x44: key = KEY_L; break;
+      case 0x45: key = KEY_SEMICOLON; break;
+      case 0x46: key = KEY_APOSTROPHE; break;
+      case 0x47: key = KEY_ENTER; break;
+      //case : key = KEY_LSHIFT; break;
+      case 0x4C: key = KEY_Z; break;
+      case 0x4D: key = KEY_X; break;
+      case 0x4E: key = KEY_C; break;
+      case 0x4F: key = KEY_V; break;
+      case 0x50: key = KEY_B; break;
+      case 0x51: key = KEY_N; break;
+      case 0x52: key = KEY_M; break;
+      case 0x53: key = KEY_COMMA; break;
+      case 0x54: key = KEY_PERIOD; break;
+      //case : key = KEY_SLASH; break;
+      //case : key = KEY_RSHIFT; break;
+      //case : key = KEY_LCONTROL; break;
+      //case : key = KEY_LMETA; break;
+      //case : key = KEY_LALT; break;
+      case 0x5E: key = KEY_SPACE; break;
+      //case : key = KEY_RALT; break;
+      //case : key = KEY_RMETA; break;
+      //case : key = KEY_RMENU; break;
+      //case : key = KEY_RCONTROL; break;
+      case 0x1F: key = KEY_INSERT; break;
+      case 0x34: key = KEY_DELETE; break;
+      case 0x20: key = KEY_HOME; break;
+      case 0x35: key = KEY_END; break;
+      case 0x21: key = KEY_PAGE_UP; break;
+      case 0x36: key = KEY_PAGE_DOWN; break;
+      case 0x61: key = KEY_LEFT; break;
+      case 0x57: key = KEY_UP; break;
+      case 0x63: key = KEY_RIGHT; break;
+      case 0x62: key = KEY_DOWN; break;
+      //case : key = KEY_NUM_LOCK; break;
+      case 0x23: key = KEY_NUMPAD_SLASH; break;
+      case 0x24: key = KEY_NUMPAD_STAR; break;
+      case 0x25: key = KEY_NUMPAD_MINUS; break;
+      case 0x3A: key = KEY_NUMPAD_PLUS; break;
+      case 0x5B: key = KEY_NUMPAD_ENTER; break;
+      case 0x65: key = KEY_NUMPAD_DOT; break;
+      case 0x64: key = KEY_NUMPAD0; break;
+      case 0x58: key = KEY_NUMPAD1; break;
+      case 0x59: key = KEY_NUMPAD2; break;
+      case 0x5A: key = KEY_NUMPAD3; break;
+      case 0x48: key = KEY_NUMPAD4; break;
+      case 0x49: key = KEY_NUMPAD5; break;
+      case 0x4A: key = KEY_NUMPAD6; break;
+      case 0x37: key = KEY_NUMPAD7; break;
+      case 0x38: key = KEY_NUMPAD8; break;
+      case 0x39: key = KEY_NUMPAD9; break;
+
+      default:
+         key = -1;
+   }
+   return key;
+}
+
+
+static void fixcanvas_key_down(FixCanvas *canvas, const char *_bytes, int32_t _num_bytes)
+{
+   void *win, *msg, *new_msg;
+   int what;
+   int32_t key, modifiers;
+   int mod = 0;
+   void *data;
+   ssize_t num_bytes;
+
+   win = BView_Window(canvas);
+   msg = BLooper_CurrentMessage(win);
+   what = ((BMessage *)msg)->what;
+   key = BMessage_GetInt32(msg, "key", 0);
+   modifiers = BMessage_GetInt32(msg, "modifiers", 0);
+
+   if (modifiers & 1) mod |= SCRIPT_MOD_SHIFT;
+   if (modifiers & 2) mod |= SCRIPT_MOD_ALT;
+   if (modifiers & 4) mod |= SCRIPT_MOD_CTRL;
+
+   key = convert_key(key);
+   if (key != -1) {
+      new_msg = new(BMESSAGE_SIZE);
+      BMessage_new(new_msg, MSG_CANVAS_KEY_EVENT);
+      BMessage_AddPointer(new_msg, "view", canvas->view);
+      BMessage_AddInt32(new_msg, "type", what == B_KEY_DOWN? EVENT_KEY_DOWN : EVENT_KEY_UP);
+      BMessage_AddInt32(new_msg, "key", key);
+      BMessage_AddInt32(new_msg, "mod", mod);
+      BLooper_PostMessage(script_looper, new_msg);
+   }
+
+   if (what == B_KEY_DOWN) {
+      if (BMessage_FindData(msg, "bytes", B_STRING_TYPE, &data, &num_bytes) == B_OK) {
+         if (num_bytes > 1 && ((char *)data)[0] >= ' ' && ((char *)data)[0] != 127) {
+            new_msg = new(BMESSAGE_SIZE);
+            BMessage_new(new_msg, MSG_CANVAS_KEY_TYPED_EVENT);
+            BMessage_AddPointer(new_msg, "view", canvas->view);
+            BMessage_AddPointer(new_msg, "chars", strdup(data));
+            BMessage_AddInt32(new_msg, "mod", mod);
+            BLooper_PostMessage(script_looper, new_msg);
+         }
+      }
+   }
+}
+
+
+static void fixcanvas_message_received(FixCanvas *canvas, BMessage *msg)
+{
+   float wheel_y;
+
+   if (msg->what == B_MOUSE_WHEEL_CHANGED) {
+      BMessage_FindFloat(msg, "be:wheel_delta_y", &wheel_y);
+
+      msg = new(BMESSAGE_SIZE);
+      BMessage_new(msg, MSG_CANVAS_MOUSE_WHEEL_EVENT);
+      BMessage_AddPointer(msg, "view", canvas->view);
+      BMessage_AddInt32(msg, "x", canvas->last_x);
+      BMessage_AddInt32(msg, "y", canvas->last_y);
+      BMessage_AddInt32(msg, "mod", convert_modifiers(canvas->last_buttons, modifiers()));
+      BMessage_AddInt32(msg, "wheel_y", (int)(wheel_y*1000.0f));
+      BLooper_PostMessage(script_looper, msg);
+   }
+
+   fixcanvas_orig_message_received(canvas, msg);
+}
+
+
 static void fixpopupmenu_destroy(FixPopUpMenu *popup)
 {
    void *msg;
@@ -957,6 +1421,10 @@ void view_set_rect(View *view, Rect *rect)
    BView_MoveTo(view->view, rect->x1, rect->y1);
    BView_ResizeTo(view->view, rect->x2 - rect->x1, rect->y2 - rect->y1);
    view_unlock(view);
+
+   if (view->common.type == TYPE_CANVAS) {
+      call_view_callback(view, CALLBACK_CANVAS_RESIZE);
+   }
 }
 
 
@@ -1240,13 +1708,20 @@ View *label_create(plat_char *label)
 
 plat_char *label_get_label(View *view)
 {
-   return strdup(BStringView_Text(view->view));
+   char *label;
+
+   view_lock(view);
+   label = strdup(BStringView_Text(view->view));
+   view_unlock(view);
+   return label;
 }
 
 
 void label_set_label(View *view, plat_char *label)
 {
+   view_lock(view);
    BStringView_SetText(view->view, label);
+   view_unlock(view);
 }
 
 
@@ -1270,13 +1745,20 @@ View *text_field_create()
 
 plat_char *text_field_get_text(View *view)
 {
-   return strdup(BTextControl_Text(view->view));
+   char *text;
+
+   view_lock(view);
+   text = strdup(BTextControl_Text(view->view));
+   view_unlock(view);
+   return text;
 }
 
 
 void text_field_set_text(View *view, plat_char *text)
 {
+   view_lock(view);
    BTextControl_SetText(view->view, text);
+   view_unlock(view);
 }
 
 
@@ -1366,13 +1848,20 @@ View *button_create(plat_char *label, int flags)
 
 plat_char *button_get_label(View *view)
 {
-   return strdup(BControl_Label(view->view));
+   char *label;
+
+   view_lock(view);
+   label = strdup(BControl_Label(view->view));
+   view_unlock(view);
+   return label;
 }
 
 
 void button_set_label(View *view, plat_char *label)
 {
+   view_lock(view);
    BButton_SetLabel(view->view, label);
+   view_unlock(view);
 }
 
 
@@ -1446,6 +1935,7 @@ View *canvas_create(int flags)
 
    canvas = new(sizeof(FixCanvas));
    canvas->view = view;
+   canvas->last_buttons = 0;
    rect.left = 0;
    rect.top = 0;
    rect.right = 100;
@@ -1453,7 +1943,14 @@ View *canvas_create(int flags)
    BView_new(canvas, &rect, NULL, 0, B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE);
    if (!fixcanvas_vtable) {
       fixcanvas_vtable = clone_vtable(canvas, 2, 66);
+      fixcanvas_orig_message_received = fixcanvas_vtable[2+7];
+      fixcanvas_vtable[2+7] = fixcanvas_message_received;
       fixcanvas_vtable[2+22] = fixcanvas_draw;
+      fixcanvas_vtable[2+23] = fixcanvas_mouse_down;
+      fixcanvas_vtable[2+24] = fixcanvas_mouse_up;
+      fixcanvas_vtable[2+25] = fixcanvas_mouse_moved;
+      fixcanvas_vtable[2+27] = fixcanvas_key_down;
+      fixcanvas_vtable[2+28] = fixcanvas_key_down;
    }
    *(void ***)canvas = fixcanvas_vtable+2;
    BView_SetViewColor(canvas, *B_TRANSPARENT_COLOR);
@@ -1806,77 +2303,295 @@ Worker *worker_create()
    worker = calloc(1, sizeof(Worker));
    if (!worker) return NULL;
 
+   if (pthread_mutex_init(&worker->mutex, NULL) != 0) {
+      free(worker);
+      return NULL;
+   }
+
+   if (pthread_cond_init(&worker->cond, &cond_attr) != 0) {
+      pthread_mutex_destroy(&worker->mutex);
+      free(worker);
+      return NULL;
+   }
+
    return worker;
+}
+
+
+static void *worker_main(void *data)
+{
+   Worker *worker = data;
+
+   pthread_setname_np(pthread_self(), "worker thread");
+   worker->common.main_func(worker);
+   return NULL;
 }
 
 
 int worker_start(Worker *worker)
 {
-   return 0;
+   pthread_t thread;
+
+   if (pthread_create(&thread, NULL, worker_main, worker) != 0) {
+      return 0;
+   }
+   pthread_detach(thread);
+   return 1;
 }
 
 
 void worker_notify(Worker *worker)
 {
+   void* msg;
+
+   msg = new(BMESSAGE_SIZE);
+   BMessage_new(msg, MSG_WORKER_NOTIFY);
+   BMessage_AddPointer(msg, "worker", worker);
+   BLooper_PostMessage(script_looper, msg);
+   delete_virtual(msg);
 }
 
 
 void worker_lock(Worker *worker)
 {
+   pthread_mutex_lock(&worker->mutex);
 }
 
 
 void worker_wait(Worker *worker, int timeout)
 {
+   if (timeout == 0) return;
+   if (timeout < 0) {
+      pthread_cond_wait(&worker->cond, &worker->mutex);
+   }
+   else {
+      pthread_cond_timedwait_relative(&worker->cond, &worker->mutex, timeout*1000000LL);
+   }
 }
 
 
 void worker_unlock(Worker *worker)
 {
+   pthread_cond_signal(&worker->cond);
+   pthread_mutex_unlock(&worker->mutex);
 }
 
 
 void worker_destroy(Worker *worker)
 {
+   pthread_cond_destroy(&worker->cond);
+   pthread_mutex_destroy(&worker->mutex);
    free(worker);
+}
+
+
+static void *timer_thread(void *data)
+{
+   Timer *timer;
+   uint32_t time;
+   int32_t delta;
+   int interval;
+   void *msg;
+
+   pthread_setname_np(pthread_self(), "timer thread");
+   pthread_mutex_lock(&timer_mutex);
+   for (;;) {
+      for (;;) {
+         time = timer_get_time();
+         interval = INT_MAX;
+
+         for (timer = active_timers; timer; timer = timer->next) {
+            delta = (int32_t)(timer->next_time - time);
+            if (delta < 0) delta = 0;
+            if (delta < interval) {
+               interval = delta;
+            }
+         }
+
+         if (interval == 0) break;
+         if (interval == INT_MAX) {
+            interval = -1;
+         }
+         
+         pthread_cond_timedwait_relative(&timer_cond, &timer_mutex, interval*1000000LL);
+      }
+
+      msg = new(BMESSAGE_SIZE);
+      BMessage_new(msg, MSG_PROCESS_TIMERS);
+      BLooper_PostMessage(script_looper, msg);
+      delete_virtual(msg);
+
+      pthread_cond_wait(&timer_cond_processed, &timer_mutex);
+   }
+   pthread_mutex_unlock(&timer_mutex);
+   return NULL;
 }
 
 
 uint32_t timer_get_time()
 {
-   return 0;
+#ifdef __linux__
+   struct timespec ts;
+   
+   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+      ts.tv_sec = 0;
+      ts.tv_nsec = 0;
+   }
+
+   return ts.tv_sec * 1000LL + (ts.tv_nsec + 500000) / 1000000;
+#else
+   struct timeval tv;
+
+   if (gettimeofday(&tv, NULL) != 0) {
+      tv.tv_sec = 0;
+      tv.tv_usec = 0;
+   }
+
+   return tv.tv_sec * 1000LL + (tv.tv_usec + 500) / 1000;
+#endif
 }
 
 
 uint32_t timer_get_micro_time()
 {
-   return 0;
+#ifdef __linux__
+   struct timespec ts;
+   
+   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+      ts.tv_sec = 0;
+      ts.tv_nsec = 0;
+   }
+
+   return ts.tv_sec * 1000000LL + (ts.tv_nsec + 500) / 1000;
+#else
+   struct timeval tv;
+
+   if (gettimeofday(&tv, NULL) != 0) {
+      tv.tv_sec = 0;
+      tv.tv_usec = 0;
+   }
+
+   return tv.tv_sec * 1000000LL + tv.tv_usec;
+#endif
 }
 
 
 int timer_is_active(Heap *heap, Value instance)
 {
-   return 0;
+   Timer *timer;
+   int found = 0;
+
+   pthread_mutex_lock(&timer_mutex);
+   for (timer = active_timers; timer; timer = timer->next) {
+      if (timer->heap == heap && timer->instance.value == instance.value && timer->instance.is_array == instance.is_array) {
+         found = 1;
+         break;
+      }
+   }
+   pthread_mutex_unlock(&timer_mutex);
+
+   return found;
 }
 
 
 void timer_start(Heap *heap, Value instance, int interval, int restart)
 {
+   Timer *timer;
+   
+   pthread_mutex_lock(&timer_mutex);
+   for (timer = active_timers; timer; timer = timer->next) {
+      if (timer->heap == heap && timer->instance.value == instance.value && timer->instance.is_array == instance.is_array) {
+         break;
+      }
+   }
+   if (timer) {
+      if (restart) {
+         timer->next_time = timer_get_time() + (uint32_t)timer->interval;
+         pthread_cond_broadcast(&timer_cond);
+      }
+   }
+   else {
+      timer = calloc(1, sizeof(Timer));
+      timer->heap = heap;
+      timer->instance = instance;
+      timer->interval = interval;
+      timer->next_time = timer_get_time() + (uint32_t)interval;
+      timer->next = active_timers;
+      active_timers = timer;
+      fixscript_ref(heap, instance);
+      pthread_cond_broadcast(&timer_cond);
+   }
+   pthread_mutex_unlock(&timer_mutex);
 }
 
 
 void timer_stop(Heap *heap, Value instance)
 {
+   Timer *timer = NULL, **prev_timer;
+   
+   pthread_mutex_lock(&timer_mutex);
+   prev_timer = &active_timers;
+   for (timer = active_timers; timer; timer = timer->next) {
+      if (timer->heap == heap && timer->instance.value == instance.value && timer->instance.is_array == instance.is_array) {
+         break;
+      }
+      prev_timer = &timer->next;
+   }
+   if (timer) {
+      *prev_timer = timer->next;
+      fixscript_unref(timer->heap, timer->instance);
+      free(timer);
+   }
+   pthread_mutex_unlock(&timer_mutex);
 }
 
 
 void clipboard_set_text(plat_char *text)
 {
+   /*
+   TODO: doesn't work
+   BMessage *msg;
+
+   if (BClipboard_Lock(be_clipboard)) {
+      BClipboard_Clear(be_clipboard);
+      if (text) {
+         msg = BClipboard_Data(be_clipboard);
+         BMessage_AddData(msg, "text/plain", B_MIME_TYPE, text, strlen(text), 1, 1);
+      }
+      BClipboard_Commit(be_clipboard);
+      BClipboard_Unlock(be_clipboard);
+   }
+   */
 }
 
 
 plat_char *clipboard_get_text()
 {
+   /*
+   TODO: doesn't work
+   char *ret = NULL;
+   BMessage *msg;
+   void *data;
+   ssize_t len;
+
+   if (BClipboard_Lock(be_clipboard)) {
+      printf("locked\n");
+      BClipboard_Clear(be_clipboard);
+      msg = BClipboard_Data(be_clipboard);
+      if (BMessage_FindData(msg, "text/plain", B_MIME_TYPE, &data, &len) == B_OK) {
+         printf("found\n");
+         ret = malloc(len+1);
+         if (ret) {
+            memcpy(ret, data, len);
+            ret[len] = 0;
+            printf("got data '%s'\n", ret);
+         }
+      }
+      BClipboard_Unlock(be_clipboard);
+      printf("unlocked\n");
+   }
+   return ret;
+   */
    return NULL;
 }
 
@@ -1923,7 +2638,17 @@ void system_font_destroy(SystemFont *font)
 
 plat_char **system_font_get_list()
 {
-   return NULL;
+   char **list;
+   font_family name;
+   int i, cnt;
+
+   cnt = count_font_families();
+   list = calloc(cnt+1, sizeof(char *));
+   for (i=0; i<cnt; i++) {
+      get_font_family(i, &name, 0);
+      list[i] = strdup(name);
+   }
+   return list;
 }
 
 
@@ -2255,6 +2980,7 @@ void register_platform_gui_functions(Heap *heap)
 
 int main(int argc, char **argv)
 {
+   pthread_t thread;
    void *lib, **vtable, *msg;
 
    lib = dlopen("libbe.so", RTLD_LAZY);
@@ -2285,6 +3011,7 @@ int main(int argc, char **argv)
    SYM(BLooper_MessageReceived, "_ZN7BLooper15MessageReceivedEP8BMessage");
    SYM(BLooper_Lock, "_ZN7BLooper4LockEv");
    SYM(BLooper_Unlock, "_ZN7BLooper6UnlockEv");
+   SYM(BLooper_CurrentMessage, "_ZNK7BLooper14CurrentMessageEv");
    SYM2(BMessage_new, "_ZN8BMessageC1Em", "_ZN8BMessageC1Ej");
    SYM2(BMessage_AddInt32, "_ZN8BMessage8AddInt32EPKcl", "_ZN8BMessage8AddInt32EPKci");
    SYM(BMessage_AddPointer, "_ZN8BMessage10AddPointerEPKcPKv");
@@ -2294,6 +3021,9 @@ int main(int argc, char **argv)
    SYM(BMessage_GetPointer, "_ZNK8BMessage10GetPointerEPKcPKv");
    SYM(BMessage_GetBool, "_ZNK8BMessage7GetBoolEPKcb");
    SYM2(BMessage_FindData, "_ZNK8BMessage8FindDataEPKcmPPKvPl", "_ZNK8BMessage8FindDataEPKcjPPKvPl");
+   SYM(BMessage_FindPoint, "_ZNK8BMessage9FindPointEPKcP6BPoint");
+   SYM(BMessage_FindFloat, "_ZNK8BMessage9FindFloatEPKcPf");
+   SYM(BMessage_PrintToStream, "_ZNK8BMessage13PrintToStreamEv");
    SYM2(BWindow_new, "_ZN7BWindowC1E5BRectPKc11window_typemm", "_ZN7BWindowC1E5BRectPKc11window_typejj");
    SYM(BWindow_Bounds, "_ZNK7BWindow6BoundsEv");
    SYM(BWindow_AddChild, "_ZN7BWindow8AddChildEP5BViewS1_");
@@ -2316,11 +3046,14 @@ int main(int argc, char **argv)
    SYM(BView_IsFocus, "_ZNK5BView7IsFocusEv");
    SYM(BView_DrawBitmap, "_ZN5BView10DrawBitmapEPK7BBitmap5BRect");
    SYM(BView_Flags, "_ZNK5BView5FlagsEv");
+   SYM2(BView_SetMouseEventMask, "_ZN5BView17SetMouseEventMaskEmm", "_ZN5BView17SetMouseEventMaskEjj");
+   SYM(modifiers, "_Z9modifiersv");
    SYM(BView_Invalidate, "_ZN5BView10InvalidateEv");
    SYM(BView_Invalidate_rect, "_ZN5BView10InvalidateE5BRect");
    SYM(BView_ConvertToScreen, "_ZNK5BView15ConvertToScreenEP6BPoint");
    SYM(BView_DrawString, "_ZN5BView10DrawStringEPKc6BPointP16escapement_delta");
    SYM(BView_Sync, "_ZNK5BView4SyncEv");
+   SYM(BView_Window, "_ZNK5BView6WindowEv");
    SYM(BBitmap_new, "_ZN7BBitmapC1E5BRect11color_spacebb");
    SYM(BBitmap_Bounds, "_ZNK7BBitmap6BoundsEv");
    SYM(BBitmap_BytesPerRow, "_ZNK7BBitmap11BytesPerRowEv");
@@ -2364,10 +3097,28 @@ int main(int argc, char **argv)
    SYM(BFont_GetHeight, "_ZNK5BFont9GetHeightEP11font_height");
    SYM(BFont_StringWidth, "_ZNK5BFont11StringWidthEPKc");
    SYM(B_TRANSPARENT_COLOR, "B_TRANSPARENT_COLOR");
+   SYM(count_font_families, "_Z19count_font_familiesv");
+   SYM2(get_font_family, "_Z15get_font_familylPA64_cPm", "_Z15get_font_familyiPA64_cPj");
+   SYM(be_clipboard, "be_clipboard");
+   SYM(BClipboard_Lock, "_ZN10BClipboard4LockEv");
+   SYM(BClipboard_Unlock, "_ZN10BClipboard6UnlockEv");
+   SYM(BClipboard_Clear, "_ZN10BClipboard5ClearEv");
+   SYM(BClipboard_Data, "_ZNK10BClipboard4DataEv");
+   SYM(BClipboard_Commit, "_ZN10BClipboard6CommitEv");
 
+   pthread_condattr_init(&cond_attr);
+   pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC);
    pthread_mutex_init(&mutex, NULL);
-   pthread_cond_init(&cond, NULL);
+   pthread_cond_init(&cond, &cond_attr);
+   pthread_mutex_init(&timer_mutex, NULL);
+   pthread_cond_init(&timer_cond, &cond_attr);
+   pthread_cond_init(&timer_cond_processed, &cond_attr);
    fixgui__tls_init();
+
+   if (pthread_create(&thread, NULL, timer_thread, NULL) != 0) {
+      return 1;
+   }
+   pthread_detach(thread);
 
    app = new(BAPPLICATION_SIZE);
    BApplication_new(app, "application/x-vnd.FixGUI-Application");

@@ -1,0 +1,112 @@
+use "classes";
+
+import "util/common";
+import "util/string";
+import "util/comment_tracker";
+
+function adjust_document(request: Request, document: Element)
+{
+	if (request.get_domain() == "news.ycombinator.com") {
+		remove_all_elements(document, "a.togg.clicky");
+		remove_class_in_all_elements(document, "div.comment.noshow", "noshow");
+		remove_class_in_all_elements(document, "tr.comtr.noshow", "noshow");
+
+		var path = request.get_path();
+		if (path == "/" || path == "/news" || path == "/newest" || path == "/front" || path == "/ask" ||
+		    path == "/show" || path == "/shownew" || path == "/submitted" ||
+		    (path == "/favorites" && request.get_param("comments") != "t"))
+		{
+			HackerNewsCommentTracker::create().show_new_posts(document);
+		}
+		else if (path == "/item") {
+			var id = request.get_param("id");
+			if (id) {
+				HackerNewsCommentTracker::create().track(document, [id]);
+			}
+		}
+	}
+}
+
+class @HackerNewsCommentTracker: CommentTracker
+{
+	constructor create()
+	{
+		super::create("news.ycombinator.com");
+	}
+
+	function show_new_posts(document: Element)
+	{
+		foreach (var anchor in document.query_all("span.subline > a[href^='item?id=']")) {
+			var parts = anchor.extract_text().trim().split('\A0');
+			if (parts.length == 2 && parts[1] == "comments") {
+				var discussion_key = [anchor.get_attr("href").substring("item?id=".length)];
+				var num_comments = String::parse_int(parts[0]);
+				var last_comments = get_last_comment_count(discussion_key);
+				if (last_comments >= 0 && num_comments > last_comments) {
+					var link = Element::create("a");
+					link.set_attr("href", "item?id="+discussion_key[0]+"#unread-comment-0");
+					link.set_attr("style", "font-weight: bold; color: #000");
+					link.append_child(Element::create_text(format_count_english(num_comments - last_comments, "new comment >", "new comments >")));
+					var parent = anchor.get_parent();
+					parent.append_child(Element::create_text(" | "));
+					parent.append_child(link);
+				}
+			}
+		}
+	}
+
+	override function get_comment_count(document: Element): Integer
+	{
+		foreach (var anchor in document.query_all("span.subline > a[href^='item?id=']")) {
+			var parts = anchor.extract_text().trim().split('\A0');
+			if (parts.length == 2 && parts[1] == "comments") {
+				return String::parse_int(parts[0]);
+			}
+		}
+		return -1;
+	}
+
+	override function get_comment_list(document: Element): Element[]
+	{
+		return document.query_all("tr.comtr");
+	}
+
+	override function get_comment_time(comment: Element): String
+	{
+		var time = comment.query("span.age").get_attr("title");
+		var idx = time.search_char(' ');
+		if (idx >= 0) {
+			time.set_length(idx);
+		}
+		return time;
+	}
+
+	override function link_first_comment(document: Element)
+	{
+		var span = document.query("span.subline");
+		if (span) {
+			var anchor = Element::create("a");
+			anchor.set_attr("href", "#unread-comment-0");
+			anchor.set_attr("style", "color: #000; font-weight: bold");
+			anchor.append_child(Element::create_text("first unread >"));
+			span.append_child(Element::create_text(" | "));
+			span.append_child(anchor);
+		}
+	}
+
+	override function mark_comment(comment: Element, index: Integer, last: Boolean)
+	{
+		var entry = comment.query("td.default");
+		entry.set_attr("style", "background: #ff4; color: #000");
+		entry.set_attr("id", "unread-comment-"+index);
+
+		if (!last) {
+			var actions = entry.query("div.reply > p");
+			var anchor = Element::create("a");
+			anchor.set_attr("href", "#unread-comment-"+(index+1));
+			anchor.set_attr("style", "color: #000; font-weight: bold");
+			anchor.append_child(Element::create_text("next unread >"));
+			actions.append_child(anchor);
+		}
+	}
+}

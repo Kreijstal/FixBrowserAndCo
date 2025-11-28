@@ -1,12 +1,14 @@
+use "classes";
+
 import "util/common";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "cdn.arstechnica.net")) return true;
 	return false;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	remove_class_in_element(document, "div.comments-row", "comments-row");
 }

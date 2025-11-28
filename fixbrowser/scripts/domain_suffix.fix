@@ -1,36 +1,38 @@
-var @tlds;
-var @uk_subdomains;
+use "classes";
 
-function get_domain_suffix_length(parts)
+var @tlds: Dynamic[String];
+var @uk_subdomains: Boolean[String];
+
+function get_domain_suffix_length(parts: String[]): Integer
 {
 	if (!tlds) {
 		init_tlds();
 	}
 
-	var len = length(parts);
+	var len = parts.length;
 	if (len == 0) return 0;
 
-	var func = hash_get(tlds, parts[len-1], null);
+	var func = tlds.get(parts[len-1], null);
 	if (!func) return 1;
 
 	return func(parts);
 }
 
-function @register_tld(name)
+function @register_tld(name: String)
 {
-	tlds{name} = null;
+	tlds[name] = null;
 }
 
-function @register_tld(name, func)
+function @register_tld(name: String, func)
 {
-	tlds{name} = func;
+	tlds[name] = func;
 }
 
-function @create_set(arr)
+function @create_set(arr: String[]): Boolean[String]
 {
-	var set = {};
-	for (var i=0; i<length(arr); i++) {
-		set{arr[i]} = true;
+	var set: Boolean[String] = {};
+	for (var i=0; i<arr.length; i++) {
+		set[arr[i]] = true;
 	}
 	return set;
 }
@@ -326,7 +328,7 @@ function @init_tlds()
 	register_tld("zw"); // Zimbabwe
 }
 
-function @domain_uk(parts)
+function @domain_uk(parts: String[]): Integer
 {
 	// source: https://en.wikipedia.org/wiki/.uk
 	// updated on 2019/01/22
@@ -355,12 +357,12 @@ function @domain_uk(parts)
 		]);
 	}
 
-	var len = length(parts);
+	var len = parts.length;
 	if (len == 1) return 1;
 
 	var name = parts[len-2];
 	if (name == "sch") return 3;
-	if (hash_contains(uk_subdomains, name)) {
+	if (uk_subdomains.contains(name)) {
 		return 2;
 	}
 	return 1;

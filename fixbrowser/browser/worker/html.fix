@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -22,6 +22,7 @@
 use "macros";
 use "classes";
 
+import "io/file";
 import "task/channel";
 import "browser/html/html";
 import "browser/html/element";
@@ -125,7 +126,7 @@ function process_document(document: Element, url: String, reload: Boolean, statu
 	if (status_func) {
 		status_func(status_data, "Applying CSS...");
 	}
-	var default_sheet = css_parse(file_read("default.css"), null) as Stylesheet;
+	var default_sheet = css_parse(File::read_whole(get_executable_path()+"/default.css", {""}) as String, null) as Stylesheet;
 	log(stylesheet_to_string(default_sheet));
 	//log(element_to_html(document));
 
@@ -314,7 +315,7 @@ function @process_element(ctx: Context, element: Element, stack_, paragraph: Par
 		var z_index = 0;
 		var z_index_value = hash_get(props, PROP_Z_INDEX, null) as Value;
 		if (z_index_value != null && z_index_value.type == VALUE_INTEGER) {
-			z_index = z_index_value.value;
+			z_index = (z_index_value as IntegerValue).value;
 		}
 
 		var pos_background = BackgroundBox::create(null);
@@ -503,9 +504,10 @@ function @create_background(props: Value[Integer]): Background
 				if (!background) {
 					background = Background::create();
 				}
-				for (var i=0, n=value.child_count(); i<n; i++) {
-					var v = value.child_get(i);
-					if (v.is_color()) {
+				var list = value as ListValue;
+				for (var i=0, n=list.get_child_count(); i<n; i++) {
+					var v = list.get_child(i);
+					if (ColorValue::is_instance(v)) {
 						background.color = get_color(v);
 					}
 				}
@@ -521,8 +523,9 @@ function @create_background(props: Value[Integer]): Background
 				var border_style = BORDER_STYLE_NONE;
 				var border_color = 0xFF000000;
 
-				for (var i=0, n=value.child_count(); i<n; i++) {
-					var value2 = value.child_get(i);
+				var list = value as ListValue;
+				for (var i=0, n=list.get_child_count(); i<n; i++) {
+					var value2 = list.get_child(i);
 					switch (value2.type) {
 						case VALUE_THIN: border_size = 1; break;
 						case VALUE_MEDIUM: border_size = 3; break;
@@ -622,10 +625,11 @@ function @create_background(props: Value[Integer]): Background
 				if (!background) {
 					background = Background::create();
 				}
-				var top = get_size(value.child_get(0));
-				var right = get_size(value.child_get(1));
-				var bottom = get_size(value.child_get(2));
-				var left = get_size(value.child_get(3));
+				var list = value as ListValue;
+				var top = get_size(list.get_child(0));
+				var right = get_size(list.get_child(1));
+				var bottom = get_size(list.get_child(2));
+				var left = get_size(list.get_child(3));
 				if (left.is_pixels()) {
 					background.padding_left = left.get_pixels();
 				}
@@ -650,9 +654,10 @@ function @create_background(props: Value[Integer]): Background
 				}
 				var shadow: Shadow;
 				if (value.type == VALUE_MULTIPLE) {
-					for (var i=0, n=value.child_count(); i<n; i++) {
+					var list = value as ListValue;
+					for (var i=0, n=list.get_child_count(); i<n; i++) {
 						var prev = shadow;
-						shadow = parse_shadow(value.child_get(i), true);
+						shadow = parse_shadow(list.get_child(i), true);
 						shadow.next = prev;
 					}
 				}
@@ -683,14 +688,15 @@ function @create_text_style(ctx: Context, element: Element, props: Value[Integer
 	foreach (var prop, value in props) {
 		switch (prop) {
 			case PROP_FONT_FAMILY: {
-				array_set_length(style.font_family, 0);
+				style.font_family.clear();
 				if (value.type == VALUE_MULTIPLE) {
-					for (var i=0, n=value.child_count(); i<n; i++) {
-						style.font_family[] = value.child_get(i).value;
+					var list = value as ListValue;
+					for (var i=0, n=list.get_child_count(); i<n; i++) {
+						style.font_family[] = (list.get_child(i) as FontFamilyValue).name;
 					}
 				}
 				else {
-					style.font_family[] = value.value;
+					style.font_family[] = (value as FontFamilyValue).name;
 				}
 				break;
 			}
@@ -730,9 +736,10 @@ function @create_text_style(ctx: Context, element: Element, props: Value[Integer
 				}
 				var shadow: Shadow;
 				if (value.type == VALUE_MULTIPLE) {
-					for (var i=0, n=value.child_count(); i<n; i++) {
+					var list = value as ListValue;
+					for (var i=0, n=list.get_child_count(); i<n; i++) {
 						var prev = shadow;
-						shadow = parse_shadow(value.child_get(i), false);
+						shadow = parse_shadow(list.get_child(i), false);
 						shadow.next = prev;
 					}
 				}
@@ -800,19 +807,20 @@ function @create_text_style(ctx: Context, element: Element, props: Value[Integer
 
 function @parse_shadow(value: Value, box: Boolean): Shadow
 {
-	var idx = 0, cnt = value.child_count();
-	var off_x = get_pixels(value.child_get(idx++));
-	var off_y = get_pixels(value.child_get(idx++));
+	var list = value as ListValue;
+	var idx = 0, cnt = list.get_child_count();
+	var off_x = get_pixels(list.get_child(idx++));
+	var off_y = get_pixels(list.get_child(idx++));
 	var blur = 0.0;
 	var spread = 0;
 	var color = 0xFF000000;
 	if (idx < cnt) {
-		var value2 = value.child_get(idx);
+		var value2 = list.get_child(idx);
 		if (value2.type == VALUE_LENGTH) {
 			blur = float(get_pixels(value2));
 			idx++;
 			if (box && idx < cnt) {
-				value2 = value.child_get(idx);
+				value2 = list.get_child(idx);
 				if (value2.type == VALUE_LENGTH) {
 					spread = get_pixels(value2);
 					idx++;
@@ -821,7 +829,7 @@ function @parse_shadow(value: Value, box: Boolean): Shadow
 		}
 	}
 	if (idx < cnt) {
-		color = get_color(value.child_get(idx));
+		color = get_color(list.get_child(idx));
 	}
 	return Shadow::create(off_x, off_y, blur, spread, color);
 }
@@ -829,10 +837,10 @@ function @parse_shadow(value: Value, box: Boolean): Shadow
 function @get_color(value: Value): Integer
 {
 	if (value.type == VALUE_COLOR_RGB) {
-		return 0xFF000000 | value.value;
+		return 0xFF000000 | (value as ColorValue).color;
 	}
 	if (value.type == VALUE_COLOR_RGBA) {
-		var c = value.value;
+		var c = (value as ColorValue).color;
 		var a = c >>> 24;
 		var r = (c >>> 16) & 0xFF;
 		var g = (c >>> 8) & 0xFF;
@@ -851,8 +859,8 @@ function @get_size(value: Value): Size
 		return Size::auto();
 	}
 
-	var len = value.value as Float;
-	var unit = (value as ValueLength).unit;
+	var len = (value as LengthValue).value;
+	var unit = (value as LengthValue).unit;
 
 	var font_size = 16.0;
 	var screen_width = 1024;
@@ -904,7 +912,7 @@ function @get_font_size(ctx: Context, element: Element, value: Value): Integer
 		case VALUE_SMALLER:
 		case VALUE_LARGER:
 		case VALUE_LENGTH: {
-			if (value.type != VALUE_LENGTH || (value as ValueLength).unit == UNIT_PERCENT) {
+			if (value.type != VALUE_LENGTH || (value as LengthValue).unit == UNIT_PERCENT) {
 				var factor = 1.0;
 				var elem = element;
 				var size = value;
@@ -916,8 +924,8 @@ function @get_font_size(ctx: Context, element: Element, value: Value): Integer
 						else if (size.type == VALUE_LARGER) {
 							factor = factor * 1.5;
 						}
-						else if (size.type == VALUE_LENGTH && (size as ValueLength).unit == UNIT_PERCENT) {
-							factor = factor * ((value.value as Float) / 100.0);
+						else if (size.type == VALUE_LENGTH && (size as LengthValue).unit == UNIT_PERCENT) {
+							factor = factor * ((value as LengthValue).value / 100.0);
 						}
 						else {
 							return max(1, iround(get_font_size(ctx, element, size) * factor));
@@ -949,7 +957,7 @@ function @get_font_weight(value: Value): Boolean
 	switch (value.type) {
 		case VALUE_BOLDER: return true;
 		case VALUE_LIGHTER: return false;
-		case VALUE_FONT_WEIGHT: return value.value >= 700;
+		case VALUE_FONT_WEIGHT: return (value as FontWeightValue).weight >= 700;
 	}
 	return false;
 }
@@ -980,9 +988,9 @@ function @get_vertical_align(props: Value[Integer]): Float
 
 			/*
 			case VALUE_LENGTH:
-				switch ((value as ValueLength).unit) {
+				switch ((value as LengthValue).unit) {
 					case UNIT_ZERO: return 0.0;
-					case UNIT_PERCENT: return fclamp((value.value as Float)/100.0, 0.0, 1.0);
+					case UNIT_PERCENT: return fclamp((value as LengthValue).value/100.0, 0.0, 1.0);
 				}
 				break;
 			*/

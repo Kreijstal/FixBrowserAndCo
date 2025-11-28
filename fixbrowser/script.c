@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "browser.h"
+#include "util.h"
 
 typedef struct {
    Heap *heap;
@@ -117,6 +118,8 @@ static Value script_log(Heap *heap, Value *error, int num_params, Value *params,
       fprintf(stderr, "script: %s\n", s);
    }
 
+   fflush(stderr);
+
    free(str);
    return fixscript_int(0);
 }
@@ -194,6 +197,11 @@ static Value script_run_func(Heap *heap, Value *error, int num_params, Value *pa
    }
    
    func_result = fixscript_call(func->heap, func->func, 2, &func_error, arr, func->data);
+
+   if (fixscript_is_int(func_result) && fixscript_is_int(func_error)) {
+      *error = func_error;
+      return func_result;
+   }
 
    if (func_error.value) {
       err = fixscript_clone_between(heap, func->heap, func_error, error, NULL, NULL, NULL);
@@ -509,7 +517,7 @@ static Value script_has_function(Heap *heap, Value *error, int num_params, Value
    if (err) {
       return fixscript_error(heap, error, err);
    }
-   script = fixscript_load_file(script_heap->heap, script_name, &script_error, "scripts");
+   script = script_load_file(script_heap->heap, script_name, &script_error, "scripts");
    if (!script) {
       error_msg = strdup(fixscript_get_compiler_error(script_heap->heap, script_error));
       len = strlen(error_msg);
@@ -558,7 +566,7 @@ static Value script_run(Heap *heap, Value *error, int num_params, Value *params,
    if (err) {
       return fixscript_error(heap, error, err);
    }
-   script = fixscript_load_file(script_heap->heap, script_name, &script_error, "scripts");
+   script = script_load_file(script_heap->heap, script_name, &script_error, "scripts");
    free(script_name);
    if (!script) {
       error_msg = strdup(fixscript_get_compiler_error(script_heap->heap, script_error));

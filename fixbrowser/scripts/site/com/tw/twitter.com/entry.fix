@@ -1,95 +1,95 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/template";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "twimg.com")) return true;
 	return false;
 }
 
-function handle_request(request)
+function handle_request(request: Request)
 {
-	var domain = request_get_domain(request);
+	var domain = request.get_domain();
 	if (domain == "pic.twitter.com") {
 		return;
 	}
-	if (domain != "twitter.com" || request_get_scheme(request) != "https") {
-		request_set_redirect(request, {"https://twitter.com", request_get_path(request)});
+	if (domain != "twitter.com" || request.get_scheme() != "https") {
+		request.set_redirect("https://twitter.com"+request.get_path());
 		return;
 	}
 
-	var path = request_get_path(request);
-	var parts = string_split(path, '/');
-	if (length(parts) >= 4 && parts[2] == "status") {
-		if (length(parts) > 4) {
-			array_set_length(parts, 4);
-			request_set_redirect(request, {"https://twitter.com", string_join(parts, "/")});
+	var path = request.get_path();
+	var parts = path.split('/');
+	if (parts.length >= 4 && parts[2] == "status") {
+		if (parts.length > 4) {
+			parts.set_length(4);
+			request.set_redirect("https://twitter.com"+String::join(parts, "/"));
 			return;
 		}
-		return show_status(request, parts[1]);
+		request.replace_with_html(show_status(request, parts[1]));
+		return;
 	}
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	if (request_get_domain(request) == "pic.twitter.com") {
-		var refresh = element_get_attr(element_query(document, "meta[http-equiv='refresh']"), "content");
-		request_set_redirect(request, string_substring(refresh, 6));
+	if (request.get_domain() == "pic.twitter.com") {
+		var refresh = document.query("meta[http-equiv='refresh']").get_attr("content");
+		request.set_redirect(refresh.substring(6));
 		return;
 	}
 
 	remove_element(document, "form.NoScriptForm");
 
-	var links = element_query_all(document, "a[href^='https://t.co/'][title^='http']");
-	for (var i=0; i<length(links); i++) {
-		element_set_attr(links[i], "href", element_get_attr(links[i], "title"));
+	foreach (var link in document.query_all("a[href^='https://t.co/'][title^='http']")) {
+		link.set_attr("href", link.get_attr("title"));
 	}
 }
 
-function @show_status(request, twitter_id)
+function @show_status(request: Request, twitter_id: String): String
 {
 	var s = {""};
 
-	var content = http_get(request_get_url(request));
-	var doc = document_parse(content);
+	var doc = Document::parse_from_http(request.get_url());
 
-	var tpl = template_create("site/com/tw/twitter.com/list.tpl");
-	template_set(tpl, "title", twitter_id);
+	var tpl = Template::create("site/com/tw/twitter.com/list.tpl");
+	tpl.set("title", twitter_id);
 
-	var elems = element_query_all(doc, "div.js-tweet-text-container");
-	template_begin(tpl, "posts");
-	for (var i=0; i<length(elems); i++) {
-		var parent = element_get_parent(elems[i]);
-		var text = element_extract_text(elems[i]);
-		var time = get_time(element_query(parent, "small.time > a"));
-		var full_name = element_extract_text(element_query(parent, "strong.fullname"));
-		var username = element_extract_text(element_query(parent, "span.username > b"));
+	tpl.begin("posts");
+	foreach (var elem in doc.query_all("div.js-tweet-text-container")) {
+		var parent = elem.get_parent();
+		var text = elem.extract_text();
+		var time = get_time(parent.query("small.time > a"));
+		var full_name = parent.query("strong.fullname").extract_text();
+		var username = parent.query("span.username > b").extract_text();
 		var image = null;
 
-		var next_elem = element_get_next_tag(elems[i]);
+		var next_elem = elem.get_next_tag();
 		if (next_elem) {
-			var photo_elem = element_query(next_elem, "div.AdaptiveMedia-container div.AdaptiveMedia-photoContainer[data-image-url]");
+			var photo_elem = next_elem.query("div.AdaptiveMedia-container div.AdaptiveMedia-photoContainer[data-image-url]");
 			if (photo_elem) {
-				image = element_get_attr(photo_elem, "data-image-url");
+				image = photo_elem.get_attr("data-image-url");
 			}
 		}
 
-		template_set(tpl, "text", html_escape(text));
-		template_set(tpl, "time", html_escape(time));
-		template_set(tpl, "full_name", html_escape(full_name));
-		template_set(tpl, "username", html_escape(username));
+		tpl.set("text", html_escape(text));
+		tpl.set("time", html_escape(time));
+		tpl.set("full_name", html_escape(full_name));
+		tpl.set("username", html_escape(username));
 		if (image) {
-			template_set(tpl, "image", html_escape(image));
+			tpl.set("image", html_escape(image));
 		}
-		template_next_record(tpl);
+		tpl.next_record();
 	}
-	template_end(tpl);
+	tpl.end();
 
-	return template_process(tpl);
+	return tpl.process();
 }
 
-function @get_time(elem)
+function @get_time(elem: Element): String
 {
-	return element_get_attr(elem, "title");
+	return elem.get_attr("title");
 }

@@ -1,0 +1,1838 @@
+/*
+ * FixScript IO v0.8 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "util/long";
+import "util/double";
+
+const @BUF_SIZE = 4096;
+
+var @mini_buf: Byte[];
+
+class Stream
+{
+	constructor create()
+	{
+		if (!mini_buf) {
+			mini_buf = Array::create_shared(8, 1);
+		}
+	}
+	
+	virtual function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		throw error("reading is not supported for this stream");
+	}
+
+	virtual function write_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		throw error("writing is not supported for this stream");
+	}
+
+	virtual function flush()
+	{
+	}
+
+	virtual function skip(len: Integer)
+	{
+		if (len < 0) throw error("negative length");
+		var buf = (len > 8? Array::create_shared(min(BUF_SIZE, len), 1) as Byte[] : mini_buf);
+		while (len > 0) {
+			var read = read_part(buf, 0, min(len, buf.length));
+			if (read < 0) throw error("unexpected end of stream");
+			len -= read;
+		}
+	}
+
+	virtual function close()
+	{
+	}
+	
+	function read(buf: Byte[])
+	{
+		read(buf, 0, buf.length);
+	}
+
+	function read(buf: Byte[], off: Integer, len: Integer)
+	{
+		while (len > 0) {
+			var read = read_part(buf, off, len);
+			if (read < 0) throw error("unexpected end of stream");
+			off += read;
+			len -= read;
+		}
+	}
+	
+	function write(buf: Byte[])
+	{
+		write(buf, 0, buf.length);
+	}
+
+	function write(buf: Byte[], off: Integer, len: Integer)
+	{
+		while (len > 0) {
+			var written = write_part(buf, off, len);
+			off += written;
+			len -= written;
+		}
+	}
+
+	function read_all(): Byte[]
+	{
+		return read_all([]);
+	}
+
+	function read_all(buf: Byte[]): Byte[]
+	{
+		var len = buf.length;
+		for (;;) {
+			buf.set_length(len + BUF_SIZE);
+			var read = read_part(buf, len, BUF_SIZE);
+			if (read < 0) {
+				buf.set_length(len);
+				break;
+			}
+			len += read;
+		}
+		return buf;
+	}
+
+	function read_part(buf: Byte[]): Integer
+	{
+		return read_part(buf, 0, buf.length);
+	}
+
+	function write_part(buf: Byte[]): Integer
+	{
+		return write_part(buf, 0, buf.length);
+	}
+
+	function read_byte(): Byte
+	{
+		read(mini_buf, 0, 1);
+		return (mini_buf[0] << 24) >> 24;
+	}
+
+	function read_ubyte(): Byte
+	{
+		read(mini_buf, 0, 1);
+		return mini_buf[0];
+	}
+
+	function read_short_LE(): Short
+	{
+		read(mini_buf, 0, 2);
+		return ((mini_buf[0] << 16) | (mini_buf[1] << 24)) >> 16;
+	}
+
+	function read_ushort_LE(): Short
+	{
+		read(mini_buf, 0, 2);
+		return mini_buf[0] | (mini_buf[1] << 8);
+	}
+
+	function read_short_BE(): Short
+	{
+		read(mini_buf, 0, 2);
+		return ((mini_buf[0] << 24) | (mini_buf[1] << 16)) >> 16;
+	}
+
+	function read_ushort_BE(): Short
+	{
+		read(mini_buf, 0, 2);
+		return (mini_buf[0] << 8) | mini_buf[1];
+	}
+
+	function read_int_LE(): Integer
+	{
+		read(mini_buf, 0, 4);
+		return mini_buf[0] | (mini_buf[1] << 8) | (mini_buf[2] << 16) | (mini_buf[3] << 24);
+	}
+
+	function read_int_BE(): Integer
+	{
+		read(mini_buf, 0, 4);
+		return (mini_buf[0] << 24) | (mini_buf[1] << 16) | (mini_buf[2] << 8) | mini_buf[3];
+	}
+
+	function read_long_LE(): Long
+	{
+		read(mini_buf, 0, 8);
+		var out = [0, 0];
+		out[0] = mini_buf[0] | (mini_buf[1] << 8) | (mini_buf[2] << 16) | (mini_buf[3] << 24);
+		out[1] = mini_buf[4] | (mini_buf[5] << 8) | (mini_buf[6] << 16) | (mini_buf[7] << 24);
+		return out as Long;
+	}
+
+	function read_long_LE(out: Long): Long
+	{
+		read(mini_buf, 0, 8);
+		out.lo = mini_buf[0] | (mini_buf[1] << 8) | (mini_buf[2] << 16) | (mini_buf[3] << 24);
+		out.hi = mini_buf[4] | (mini_buf[5] << 8) | (mini_buf[6] << 16) | (mini_buf[7] << 24);
+		return out;
+	}
+
+	function read_long_BE(): Long
+	{
+		read(mini_buf, 0, 8);
+		var out = [0, 0];
+		out[1] = (mini_buf[0] << 24) | (mini_buf[1] << 16) | (mini_buf[2] << 8) | mini_buf[3];
+		out[0] = (mini_buf[4] << 24) | (mini_buf[5] << 16) | (mini_buf[6] << 8) | mini_buf[7];
+		return out as Long;
+	}
+
+	function read_long_BE(out: Long): Long
+	{
+		read(mini_buf, 0, 8);
+		out.hi = (mini_buf[0] << 24) | (mini_buf[1] << 16) | (mini_buf[2] << 8) | mini_buf[3];
+		out.lo = (mini_buf[4] << 24) | (mini_buf[5] << 16) | (mini_buf[6] << 8) | mini_buf[7];
+		return out;
+	}
+
+	function read_float_LE(): Float
+	{
+		read(mini_buf, 0, 4);
+		return ((mini_buf[0] | (mini_buf[1] << 8) | (mini_buf[2] << 16) | (mini_buf[3] << 24)) as Float) + 0.0;
+	}
+
+	function read_float_BE(): Float
+	{
+		read(mini_buf, 0, 4);
+		return (((mini_buf[0] << 24) | (mini_buf[1] << 16) | (mini_buf[2] << 8) | mini_buf[3]) as Float) + 0.0;
+	}
+
+	function read_double_LE(): Double
+	{
+		read(mini_buf, 0, 8);
+		var out = [0, 0];
+		out[0] = mini_buf[0] | (mini_buf[1] << 8) | (mini_buf[2] << 16) | (mini_buf[3] << 24);
+		out[1] = mini_buf[4] | (mini_buf[5] << 8) | (mini_buf[6] << 16) | (mini_buf[7] << 24);
+		return out as Double;
+	}
+
+	function read_double_LE(out: Double): Double
+	{
+		read(mini_buf, 0, 8);
+		out.lo = mini_buf[0] | (mini_buf[1] << 8) | (mini_buf[2] << 16) | (mini_buf[3] << 24);
+		out.hi = mini_buf[4] | (mini_buf[5] << 8) | (mini_buf[6] << 16) | (mini_buf[7] << 24);
+		return out;
+	}
+
+	function read_double_BE(): Double
+	{
+		read(mini_buf, 0, 8);
+		var out = [0, 0];
+		out[1] = (mini_buf[0] << 24) | (mini_buf[1] << 16) | (mini_buf[2] << 8) | mini_buf[3];
+		out[0] = (mini_buf[4] << 24) | (mini_buf[5] << 16) | (mini_buf[6] << 8) | mini_buf[7];
+		return out as Double;
+	}
+
+	function read_double_BE(out: Double): Double
+	{
+		read(mini_buf, 0, 8);
+		out.hi = (mini_buf[0] << 24) | (mini_buf[1] << 16) | (mini_buf[2] << 8) | mini_buf[3];
+		out.lo = (mini_buf[4] << 24) | (mini_buf[5] << 16) | (mini_buf[6] << 8) | mini_buf[7];
+		return out;
+	}
+
+	function write_byte(value: Byte)
+	{
+		if (value < -128 || value > 127) {
+			throw error("value outside range");
+		}
+		mini_buf[0] = value & 0xFF;
+		write(mini_buf, 0, 1);
+	}
+
+	function write_ubyte(value: Byte)
+	{
+		if (value < 0 || value > 255) {
+			throw error("value outside range");
+		}
+		mini_buf[0] = value;
+		write(mini_buf, 0, 1);
+	}
+
+	function write_short_LE(value: Short)
+	{
+		if (value < -32768 || value > 32767) {
+			throw error("value outside range");
+		}
+		mini_buf[0] = value & 0xFF;
+		mini_buf[1] = (value >>> 8) & 0xFF;
+		write(mini_buf, 0, 2);
+	}
+
+	function write_short_BE(value: Short)
+	{
+		if (value < -32768 || value > 32767) {
+			throw error("value outside range");
+		}
+		mini_buf[0] = (value >>> 8) & 0xFF;
+		mini_buf[1] = value & 0xFF;
+		write(mini_buf, 0, 2);
+	}
+
+	function write_ushort_LE(value: Short)
+	{
+		if (value < 0 || value > 65535) {
+			throw error("value outside range");
+		}
+		mini_buf[0] = value & 0xFF;
+		mini_buf[1] = value >>> 8;
+		write(mini_buf, 0, 2);
+	}
+
+	function write_ushort_BE(value: Short)
+	{
+		if (value < 0 || value > 65535) {
+			throw error("value outside range");
+		}
+		mini_buf[0] = value >>> 8;
+		mini_buf[1] = value & 0xFF;
+		write(mini_buf, 0, 2);
+	}
+
+	function write_int_LE(value: Integer)
+	{
+		mini_buf[0] = value & 0xFF;
+		mini_buf[1] = (value >>> 8) & 0xFF;
+		mini_buf[2] = (value >>> 16) & 0xFF;
+		mini_buf[3] = value >>> 24;
+		write(mini_buf, 0, 4);
+	}
+
+	function write_int_BE(value: Integer)
+	{
+		mini_buf[0] = value >>> 24;
+		mini_buf[1] = (value >>> 16) & 0xFF;
+		mini_buf[2] = (value >>> 8) & 0xFF;
+		mini_buf[3] = value & 0xFF;
+		write(mini_buf, 0, 4);
+	}
+
+	function write_long_LE(value: Long)
+	{
+		var lo = value.lo;
+		var hi = value.hi;
+		mini_buf[0] = lo & 0xFF;
+		mini_buf[1] = (lo >>> 8) & 0xFF;
+		mini_buf[2] = (lo >>> 16) & 0xFF;
+		mini_buf[3] = lo >>> 24;
+		mini_buf[4] = hi & 0xFF;
+		mini_buf[5] = (hi >>> 8) & 0xFF;
+		mini_buf[6] = (hi >>> 16) & 0xFF;
+		mini_buf[7] = hi >>> 24;
+		write(mini_buf, 0, 8);
+	}
+
+	function write_long_BE(value: Long)
+	{
+		var lo = value.lo;
+		var hi = value.hi;
+		mini_buf[0] = hi >>> 24;
+		mini_buf[1] = (hi >>> 16) & 0xFF;
+		mini_buf[2] = (hi >>> 8) & 0xFF;
+		mini_buf[3] = hi & 0xFF;
+		mini_buf[4] = lo >>> 24;
+		mini_buf[5] = (lo >>> 16) & 0xFF;
+		mini_buf[6] = (lo >>> 8) & 0xFF;
+		mini_buf[7] = lo & 0xFF;
+		write(mini_buf, 0, 8);
+	}
+
+	function write_float_LE(value: Float)
+	{
+		mini_buf[0] = (value as Integer) & 0xFF;
+		mini_buf[1] = ((value as Integer) >>> 8) & 0xFF;
+		mini_buf[2] = ((value as Integer) >>> 16) & 0xFF;
+		mini_buf[3] = (value as Integer) >>> 24;
+		write(mini_buf, 0, 4);
+	}
+
+	function write_float_BE(value: Float)
+	{
+		mini_buf[0] = (value as Integer) >>> 24;
+		mini_buf[1] = ((value as Integer) >>> 16) & 0xFF;
+		mini_buf[2] = ((value as Integer) >>> 8) & 0xFF;
+		mini_buf[3] = (value as Integer) & 0xFF;
+		write(mini_buf, 0, 4);
+	}
+
+	function write_double_LE(value: Double)
+	{
+		var lo = value.lo;
+		var hi = value.hi;
+		mini_buf[0] = lo & 0xFF;
+		mini_buf[1] = (lo >>> 8) & 0xFF;
+		mini_buf[2] = (lo >>> 16) & 0xFF;
+		mini_buf[3] = lo >>> 24;
+		mini_buf[4] = hi & 0xFF;
+		mini_buf[5] = (hi >>> 8) & 0xFF;
+		mini_buf[6] = (hi >>> 16) & 0xFF;
+		mini_buf[7] = hi >>> 24;
+		write(mini_buf, 0, 8);
+	}
+
+	function write_double_BE(value: Double)
+	{
+		var lo = value.lo;
+		var hi = value.hi;
+		mini_buf[0] = hi >>> 24;
+		mini_buf[1] = (hi >>> 16) & 0xFF;
+		mini_buf[2] = (hi >>> 8) & 0xFF;
+		mini_buf[3] = hi & 0xFF;
+		mini_buf[4] = lo >>> 24;
+		mini_buf[5] = (lo >>> 16) & 0xFF;
+		mini_buf[6] = (lo >>> 8) & 0xFF;
+		mini_buf[7] = lo & 0xFF;
+		write(mini_buf, 0, 8);
+	}
+
+	function write_stream(stream: Stream)
+	{
+		var buf = Array::create_shared(BUF_SIZE, 1);
+		for (;;) {
+			var read = stream.read_part(buf, 0, buf.length);
+			if (read < 0) break;
+			if (read > 0) {
+				write(buf, 0, read);
+			}
+		}
+	}
+
+	function write_null_string(s: Byte[])
+	{
+		write_null_string(s, 0, s.length);
+	}
+
+	function write_null_string(s: Byte[], off: Integer, len: Integer)
+	{
+		for (var i=off, n=off+len; i<n; i++) {
+			switch (s[i]) {
+				case 0: throw error("string must not contain null characters");
+				case 0x100 .. 0x7FFFFFFF:
+				case 0x80000000 .. 0xFFFFFFFF:
+					throw error("string must contain only bytes");
+				default: continue;
+			}
+		}
+		write(s, off, len);
+		mini_buf[0] = 0;
+		write(mini_buf, 0, 1);
+	}
+}
+
+class ArrayStream: Stream
+{
+	var @in_buf: Byte[];
+	var @in_pos: Integer;
+	var @out_buf: Byte[];
+
+	constructor create()
+	{
+	}
+	
+	static function create(in_buf: Byte[]): ArrayStream
+	{
+		var stream = new ArrayStream: Stream::create();
+		stream.in_buf = in_buf;
+		return stream;
+	}
+	
+	static function create(in_buf: Byte[], out_buf: Byte[]): ArrayStream
+	{
+		var stream = new ArrayStream: Stream::create();
+		stream.in_buf = in_buf;
+		stream.out_buf = out_buf;
+		return stream;
+	}
+
+	function reset()
+	{
+		in_pos = 0;
+		if (out_buf) {
+			out_buf.clear();
+		}
+	}
+
+	function reset(in_buf: Byte[])
+	{
+		this.in_buf = in_buf;
+		this.in_pos = 0;
+		if (out_buf) {
+			out_buf.clear();
+		}
+	}
+
+	function reset(in_buf: Byte[], out_buf: Byte[])
+	{
+		this.in_buf = in_buf;
+		this.in_pos = 0;
+		this.out_buf = out_buf;
+	}
+
+	override function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (!in_buf) {
+			throw error("reading is not supported for this stream");
+		}
+		var amount = min(in_buf.length - in_pos, len);
+		if (amount <= 0) {
+			return -1;
+		}
+		Array::copy(buf, off, in_buf, in_pos, amount);
+		in_pos += amount;
+		return amount;
+	}
+
+	override function write_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (!out_buf) {
+			out_buf = [];
+		}
+		out_buf.append(buf, off, len);
+		return len;
+	}
+
+	override function skip(len: Integer)
+	{
+		if (len < 0) throw error("negative length");
+		if (!in_buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (in_pos + len > in_buf.length) {
+			in_pos = in_buf.length;
+			throw error("unexpected end of stream");
+		}
+		in_pos += len;
+	}
+
+	function get_position(): Integer
+	{
+		if (!in_buf) {
+			throw error("reading is not supported for this stream");
+		}
+		return in_pos;
+	}
+
+	function set_position(pos: Integer)
+	{
+		if (!in_buf) {
+			throw error("reading is not supported for this stream");
+		}
+		in_pos = pos;
+	}
+
+	function get_output(): Byte[]
+	{
+		if (!out_buf) {
+			out_buf = [];
+		}
+		return out_buf;
+	}
+
+	function read_byte(): Byte
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos >= buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = (buf[pos++] << 24) >> 24;
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_ubyte(): Byte
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos >= buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = buf[pos++];
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_short_LE(): Short
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+2 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = ((buf[pos++] << 16) | (buf[pos++] << 24)) >> 16;
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_ushort_LE(): Short
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+2 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = buf[pos++] | (buf[pos++] << 8);
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_short_BE(): Short
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+2 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = ((buf[pos++] << 24) | (buf[pos++] << 16)) >> 16;
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_ushort_BE(): Short
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+2 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = (buf[pos++] << 8) | buf[pos++];
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_int_LE(): Integer
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+4 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_int_BE(): Integer
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+4 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_long_LE(): Long
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var out = [0, 0];
+		out[0] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out[1] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_pos = pos;
+		return out as Long;
+	}
+
+	function read_long_LE(out: Long): Long
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		out.lo = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out.hi = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_pos = pos;
+		return out;
+	}
+
+	function read_long_BE(): Long
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var out = [0, 0];
+		out[1] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out[0] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_pos = pos;
+		return out as Long;
+	}
+
+	function read_long_BE(out: Long): Long
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		out.hi = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out.lo = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_pos = pos;
+		return out;
+	}
+
+	function read_float_LE(): Float
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+4 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = ((buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24)) as Float) + 0.0;
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_float_BE(): Float
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+4 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var ret = (((buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++]) as Float) + 0.0;
+		in_pos = pos;
+		return ret;
+	}
+
+	function read_double_LE(): Double
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var out = [0, 0];
+		out[0] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out[1] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_pos = pos;
+		return out as Double;
+	}
+
+	function read_double_LE(out: Double): Double
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		out.lo = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out.hi = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_pos = pos;
+		return out;
+	}
+
+	function read_double_BE(): Double
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		var out = [0, 0];
+		out[1] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out[0] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_pos = pos;
+		return out as Double;
+	}
+
+	function read_double_BE(out: Double): Double
+	{
+		var buf = in_buf;
+		var pos = in_pos;
+		if (!buf) {
+			throw error("reading is not supported for this stream");
+		}
+		if (pos+8 > buf.length) {
+			throw error("unexpected end of stream");
+		}
+		out.hi = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out.lo = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_pos = pos;
+		return out;
+	}
+
+	function write_byte(value: Byte)
+	{
+		if (value < -128 || value > 127) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = value & 0xFF;
+	}
+
+	function write_ubyte(value: Byte)
+	{
+		if (value < 0 || value > 255) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = value;
+	}
+
+	function write_short_LE(value: Short)
+	{
+		if (value < -32768 || value > 32767) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = value & 0xFF;
+		buf[] = (value >>> 8) & 0xFF;
+	}
+
+	function write_short_BE(value: Short)
+	{
+		if (value < -32768 || value > 32767) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = (value >>> 8) & 0xFF;
+		buf[] = value & 0xFF;
+	}
+
+	function write_ushort_LE(value: Short)
+	{
+		if (value < 0 || value > 65535) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = value & 0xFF;
+		buf[] = value >>> 8;
+	}
+
+	function write_ushort_BE(value: Short)
+	{
+		if (value < 0 || value > 65535) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = value >>> 8;
+		buf[] = value & 0xFF;
+	}
+
+	function write_int_LE(value: Integer)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = value & 0xFF;
+		buf[] = (value >>> 8) & 0xFF;
+		buf[] = (value >>> 16) & 0xFF;
+		buf[] = value >>> 24;
+	}
+
+	function write_int_BE(value: Integer)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = value >>> 24;
+		buf[] = (value >>> 16) & 0xFF;
+		buf[] = (value >>> 8) & 0xFF;
+		buf[] = value & 0xFF;
+	}
+
+	function write_long_LE(value: Long)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[] = lo & 0xFF;
+		buf[] = (lo >>> 8) & 0xFF;
+		buf[] = (lo >>> 16) & 0xFF;
+		buf[] = lo >>> 24;
+		buf[] = hi & 0xFF;
+		buf[] = (hi >>> 8) & 0xFF;
+		buf[] = (hi >>> 16) & 0xFF;
+		buf[] = hi >>> 24;
+	}
+
+	function write_long_BE(value: Long)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[] = hi >>> 24;
+		buf[] = (hi >>> 16) & 0xFF;
+		buf[] = (hi >>> 8) & 0xFF;
+		buf[] = hi & 0xFF;
+		buf[] = lo >>> 24;
+		buf[] = (lo >>> 16) & 0xFF;
+		buf[] = (lo >>> 8) & 0xFF;
+		buf[] = lo & 0xFF;
+	}
+
+	function write_float_LE(value: Float)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = (value as Integer) & 0xFF;
+		buf[] = ((value as Integer) >>> 8) & 0xFF;
+		buf[] = ((value as Integer) >>> 16) & 0xFF;
+		buf[] = (value as Integer) >>> 24;
+	}
+
+	function write_float_BE(value: Float)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf[] = (value as Integer) >>> 24;
+		buf[] = ((value as Integer) >>> 16) & 0xFF;
+		buf[] = ((value as Integer) >>> 8) & 0xFF;
+		buf[] = (value as Integer) & 0xFF;
+	}
+
+	function write_double_LE(value: Double)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[] = lo & 0xFF;
+		buf[] = (lo >>> 8) & 0xFF;
+		buf[] = (lo >>> 16) & 0xFF;
+		buf[] = lo >>> 24;
+		buf[] = hi & 0xFF;
+		buf[] = (hi >>> 8) & 0xFF;
+		buf[] = (hi >>> 16) & 0xFF;
+		buf[] = hi >>> 24;
+	}
+
+	function write_double_BE(value: Double)
+	{
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[] = hi >>> 24;
+		buf[] = (hi >>> 16) & 0xFF;
+		buf[] = (hi >>> 8) & 0xFF;
+		buf[] = hi & 0xFF;
+		buf[] = lo >>> 24;
+		buf[] = (lo >>> 16) & 0xFF;
+		buf[] = (lo >>> 8) & 0xFF;
+		buf[] = lo & 0xFF;
+	}
+
+	function write_null_string(s: Byte[])
+	{
+		write_null_string(s, 0, s.length);
+	}
+
+	function write_null_string(s: Byte[], off: Integer, len: Integer)
+	{
+		for (var i=off, n=off+len; i<n; i++) {
+			switch (s[i]) {
+				case 0: throw error("string must not contain null characters");
+				case 0x100 .. 0x7FFFFFFF:
+				case 0x80000000 .. 0xFFFFFFFF:
+					throw error("string must contain only bytes");
+				default: continue;
+			}
+		}
+		var buf = out_buf;
+		if (!buf) {
+			buf = out_buf = [];
+		}
+		buf.append(s, off, len);
+		buf[] = 0;
+	}
+
+	function read_line(buf: Byte[]): Byte[]
+	{
+		return read_line(buf, -1);
+	}
+
+	function read_line(buf: Byte[], max_bytes: Integer): Byte[]
+	{
+		buf.clear();
+		if (max_bytes < 0) {
+			max_bytes = 0x7FFFFFFF;
+		}
+		var in_buf = this.in_buf;
+		if (!in_buf) {
+			throw error("reading is not supported for this stream");
+		}
+		var pos = in_pos;
+		var has_line = false;
+		while (pos < in_buf.length) {
+			var c = in_buf[pos++];
+			if (c == '\n') {
+				var last = buf.length-1;
+				if (last >= 0 && buf[last] == '\r') {
+					buf.set_length(last);
+				}
+				in_pos = pos;
+				return buf;
+			}
+			if (buf.length >= max_bytes) {
+				throw error("exceeded maximum line length");
+			}
+			buf[] = c;
+			has_line = true;
+		}
+		var last = buf.length-1;
+		if (last >= 0 && buf[last] == '\r') {
+			buf.set_length(last);
+		}
+		in_pos = pos;
+		return has_line? buf : null;
+	}
+
+	function read_null_string(): Byte[]
+	{
+		return read_null_string({""}, -1);
+	}
+	
+	function read_null_string(str: Byte[]): Byte[]
+	{
+		return read_null_string(str, -1);
+	}
+
+	function read_null_string(str: Byte[], max_bytes: Integer): Byte[]
+	{
+		if (max_bytes < 0) {
+			max_bytes = 0x7FFFFFFF;
+		}
+		var in_buf = this.in_buf;
+		if (!in_buf) {
+			throw error("reading is not supported for this stream");
+		}
+		var pos = in_pos;
+		while (pos < in_buf.length) {
+			var c = in_buf[pos++];
+			if (c == 0) {
+				in_pos = pos;
+				return str;
+			}
+			if (str.length >= max_bytes) {
+				throw error("exceeded maximum number of bytes");
+			}
+			str[] = c;
+		}
+		in_pos = pos;
+		throw error("unexpected end of stream");
+	}
+}
+
+class BufferedStream: Stream
+{
+	var @parent: Stream;
+	var @in_buf: Byte[];
+	var @in_start: Integer;
+	var @in_end: Integer;
+	var @out_buf: Byte[];
+	var @out_pos: Integer;
+	
+	constructor create(parent: Stream)
+	{
+		this.parent = parent;
+	}
+
+	override function read_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		if (in_start == in_end) {
+			if (!in_buf) {
+				in_buf = Array::create_shared(BUF_SIZE, 1);
+			}
+			if (in_start == -1) {
+				return -1;
+			}
+			var read = parent.read_part(in_buf, 0, in_buf.length);
+			if (read < 0) {
+				in_start = -1;
+				in_end = -1;
+				return -1;
+			}
+			in_start = 0;
+			in_end = read;
+		}
+		var amount = min(in_end - in_start, len);
+		Array::copy(buf, off, in_buf, in_start, amount);
+		in_start += amount;
+		return amount;
+	}
+
+	override function write_part(buf: Byte[], off: Integer, len: Integer): Integer
+	{
+		var orig_len = len;
+		if (!out_buf) {
+			out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		var amount = min(out_buf.length - out_pos, len);
+		if (amount > 0) {
+			Array::copy(out_buf, out_pos, buf, off, amount);
+			out_pos += amount;
+			off += amount;
+			len -= amount;
+		}
+		if (out_pos == out_buf.length) {
+			parent.write(out_buf, 0, out_pos);
+			out_pos = 0;
+		}
+		if (len > 0) {
+			if (len >= out_buf.length) {
+				parent.write(buf, off, len);
+			}
+			else {
+				Array::copy(out_buf, 0, buf, off, len);
+				out_pos = len;
+			}
+		}
+		return orig_len;
+	}
+
+	override function flush()
+	{
+		flush_output();
+		parent.flush();
+	}
+
+	override function close()
+	{
+		flush_output();
+		parent.close();
+	}
+
+	function @read_more(): Boolean
+	{
+		if (!in_buf) {
+			in_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		var remaining = in_end - in_start;
+		Array::copy(in_buf, 0, in_buf, in_start, remaining);
+		in_start = 0;
+		in_end = remaining;
+		for (;;) {
+			var read = parent.read_part(in_buf, in_end, in_buf.length - in_end);
+			if (read < 0) return false;
+			if (read == 0) continue;
+			in_end += read;
+			return true;
+		}
+	}
+
+	function @read_more(amount: Integer)
+	{
+		if (!in_buf) {
+			in_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		var remaining = in_end - in_start;
+		Array::copy(in_buf, 0, in_buf, in_start, remaining);
+		in_start = 0;
+		in_end = remaining;
+		while (in_end < amount) {
+			var read = parent.read_part(in_buf, in_end, in_buf.length - in_end);
+			if (read < 0) throw error("unexpected end of stream");
+			in_end += read;
+		}
+	}
+
+	function @flush_output()
+	{
+		if (out_pos > 0) {
+			parent.write(out_buf, 0, out_pos);
+			out_pos = 0;
+		}
+	}
+
+	function read_byte(): Byte
+	{
+		if (in_start == in_end) {
+			read_more(1);
+		}
+		return (in_buf[in_start++] << 24) >> 24;
+	}
+
+	function read_ubyte(): Byte
+	{
+		if (in_start == in_end) {
+			read_more(1);
+		}
+		return in_buf[in_start++];
+	}
+
+	function read_short_LE(): Short
+	{
+		if (in_end - in_start < 2) {
+			read_more(2);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = ((buf[pos++] << 16) | (buf[pos++] << 24)) >> 16;
+		in_start = pos;
+		return ret;
+	}
+
+	function read_ushort_LE(): Short
+	{
+		if (in_end - in_start < 2) {
+			read_more(2);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = buf[pos++] | (buf[pos++] << 8);
+		in_start = pos;
+		return ret;
+	}
+
+	function read_short_BE(): Short
+	{
+		if (in_end - in_start < 2) {
+			read_more(2);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = ((buf[pos++] << 24) | (buf[pos++] << 16)) >> 16;
+		in_start = pos;
+		return ret;
+	}
+
+	function read_ushort_BE(): Short
+	{
+		if (in_end - in_start < 2) {
+			read_more(2);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = (buf[pos++] << 8) | buf[pos++];
+		in_start = pos;
+		return ret;
+	}
+
+	function read_int_LE(): Integer
+	{
+		if (in_end - in_start < 4) {
+			read_more(4);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_start = pos;
+		return ret;
+	}
+
+	function read_int_BE(): Integer
+	{
+		if (in_end - in_start < 4) {
+			read_more(4);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_start = pos;
+		return ret;
+	}
+
+	function read_long_LE(): Long
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var out = [0, 0];
+		out[0] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out[1] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_start = pos;
+		return out as Long;
+	}
+
+	function read_long_LE(out: Long): Long
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		out.lo = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out.hi = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_start = pos;
+		return out;
+	}
+
+	function read_long_BE(): Long
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var out = [0, 0];
+		out[1] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out[0] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_start = pos;
+		return out as Long;
+	}
+
+	function read_long_BE(out: Long): Long
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		out.hi = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out.lo = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_start = pos;
+		return out;
+	}
+
+	function read_float_LE(): Float
+	{
+		if (in_end - in_start < 4) {
+			read_more(4);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = ((buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24)) as Float) + 0.0;
+		in_start = pos;
+		return ret;
+	}
+
+	function read_float_BE(): Float
+	{
+		if (in_end - in_start < 4) {
+			read_more(4);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var ret = (((buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++]) as Float) + 0.0;
+		in_start = pos;
+		return ret;
+	}
+
+	function read_double_LE(): Double
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var out = [0, 0];
+		out[0] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out[1] = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_start = pos;
+		return out as Double;
+	}
+
+	function read_double_LE(out: Double): Double
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		out.lo = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		out.hi = buf[pos++] | (buf[pos++] << 8) | (buf[pos++] << 16) | (buf[pos++] << 24);
+		in_start = pos;
+		return out;
+	}
+
+	function read_double_BE(): Double
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		var out = [0, 0];
+		out[1] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out[0] = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_start = pos;
+		return out as Double;
+	}
+
+	function read_double_BE(out: Double): Double
+	{
+		if (in_end - in_start < 8) {
+			read_more(8);
+		}
+		var buf = in_buf;
+		var pos = in_start;
+		out.hi = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		out.lo = (buf[pos++] << 24) | (buf[pos++] << 16) | (buf[pos++] << 8) | buf[pos++];
+		in_start = pos;
+		return out;
+	}
+
+	function write_byte(value: Byte)
+	{
+		if (value < -128 || value > 127) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (out_pos == buf.length) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = value & 0xFF;
+		out_pos = pos;
+	}
+
+	function write_ubyte(value: Byte)
+	{
+		if (value < 0 || value > 255) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (out_pos == buf.length) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = value;
+		out_pos = pos;
+	}
+
+	function write_short_LE(value: Short)
+	{
+		if (value < -32768 || value > 32767) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 2) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = value & 0xFF;
+		buf[pos++] = (value >>> 8) & 0xFF;
+		out_pos = pos;
+	}
+
+	function write_short_BE(value: Short)
+	{
+		if (value < -32768 || value > 32767) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 2) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = (value >>> 8) & 0xFF;
+		buf[pos++] = value & 0xFF;
+		out_pos = pos;
+	}
+
+	function write_ushort_LE(value: Short)
+	{
+		if (value < 0 || value > 65535) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 2) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = value & 0xFF;
+		buf[pos++] = value >>> 8;
+		out_pos = pos;
+	}
+
+	function write_ushort_BE(value: Short)
+	{
+		if (value < 0 || value > 65535) {
+			throw error("value outside range");
+		}
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 2) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = value >>> 8;
+		buf[pos++] = value & 0xFF;
+		out_pos = pos;
+	}
+
+	function write_int_LE(value: Integer)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 4) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = value & 0xFF;
+		buf[pos++] = (value >>> 8) & 0xFF;
+		buf[pos++] = (value >>> 16) & 0xFF;
+		buf[pos++] = value >>> 24;
+		out_pos = pos;
+	}
+
+	function write_int_BE(value: Integer)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 4) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = value >>> 24;
+		buf[pos++] = (value >>> 16) & 0xFF;
+		buf[pos++] = (value >>> 8) & 0xFF;
+		buf[pos++] = value & 0xFF;
+		out_pos = pos;
+	}
+
+	function write_long_LE(value: Long)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 8) {
+			flush_output();
+			pos = 0;
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[pos++] = lo & 0xFF;
+		buf[pos++] = (lo >>> 8) & 0xFF;
+		buf[pos++] = (lo >>> 16) & 0xFF;
+		buf[pos++] = lo >>> 24;
+		buf[pos++] = hi & 0xFF;
+		buf[pos++] = (hi >>> 8) & 0xFF;
+		buf[pos++] = (hi >>> 16) & 0xFF;
+		buf[pos++] = hi >>> 24;
+		out_pos = pos;
+	}
+
+	function write_long_BE(value: Long)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 8) {
+			flush_output();
+			pos = 0;
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[pos++] = hi >>> 24;
+		buf[pos++] = (hi >>> 16) & 0xFF;
+		buf[pos++] = (hi >>> 8) & 0xFF;
+		buf[pos++] = hi & 0xFF;
+		buf[pos++] = lo >>> 24;
+		buf[pos++] = (lo >>> 16) & 0xFF;
+		buf[pos++] = (lo >>> 8) & 0xFF;
+		buf[pos++] = lo & 0xFF;
+		out_pos = pos;
+	}
+
+	function write_float_LE(value: Float)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 4) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = (value as Integer) & 0xFF;
+		buf[pos++] = ((value as Integer) >>> 8) & 0xFF;
+		buf[pos++] = ((value as Integer) >>> 16) & 0xFF;
+		buf[pos++] = (value as Integer) >>> 24;
+		out_pos = pos;
+	}
+
+	function write_float_BE(value: Float)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 4) {
+			flush_output();
+			pos = 0;
+		}
+		buf[pos++] = (value as Integer) >>> 24;
+		buf[pos++] = ((value as Integer) >>> 16) & 0xFF;
+		buf[pos++] = ((value as Integer) >>> 8) & 0xFF;
+		buf[pos++] = (value as Integer) & 0xFF;
+		out_pos = pos;
+	}
+
+	function write_double_LE(value: Double)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 8) {
+			flush_output();
+			pos = 0;
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[pos++] = lo & 0xFF;
+		buf[pos++] = (lo >>> 8) & 0xFF;
+		buf[pos++] = (lo >>> 16) & 0xFF;
+		buf[pos++] = lo >>> 24;
+		buf[pos++] = hi & 0xFF;
+		buf[pos++] = (hi >>> 8) & 0xFF;
+		buf[pos++] = (hi >>> 16) & 0xFF;
+		buf[pos++] = hi >>> 24;
+		out_pos = pos;
+	}
+
+	function write_double_BE(value: Double)
+	{
+		var buf = out_buf;
+		var pos = out_pos;
+		if (!buf) {
+			buf = out_buf = Array::create_shared(BUF_SIZE, 1);
+		}
+		if (buf.length - out_pos < 8) {
+			flush_output();
+			pos = 0;
+		}
+		var lo = value.lo;
+		var hi = value.hi;
+		buf[pos++] = hi >>> 24;
+		buf[pos++] = (hi >>> 16) & 0xFF;
+		buf[pos++] = (hi >>> 8) & 0xFF;
+		buf[pos++] = hi & 0xFF;
+		buf[pos++] = lo >>> 24;
+		buf[pos++] = (lo >>> 16) & 0xFF;
+		buf[pos++] = (lo >>> 8) & 0xFF;
+		buf[pos++] = lo & 0xFF;
+		out_pos = pos;
+	}
+	
+	function read_line(buf: Byte[]): Byte[]
+	{
+		return read_line(buf, -1);
+	}
+
+	function read_line(buf: Byte[], max_bytes: Integer): Byte[]
+	{
+		buf.clear();
+		if (max_bytes < 0) {
+			max_bytes = 0x7FFFFFFF;
+		}
+		var has_line = false;
+		for (;;) {
+			if (in_end - in_start < 1) {
+				if (!read_more()) {
+					break;
+				}
+			}
+			var in_buf = in_buf;
+			var pos = in_start;
+			var end = in_end;
+			for (; pos < end; pos++) {
+				var c = in_buf[pos];
+				if (c == '\n') {
+					var last = buf.length-1;
+					if (last >= 0 && buf[last] == '\r') {
+						buf.set_length(last);
+					}
+					in_start = pos+1;
+					return buf;
+				}
+				if (buf.length >= max_bytes) {
+					throw error("exceeded maximum line length");
+				}
+				buf[] = c;
+				has_line = true;
+			}
+			in_start = pos;
+		}
+		var last = buf.length-1;
+		if (last >= 0 && buf[last] == '\r') {
+			buf.set_length(last);
+		}
+		return has_line? buf : null;
+	}
+
+	function read_null_string(): Byte[]
+	{
+		return read_null_string({""}, -1);
+	}
+	
+	function read_null_string(str: Byte[]): Byte[]
+	{
+		return read_null_string(str, -1);
+	}
+
+	function read_null_string(str: Byte[], max_bytes: Integer): Byte[]
+	{
+		if (max_bytes < 0) {
+			max_bytes = 0x7FFFFFFF;
+		}
+		for (;;) {
+			if (in_end - in_start < 1) {
+				if (!read_more()) {
+					break;
+				}
+			}
+			var in_buf = in_buf;
+			var pos = in_start;
+			var end = in_end;
+			for (; pos < end; pos++) {
+				var c = in_buf[pos];
+				if (c == 0) {
+					in_start = pos+1;
+					return str;
+				}
+				if (str.length >= max_bytes) {
+					throw error("exceeded maximum number of bytes");
+				}
+				str[] = c;
+			}
+			in_start = pos;
+		}
+		throw error("unexpected end of stream");
+	}
+}

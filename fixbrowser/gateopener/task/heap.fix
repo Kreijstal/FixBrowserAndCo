@@ -1,0 +1,210 @@
+/*
+ * FixScript Task v0.6 - https://www.fixscript.org/
+ * Copyright (c) 2020-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+class Heap
+{
+	static function create(): Heap;
+	static function create_full(): Heap;
+	function destroy();
+
+	function collect();
+	function get_size(): Integer;
+	function adjust_size(relative_change: Integer);
+	function set_max_stack_size(size: Integer);
+	function get_max_stack_size(): Integer;
+	function get_stack_size(): Integer;
+
+	function ref(value: Value);
+	function unref(value: Value);
+
+	function set_protected(value: Value, protected: Boolean);
+	function is_protected(value: Value): Boolean;
+
+	function set_time_limit(limit: Integer);
+	function get_remaining_time(): Integer;
+	function get_async(): AsyncHeap;
+
+	function mark_ref(value: Value);
+
+	function create_array(len: Integer): Value;
+	function set_array_length(array: Value, len: Integer);
+	function get_array_length(array: Value): Integer;
+	function is_array(value: Value): Boolean;
+	function set_array_elem(array: Value, idx: Integer, value: Value);
+	function get_array_elem(array: Value, idx: Integer): Value;
+	function append_array_elem(array: Value, value: Value);
+	function get_array_range(array: Value, off: Integer, len: Integer, values: Value[], values_off: Integer);
+	function set_array_range(array: Value, off: Integer, len: Integer, values: Value[], values_off: Integer);
+	function get_array_values(array: Value, off: Integer, len: Integer, values, values_off: Integer);
+	function set_array_values(array: Value, off: Integer, len: Integer, values, values_off: Integer);
+	function get_array_numbers(array: Value, off: Integer, len: Integer, numbers, numbers_off: Integer);
+	function set_array_numbers(array: Value, off: Integer, len: Integer, numbers, numbers_off: Integer);
+	function copy_array(dest: Value, dest_off: Integer, src: Value, src_off: Integer, count: Integer);
+
+	function create_string(str: String): Value;
+	function create_string(str: String, off: Integer, len: Integer): Value;
+	function is_string(string: Value): Boolean;
+	function get_const_string(string: Value): Value;
+	function get_const_string(string: Value, off: Integer, len: Integer): Value;
+	function is_const_string(string: Value): Boolean;
+
+	function create_hash(): Value;
+	function is_hash(hash: Value): Boolean;
+	function set_hash_elem(hash: Value, key: Value, value: Value);
+	function get_hash_elem(hash: Value, key: Value): Value;
+	function remove_hash_elem(hash: Value, key: Value): Value;
+	function clear_hash(hash: Value);
+	function get_hash_entry(hash: Value, idx: Integer);
+
+	function create_handle(handle: Handle): Value;
+	function is_handle(value: Value): Boolean;
+	function get_handle(value: Value): Handle;
+
+	function create_weak_ref(value: Value): Value;
+	function create_weak_ref(value: Value, container: Value): Value;
+	function create_weak_ref(value: Value, container: Value, key: Value): Value;
+	function get_weak_ref(weak_ref: Value): Value;
+	function is_weak_ref(weak_ref: Value): Boolean;
+
+	function create_error(string_or_value: String or Value): Value;
+	function create_error_string(msg: String): Value { return create_error(create_string(msg)); }
+
+	function dump_value(value: Value);
+	function dump_value(value: Value, newlines: Boolean);
+	function to_string(value: Value): String;
+	function to_string(value: Value, newlines: Boolean): String;
+
+	function compare(value1: Value, value2: Value): Boolean;
+	function compare_between(value1: Value, heap2: Heap, value2: Value): Boolean;
+	function clone(value: Value): Value;
+	function clone_deep(value: Value): Value;
+	function clone_to(value: Dynamic): Value;
+	function clone_to(value: Dynamic, resolve_existing: Boolean): Value { return clone_to(value, resolve_existing? Heap::resolve_existing#3 : null, null); }
+	function clone_to(value: Dynamic, load_func, load_data): Value;
+	function clone_from(value: Value): Dynamic;
+	function clone_from(value: Value, resolve_existing: Boolean): Dynamic;
+	function clone_between(other: Heap, value: Value): Value;
+	function clone_between(other: Heap, value: Value, resolve_existing: Boolean): Value { return clone_between(other, value, resolve_existing? Heap::resolve_existing#3 : null, null); }
+	function clone_between(other: Heap, value: Value, load_func, load_data): Value;
+	function serialize(value: Value): Byte[];
+	function serialize(bytes: Byte[], value: Value): Byte[];
+	function unserialize(bytes: Byte[]): Value;
+	function unserialize(bytes: Byte[], off: Integer, len: Integer): Value;
+	function unserialize(bytes: Byte[], off_ref: Integer[]): Value;
+
+	function load(script: String, src: String, load_func, load_data);
+	function load_script(script: String);
+	function reload(script: String, src: String, load_func, load_data);
+	function is_loaded(script: String): Boolean;
+	function get_function(script: String, name: String): Value;
+	function get_function_info(value: Value): FunctionInfo;
+
+	function run(script: String, func_name: String, args: Value[]): Value[];
+	function call(func: Value, args: Value[]): Value[];
+
+	function register_native_function(name: String, func, data);
+
+	static function resolve_existing(data, heap: Heap, name: String)
+	{
+		throw error("tried to load script "+name+".fix during resolving of function references with loading disabled");
+	}
+}
+
+class AsyncHeap
+{
+	function stop_execution();
+}
+
+class FunctionInfo
+{
+	var script: String;
+	var name: String;
+	var num_args: Integer;
+}
+
+class Value
+{
+	var value: Integer;
+	var is_array: Boolean;
+
+	static function int(value: Integer): Value
+	{
+		return [value|0, false] as Value;
+	}
+
+	static function float(value: Float): Value
+	{
+		return [((value*1.0) as Integer)|0, true] as Value;
+	}
+
+	function is_int(): Boolean
+	{
+		return !is_array;
+	}
+
+	function is_float(): Boolean
+	{
+		if (!is_array) return false;
+		return value <= 0 || value >= 0x800000;
+	}
+
+	function get_int(): Integer
+	{
+		return value;
+	}
+
+	function get_float(): Float
+	{
+		return (value as Float)*1.0;
+	}
+}
+
+class Handle
+{
+	constructor create()
+	{
+	}
+
+	virtual function destroy(heap: Heap)
+	{
+	}
+
+	virtual function compare(heap: Heap, other: Handle): Boolean
+	{
+		return false;
+	}
+
+	virtual function calc_hash(heap: Heap): Integer
+	{
+		return 0;
+	}
+
+	virtual function to_string(heap: Heap): String
+	{
+		return null;
+	}
+
+	virtual function mark_refs(heap: Heap)
+	{
+	}
+}

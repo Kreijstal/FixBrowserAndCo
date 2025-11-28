@@ -1,0 +1,523 @@
+/*
+ * FixScript Image v0.7 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+const {
+	@TOK_IDENT,
+	@TOK_FUNC_REF,
+	@TOK_NUMBER,
+	@TOK_HEX_NUMBER,
+	@TOK_FLOAT_NUMBER,
+	@TOK_CHAR,
+	@TOK_STRING,
+	@TOK_UNKNOWN,
+
+	@KW_DO,
+	@KW_IF,
+	@KW_FOR,
+	@KW_USE,
+	@KW_VAR,
+	@KW_CASE,
+	@KW_ELSE,
+	@KW_BREAK,
+	@KW_CONST,
+	@KW_WHILE,
+	@KW_IMPORT,
+	@KW_RETURN,
+	@KW_SWITCH,
+	@KW_DEFAULT,
+	@KW_CONTINUE,
+	@KW_FUNCTION
+};
+
+const {
+	@TOK_type,
+	@TOK_off,
+	@TOK_len,
+	@TOK_line,
+	@TOK_SIZE
+};
+
+const {
+	@BC_COLOR,
+	@BC_SAMPLE_NEAREST,
+	@BC_SAMPLE_BILINEAR,
+	@BC_SAMPLE_BICUBIC,
+	@BC_COPY,
+	@BC_ADD,
+	@BC_SUB,
+	@BC_MUL,
+	@BC_MIX,
+	@BC_OUTPUT_BLEND,
+	@BC_OUTPUT_REPLACE
+};
+
+const {
+	@TEX_CLAMP_X = 0x01,
+	@TEX_CLAMP_Y = 0x02
+};
+
+const {
+	@GEN_new_tokens,
+	@GEN_input_tokens,
+	@GEN_bytecode,
+	@GEN_used_regs,
+	@GEN_num_inputs,
+	@GEN_vars,
+	@GEN_SIZE
+};
+
+function process_tokens(fname, tokens, src)
+{
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (tokens[i+TOK_type] == TOK_IDENT && tokens[i+TOK_len] == 6 && src[tokens[i+TOK_off]] == 'S') {
+			if (array_extract(src, tokens[i+TOK_off], 6) == "Shader") {
+				i = process_shader(tokens, src, i);
+				continue;
+			}
+		}
+	}
+
+	//dump_tokens(tokens, src);
+	//return 0, 1;
+}
+
+function @alloc_reg(gen, line)
+{
+	var used_regs = gen->GEN_used_regs;
+	for (var i=0; i<16; i++) {
+		var value = used_regs[i];
+		if (value != 0xFFFF) {
+			for (var j=0; j<16; j++) {
+				if ((value & (1 << j)) == 0) {
+					used_regs[i] |= 1 << j;
+					return i*16+j;
+				}
+			}
+		}
+	}
+	return 0, error({script_line(line), ": maximum register count reached"});
+}
+
+function @free_reg(gen, reg)
+{
+	gen->GEN_used_regs[reg >> 4] &= ~(1 << (reg & 15));
+}
+
+function @process_shader(tokens, src, i)
+{
+	var gen = object_create(GEN_SIZE);
+	gen->GEN_new_tokens = [];
+	gen->GEN_input_tokens = [];
+	gen->GEN_bytecode = [];
+	gen->GEN_used_regs = array_create_shared(16, 2);
+	gen->GEN_vars = {};
+
+	var start = i;
+	var line = tokens[i+TOK_line];
+	i = expect_symbol(tokens, src, i, '{');
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		if (tokens[i+TOK_type] == '}') {
+			break;
+		}
+
+		if (tokens[i+TOK_type] == TOK_IDENT) {
+			var name = get_token_value(tokens, src, i);
+			if (name == "blend" || name == "replace") {
+				var reg = alloc_reg(gen, tokens[i+TOK_line]);
+				var reg_ref = [reg];
+				i = expect_symbol(tokens, src, i, '(');
+				i = parse_expression(tokens, src, i, gen, reg_ref);
+				i = expect_symbol(tokens, src, i, ')');
+				i = expect_symbol(tokens, src, i, ';');
+				gen->GEN_bytecode[] = name == "blend"? BC_OUTPUT_BLEND : BC_OUTPUT_REPLACE;
+				gen->GEN_bytecode[] = reg_ref[0];
+				free_reg(gen, reg);
+			}
+			else {
+				return 0, error({script_line(tokens[i+TOK_line]), ": expected statement"});
+			}
+		}
+		else if (tokens[i+TOK_type] == KW_VAR) {
+			i = expect_type(tokens, src, i, TOK_IDENT, "identifier");
+			var name = get_token_value(tokens, src, i);
+			if (hash_contains(gen->GEN_vars, name)) {
+				return 0, error({script_line(tokens[i+TOK_line]), ": duplicate variable"});
+			}
+			var reg = alloc_reg(gen, tokens[i+TOK_line]);
+			var reg_ref = [reg];
+			gen->GEN_vars{name} = reg;
+			i = expect_symbol(tokens, src, i, '=');
+			i = parse_expression(tokens, src, i, gen, reg_ref);
+			i = expect_symbol(tokens, src, i, ';');
+			if (reg_ref[0] != reg) {
+				gen->GEN_bytecode[] = BC_COPY;
+				gen->GEN_bytecode[] = reg;
+				gen->GEN_bytecode[] = reg_ref[0];
+			}
+		}
+		else {
+			return 0, error({script_line(tokens[i+TOK_line]), ": expected statement"});
+		}
+	}
+	tokens_parse(gen->GEN_new_tokens, src, {token_escape_string(gen->GEN_bytecode), ", ["}, line);
+	array_append(gen->GEN_new_tokens, gen->GEN_input_tokens);
+	tokens_parse(gen->GEN_new_tokens, src, "]", line);
+	array_replace_range(tokens, start, i+TOK_SIZE, gen->GEN_new_tokens);
+	return i;
+}
+
+function @parse_primary_expression(tokens, src, i, gen, out_reg_ref)
+{
+	i = expect_next(tokens, src, i);
+	switch (tokens[i+TOK_type]) {
+		case TOK_HEX_NUMBER:
+			gen->GEN_bytecode[] = BC_COLOR;
+			gen->GEN_bytecode[] = out_reg_ref[0];
+			gen->GEN_bytecode[] = gen->GEN_num_inputs++;
+			if (length(gen->GEN_input_tokens) > 0) {
+				tokens_parse(gen->GEN_input_tokens, src, ",", tokens[i+TOK_line]);
+			}
+			array_append(gen->GEN_input_tokens, tokens, i, TOK_SIZE);
+			return i;
+
+		case TOK_IDENT: {
+			var name = get_token_value(tokens, src, i);
+			if (name == "rgb" || name == "argb") {
+				i = expect_next(tokens, src, i);
+				if (tokens[i+TOK_type] == '(') {
+					i = expect_next(tokens, src, i);
+					if (tokens[i+TOK_type] != TOK_HEX_NUMBER) {
+						return 0, error({script_line(tokens[i+TOK_line]), ": expected hex number"});
+					}
+					var value = from_hex(array_extract(src, tokens[i+TOK_off]+2, tokens[i+TOK_len]-2));
+					if (name == "rgb") {
+						value |= 0xFF000000;
+					}
+					else {
+						var ca = value >>> 24;
+						var cr = (value >>> 16) & 0xFF;
+						var cg = (value >>> 8) & 0xFF;
+						var cb = value & 0xFF;
+						cr = (cr * ca) / 255;
+						cg = (cg * ca) / 255;
+						cb = (cb * ca) / 255;
+						value = (ca << 24) | (cr << 16) | (cg << 8) | cb;
+					}
+					gen->GEN_bytecode[] = BC_COLOR;
+					gen->GEN_bytecode[] = out_reg_ref[0];
+					gen->GEN_bytecode[] = gen->GEN_num_inputs++;
+					if (length(gen->GEN_input_tokens) > 0) {
+						tokens_parse(gen->GEN_input_tokens, src, ",", tokens[i+TOK_line]);
+					}
+					tokens_parse(gen->GEN_input_tokens, src, {value}, tokens[i+TOK_line]);
+					i = expect_symbol(tokens, src, i, ')');
+					return i;
+				}
+				else {
+					i -= TOK_SIZE;
+				}
+			}
+			if (name == "sample_nearest" || name == "sample_bilinear" || name == "sample_bicubic") {
+				var flags = 0;
+				i = expect_symbol(tokens, src, i, '(');
+				i = parse_param(tokens, src, i, gen);
+				i = expect_symbol(tokens, src, i, ',');
+				i = parse_param(tokens, src, i, gen);
+				
+				i = expect_next(tokens, src, i);
+				if (tokens[i+TOK_type] == ',') {
+					for (;;) {
+						i = expect_type(tokens, src, i, TOK_IDENT, "flag");
+						var flag_name = get_token_value(tokens, src, i);
+						if (flag_name == "CLAMP") {
+							flags |= TEX_CLAMP_X | TEX_CLAMP_Y;
+						}
+						else if (flag_name == "CLAMP_X") {
+							flags |= TEX_CLAMP_X;
+						}
+						else if (flag_name == "CLAMP_Y") {
+							flags |= TEX_CLAMP_Y;
+						}
+						else {
+							return 0, error({script_line(tokens[i+TOK_line]), ": unknown flag '", name, "'"});
+						}
+						i = expect_next(tokens, src, i);
+						if (tokens[i+TOK_type] == '|') {
+							continue;
+						}
+						i -= TOK_SIZE;
+						break;
+					}
+				}
+				else {
+					i -= TOK_SIZE;
+				}
+
+				i = expect_symbol(tokens, src, i, ')');
+				gen->GEN_bytecode[] = name == "sample_nearest"? BC_SAMPLE_NEAREST : name == "sample_bilinear"? BC_SAMPLE_BILINEAR : BC_SAMPLE_BICUBIC;
+				gen->GEN_bytecode[] = out_reg_ref[0];
+				gen->GEN_bytecode[] = gen->GEN_num_inputs++;
+				gen->GEN_bytecode[] = gen->GEN_num_inputs++;
+				gen->GEN_bytecode[] = flags;
+				return i;
+			}
+			if (name == "mix") {
+				var reg1 = alloc_reg(gen, tokens[i+TOK_line]);
+				var reg2 = alloc_reg(gen, tokens[i+TOK_line]);
+				var reg1_ref = [reg1];
+				var reg2_ref = [reg2];
+				i = expect_symbol(tokens, src, i, '(');
+				i = parse_expression(tokens, src, i, gen, reg1_ref);
+				i = expect_symbol(tokens, src, i, ',');
+				i = parse_expression(tokens, src, i, gen, reg2_ref);
+				i = expect_symbol(tokens, src, i, ',');
+				i = parse_param(tokens, src, i, gen);
+				i = expect_symbol(tokens, src, i, ')');
+				gen->GEN_bytecode[] = BC_MIX;
+				gen->GEN_bytecode[] = out_reg_ref[0];
+				gen->GEN_bytecode[] = reg1_ref[0];
+				gen->GEN_bytecode[] = reg2_ref[0];
+				gen->GEN_bytecode[] = gen->GEN_num_inputs++;
+				free_reg(gen, reg1);
+				free_reg(gen, reg2);
+				return i;
+			}
+			var var_reg = hash_get(gen->GEN_vars, name, -1);
+			if (var_reg >= 0) {
+				out_reg_ref[0] = var_reg;
+			}
+			else {
+				gen->GEN_bytecode[] = BC_COLOR;
+				gen->GEN_bytecode[] = out_reg_ref[0];
+				gen->GEN_bytecode[] = gen->GEN_num_inputs++;
+				if (length(gen->GEN_input_tokens) > 0) {
+					tokens_parse(gen->GEN_input_tokens, src, ",", tokens[i+TOK_line]);
+				}
+				array_append(gen->GEN_input_tokens, tokens, i, TOK_SIZE);
+			}
+			return i;
+		}
+
+		case '(':
+			i = parse_expression(tokens, src, i, gen, out_reg_ref);
+			i = expect_symbol(tokens, src, i, ')');
+			return i;
+
+		case '$': {
+			gen->GEN_bytecode[] = BC_COLOR;
+			gen->GEN_bytecode[] = out_reg_ref[0];
+			gen->GEN_bytecode[] = gen->GEN_num_inputs++;
+			if (length(gen->GEN_input_tokens) > 0) {
+				tokens_parse(gen->GEN_input_tokens, src, ",", tokens[i+TOK_line]);
+			}
+			i = expect_symbol(tokens, src, i, '(');
+			var start = i;
+			i = expect_expression(tokens, src, i);
+			array_append(gen->GEN_input_tokens, tokens, start + TOK_SIZE, i - start);
+			i = expect_symbol(tokens, src, i, ')');
+			return i;
+		}
+	}
+	return 0, error({script_line(tokens[i+TOK_line]), ": expected expression"});
+}
+
+function @parse_multiplicative_expression(tokens, src, i, gen, out_reg_ref)
+{
+	i = parse_primary_expression(tokens, src, i, gen, out_reg_ref);
+
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		var c = tokens[i+TOK_type];
+		switch (c) {
+			case '*': {
+				var reg = alloc_reg(gen, tokens[i+TOK_line]);
+				var reg_ref = [reg];
+				i = parse_primary_expression(tokens, src, i, gen, reg_ref);
+				gen->GEN_bytecode[] = BC_MUL;
+				gen->GEN_bytecode[] = out_reg_ref[0];
+				gen->GEN_bytecode[] = out_reg_ref[0];
+				gen->GEN_bytecode[] = reg_ref[0];
+				free_reg(gen, reg);
+				continue;
+			}
+		}
+
+		i -= TOK_SIZE;
+		break;
+	}
+	return i;
+}
+
+function @parse_additive_expression(tokens, src, i, gen, out_reg_ref)
+{
+	i = parse_multiplicative_expression(tokens, src, i, gen, out_reg_ref);
+
+	for (;;) {
+		i = expect_next(tokens, src, i);
+		var c = tokens[i+TOK_type];
+		switch (c) {
+			case '+', '-': {
+				var reg = alloc_reg(gen, tokens[i+TOK_line]);
+				var reg_ref = [reg];
+				i = parse_multiplicative_expression(tokens, src, i, gen, reg_ref);
+				gen->GEN_bytecode[] = c == '+'? BC_ADD : BC_SUB;
+				gen->GEN_bytecode[] = out_reg_ref[0];
+				gen->GEN_bytecode[] = out_reg_ref[0];
+				gen->GEN_bytecode[] = reg_ref[0];
+				free_reg(gen, reg);
+				continue;
+			}
+		}
+
+		i -= TOK_SIZE;
+		break;
+	}
+	return i;
+}
+
+function @parse_expression(tokens, src, i, gen, out_reg_ref)
+{
+	return parse_additive_expression(tokens, src, i, gen, out_reg_ref);
+}
+
+function @parse_param(tokens, src, i, gen)
+{
+	if (length(gen->GEN_input_tokens) > 0) {
+		tokens_parse(gen->GEN_input_tokens, src, ",", tokens[i+TOK_line]);
+	}
+
+	i = expect_next(tokens, src, i);
+	if (tokens[i+TOK_type] == TOK_IDENT) {
+		array_append(gen->GEN_input_tokens, tokens, i, TOK_SIZE);
+		return i;
+	}
+	else if (tokens[i+TOK_len] == 1 && src[tokens[i+TOK_off]] == '$') {
+		i = expect_symbol(tokens, src, i, '(');
+		var start = i;
+		i = expect_expression(tokens, src, i);
+		array_append(gen->GEN_input_tokens, tokens, start + TOK_SIZE, i - start);
+		i = expect_symbol(tokens, src, i, ')');
+		return i;
+	}
+	return 0, error({script_line(tokens[i+TOK_line]), ": expected variable or fragment"});
+}
+
+function @dump_tokens(tokens, src)
+{
+	var s = {""};
+	var last_line = 1, last_type = -1;
+	
+	for (var i=0; i<length(tokens); i+=TOK_SIZE) {
+		if (last_line != tokens[i+TOK_line]) {
+			s[] = '\n';
+			last_line = tokens[i+TOK_line];
+		}
+		else {
+			if (last_type < ' ' && tokens[i+TOK_type] < ' ') {
+				s[] = ' ';
+			}
+		}
+		array_append(s, src, tokens[i+TOK_off], tokens[i+TOK_len]);
+		last_type = tokens[i+TOK_type];
+	}
+	log(s);
+}
+
+function @expect_next(tokens, src, i)
+{
+	i += TOK_SIZE;
+	if (i >= length(tokens)) {
+		return 0, error("unexpected end of file");
+	}
+	return i;
+}
+
+function @expect_type(tokens, src, i, type, what)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != type) {
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected ", what});
+	}
+	return i;
+}
+
+function @expect_symbol(tokens, src, i, sym)
+{
+	i += TOK_SIZE;
+	if (tokens[i+TOK_type] != sym) {
+		var s = {" "};
+		s[0] = sym;
+		return 0, error({script_line(tokens[i+TOK_line]), ": expected '", s, "'"});
+	}
+	return i;
+}
+
+function @expect_expression(tokens, src, i)
+{
+	var level = 0;
+	i += TOK_SIZE;
+	for (; i < length(tokens); i += TOK_SIZE) {
+		switch (tokens[i]) {
+			case '(', '{', '[':
+				level++;
+				break;
+			case ')', '}', ']':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				level--;
+				break;
+			case ',', ';':
+				if (level == 0) {
+					return i - TOK_SIZE;
+				}
+				break;
+		}
+	}
+
+	return 0, error("unexpected end of file");
+}
+
+function @get_token_value(tokens, src, i)
+{
+	return array_extract(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @get_token_string(tokens, src, i)
+{
+	return token_parse_string(src, tokens[i+TOK_off], tokens[i+TOK_len]);
+}
+
+function @from_hex(s)
+{
+	var value = 0, shift = 0;
+	for (var i=length(s)-1; i>=0; i--) {
+		var c = s[i];
+		switch (s[i]) {
+			case '0'..'9': value |= (c-'0') << shift; break;
+			case 'a'..'f': value |= (c-'a'+10) << shift; break;
+			case 'A'..'F': value |= (c-'A'+10) << shift; break;
+		}
+		shift += 4;
+	}
+	return value;
+}

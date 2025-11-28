@@ -1,0 +1,325 @@
+/*
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/stream";
+import "io/file";
+import "io/tcp";
+import "io/tls/tls";
+import "io/crypto/sha256";
+import "util/json";
+
+const {
+	@PACKET_ERROR,
+	@PACKET_SUCCESS,
+	@PACKET_CONNECT,
+	@PACKET_CONNECT_SUCCESS,
+	@PACKET_CONNECT_FAILURE,
+	@PACKET_DISCONNECT,
+	@PACKET_DATA
+};
+
+function @append_short(buf: Byte[], value: Short)
+{
+	buf[] = value & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+}
+
+function @append_int(buf: Byte[], value: Integer)
+{
+	buf[] = value & 0xFF;
+	buf[] = (value >>> 8) & 0xFF;
+	buf[] = (value >>> 16) & 0xFF;
+	buf[] = value >>> 24;
+}
+
+function @get_short(buf: Byte[], off: Integer): Short
+{
+	return buf[off+0] | (buf[off+1] << 8);
+}
+
+function @get_int(buf: Byte[], off: Integer): Integer
+{
+	return buf[off+0] | (buf[off+1] << 8) | (buf[off+2] << 16) | (buf[off+3] << 24);
+}
+
+function @to_hex(value)
+{
+	var hex = {""};
+	var len = length(value);
+	for (var i=0; i<len; i++) {
+		var b = value[i];
+		var hi = b >>> 4;
+		var lo = b & 0xF;
+		hex[] = hi >= 10? hi - 10 + 'a' : hi + '0';
+		hex[] = lo >= 10? lo - 10 + 'a' : lo + '0';
+	}
+	return hex;
+}
+
+function gateopener_is_available(path: Path): Boolean
+{
+	var config_path = path.merge("gateopener.json"); //XXX
+	return config_path.exists();
+}
+
+function gateopener_process(path: Path, request: Dynamic): JSON
+{
+	var config_path = path.merge("gateopener.json"); //XXX
+	if (!config_path.exists()) {
+		return null;
+	}
+	var config = JSON::parse(File::read_whole(config_path));
+
+	var server_host = config.get("server").as_string();
+	var server_port = config.get("port").as_int();
+	var certificate = config.opt("certificate");
+	var access_token = config.opt("access_token");
+
+	var conn: Stream;
+	var is_tls = false;
+	if (certificate.has_value()) {
+		var tcp_conn = TCPConnection::open(server_host, server_port);
+		var tls = tls_create(tcp_conn, server_host, server_port);
+		tls_connect(tls);
+		var fingerprint = to_hex(sha256(tls_get_cert_binary(tls, 0)));
+		if (certificate.as_string() != fingerprint) {
+			throw error("unrecognized certificate");
+		}
+		conn = tls_open_stream(tls);
+		is_tls = true;
+	}
+	else {
+		conn = TCPConnection::open(server_host, server_port);
+	}
+
+	var conn_map: TCPConnection[Integer] = {};
+
+	var packet = [];
+	append_int(packet, 1); // version
+	if (access_token.has_value()) {
+		var token = access_token.as_string();
+		if (token.length > 255) {
+			throw error("invalid access token");
+		}
+		foreach (var c in token) {
+			if (c > 255) {
+				throw error("invalid access token");
+			}
+		}
+		packet[] = token.length;
+		packet.append(token as Byte[]);
+	}
+	else {
+		packet[] = 0;
+	}
+	var request_data = (request as JSON).to_bytes();
+	append_short(packet, request_data.length);
+	packet.append(request_data);
+	conn.write(packet);
+	conn.flush();
+
+	var buf = Array::create_shared(4096, 1);
+	var response: JSON;
+	var quit = false;
+
+	while (!quit) {
+		var read: Integer;
+		if (is_tls) {
+			read = tls_read_part(conn, buf, 0, 1, 10);
+		}
+		else {
+			read = (conn as TCPConnection).read_part(buf, 0, 1, 10);
+		}
+		if (read < 0) {
+			break;
+		}
+		if (read == 1) {
+			switch (buf[0]) {
+				case PACKET_ERROR: {
+					conn.read(buf, 0, 2);
+					var len = get_short(buf, 0);
+					if (len > buf.length) {
+						buf = Array::create_shared(len, 1);
+					}
+					conn.read(buf, 0, len);
+					throw error(String::from_utf8(buf, 0, len));
+				}
+
+				case PACKET_SUCCESS: {
+					conn.read(buf, 0, 4);
+					var len = get_int(buf, 0);
+					var response_data = Array::create_shared(len, 1);
+					conn.read(response_data);
+					response = JSON::parse(response_data);
+					quit = true;
+					break;
+				}
+				
+				case PACKET_CONNECT: {
+					//log("packet connect");
+					conn.read(buf, 0, 2);
+					var conn_id = buf[0];
+					var len = buf[1];
+					conn.read(buf, 0, len+2);
+					var hostname = {""};
+					hostname.append(buf as String, 0, len);
+					var port = get_short(buf, len);
+					//log("conn_id="+conn_id+" hostname="+hostname+" port="+port);
+					if (conn_map.contains(conn_id)) {
+						throw error("invalid connection ID");
+					}
+
+					var (proxy_conn, e) = TCPConnection::open(hostname, port);
+					if (e) {
+						dump(e);
+						packet.clear();
+						packet[] = PACKET_CONNECT_FAILURE;
+						packet[] = conn_id;
+						conn.write(packet);
+						conn.flush();
+					}
+					else {
+						conn_map[conn_id] = proxy_conn;
+						packet.clear();
+						packet[] = PACKET_CONNECT_SUCCESS;
+						packet[] = conn_id;
+						conn.write(packet);
+						conn.flush();
+					}
+					break;
+				}
+
+				case PACKET_DISCONNECT: {
+					//log("packet disconnect");
+					conn.read(buf, 0, 1);
+					var conn_id = buf[0];
+					//log("conn_id="+conn_id);
+					var proxy_conn = conn_map.get(conn_id, -1 as TCPConnection);
+					if (proxy_conn == -1) {
+						throw error("invalid connection ID");
+					}
+					conn_map.remove(conn_id);
+					if (proxy_conn) {
+						var (r, e) = proxy_conn.close();
+						if (e) {
+							dump(e);
+						}
+					}
+					packet.clear();
+					packet[] = PACKET_DISCONNECT;
+					packet[] = conn_id;
+					conn.write(packet);
+					conn.flush();
+					break;
+				}
+
+				case PACKET_DATA: {
+					//log("packet data");
+					conn.read(buf, 0, 3);
+					var conn_id = buf[0];
+					var len = get_short(buf, 1);
+					//log("conn_id="+conn_id+" len="+len);
+					while (buf.length < len) {
+						buf = Array::create_shared(buf.length*2, 1);
+					}
+					conn.read(buf, 0, len);
+					var proxy_conn = conn_map.get(conn_id, -1 as TCPConnection);
+					if (proxy_conn == -1) {
+						throw error("invalid connection ID");
+					}
+					if (proxy_conn) {
+						var (r, e) = proxy_conn.write(buf, 0, len);
+						if (e) {
+							conn_map[conn_id] = null;
+							var (r2, e2) = proxy_conn.close();
+							if (e2) {
+								dump(e2);
+							}
+							packet.clear();
+							packet[] = PACKET_DATA;
+							packet[] = conn_id;
+							append_short(packet, 0);
+							conn.write(packet);
+							conn.flush();
+						}
+					}
+					break;
+				}
+			}
+			if (quit) break;
+		}
+
+		foreach (var conn_id, proxy_conn in conn_map) {
+			if (!proxy_conn) {
+				continue;
+			}
+			var (r, e) = proxy_conn.read_part(buf, 0, min(buf.length, 4096), 0);
+			if (e) {
+				dump(e);
+				var (r2, e2) = proxy_conn.close();
+				if (e2) {
+					dump(e2);
+				}
+				conn_map[conn_id] = null;
+				packet.clear();
+				packet[] = PACKET_DATA;
+				packet[] = conn_id;
+				append_short(packet, 0);
+				conn.write(packet);
+				conn.flush();
+			}
+			else {
+				if (r < 0) {
+					var (r2, e2) = proxy_conn.close();
+					if (e2) {
+						dump(e2);
+					}
+					conn_map[conn_id] = null;
+					packet.clear();
+					packet[] = PACKET_DATA;
+					packet[] = conn_id;
+					append_short(packet, 0);
+					conn.write(packet);
+					conn.flush();
+				}
+				else if (r > 0) {
+					packet.clear();
+					packet[] = PACKET_DATA;
+					packet[] = conn_id;
+					append_short(packet, r);
+					conn.write(packet);
+					conn.write(buf, 0, r);
+					conn.flush();
+				}
+			}
+		}
+	}
+
+	foreach (var id, proxy_conn in conn_map) {
+		var (r, e) = proxy_conn.close();
+		if (e) dump(e);
+	}
+
+	conn.close();
+	return response;
+}

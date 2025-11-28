@@ -1,0 +1,201 @@
+/*
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "string_switch";
+use "classes";
+
+import "io/file";
+import "io/time";
+import "image/image";
+import "image/rect";
+import "util/string";
+import "util/json";
+import "util/random";
+import "gateopener/handler";
+import "gateopener/image_analyze";
+
+class GenericHandler: Handler
+{
+	var @first_url: String;
+	var @ignore_requests: Boolean;
+
+	constructor create()
+	{
+	}
+
+	override function init()
+	{
+		open_url(client_request.get("url").as_string());
+	}
+
+	override function handle_before_request_sent(params: JSON): Integer
+	{
+		var request = params.get("request");
+		var url = request.get("url").as_string();
+		var url_without_params = url.split('?')[0];
+
+		var allow = ALLOW_PASS;
+		if (ignore_requests) {
+			allow = ALLOW_IGNORE;
+		}
+		else if (!first_url) {
+			first_url = url_without_params;
+			log("first_url="+first_url);
+		}
+		else {
+			if (url_without_params == first_url) {
+				allow = ALLOW_IGNORE;
+				log("got first url again, sending response with success");
+				var headers = request.get("headers").as_array();
+				var user_agent: Dynamic = JSONNull::get();
+				foreach (var header in headers) {
+					if (header.get("name").as_string().to_lower_case() == "user-agent") {
+						user_agent = header.get("value").get("value").as_string();
+						break;
+					}
+				}
+				var cookies = request.get("cookies").as_array();
+				var response_cookies: String[String] = {};
+				foreach (var cookie in cookies) {
+					var name = cookie.get("name").as_string();
+					var value = cookie.get("value").get("value").as_string();
+					response_cookies[name] = value;
+				}
+				var client_response = {
+					"user_agent": user_agent,
+					"cookies": response_cookies
+				};
+				dump(client_response);
+				send_response(client_response);
+				ignore_requests = true;
+			}
+		}
+		return allow;
+	}
+}
+
+class CloudflareHandler: GenericHandler
+{
+	var @last_time: Integer;
+	var @last_rect: Rect;
+	var @cnt: Integer;
+	var @mouse_done: Boolean;
+	var @random: Random;
+	var @first_response: Boolean;
+
+	constructor create()
+	{
+		random = Random::create(Monotonic::get_micro_time(), 0);
+		first_response = true;
+	}
+
+	override function handle_response_started(params: JSON)
+	{
+		if (first_response) {
+			var request = params.get("request");
+			var response = params.get("response");
+			var url = request.get("url").as_string();
+			if (url == first_url && response.get("status").as_int() == 200) {
+				var headers = request.get("headers").as_array();
+				var user_agent: Dynamic = JSONNull::get();
+				foreach (var header in headers) {
+					if (header.get("name").as_string().to_lower_case() == "user-agent") {
+						user_agent = header.get("value").get("value").as_string();
+						break;
+					}
+				}
+				headers = response.get("headers").as_array();
+				var response_cookies: String[String] = {};
+				foreach (var header in headers) {
+					if (header.get("name").as_string().to_lower_case() == "set-cookie") {
+						var value = header.get("value").get("value").as_string();
+						value = value.split(';')[0];
+						var idx = value.search_char('=');
+						if (idx >= 0) {
+							var key = value.substring(0, idx).trim();
+							response_cookies[key] = value.substring(idx+1).trim();
+						}
+					}
+				}
+				var client_response = {
+					"direct_response": JSONBoolean::get(true),
+					"user_agent": user_agent,
+					"cookies": response_cookies
+				};
+				dump(client_response);
+				send_response(client_response);
+				ignore_requests = true;
+			}
+			first_response = false;
+		}
+	}
+
+	override function handle_periodic(time: Integer)
+	{
+		if (time - last_time >= 1000) {
+			log("taking screenshot");
+			take_screenshot();
+			last_time = time;
+		}
+	}
+
+	override function handle_screenshot(img: Image)
+	{
+		log("obtained screenshot");
+		var rect = find_cloudflare_checkbox(img);
+
+		if (rect) {
+			if (rect == last_rect) {
+				if (!mouse_done) {
+					var x = rect.get_x() + random.next(rect.get_width());
+					var y = rect.get_y() + random.next(rect.get_height());
+					log("got cloudflare checkbox "+rect.to_string()+", clicking on "+x+","+y+"...");
+					mouse_action(
+						random.next(img.get_width()),
+						random.next(img.get_height()),
+						x,
+						y,
+						1000 + random.next(1000),
+						80 + random.next(150)
+					);
+					mouse_done = true;
+				}
+			}
+			last_rect = rect;
+		}
+	}
+}
+
+function get_handler(client_request: JSON): Handler
+{
+	if (!client_request.is_object()) {
+		throw error("must be object");
+	}
+	var url = client_request.opt("url").as_string();
+	if (!url.starts_with("http://") && !url.starts_with("https://")) {
+		throw error("invalid url");
+	}
+	switch (client_request.get("type").as_string()) {
+		case "generic":    return GenericHandler::create();
+		case "cloudflare": return CloudflareHandler::create();
+	}
+	throw error("unknown type");
+}

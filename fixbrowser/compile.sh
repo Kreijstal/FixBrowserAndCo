@@ -10,7 +10,7 @@ gcc -DFIXBUILD_BINCOMPAT -Wall -O3 -g -msse2 -mstackrealign -o fiximage.o -c fix
 gcc -Wall -O3 -g -o fixgui.o -c fixgui.c
 gcc -Wall -O3 -g -o fixgui_gtk.o -c fixgui_gtk.c
 gcc -Wall -O3 -g -o fixtask.o -c fixtask.c
-./fixembed -ex scripts . embed_scripts.h embed_scripts
+./fixembed -ex gateopener -ex scripts . embed_scripts.h embed_scripts
 ./fixembed -bin res embed_resources.h embed_resources
 ./fixembed -bin res_proxy embed_resources_proxy.h embed_resources_proxy
 ./gencharsets charsets embed_charsets.h embed_charsets

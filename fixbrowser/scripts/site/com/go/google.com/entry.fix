@@ -1,46 +1,55 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "dispatch/javascript-site" : javascript_site;
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "gstatic.com")) return true;
+	if (domain_ends_with(dest, "ytimg.com")) return true;
 	if (is_google_domain(dest)) return true;
 	return false;
 }
 
-function handle_request(request)
+function handle_request(request: Request)
 {
-	if (request_get_path(request) == "/maps") {
-		return javascript_site:handle_request(request);
+	if (request.get_scheme() == "http") {
+		request.set_redirect(Link::with_https(request.get_url()));
+		return;
+	}
+
+	// https://github.com/benbusby/whoogle-search
+	request.set_header("User-Agent", "Lynx/2.9.2 libwww-FM/2.14 SSL-MM/1.4.1 OpenSSL/3.4.0");
+	request.append_to_header("Cookie", "CONSENT=PENDING+987");
+	request.append_to_header("Cookie", "SOCS=CAESHAgBEhIaAB");
+
+	if (request.get_path() == "/maps") {
+		javascript_site:handle_request(request);
+		return;
 	}
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	if (request_get_path(request) == "/") {
-		add_style_to_element(document, "input[name=q]", "margin: 0; width: 440px;");
-	}
-
-	var meta = element_query(document, "meta[http-equiv=refresh][content]");
+	var meta = document.query("meta[http-equiv=refresh][content]");
 	if (meta) {
-		var value = element_get_attr(meta, "content");
+		var value = meta.get_attr("content");
 		var prefix = "0;url=";
-		if (string_starts_with(value, prefix)) {
-			request_set_redirect(request, string_substring(value, length(prefix)));
+		if (value.starts_with(prefix)) {
+			request.set_redirect(value.substring(prefix.length));
 		}
 	}
 
-	var links = element_query_all(document, "a[href^='/url?']");
-	for (var i=0; i<length(links); i++) {
-		var real_url = link_get_param(element_get_attr(links[i], "href"), "q");
+	foreach (var link in document.query_all("a[href^='/url?']")) {
+		var real_url = Link::get_param(link.get_attr("href"), "q");
 		if (real_url) {
-			element_set_attr(links[i], "href", real_url);
+			link.set_attr("href", real_url);
 		}
 	}
 }
 
-function @is_google_domain(domain)
+function @is_google_domain(domain: String): Boolean
 {
 	var domains = [
 		"google.com",
@@ -246,8 +255,8 @@ function @is_google_domain(domain)
 		"google.co.zm",
 		"google.co.zw"
 	];
-	for (var i=0; i<length(domains); i++) {
-		if (domain_ends_with(domain, domains[i])) return true;
+	foreach (var google_domain in domains) {
+		if (domain_ends_with(domain, google_domain)) return true;
 	}
 	return false;
 }

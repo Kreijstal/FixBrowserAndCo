@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -165,8 +165,8 @@ void embed_file(const char *fname)
 {
    FILE *f;
    char buf[1024];
-   int num;
-   int first, second;
+   int i, num;
+   int first, second, last_char;
    union {
       uint16_t value;
       uint8_t c[2];
@@ -178,6 +178,7 @@ void embed_file(const char *fname)
       exit(1);
    }
    fprintf(out, "   \"");
+   last_char = -1;
    while (fgets(buf, sizeof(buf), f)) {
       u.value = 0xFFFF;
       num = sscanf(buf, "0x%x\t0x%x", &first, &second);
@@ -190,8 +191,19 @@ void embed_file(const char *fname)
          u.value = 0xFFFD;
       }
       if (u.value != 0xFFFF) {
+         if (first <= last_char) {
+            fprintf(stderr, "error: characters not sorted\n");
+            exit(1);
+         }
+         for (i=last_char+1; i<first; i++) {
+            fprintf(out, "\\%03o\\%03o", 0xFD, 0xFF);
+         }
          fprintf(out, "\\%03o\\%03o", u.c[0], u.c[1]);
+         last_char = first;
       }
+   }
+   for (i=last_char+1; i<256; i++) {
+      fprintf(out, "\\%03o\\%03o", 0xFD, 0xFF);
    }
    if (ferror(f)) {
       errno = ferror(f);
@@ -226,7 +238,7 @@ void traverse_dir(const char *dirname)
    for (e=entries; e; e=e->next) {
       if (e->name[0] == '.') continue;
 
-      if (!e->dir && ends_with(e->name, ".txt")) {
+      if (!e->dir && ends_with(e->name, ".txt") && strcmp(e->name, "readme.txt") != 0) {
          strcpy(tmp, e->name);
          tmp[strlen(tmp)-4] = 0;
          fprintf(out, "   \"%s\",\n", tmp);

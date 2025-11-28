@@ -1,4 +1,33 @@
+/*
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
 import "util/string";
+
+const @class_Template = "struct=TPL";
+const @static_Template_create_1 = "(String): Template";
+const @method_Template_set_3 = "(String, String)";
+const @method_Template_begin_2 = "(String)";
+const @method_Template_next_record_1 = "()";
+const @method_Template_end_1 = "()";
+const @method_Template_process_1 = "(): String";
 
 const {
 	@TPL_fname,
@@ -141,7 +170,7 @@ function @process_block(block, vars, block_vars, block_infos, fname, s)
 		var part = block[i];
 		switch (part->PART_type) {
 			case PART_TEXT:
-				string_append(s, part->PART_text);
+				array_append(s, part->PART_text);
 				break;
 
 			case PART_VAR: {
@@ -156,7 +185,7 @@ function @process_block(block, vars, block_vars, block_infos, fname, s)
 					}
 					value = vars{name};
 				}
-				string_append(s, value);
+				array_append(s, value);
 				break;
 			}
 

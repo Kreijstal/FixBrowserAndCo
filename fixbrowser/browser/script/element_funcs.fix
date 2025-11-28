@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,6 +19,7 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+import "io/charset/charset";
 import "browser/html/html";
 import "browser/html/element";
 import "browser/html/element_query";
@@ -44,7 +45,7 @@ function @script_element_create_text(params, data)
 
 function @script_element_create_fragment(params, data)
 {
-	var doc = html_parse({"<html><body>", params[0], "</body></html>"}, null);
+	var doc = html_parse(string_to_utf8({"<html><body>", params[0], "</body></html>"}), charset_get("UTF-8"));
 	var elem = element_get_last_child(element_get_first_child(doc));
 	var frag = element_create("#fragment");
 	for (var e = element_get_first_child(elem), next; e; e = next) {
@@ -150,8 +151,8 @@ function @script_element_insert_after(params, data)
 {
 	var parent = script_get_handle(params[0], HANDLE_TYPE_ELEMENT);
 	var elem = script_get_handle(params[1], HANDLE_TYPE_ELEMENT);
-	var before = script_get_handle(params[2], HANDLE_TYPE_ELEMENT);
-	element_insert_after(parent, elem, before);
+	var after = script_get_handle(params[2], HANDLE_TYPE_ELEMENT);
+	element_insert_after(parent, elem, after);
 }
 
 function @script_element_append_child(params, data)
@@ -261,7 +262,7 @@ function @script_element_multiquery_match_all(params, data)
 
 function @script_document_parse(params, data)
 {
-	var document = html_parse(params[0], null);
+	var document = html_parse(params[0], length(params) > 1? charset_get(params[1]) : null);
 	return script_create_handle(HANDLE_TYPE_ELEMENT, document);
 }
 
@@ -303,4 +304,5 @@ function register_element_funcs(heap)
 	script_register_function(heap, "element_multiquery_add#3", script_element_multiquery_add#2, null);
 	script_register_function(heap, "element_multiquery_match_all#2", script_element_multiquery_match_all#2, null);
 	script_register_function(heap, "document_parse#1", script_document_parse#2, null);
+	script_register_function(heap, "document_parse#2", script_document_parse#2, null);
 }

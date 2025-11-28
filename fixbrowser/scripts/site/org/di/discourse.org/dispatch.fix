@@ -1,6 +1,8 @@
+use "classes";
+
 import "util/common";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	request_add_same_domain(request, "discourse-cdn-sjc1.com");
+	request.add_same_domain("discourse-cdn-sjc1.com");
 }

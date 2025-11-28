@@ -1,2 +1,59 @@
+Version 0.4 (2025/07/05):
+- Added redirection from AMP links to normal websites
+- Added support for open and name attributes in <details> in FixProxy
+- Added more robust handling of data store file in case of JSON syntax error
+- Added GateOpener service
+- Added support for ICO image format in FixProxy
+- Fixed timer thread not sleeping properly on Haiku OS
+- Fixed handling of mouse events on Haiku OS
+- Fixed launching from different directory
+- Fixed setting of multiple cookies in scripts
+- Fixed occasional bad record MAC error in TLS implementation
+- Fixed downloading of files to work with all mime types in FixProxy
+- [cloudflare] Added automatic handling of Cloudflare challenges using GateOpener service
+- [duckduckgo] Removed tracking in results
+- [anubis] Updated support for new versions
+- [anubis] Added fallback using GateOpener service
+- [go-away] Added initial support for "go-away" gatekeeper using GateOpener service
+
+Version 0.3 (2025/05/11):
+- Added support for missing single byte encodings
+- Added sending of referer header pointing to the requested domain
+- Added support for <picture> tag in FixProxy
+- Added support for CSS variables in FixProxy
+- Added ability to set default URL as command-line parameter
+- Added parsing of cursor CSS property
+- Increased maximum allowed HTTP response header size
+- Fixed error on duplicate headers in HTTP response
+- [archive] Fixed and improved loading of timeline in Wayback Machine
+- [anubis] Added support for Anubis gatekeeper
+- [google] Added support for Google Search
+- [reddit] Added loading of all comments
+- [reddit] Fixed loading of user profiles that require age confirmation
+- [reddit] Changed to track continued discussions separately
+- [giphy] Fixed loading of images
+- [various] Added support for geforcenowspecs.cloud
+
+Version 0.2 (2025/01/24):
+- Added support for SVG, WebP and AVIF image formats in FixProxy
+- Added showing of URL for using FixProxy
+- Added support for <audio> and <video> tags in FixProxy
+- Added support for downloading of files in FixProxy
+- Added data store for scripts
+- Added support for Haiku OS
+- Changed scripts to use classes
+- Disabled Unicode filtering for now
+- Fixed handling of charset when replacing content in script handlers
+- Fixed loading of pages with replaced content from script handlers
+- Fixed matching of CSS class selectors
+- Fixed merging of empty URLs or containing just fragment part
+- Fixed compatibility with Windows 2000
+- [imgur] Added support for viewing of images and videos
+- [reddit] Added support for viewing of share links
+- [reddit] Removed signup banner and obsolete adjustments
+- [reddit] Added tracking of unread comments
+- [hackernews] Added tracking of unread comments
+- [hackernews] Added automatic expansion of hidden comments
+
 Version 0.1 (2024/12/23):
 - Initial release

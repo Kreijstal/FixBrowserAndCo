@@ -1,22 +1,54 @@
+use "classes";
+
+import "util/common";
 import "util/string";
 
-var @mq;
+var @mq: ElementMultiquery;
 
-function dispatch_adjust_document(request, document)
+function dispatch_handle_request(request: Request): String[]
+{
+	var gk = GateKeeper::get(request.get_domain());
+	if (gk) {
+		var handlers: String[] = [];
+		foreach (var type in gk.get_types()) {
+			handlers[] = "dispatch/"+type;
+		}
+		return handlers;
+	}
+	return null;
+}
+
+function dispatch_adjust_document(request: Request, document: Element): String[]
 {
 	if (!mq) {
 		dispatch_init();
 	}
 
-	return element_multiquery_match_all(mq, document);
+	foreach (var name, values in request.get_headers()) {
+		if (name == "Set-Cookie") {
+			foreach (var value in values) {
+				if (value.starts_with("within.website-x-cmd-anubis-auth=")) {
+					return ["dispatch/anubis"];
+				}
+				if (value.starts_with("techaro.lol-anubis-auth=")) {
+					return ["dispatch/anubis"];
+				}
+			}
+		}
+		if (name == "Cf-Mitigated" && values == ["challenge"]) {
+			return ["dispatch/cloudflare"];
+		}
+	}
+
+	return mq.match_all(document);
 }
 
-function dispatch_handle_redirect(request, new_url)
+function dispatch_handle_redirect(request: Request, new_url: String): String
 {
-	if (string_starts_with(new_url, "https://medium.com/m/global-identity?redirectUrl=")) {
+	if (new_url.starts_with("https://medium.com/m/global-identity?redirectUrl=")) {
 		return "site/com/me/medium.com/dispatch";
 	}
-	if (string_starts_with(new_url, "https://guce.yahoo.com/consent?")) {
+	if (new_url.starts_with("https://guce.yahoo.com/consent?")) {
 		return "site/com/ya/yahoo.com/dispatch";
 	}
 	return null;
@@ -24,42 +56,43 @@ function dispatch_handle_redirect(request, new_url)
 
 function @dispatch_init()
 {
-	mq = element_multiquery_create();
-	element_multiquery_add(mq, "div#disqus_thread", "site/com/di/disqus.com/dispatch");
-	element_multiquery_add(mq, "script[src^='/_Incapsula_Resource']", "dispatch/incapsula");
-	element_multiquery_add(mq, "iframe[src^='/_Incapsula_Resource']", "dispatch/incapsula");
-	element_multiquery_add(mq, "div.cf-error-footer a#brand_link[href^='https://www.cloudflare.com/5xx-error-landing']", "dispatch/cloudflare");
-	element_multiquery_add(mq, "form[id='challenge-form'][action$='/cdn-cgi/l/chk_jschl']", "dispatch/cloudflare");
-	element_multiquery_add(mq, "body.ng-cloak", "dispatch/angular");
-	element_multiquery_add(mq, "script[src*='//unpkg.com/docsify/']", "dispatch/docsify");
-	element_multiquery_add(mq, "div[id='incompatible-browser'] a[href='https://github.com/Chocobozzz/PeerTube/issues/new']", "dispatch/peertube");
-	element_multiquery_add(mq, "meta[name='generator'][content='Wix.com Website Builder']", "dispatch/wix");
+	mq = ElementMultiquery::create();
+	mq.add("div#disqus_thread", "site/com/di/disqus.com/dispatch");
+	mq.add("script[src^='/_Incapsula_Resource']", "dispatch/incapsula");
+	mq.add("iframe[src^='/_Incapsula_Resource']", "dispatch/incapsula");
+	mq.add("body.ng-cloak", "dispatch/angular");
+	mq.add("script[src*='//unpkg.com/docsify/']", "dispatch/docsify");
+	mq.add("div[id='incompatible-browser'] a[href='https://github.com/Chocobozzz/PeerTube/issues/new']", "dispatch/peertube");
+	mq.add("meta[name='generator'][content='Wix.com Website Builder']", "dispatch/wix");
+	mq.add("html[\u26A1]", "dispatch/amp");
+	mq.add("html[amp]", "dispatch/amp");
+	mq.add("html > head > link[rel='stylesheet'][href^='/.well-known/.git.gammaspectra.live/git/go-away/']", "dispatch/go-away");
 
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.medium.com/']", "site/com/me/medium.com/dispatch");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.wp.com/']", "site/com/wo/wordpress.com/dispatch");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='-wpengine.netdna-ssl.com/']", "site/com/wp/wpengine.com/dispatch");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://www.blogger.com/']", "site/com/bl/blogger.com/dispatch");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.squarespace.com/']", "site/com/sq/squarespace.com/dispatch");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.webflow.com/']", "site/com/we/webflow.com/dispatch");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://discourse-cdn-sjc1.com/']", "site/org/di/discourse.org/dispatch");
+	mq.add("html > head > link[rel='stylesheet'][href*='.medium.com/']", "site/com/me/medium.com/dispatch");
+	mq.add("html > head > link[rel='stylesheet'][href*='.wp.com/']", "site/com/wo/wordpress.com/dispatch");
+	mq.add("html > head > link[rel='stylesheet'][href*='-wpengine.netdna-ssl.com/']", "site/com/wp/wpengine.com/dispatch");
+	mq.add("html > head > link[rel='stylesheet'][href^='https://www.blogger.com/']", "site/com/bl/blogger.com/dispatch");
+	mq.add("html > head > link[rel='stylesheet'][href*='.squarespace.com/']", "site/com/sq/squarespace.com/dispatch");
+	mq.add("html > head > link[rel='stylesheet'][href*='.webflow.com/']", "site/com/we/webflow.com/dispatch");
+	mq.add("html > head > link[rel='stylesheet'][href^='https://discourse-cdn-sjc1.com/']", "site/org/di/discourse.org/dispatch");
 
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='http://yui.yahooapis.com/pure/']", "dispatch/external_css");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://unpkg.com/purecss@']", "dispatch/external_css");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://ajax.aspnetcdn.com/ajax/bootstrap/']", "dispatch/external_css");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/']", "dispatch/external_css");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href*='.bootstrapcdn.com/bootstrap/']", "dispatch/external_css");
-	element_multiquery_add(mq, "html > head > link[rel='stylesheet'][href^='https://cdnjs.cloudflare.com/ajax/libs/materialize/']", "dispatch/external_css");
+	mq.add("html > head > link[rel='stylesheet'][href^='http://yui.yahooapis.com/pure/']", "dispatch/external_css");
+	mq.add("html > head > link[rel='stylesheet'][href^='https://unpkg.com/purecss@']", "dispatch/external_css");
+	mq.add("html > head > link[rel='stylesheet'][href^='https://ajax.aspnetcdn.com/ajax/bootstrap/']", "dispatch/external_css");
+	mq.add("html > head > link[rel='stylesheet'][href^='https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/']", "dispatch/external_css");
+	mq.add("html > head > link[rel='stylesheet'][href*='.bootstrapcdn.com/bootstrap/']", "dispatch/external_css");
+	mq.add("html > head > link[rel='stylesheet'][href^='https://cdnjs.cloudflare.com/ajax/libs/materialize/']", "dispatch/external_css");
 }
 
-function element_list_to_string(list)
+function element_list_to_string(list: Element[]): String
 {
 	var s = {"["};
-	for (var i=0; i<length(list); i++) {
+	for (var i=0; i<list.length; i++) {
 		if (i > 0) {
 			s[] = ',';
 			s[] = ' ';
 		}
-		string_append(s, element_to_string(list[i]));
+		s += list[i].to_string();
 	}
 	s[] = ']';
 	return s;

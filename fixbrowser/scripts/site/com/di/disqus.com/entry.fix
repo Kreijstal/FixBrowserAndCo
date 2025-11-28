@@ -1,33 +1,34 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/template";
 import "util/json";
 import "util/extract";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "disquscdn.com")) return true;
 	return false;
 }
 
-function handle_request(request)
+function handle_request(request: Request)
 {
-	if (request_get_path(request) == "/embed") {
-		var shortname = request_get_domain(request);
-		if (string_ends_with(shortname, ".disqus.com")) {
-			shortname = string_substring(shortname, 0, length(shortname)-11);
+	if (request.get_path() == "/embed") {
+		var shortname = request.get_domain();
+		if (shortname.ends_with(".disqus.com")) {
+			shortname = shortname.substring(0, shortname.length-11);
 		}
 		else {
 			shortname = null;
 		}
 
-		var params = request_get_params(request);
-		var url = params{"url"};
-		var title = params{"title"};
+		var url = request.get_param("url");
+		var title = request.get_param("title");
 
-		if (hash_get(params, "load", null) == "1") {
+		if (request.get_param("load") == "1") {
 			//var version = retrieve_version(shortname);
-			var disqus_url = link_with_params("https://disqus.com/embed/comments/", {
+			var disqus_url = Link::with_params("https://disqus.com/embed/comments/", {
 				"base": "default",
 				"f": shortname,
 				"t_u": url,
@@ -35,70 +36,71 @@ function handle_request(request)
 				"t_t": title,
 				"s_o": "default"
 			});
-			return show_comments(disqus_url);
+			request.replace_with_html(show_comments(disqus_url));
+			return;
 		}
 
-		var tpl = template_create("site/com/di/disqus.com/confirm_load.tpl");
-		template_set(tpl, "shortname", html_escape(shortname));
-		template_set(tpl, "url", html_escape(url));
-		template_set(tpl, "title", html_escape(title));
-		return template_process(tpl);
+		var tpl = Template::create("site/com/di/disqus.com/confirm_load.tpl");
+		tpl.set("shortname", html_escape(shortname));
+		tpl.set("url", html_escape(url));
+		tpl.set("title", html_escape(title));
+		request.replace_with_html(tpl.process());
+		return;
 	}
 }
 
-function @show_comments(url)
+function @show_comments(url: String): String
 {
-	var doc = document_parse(http_get(url));
-	var forum_data = json_parse(element_extract_text(element_query(doc, "script#disqus-forumData")));
-	var thread_data = json_parse(element_extract_text(element_query(doc, "script#disqus-threadData")));
+	var doc = Document::parse_from_http(url);
+	var forum_data = JSON::parse_string(doc.query("script#disqus-forumData").extract_text());
+	var thread_data = JSON::parse_string(doc.query("script#disqus-threadData").extract_text());
 
-	var response = json_get_object(thread_data, "response");
-	var posts = json_get_array(response, "posts");
+	var response = thread_data.get("response");
+	var posts = response.get("posts").as_array();
 
-	var tpl = template_create("site/com/di/disqus.com/posts.tpl");
+	var tpl = Template::create("site/com/di/disqus.com/posts.tpl");
 
-	var levels = {};
+	var levels: Integer[String] = {};
 
-	template_begin(tpl, "posts");
-	for (var i=0; i<json_length(posts); i++) {
-		var post = json_get_object(posts, i);
-		var id = json_get_string(post, "id");
-		var parent = json_get_number(post, "parent");
-		//var message = json_get_string(post, "message");
-		var message = json_get_string(post, "raw_message");
-		var date = json_get_string(post, "createdAt");
-		var idx = string_search_char(date, 'T');
+	tpl.begin("posts");
+	foreach (var post in posts) {
+		var id = post.get("id").as_string();
+		var parent = post.get("parent").as_string();
+		//var message = post.get("message").as_string();
+		var message = post.get("raw_message").as_string();
+		var date = post.get("createdAt").as_string();
+		var idx = date.search_char('T');
 		if (idx != -1) {
 			date[idx] = ' ';
 		}
 
-		var author = json_get_object(post, "author");
-		var profile_url = json_get_string(author, "profileUrl");
-		var name = json_get_string(author, "name");
+		var author = post.get("author");
+		var profile_url = author.get("profileUrl").as_string();
+		var name = author.get("name").as_string();
 
-		var avatar = json_get_object(author, "avatar");
-		var image = json_get_string(json_get_object(avatar, "large"), "cache");
+		var avatar = author.get("avatar");
+		var image = avatar.get("large").get("cache").as_string();
 
-		var level = parent? hash_get(levels, parent, -1) + 1 : 0;
-		levels{id} = level;
+		var level = parent? levels.get(parent, -1) + 1 : 0;
+		levels[id] = level;
 
-		template_set(tpl, "message", html_escape(message));
-		template_set(tpl, "date", html_escape(date));
-		template_set(tpl, "profile_url", html_escape(profile_url));
-		template_set(tpl, "name", html_escape(name));
-		template_set(tpl, "image", html_escape(image));
-		template_set(tpl, "indent", {(level*56)});
-		template_next_record(tpl);
+		tpl.set("message", html_escape(message));
+		tpl.set("date", html_escape(date));
+		tpl.set("profile_url", html_escape(profile_url));
+		tpl.set("name", html_escape(name));
+		tpl.set("image", html_escape(image));
+		tpl.set("indent", {(level*56)});
+		tpl.next_record();
 	}
-	template_end(tpl);
+	tpl.end();
 
-	return template_process(tpl);
+	return tpl.process();
 }
 
-function @retrieve_version(shortname)
+function @retrieve_version(shortname: String): String
 {
-	var url = {"https://", shortname, ".disqus.com/embed.js"};
-	var content = http_get(url);
+	var url = "https://"+shortname+".disqus.com/embed.js";
+	var content = String::from_utf8(Http::get(url).content);
 
 	var version = extract_string(content, "lounge.load.", ".js");
 	if (version) {

@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -20,13 +20,14 @@
  */
 
 import "io/stream";
+import "io/tcp";
 import "util/array";
 import "io/crypto/md5";
 import "io/crypto/sha1";
 import "io/crypto/sha256";
 
-const @MAX_READ_SIZE = 18432; // 16384+2048
-const @MAX_WRITE_SIZE = 4096;
+const @MAX_ENCRYPTED_SIZE = 18432; // 16384+2048
+const @MAX_WRITE_SIZE     = 4096;
 
 const {
 	TLS_1_0 = 0x0301,
@@ -114,6 +115,8 @@ const {
 
 const @HEADER_SIZE = 5;
 
+function record_read_timeout_marker() {}
+
 function record_create(stream)
 {
 	var record = object_create(REC_SIZE);
@@ -146,7 +149,7 @@ function record_set_version(record, version)
 	record->REC_version = version;
 }
 
-function record_read_part(record, buf, off, len)
+function record_read_part(record, buf, off, len, timeout)
 {
 	if (record->REC_reset) {
 		record->REC_read_type = -1;
@@ -159,7 +162,16 @@ function record_read_part(record, buf, off, len)
 			var header = record->REC_header;
 			var header_pos = record->REC_header_pos;
 
-			var r = stream_read_part(record->REC_stream, header, header_pos, length(header) - header_pos);
+			var r;
+			if (timeout >= 0) {
+				r = tcp_connection_read_part(record->REC_stream, header, header_pos, length(header) - header_pos, timeout);
+				if (r == 0) {
+					return 0, record_read_timeout_marker#0;
+				}
+			}
+			else {
+				r = stream_read_part(record->REC_stream, header, header_pos, length(header) - header_pos);
+			}
 			if (r < 0) {
 				if (header_pos != 0) {
 					return 0, error("incomplete header");
@@ -175,7 +187,7 @@ function record_read_part(record, buf, off, len)
 				if (type < CT_CHANGE_CIPHER_SPEC || type > CT_APPLICATION_DATA) {
 					return 0, error({"unknown content type ", type});
 				}
-				if (in_len > MAX_READ_SIZE) {
+				if (in_len > MAX_ENCRYPTED_SIZE) {
 					return 0, error({"packet too big (", in_len, ")"});
 				}
 				record->REC_read_type = type;
@@ -221,13 +233,18 @@ function record_get_type(record)
 
 function record_read(record, buf, off, len)
 {
+	return record_read(record, buf, off, len, -1);
+}
+
+function record_read(record, buf, off, len, timeout)
+{
 	var type = -1;
 	if (len == 0) {
 		if (record->REC_state == STATE_READ_DATA && !record->REC_reset) {
 			return record->REC_read_type;
 		}
 		do {
-			var r = record_read_part(record, buf, off, len);
+			var r = record_read_part(record, buf, off, len, -1);
 			if (r < 0) {
 				return 0, error("premature end of data");
 			}
@@ -242,7 +259,10 @@ function record_read(record, buf, off, len)
 	}
 
 	while (len > 0) {
-		var r = record_read_part(record, buf, off, len);
+		var r = record_read_part(record, buf, off, len, timeout);
+		if (r != 0) {
+			timeout = -1;
+		}
 		if (r < 0) {
 			if (type == -1) {
 				return -1;
@@ -267,10 +287,10 @@ function record_read(record, buf, off, len)
 	return type;
 }
 
-function record_read_packet(record, buf)
+function record_read_packet(record, buf, timeout)
 {
 	array_set_length(buf, 1);
-	var ct = record_read(record, buf, 0, 1);
+	var ct = record_read(record, buf, 0, 1, timeout);
 	if (ct < 0) return ct;
 	var rem = record->REC_remaining;
 	array_set_length(buf, 1+rem);
@@ -310,12 +330,21 @@ function record_write(record, type, packet)
 		sha256_process(record->REC_handshake_sha256, packet, off, len);
 	}
 
-	while (len - off > 0) {
-		var num = min(len - off, MAX_WRITE_SIZE - (length(buf) - HEADER_SIZE));
-		array_append(buf, packet, off, num);
-		off += num;
-		if (length(buf) - HEADER_SIZE == MAX_WRITE_SIZE) {
-			record_flush(record);
+	if (type == CT_APPLICATION_DATA) {
+		if (length(packet) > MAX_ENCRYPTED_SIZE) {
+			return 0, error("packet exceeded maximum size");
+		}
+		array_append(buf, packet);
+		record_flush(record);
+	}
+	else {
+		while (len - off > 0) {
+			var num = min(len - off, MAX_WRITE_SIZE - (length(buf) - HEADER_SIZE));
+			array_append(buf, packet, off, num);
+			off += num;
+			if (length(buf) - HEADER_SIZE == MAX_WRITE_SIZE) {
+				record_flush(record);
+			}
 		}
 	}
 }

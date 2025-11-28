@@ -1,70 +1,70 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 import "util/extract";
 
-function handle_redirect(request, new_url)
+function handle_redirect(request: Request, new_url: String)
 {
-	if (string_starts_with(new_url, "https://guce.yahoo.com/consent?")) {
-		var cookies = hash_get(request_get_headers(request), "Set-Cookie", null);
-
+	if (new_url.starts_with("https://guce.yahoo.com/consent?")) {
 		var cookie_GUCS, cookie_B;
-		for (var i=0; i<length(cookies); i++) {
-			var value = extract_string(cookies[i], "GUCS=", ";");
+		foreach (var cookie in request.get_headers().get("Set-Cookie", null)) {
+			var value = extract_string(cookie, "GUCS=", ";");
 			if (value) cookie_GUCS = value;
-			value = extract_string(cookies[i], "B=", ";");
+			value = extract_string(cookie, "B=", ";");
 			if (value) cookie_B = value;
 		}
 
 		// https://guce.yahoo.com/consent?brandType=nonEu&gcrumb=XXX&done=https%3A%2F%2Fwww.yahoo.com%2F
-		var http = http_open(new_url);
-		http_set_header(http, "Cookie", {"GUCS=", cookie_GUCS, "; B=", cookie_B});
-		http_connect(http);
-		var location = http_get_header(http, "Location");
-		stream_close(http);
+		var http = Http::open(new_url);
+		http.set_header("Cookie", "GUCS="+cookie_GUCS+"; B="+cookie_B);
+		http.connect();
+		var location = http.get_header("Location");
+		http.close();
 
 		// https://consent.yahoo.com/collectConsent?sessionId=XXX&lang=&inline=false
-		var doc = document_parse(http_get(location, null, {"Cookie": {"GUCS=", cookie_GUCS, "; B=", cookie_B}}));
-		var form = element_query(doc, "form");
+		var doc = Document::parse_from_http(location, null, {"Cookie": "GUCS="+cookie_GUCS+"; B="+cookie_B});
+		var form = doc.query("form");
 
-		var form_url = element_get_attr(form, "action");
-		form_url = url_to_string(url_merge(url_create(location), url_create(form_url)));
+		var form_url = form.get_attr("action");
+		form_url = URL::create(location).merge(URL::create(form_url)).to_string();
 
-		var params = {};
-		var elems = element_query_all(form, "input[type=hidden]");
-		for (var i=0; i<length(elems); i++) {
-			var name = element_get_attr(elems[i], "name");
-			var value = element_get_attr(elems[i], "value");
-			params{name} = value;
+		var params: String[String] = {};
+		foreach (var elem in form.query_all("input[type=hidden]")) {
+			var name = elem.get_attr("name");
+			var value = elem.get_attr("value");
+			params[name] = value;
 		}
-		params{"agree"} = "agree";
+		params["agree"] = "agree";
 
-		http = http_open(form_url);
-		http_set_header(http, "Cookie", {"GUCS=", cookie_GUCS, "; B=", cookie_B});
-		http_set_post_params(http, params);
-		http_connect(http);
-		location = http_get_header(http, "Location");
-		stream_close(http);
+		http = Http::open(form_url);
+		http.set_header("Cookie", "GUCS="+cookie_GUCS+"; B="+cookie_B);
+		http.set_post_params(params);
+		http.connect();
+		location = http.get_header("Location");
+		http.close();
 
 		// https://guce.yahoo.com/copyConsent?sessionId=XXX
-		http = http_open(location);
-		http_set_header(http, "Cookie", {"GUCS=", cookie_GUCS, "; B=", cookie_B});
-		http_connect(http);
-		cookies = http_get_header_multiple(http, "Set-Cookie");
-		stream_close(http);
+		http = Http::open(location);
+		http.set_header("Cookie", "GUCS="+cookie_GUCS+"; B="+cookie_B);
+		http.connect();
+		var cookies = http.get_header_multiple("Set-Cookie");
+		http.close();
 
 		var cookie_EuConsent = null, cookie_GUC = null;
-		for (var i=0; i<length(cookies); i++) {
-			var value = extract_string(cookies[i], "EuConsent=", ";");
+		foreach (var cookie in cookies) {
+			var value = extract_string(cookie, "EuConsent=", ";");
 			if (value) cookie_EuConsent = value;
-			value = extract_string(cookies[i], "GUC=", ";");
+			value = extract_string(cookie, "GUC=", ";");
 			if (value) cookie_GUC = value;
 		}
 
-		return http_get(request_get_url(request), null, {"Cookie": {
-			"GUCS=", cookie_GUCS,
-			"; B=", cookie_B,
-			"; GUC=", cookie_GUC,
-			"; EuConsent=", cookie_EuConsent
+		request.replace_from_http(request.get_url(), null, {"Cookie": {
+			"GUCS="+cookie_GUCS,
+			"; B="+cookie_B,
+			"; GUC="+cookie_GUC,
+			"; EuConsent="+cookie_EuConsent
 		}});
+		return;
 	}
 }

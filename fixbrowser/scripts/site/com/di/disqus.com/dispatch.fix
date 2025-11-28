@@ -1,29 +1,31 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 
-function embed_disqus(request, document, thread_elem, shortname, page_url, title)
+function embed_disqus(request: Request, document: Element, thread_elem: Element, shortname: String, page_url: String, title: String)
 {
 	if (!title) {
-		var title_elem = element_query(document, "html > head > title");
-		title = title_elem? element_extract_text(title_elem) : "";
+		var title_elem = document.query("html > head > title");
+		title = title_elem? title_elem.extract_text() : "";
 	}
 	if (!page_url) {
-		page_url = request_get_url(request);
+		page_url = request.get_url();
 	}
-	var url = link_with_params({"https://", shortname, ".disqus.com/embed"}, {"url": page_url, "title": title});
-	element_set_html(thread_elem, {"<iframe src=\"", make_same_domain_link(request, url), "\" style=\"width: 100%; height: 75vh\" autoresize=\"height\" frameborder=\"0\"></iframe>"});
+	var url = Link::with_params("https://"+shortname+".disqus.com/embed", {"url": page_url, "title": title});
+	thread_elem.set_html("<iframe src=\""+make_same_domain_link(request, url)+"\" style=\"width: 100%; height: 75vh\" autoresize=\"height\" frameborder=\"0\"></iframe>");
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var thread_elem = element_query(document, "div#disqus_thread");
-	var script_elem = element_get_next_tag(thread_elem);
+	var thread_elem = document.query("div#disqus_thread");
+	var script_elem = thread_elem.get_next_tag();
 	if (script_elem) {
-		var noscript_elem = element_get_next_tag(script_elem);
+		var noscript_elem = script_elem.get_next_tag();
 		if (noscript_elem) {
-			element_remove(noscript_elem);
+			noscript_elem.remove();
 		}
-		var script = element_extract_text(script_elem);
+		var script = script_elem.extract_text();
 		var shortname = extract_shortname(script);
 		if (!shortname) {
 			shortname = extract_shortname2(script);
@@ -33,9 +35,8 @@ function adjust_document(request, document)
 		}
 	}
 	else {
-		var scripts = element_query_all(document, "script");
-		for (var i=0; i<length(scripts); i++) {
-			var script = element_extract_text(scripts[i]);
+		foreach (var elem in document.query_all("script")) {
+			var script = elem.extract_text();
 			var shortname = extract_shortname(script);
 			if (!shortname) {
 				shortname = extract_shortname2(script);
@@ -48,28 +49,28 @@ function adjust_document(request, document)
 	}
 }
 
-function @extract_shortname(s)
+function @extract_shortname(s: String): String
 {
-	var idx = string_search_string(s, "disqus_shortname");
+	var idx = s.search_string("disqus_shortname");
 	if (idx == -1) return null;
 
-	var start = string_search_multi_char(s, "\'\"", idx);
+	var start = s.search_multi_char("\'\"", idx);
 	if (start == -1) return null;
 	
-	var end = string_search_multi_char(s, "\'\"", start+1);
+	var end = s.search_multi_char("\'\"", start+1);
 	if (end == -1) return null;
 
-	return string_substring(s, start+1, end);
+	return s.substring(start+1, end);
 }
 
-function @extract_shortname2(s)
+function @extract_shortname2(s: String): String
 {
 	// s.src = '//' + "shortname" + '.disqus.com/embed.js';
 
-	var end = string_search_string(s, ".disqus.com/embed.js");
+	var end = s.search_string(".disqus.com/embed.js");
 	if (end == -1) return null;
 
-	var start = string_rev_search_char(s, '/', 0, end);
+	var start = s.rev_search_char('/', 0, end);
 	if (start == -1) return null;
 
 	var result = {""};
@@ -80,5 +81,5 @@ function @extract_shortname2(s)
 				break;
 		}
 	}
-	return length(result) > 0? result : null;
+	return result.length > 0? result : null;
 }

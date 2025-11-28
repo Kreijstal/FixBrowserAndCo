@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,46 +19,13 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "classes";
+
 import "browser/css/selector";
 import "browser/css/property";
 import "browser/css/media_query";
 import "browser/css/parser";
 import "util/string";
-
-const @class_Stylesheet = "struct=SHEET";
-const @field_Stylesheet_rules = "Rule[]";
-
-const @class_Rule = "";
-const @field_Rule_type = "Integer";
-const @field_Rule_selector = "Selector[]";
-const @field_Rule_properties = "Property[]";
-const @field_Rule_media_query = "Dynamic";
-const @field_Rule_stylesheet = "Stylesheet";
-const @field_Rule_import_url = "String";
-const @field_Rule_import_media_query = "Dynamic";
-
-const {
-	SHEET_rules,
-	@SHEET_SIZE
-};
-
-const {
-	RULE_type = 0,
-	
-	// selector:
-	RULE_selector = 1,
-	RULE_properties = 2,
-
-	// media query:
-	RULE_media_query = 1,
-	RULE_stylesheet = 2,
-
-	// import:
-	RULE_import_url = 1,
-	RULE_import_media_query = 2,
-
-	@RULE_SIZE = 3
-};
 
 const {
 	RULE_SELECTOR,
@@ -70,46 +37,129 @@ const {
 	RULE_KEYFRAMES
 };
 
-function stylesheet_create()
+class Stylesheet
 {
-	var sheet = object_create(SHEET_SIZE);
-	sheet->SHEET_rules = [];
-	return sheet;
+	var rules: Rule[];
+
+	constructor create()
+	{
+		rules = [];
+	}
+
+	function add_rule(rule: Rule)
+	{
+		rules[] = rule;
+	}
+
+	function to_string(): String
+	{
+		return to_string(0);
+	}
+
+	function @to_string(level: Integer): String
+	{
+		var s = {""};
+		foreach (var rule in rules) {
+			switch (rule.type) {
+				case RULE_SELECTOR:    (rule as SelectorRule).to_string(s, level); break;
+				case RULE_MEDIA_QUERY: (rule as MediaQueryRule).to_string(s, level); break;
+				case RULE_IMPORT:      (rule as ImportRule).to_string(s, level); break;
+				
+				default:
+					throw error("unknown rule type");
+			}
+		}
+		return s;
+	}
 }
 
-function stylesheet_add_rule(sheet, rule)
+class Rule
 {
-	sheet->SHEET_rules[] = rule;
+	var type: Integer;
+
+	constructor create(type: Integer)
+	{
+		this.type = type;
+	}
 }
 
-function rule_create_selector(selector, properties)
+class SelectorRule: Rule
 {
-	var rule = object_create(RULE_SIZE);
-	rule->RULE_type = RULE_SELECTOR;
-	rule->RULE_selector = selector;
-	rule->RULE_properties = properties;
-	return rule;
+	var selector: Selector[];
+	var properties: Property[];
+
+	constructor create(selector: Selector[], properties: Property[])
+	{
+		super::create(RULE_SELECTOR);
+		this.selector = selector;
+		this.properties = properties;
+	}
+
+	function @to_string(s: String, level: Integer)
+	{
+		indent(s, level);
+		s += serialize_selector_group(selector);
+		s += " {\n";
+		foreach (var property in properties) {
+			indent(s, level+1);
+			s += property.to_string();
+			s[] = '\n';
+		}
+		indent(s, level);
+		s += "}\n\n";
+	}
 }
 
-function rule_create_media_query(media, stylesheet)
+class MediaQueryRule: Rule
 {
-	var rule = object_create(RULE_SIZE);
-	rule->RULE_type = RULE_MEDIA_QUERY;
-	rule->RULE_media_query = media;
-	rule->RULE_stylesheet = stylesheet;
-	return rule;
+	var media_query: MediaQuery;
+	var stylesheet: Stylesheet;
+
+	constructor create(media_query: MediaQuery, stylesheet: Stylesheet)
+	{
+		super::create(RULE_MEDIA_QUERY);
+		this.media_query = media_query;
+		this.stylesheet = stylesheet;
+	}
+
+	function @to_string(s: String, level: Integer)
+	{
+		indent(s, level);
+		s += "@media ";
+		s += serialize_media_query(media_query);
+		s += " {\n";
+		s += stylesheet.to_string(level+1);
+		indent(s, level);
+		s += "}\n\n";
+	}
 }
 
-function rule_create_import(url, media)
+class ImportRule: Rule
 {
-	var rule = object_create(RULE_SIZE);
-	rule->RULE_type = RULE_IMPORT;
-	rule->RULE_import_url = url;
-	rule->RULE_import_media_query = media;
-	return rule;
+	var url: String;
+	var media_query: MediaQuery;
+
+	constructor create(url: String, media_query: MediaQuery)
+	{
+		super::create(RULE_IMPORT);
+		this.url = url;
+		this.media_query = media_query;
+	}
+
+	function @to_string(s: String, level: Integer)
+	{
+		indent(s, level);
+		s += "@import ";
+		s += css_serialize_string(url);
+		if (media_query) {
+			s[] = ' ';
+			s += serialize_media_query(media_query);
+		}
+		s += ";\n\n";
+	}
 }
 
-function @indent(s, level)
+function @indent(s: String, level: Integer)
 {
 	for (var i=0; i<level; i++) {
 		s[] = ' ';
@@ -117,59 +167,4 @@ function @indent(s, level)
 		s[] = ' ';
 		s[] = ' ';
 	}
-}
-
-function stylesheet_to_string(sheet)
-{
-	return stylesheet_to_string(sheet, 0);
-}
-
-function stylesheet_to_string(sheet, level)
-{
-	var s = {""};
-	var rules = sheet->SHEET_rules;
-	for (var i=0; i<length(rules); i++) {
-		var rule = rules[i];
-		switch (rule->RULE_type) {
-			case RULE_SELECTOR: {
-				indent(s, level);
-				string_append(s, serialize_selector_group(rule->RULE_selector));
-				string_append(s, " {\n");
-				var props = rule->RULE_properties;
-				for (var j=0; j<length(props); j++) {
-					indent(s, level+1);
-					string_append(s, property_to_string(props[j]));
-					s[] = '\n';
-				}
-				indent(s, level);
-				string_append(s, "}\n\n");
-				break;
-			}
-
-			case RULE_MEDIA_QUERY: {
-				indent(s, level);
-				string_append(s, "@media ");
-				string_append(s, serialize_media_query(rule->RULE_media_query));
-				string_append(s, " {\n");
-				string_append(s, stylesheet_to_string(rule->RULE_stylesheet, level+1));
-				indent(s, level);
-				string_append(s, "}\n\n");
-				break;
-			}
-
-			case RULE_IMPORT: {
-				indent(s, level);
-				string_append(s, "@import ");
-				string_append(s, css_serialize_string(rule->RULE_import_url));
-				if (rule->RULE_import_media_query) {
-					s[] = ' ';
-					string_append(s, serialize_media_query(rule->RULE_import_media_query));
-				}
-				string_append(s, ";\n\n");
-				break;
-			}
-		}
-	}
-
-	return s;
 }

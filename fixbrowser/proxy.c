@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -112,7 +112,7 @@ static Value sort_current_selectors(Heap *heap, Value *error, int num_params, Va
 static Script *load_script(Heap *heap, const char *fname, Value *error, void *data)
 {
    if (test_scripts) {
-      return fixscript_load_file(heap, fname, error, ".");
+      return script_load_file(heap, fname, error, ".");
    }
    else {
       return fixscript_load_embed(heap, fname, error, embed_scripts);
@@ -153,7 +153,11 @@ int main(int argc, char **argv)
    signal(SIGPIPE, SIG_IGN);
 #endif
 
-   start_global_cleanup_thread();
+   if (!init_self_file(argv[0])) {
+      fprintf(stderr, "error: can't determine path of the executable\n");
+      return 1;
+   }
+   start_memory_cache_cleanup_thread();
    
    for (i=1; i<argc; i++) {
       if (strcmp(argv[i], "-t") == 0) {
@@ -181,14 +185,14 @@ int main(int argc, char **argv)
    if (!script) {
       fprintf(stderr, "%s\n", fixscript_get_compiler_error(heap, error));
       fflush(stderr);
-      return 0;
+      return 1;
    }
    
    fixscript_run(heap, script, "main#1", &error, fixscript_int(port));
    if (error.value) {
       fixscript_dump_value(heap, error, 1);
-      return 0;
+      return 1;
    }
 
-   return 1;
+   return 0;
 }

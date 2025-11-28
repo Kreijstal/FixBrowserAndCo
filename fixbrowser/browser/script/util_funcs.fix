@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,24 +19,439 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "util/time_literals";
+
+import "io/file";
+import "io/time";
+import "io/crypto/sha256";
+import "task/global";
+import "task/lock";
+import "util/long";
+import "util/json";
+import "util/string";
+import "browser/script/gateopener";
+
 function @script_resource_get(params, data)
 {
-	return file_read({"scripts/", params[0]});
+	return file_read_whole({get_executable_path(), "/scripts/", params[0]}, {""});
 }
 
-function @script_string_to_utf8(params, data)
+function @data_store_get_path(parent, key, create)
 {
-	return string_to_utf8(params[0]);
+	var path = [];
+
+	if (!is_array(key) || length(key) == 0) {
+		return 0, error("invalid key");
+	}
+
+	for (var i=0; i<length(key); i++) {
+		var name = key[i];
+		if (!is_string(name)) {
+			return 0, error("invalid key");
+		}
+		path[] = parent;
+		path[] = name;
+		var map = hash_get(parent, name, null);
+		if (map) {
+			if (!is_hash(map)) {
+				return 0, error("data store format is invalid");
+			}
+			if (i < length(key)-1 && hash_contains(map, "expiry_time")) {
+				if (!create) {
+					return null;
+				}
+				map = {"": map};
+				parent{name} = map;
+			}
+		}
+		else {
+			if (!create) {
+				return null;
+			}
+			map = {};
+			parent{name} = map;
+		}
+		parent = map;
+	}
+
+	for (;;) {
+		if (length(parent) > 0 && !hash_contains(parent, "expiry_time")) {
+			path[] = parent;
+			path[] = "";
+			var map = hash_get(parent, "", null);
+			if (!map) {
+				if (!create) {
+					return null;
+				}
+				map = {};
+				parent{""} = map;
+			}
+			parent = map;
+			continue;
+		}
+		break;
+	}
+	return path;
 }
 
-function @script_string_from_utf8(params, data)
+function @data_store_serialize_value(value)
 {
-	return string_from_utf8(params[0]);
+	if (!is_hash(value)) {
+		return 0, error("data store format is invalid");
+	}
+	value = clone(value);
+	if (!hash_contains(value, "expiry_time")) {
+		return 0, error("data store format is invalid");
+	}
+	hash_remove(value, "expiry_time");
+	return json_to_string(value);
+}
+
+function @data_store_unserialize_value(json)
+{
+	var value = json_parse_string(json);
+	if (!is_hash(value)) {
+		return 0, error("value must be object");
+	}
+	if (hash_contains(value, "expiry_time")) {
+		return 0, error("value must not contain reserved key 'expiry_time'");
+	}
+	return value;
+}
+
+function @data_store_get_file_path()
+{
+	return path_create({get_executable_path(), "/store.json"});
+}
+
+function @data_store_set(params)
+{
+	var file_path = data_store_get_file_path();
+	var domain = params[0];
+	var key = params[1];
+	var value_json = params[2];
+	var expiration = params[3];
+
+	var value;
+	if (value_json) {
+		value = data_store_unserialize_value(value_json);
+		if (expiration > 0) {
+			value{"expiry_time"} = json_long_create(long_add_int(long_div_int(clock_get_time(), 1000), expiration));
+		}
+		else {
+			value{"expiry_time"} = json_long_from_int(0);
+		}
+	}
+	
+	var (content, e1) = file_read_whole(file_path);
+	if (e1 && path_exists(file_path)) {
+		dump(e1);
+		return;
+	}
+	var root;
+	if (content) {
+		var (json, e2) = json_parse(content);
+		if (e2) {
+			log({"error: store.json is malformed (", e2[0], ")"});
+			return;
+		}
+		root = json;
+	}
+	else {
+		root = {};
+	}
+	
+	var map = hash_get(root, domain, null);
+	if (!map) {
+		if (!value) return;
+		map = {};
+		root{domain} = map;
+	}
+
+	var modified = false;
+	
+	var path = data_store_get_path(map, key, value != null);
+	if (value) {
+		var obj_hash = path[length(path)-2];
+		var obj_key = path[length(path)-1];
+		obj_hash{obj_key} = value;
+		modified = true;
+	}
+	else if (path) {
+		for (var i=length(path)-2; i>=0; i-=2) {
+			var obj_hash = path[i+0];
+			var obj_key = path[i+1];
+			if (i == length(path)-2 || length(obj_hash{obj_key}) == 0) {
+				hash_remove(obj_hash, obj_key);
+				modified = true;
+			}
+		}
+		if (length(map) == 0) {
+			hash_remove(root, domain);
+		}
+	}
+	
+	if (modified) {
+		safe_write_file(file_path, json_to_bytes(root));
+	}
+}
+
+function @data_store_get(params)
+{
+	var file_path = data_store_get_file_path();
+	var domain = params[0];
+	var key = params[1];
+
+	var (content, e1) = file_read_whole(file_path);
+	if (!content) {
+		if (e1 && path_exists(file_path)) {
+			dump(e1);
+		}
+		return null;
+	}
+	var (root, e2) = json_parse(content);
+	if (e2) {
+		log({"error: store.json is malformed (", e2[0], ")"});
+		return null;
+	}
+
+	var last_store_check = global_get("script_data_store.last_check");
+	var time = long_div_int(clock_get_time(), 1000);
+	if (!last_store_check || long_cmp_int(long_sub(long_dup(time), last_store_check), 1 hour) > 0) {
+		clean_data_store(file_path, root, time);
+		global_set("script_data_store.last_check", time);
+	}
+	
+	var map = hash_get(root, domain, null);
+	if (!map) return null;
+
+	var path = data_store_get_path(map, key, false);
+	if (!path) return null;
+
+	var obj_hash = path[length(path)-2];
+	var obj_key = path[length(path)-1];
+	var value = hash_get(obj_hash, obj_key, null);
+	if (value) {
+		return data_store_serialize_value(value);
+	}
+	return null;
+}
+
+function @clean_data_store(file_path, root, time)
+{
+	var modified = false;
+
+	for (var i=0; i<length(root); i++) {
+		var (domain, map) = hash_entry(root, i);
+		
+		modified |= clean_keys(map, time);
+
+		if (length(map) == 0) {
+			modified = true;
+			hash_remove(root, domain);
+			i--;
+			continue;
+		}
+	}
+
+	if (modified) {
+		safe_write_file(file_path, json_to_bytes(root));
+	}
+}
+
+function @clean_keys(parent, time)
+{
+	var modified = false;
+
+	for (var i=0; i<length(parent); i++) {
+		var (key, value) = hash_entry(parent, i);
+		
+		if (hash_contains(value, "expiry_time")) {
+			var expiry_time = json_as_long(value{"expiry_time"});
+			if (long_cmp_int(expiry_time, 0) > 0 && long_cmp(time, expiry_time) > 0) {
+				modified = true;
+				hash_remove(parent, key);
+				i--;
+				continue;
+			}
+		}
+		else {
+			modified |= clean_keys(value, time);
+
+			if (length(value) == 0) {
+				modified = true;
+				hash_remove(parent, key);
+				i--;
+				continue;
+			}
+		}
+	}
+
+	return modified;
+}
+
+function @data_store_get_keys(params)
+{
+	var file_path = data_store_get_file_path();
+	var domain = params[0];
+	var filter = length(params) > 1? params[1] : null;
+	var result = [];
+
+	if (filter) {
+		if (!is_array(filter)) {
+			return 0, error("invalid filter value");
+		}
+		for (var i=0; i<length(filter); i++) {
+			if (filter[i] && !is_string(filter[i])) {
+				return 0, error("invalid filter value");
+			}
+		}
+	}
+
+	var (content, e1) = file_read_whole(file_path);
+	if (!content) {
+		if (e1 && path_exists(file_path)) {
+			dump(e1);
+		}
+		return result;
+	}
+	var (root, e2) = json_parse(content);
+	if (e2) {
+		log({"error: store.json is malformed (", e2[0], ")"});
+		return result;
+	}
+	
+	var map = hash_get(root, domain, null);
+	if (!map) {
+		return result;
+	}
+
+	gather_keys(map, [], filter, result);
+	return result;
+}
+
+function @gather_keys(parent, parent_key, filter, result)
+{
+	for (var i=0; i<length(parent); i++) {
+		var (key, value) = hash_entry(parent, i);
+
+		var cur_key = clone(parent_key);
+		cur_key[] = key;
+
+		if (hash_contains(value, "expiry_time")) {
+			if (filter) {
+				var match = true;
+				if (length(filter) > length(cur_key)) {
+					match = false;
+				}
+				else {
+					for (var j=0; j<length(filter); j++) {
+						if (filter[j] && filter[j] != cur_key[j]) {
+							match = false;
+							break;
+						}
+					}
+				}
+				if (match) {
+					result[] = cur_key;
+				}
+			}
+			else {
+				result[] = cur_key;
+			}
+		}
+		else {
+			gather_keys(value, cur_key, filter, result);
+		}
+	}
+}
+
+function @get_data_store_lock()
+{
+	return lock_get("script_data_store");
+}
+
+function @script_data_store_set(params, data)
+{
+	lock_run(get_data_store_lock(), data_store_set#1, params);
+}
+
+function @script_data_store_get(params, data)
+{
+	return lock_run(get_data_store_lock(), data_store_get#1, params);
+}
+
+function @script_data_store_get_keys(params, data)
+{
+	return lock_run(get_data_store_lock(), data_store_get_keys#1, params);
+}
+
+function @safe_write_file(path, content)
+{
+	var tmp_path = path_merge(path_get_parent(path), {".", path_get_file_name(path), ".tmp"});
+	var (r, e) = file_write_whole(tmp_path, content);
+	if (e) {
+		path_delete_file(tmp_path);
+		return 0, e;
+	}
+	if (!file_rename(path_to_string(tmp_path), path_to_string(path))) {
+		path_delete_file(tmp_path);
+		return 0, error({"error writing to ", path_to_string(path)});
+	}
+}
+
+function @script_time_get(params, data)
+{
+	var time = clock_get_time();
+	return time[0], time[1];
+}
+
+function @script_time_get_monotonic(params, data)
+{
+	return monotonic_get_time();
+}
+
+function @script_crypto_sha256(params, data)
+{
+	return sha256(params[0]);
+}
+
+function @script_gate_opener_is_available(params, data)
+{
+	var (result, e) = gateopener_is_available(path_create(get_executable_path()));
+	if (e) {
+		dump(e);
+	}
+	return result;
+}
+
+function @script_gate_opener_process(params, data)
+{
+	var (result, e) = lock_run(lock_get("script_gate_opener"), run_gateopener_process#1, json_parse_string(params[0]));
+	if (e) {
+		dump(e);
+	}
+	if (result) {
+		return json_to_string(result);
+	}
+	return null;
+}
+
+function @run_gateopener_process(request)
+{
+	return gateopener_process(path_create(get_executable_path()), request);
 }
 
 function register_util_funcs(heap)
 {
 	script_register_function(heap, "resource_get#1", script_resource_get#2, null);
-	script_register_function(heap, "string_to_utf8#1", script_string_to_utf8#2, null);
-	script_register_function(heap, "string_from_utf8#1", script_string_from_utf8#2, null);
+	script_register_function(heap, "data_store_set#4", script_data_store_set#2, null);
+	script_register_function(heap, "data_store_get#2", script_data_store_get#2, null);
+	script_register_function(heap, "data_store_get_keys#1", script_data_store_get_keys#2, null);
+	script_register_function(heap, "data_store_get_keys#2", script_data_store_get_keys#2, null);
+	script_register_function(heap, "time_get#0", script_time_get#2, null);
+	script_register_function(heap, "time_get_monotonic#0", script_time_get_monotonic#2, null);
+	script_register_function(heap, "crypto_sha256#1", script_crypto_sha256#2, null);
+	script_register_function(heap, "gate_opener_is_available#0", script_gate_opener_is_available#2, null);
+	script_register_function(heap, "gate_opener_process#1", script_gate_opener_process#2, null);
 }

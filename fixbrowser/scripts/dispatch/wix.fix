@@ -1,13 +1,15 @@
+use "classes";
+
 import "util/common";
 import "util/string";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var iframe = element_query(document, "iframe[id^='TPAMultiSection_']");
+	var iframe = document.query("iframe[id^='TPAMultiSection_']");
 	if (iframe) {
-		var src = element_get_attr(iframe, "src");
-		if (string_starts_with(src, "https://social-blog.wix.com/")) {
-			request_set_same_domain_url(request, src);
+		var src = iframe.get_attr("src");
+		if (src.starts_with("https://social-blog.wix.com/")) {
+			request.set_same_domain_url(src);
 		}
 	}
 }

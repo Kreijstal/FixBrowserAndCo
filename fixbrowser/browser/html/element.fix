@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -413,12 +413,12 @@ function @element_to_string(s, elem, level)
 		s[] = ' ';
 		s[] = ' ';
 	}
-	string_append(s, elem->ELEM_type);
+	array_append(s, elem->ELEM_type);
 	if (elem->ELEM_data) {
 		s[] = ':';
 		s[] = ' ';
 		s[] = '\'';
-		string_append(s, elem->ELEM_data);
+		array_append(s, elem->ELEM_data);
 		s[] = '\'';
 	}
 	var attrs = elem->ELEM_attrs;
@@ -426,10 +426,10 @@ function @element_to_string(s, elem, level)
 		for (var i=0; i<length(attrs); i++) {
 			var (k, v) = hash_entry(attrs, i);
 			s[] = ' ';
-			string_append(s, k);
+			array_append(s, k);
 			s[] = '=';
 			s[] = '\'';
-			string_append(s, v);
+			array_append(s, v);
 			s[] = '\'';
 		}
 	}
@@ -457,33 +457,33 @@ function @element_to_html(s, elem, recurse)
 {
 	var type = elem->ELEM_type;
 	if (type == "#document") {
-		string_append(s, "<!DOCTYPE html>\n");
+		array_append(s, "<!DOCTYPE html>\n");
 	}
 	else if (type == "#text") {
-		string_append(s, html_escape(elem->ELEM_data));
+		array_append(s, html_escape(elem->ELEM_data));
 	}
 	else if (type == "#text-noescape") {
-		string_append(s, elem->ELEM_data);
+		array_append(s, elem->ELEM_data);
 	}
 	else if (type == "#comment") {
 		if (!string_contains(elem->ELEM_data, "-->")) {
-			string_append(s, "<!--");
-			string_append(s, elem->ELEM_data);
-			string_append(s, "-->");
+			array_append(s, "<!--");
+			array_append(s, elem->ELEM_data);
+			array_append(s, "-->");
 		}
 	}
 	else {
 		s[] = '<';
-		string_append(s, elem->ELEM_type);
+		array_append(s, elem->ELEM_type);
 		var attrs = elem->ELEM_attrs;
 		if (attrs) {
 			for (var i=0; i<length(attrs); i++) {
 				var (k, v) = hash_entry(attrs, i);
 				s[] = ' ';
-				string_append(s, html_escape(k));
+				array_append(s, html_escape(k));
 				s[] = '=';
 				s[] = '"';
-				string_append(s, html_escape(v));
+				array_append(s, html_escape(v));
 				s[] = '"';
 			}
 		}
@@ -500,7 +500,7 @@ function @element_to_html(s, elem, recurse)
 		if (!hash_contains(void_elems, elem->ELEM_type) || elem->ELEM_first_child !== null) {
 			s[] = '<';
 			s[] = '/';
-			string_append(s, elem->ELEM_type);
+			array_append(s, elem->ELEM_type);
 			s[] = '>';
 		}
 	}

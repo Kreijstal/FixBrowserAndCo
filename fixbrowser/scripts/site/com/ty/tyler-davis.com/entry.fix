@@ -1,17 +1,19 @@
+use "classes";
+
 import "util/common";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
 	rewrite_links(document, rewrite_link#3, null);
 }
 
-function @rewrite_link(elem, value, data)
+function @rewrite_link(elem: Element, value: String, data): String
 {
-	var url = url_create(value);
-	var domain = url_get_host(url);
+	var url = URL::create(value);
+	var domain = url.get_host();
 	if (domain == "davityle.github.io") {
-		url_set_host(url, "tyler-davis.com");
-		return url_to_string(url);
+		url.set_host("tyler-davis.com");
+		return url.to_string();
 	}
 	return value;
 }

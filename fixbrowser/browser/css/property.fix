@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -19,16 +19,14 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
+use "util/time_literals";
+use "string_switch";
+use "classes";
+
 import "browser/css/parser";
 import "browser/css/value";
 import "util/string";
-
-const @class_Property = "struct=PROP,static=create#4";
-const @field_Property_type = "Integer";
-const @field_Property_name = "String";
-const @field_Property_value = "Value";
-const @field_Property_important = "Boolean";
-const @method_Property_create_4 = "(Integer, String, Value, Boolean): Property";
+import "util/memory_cache";
 
 const {
 	PROP_ALL,
@@ -155,49 +153,50 @@ const {
 	PROP_ALIGN_SELF,
 	PROP_ALIGN_CONTENT,
 
-	PROP_TAB_SIZE
+	PROP_TAB_SIZE,
+
+	PROP_CURSOR
 };
 
-const {
-	PROP_type,
-	PROP_name,
-	PROP_value,
-	PROP_important,
-	PROP_SIZE
-};
-
-const {
-	@DATA_name,
-	@DATA_type,
-	@DATA_handler,
-	@DATA_multiple
-};
-
-var @property_hash;
-var @property_data;
-var @colors;
-
-function property_create(type, name, value, important)
+class Property
 {
-	var prop = object_create(PROP_SIZE);
-	prop->PROP_type = type;
-	prop->PROP_name = name;
-	prop->PROP_value = value;
-	prop->PROP_important = important;
-	return prop;
-}
+	var type: Integer;
+	var name: String;
+	var value: Value;
+	var important: Boolean;
 
-function property_to_string(prop)
-{
-	var s = {prop->PROP_name, ": ", value_to_string(prop->PROP_value)};
-	if (prop->PROP_important) {
-		string_append(s, " !important");
+	constructor create(type: Integer, name: String, value: Value, important: Boolean)
+	{
+		this.type = type;
+		this.name = name;
+		this.value = value;
+		this.important = important;
 	}
-	s[] = ';';
-	return s;
+
+	function to_string(): String
+	{
+		var s = name+": "+value.to_string();
+		if (important) {
+			s += " !important";
+		}
+		s[] = ';';
+		return s;
+	}
 }
 
-function is_property_inherited(type)
+struct @PropertyData
+{
+	var name: String;
+	var type: Integer;
+	var handler;
+	var multiple: Boolean;
+}
+
+var @property_hash: PropertyData[String];
+var @property_data: [PropertyData];
+var @colors: Integer[String];
+
+function is_property_inherited(type: Integer): Boolean
 {
 	switch (type) {
 		case PROP_COLOR:
@@ -230,69 +229,91 @@ function is_property_inherited(type)
 		case PROP_LIST_STYLE:
 
 		case PROP_TAB_SIZE:
+
+		case PROP_CURSOR:
 			return true;
 	}
 	return false;
 }
 
-function parse_properties(par)
+function parse_properties(par: Parser): Property[]
 {
 	if (!property_hash) {
 		init_static_data();
 	}
 
-	var properties = [];
-	var unknown_props, new_unknown_props;
+	var properties: Property[] = [];
+	var unknown_props: Boolean[String], new_unknown_props: Boolean[String];
 	
 	rewind_buffer(par);
 	while (next_token(par) != TOKEN_EOF) {
-		if (par->TOKEN_type != COMPONENT_DECLARATION) continue;
-		var decl = par->TOKEN_value;
-		var name = string_to_lower_case(decl->DECLARATION_name);
-		var important = decl->DECLARATION_important;
-		//log({"  name=", name, " important=", important});
-		var idx = hash_get(property_hash, name, -1);
-		if (idx != -1) {
-			rewind_buffer(decl);
-			consume_whitespace(decl);
-			name = property_data[idx+DATA_name];
-			var type = property_data[idx+DATA_type];
-			var handler = property_data[idx+DATA_handler];
-			var multiple = property_data[idx+DATA_multiple];
-			var (prop, e) = parse_property(type, name, handler, multiple, important, decl);
-			//if (e) dump(e);
-			if (prop && !e) {
+		if (par.type != COMPONENT_DECLARATION) continue;
+		var decl = par.value as Declaration;
+		var name = decl.name.to_lower_case();
+		var important = decl.important;
+		//log("  name="+name+" important="+important);
+		var idx = property_hash.get(name, null);
+		if ((idx as Dynamic) != null) { //XXX
+			if (css_tokens_has_variables(decl)) {
+				trim_css_tokens(decl);
+				properties[] = Property::create(VALUE_SUBSTITUTION, name, SubstitutionValue::create(decl), false);
+			}
+			else {
+				rewind_buffer(decl);
 				consume_whitespace(decl);
-				if (next_token(decl) == TOKEN_EOF) {
-					properties[] = prop;
-					//log({"  ", property_to_string(prop)});
+				name = property_data[idx].name;
+				var type = property_data[idx].type;
+				var handler = property_data[idx].handler;
+				var multiple = property_data[idx].multiple;
+				var (prop, e) = parse_property(type, name, handler, multiple, important, decl);
+				//if (e) dump(e);
+				if (prop != null && !e) { //XXX
+					consume_whitespace(decl);
+					if (next_token(decl) == TOKEN_EOF) {
+						properties[] = prop;
+						//log("  "+prop.to_string());
+					}
 				}
+			}
+		}
+		else if (name.length > 2 && name.starts_with("--")) {
+			trim_css_tokens(decl);
+			var value = VariableValue::create(decl);
+			var found = false;
+			foreach (var prop in properties) {
+				if (prop.name == name) {
+					prop.value = value;
+					found = true;
+					break;
+				}
+			}
+			if (!found) {
+				properties[] = Property::create(VALUE_VARIABLE, name, value, false);
 			}
 		}
 		else {
 			if (!unknown_props) {
-				unknown_props = global_get("unknown_css_properties");
+				unknown_props = MemoryCache::get("unknown_css_properties");
 				if (!unknown_props) {
 					unknown_props = {};
 				}
 				new_unknown_props = {};
 			}
-			if (!hash_contains(unknown_props, name) && !hash_contains(new_unknown_props, name)) {
-				log({"unhandled CSS property: ", name});
-				new_unknown_props{name} = true;
+			if (!unknown_props.contains(name) && !new_unknown_props.contains(name)) {
+				log("unhandled CSS property: "+name);
+				new_unknown_props[name] = true;
 			}
 		}
 	}
 
-	if (new_unknown_props && length(new_unknown_props) > 0) {
-		var props = global_get("unknown_css_properties");
+	if (new_unknown_props != null && new_unknown_props.length > 0) { //XXX
+		var props = MemoryCache::get("unknown_css_properties") as Boolean[String];
 		for (;;) {
-			var new_props = props? clone(props) : {};
-			for (var i=0; i<length(new_unknown_props); i++) {
-				var (k, v) = hash_entry(new_unknown_props, i);
-				new_props{k} = v;
+			var new_props = props? clone(props) : {} as Boolean[String];
+			foreach (var k, v in new_unknown_props) {
+				new_props[k] = v;
 			}
-			var old_props = global_cond_swap("unknown_css_properties", props, new_props, 3600);
+			var old_props = MemoryCache::cond_swap("unknown_css_properties", props, new_props, 1 hour);
 			if (old_props == props) break;
 			props = old_props;
 		}
@@ -301,23 +322,16 @@ function parse_properties(par)
 	return properties;
 }
 
-function @parse_property(type, name, handler, multiple, important, par)
+function @parse_property(type: Integer, name: String, handler, multiple: Boolean, important: Boolean, par: Parser): Property
 {
 	var value;
 
 	if (next_token(par) == TOKEN_IDENT) {
-		var ident_name = par->TOKEN_value;
-		switch (length(ident_name)) {
-			case 5:
-				ident_name = string_to_lower_case(ident_name);
-				if (ident_name == "unset") value = value_create(VALUE_UNSET);
-				break;
-
-			case 7:
-				ident_name = string_to_lower_case(ident_name);
-				if (ident_name == "initial") value = value_create(VALUE_INITIAL);
-				if (ident_name == "inherit") value = value_create(VALUE_INHERIT);
-				break;
+		var ident_name = par.value as String;
+		switch (ident_name.to_lower_case()) {
+			case "initial": value = Value::create(VALUE_INITIAL); break;
+			case "inherit": value = Value::create(VALUE_INHERIT); break;
+			case "unset":   value = Value::create(VALUE_UNSET); break;
 		}
 	}
 
@@ -325,19 +339,14 @@ function @parse_property(type, name, handler, multiple, important, par)
 		back_token(par);
 		value = multiple? parse_multiple(par, handler) : handler(par);
 		if (!value) {
-			return 0, error("empty value");
+			throw error("empty value");
 		}
 	}
 	
-	var prop = object_create(PROP_SIZE);
-	prop->PROP_type = type;
-	prop->PROP_name = name;
-	prop->PROP_value = value;
-	prop->PROP_important = important;
-	return prop;
+	return Property::create(type, name, value, important);
 }
 
-function @consume_whitespace(par)
+function @consume_whitespace(par: Parser)
 {
 	var token = next_token(par);
 	while (token == TOKEN_WHITESPACE) {
@@ -346,7 +355,7 @@ function @consume_whitespace(par)
 	back_token(par);
 }
 
-function @next_is_integer(par)
+function @next_is_integer(par: Parser): Boolean
 {
 	consume_whitespace(par);
 	var token = next_token(par);
@@ -354,144 +363,133 @@ function @next_is_integer(par)
 	return (token == TOKEN_NUMBER);
 }
 
-function @consume_integer(par)
+function @consume_integer(par: Parser): Integer
 {
 	consume_whitespace(par);
 	if (next_token(par) != TOKEN_NUMBER) {
-		return 0, error("not an integer");
+		throw error("not an integer");
 	}
-	var value = par->TOKEN_value;
-	if (value[2]) {
-		return 0, error("not an integer");
+	var value = par.value as Number;
+	if (value.is_number) {
+		throw error("not an integer");
 	}
-	return value[1];
+	return value.value as Integer;
 }
 
-function @consume_float(par)
+function @consume_float(par: Parser): Float
 {
 	consume_whitespace(par);
 	if (next_token(par) != TOKEN_NUMBER) {
-		return 0, error("not float");
+		throw error("not float");
 	}
-	return number_as_float(par->TOKEN_value);
+	return (par.value as Number).as_float();
 }
 
-function @consume_percentage(par)
+function @consume_percentage(par: Parser): Float
 {
 	consume_whitespace(par);
 	if (next_token(par) != TOKEN_PERCENTAGE) {
-		return 0, error("not percentage");
+		throw error("not percentage");
 	}
-	return number_as_float(par->TOKEN_value);
+	return (par.value as Number).as_float();
 }
 
-function @consume_comma(par)
+function @consume_comma(par: Parser)
 {
 	consume_whitespace(par);
 	if (next_token(par) != TOKEN_COMMA) {
-		return 0, error("not a comma");
+		throw error("not a comma");
 	}
 }
 
-function @consume_eof(par)
+function @consume_eof(par: Parser)
 {
 	consume_whitespace(par);
 	if (next_token(par) != TOKEN_EOF) {
-		return 0, error("not EOF");
+		throw error("not EOF");
 	}
 }
 
-function @expect_ident(par)
+function @expect_ident(par: Parser): String
 {
 	if (next_token(par) != TOKEN_IDENT) {
-		return 0, error("expected ident");
+		throw error("expected ident");
 	}
-	return string_to_lower_case(par->TOKEN_value);
+	return (par.value as String).to_lower_case();
 }
 
-function @parse_all(par)
+function @parse_all(par: Parser)
 {
-	return 0, error("invalid value");
+	throw error("invalid value");
 }
 
-function @clamp(value, min_val, max_val)
+function @hsl_to_rgb(h: Float, s: Float, l: Float): Integer
 {
-	return min(max(value, min_val), max_val);
-}
-
-function @fclamp(value, min_val, max_val)
-{
-	return fmin(fmax(value, min_val), max_val);
-}
-
-function @hsl_to_rgb(h, s, l)
-{
-	var m2;
-	if ({l < 0.5}) {
-		m2 = {l * {s + 1.0}};
+	var m2: Float;
+	if (l < 0.5) {
+		m2 = l * (s + 1.0);
 	}
 	else {
-		m2 = {l + s - {l * s}};
+		m2 = l + s - l * s;
 	}
-	var m1 = {{l * 2.0} - m2};
-	var r = hue_to_rgb(m1, m2, {h + {1.0 / 3.0}});
-	var g = hue_to_rgb(m1, m2, h);
-	var b = hue_to_rgb(m1, m2, {h - {1.0 / 3.0}});
-	r = iround({r * 255.0});
-	g = iround({g * 255.0});
-	b = iround({b * 255.0});
+	var m1 = l * 2.0 - m2;
+	var fr = hue_to_rgb(m1, m2, h + 1.0 / 3.0);
+	var fg = hue_to_rgb(m1, m2, h);
+	var fb = hue_to_rgb(m1, m2, h - 1.0 / 3.0);
+	var r = iround(fr * 255.0);
+	var g = iround(fg * 255.0);
+	var b = iround(fb * 255.0);
 	r = clamp(r, 0, 255);
 	g = clamp(g, 0, 255);
 	b = clamp(b, 0, 255);
 	return (r<<16)|(g<<8)|b;
 }
 
-function @hue_to_rgb(m1, m2, h)
+function @hue_to_rgb(m1: Float, m2: Float, h: Float): Float
 {
-	if ({h < 0.0}) h = {h + 1.0};
-	if ({h > 1.0}) h = {h - 1.0};
-	if ({{h * 6.0} < 1.0}) return {m1 + {{m2 - m1} * h * 6.0}};
-	if ({{h * 2.0} < 1.0}) return m2;
-	if ({{h * 3.0} < 2.0}) return {m1 + {{m2 - m1} * {{2.0 / 3.0} - h} * 6.0}};
+	if (h < 0.0) h = h + 1.0;
+	if (h > 1.0) h = h - 1.0;
+	if (h * 6.0 < 1.0) return m1 + ((m2 - m1) * h * 6.0);
+	if (h * 2.0 < 1.0) return m2;
+	if (h * 3.0 < 2.0) return m1 + ((m2 - m1) * (2.0 / 3.0 - h) * 6.0);
 	return m1;
 }
 
-function @parse_color(par)
+function @parse_color(par: Parser): Value
 {
 	var token = next_token(par);
 	if (token == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		var color = hash_get(colors, name, -1);
+		var name = (par.value as String).to_lower_case();
+		var color = colors.get(name, -1);
 		if (color != -1) {
-			return value_create_color_rgb(color);
+			return ColorValue::create_rgb(color);
 		}
 		if (name == "transparent") {
-			return value_create_color_rgba(0x00000000);
+			return ColorValue::create_rgba(0x00000000);
 		}
 		if (name == "currentcolor") {
-			return value_create_color_current();
+			return ColorValue::create_current();
 		}
 	}
 	if (token == TOKEN_HASH) {
-		var value = par->TOKEN_value;
-		if (length(value) == 3) {
-			value = string_parse_hex_int(value);
-			var r = (value >> 8) & 0xF;
-			var g = (value >> 4) & 0xF;
-			var b = (value >> 0) & 0xF;
+		var value = par.value as String;
+		if (value.length == 3) {
+			var color = String::parse_hex_int(value);
+			var r = (color >> 8) & 0xF;
+			var g = (color >> 4) & 0xF;
+			var b = (color >> 0) & 0xF;
 			r |= r<<4;
 			g |= g<<4;
 			b |= b<<4;
-			return value_create_color_rgb((r<<16)|(g<<8)|b);
+			return ColorValue::create_rgb((r<<16)|(g<<8)|b);
 		}
-		if (length(value) == 6) {
-			value = string_parse_hex_int(value);
-			return value_create_color_rgb(value);
+		if (value.length == 6) {
+			return ColorValue::create_rgb(String::parse_hex_int(value));
 		}
 	}
 	if (token == COMPONENT_FUNCTION) {
-		var func = par->TOKEN_value;
-		var name = string_to_lower_case(func->FUNCTION_name);
+		var func = par.value as Function;
+		var name = func.name.to_lower_case();
 		rewind_buffer(func);
 		if (name == "rgb" || name == "rgba") {
 			var r, g, b, a = -1;
@@ -503,19 +501,19 @@ function @parse_color(par)
 				b = consume_integer(func);
 			}
 			else {
-				r = consume_percentage(func);
+				var pr = consume_percentage(func);
 				consume_comma(func);
-				g = consume_percentage(func);
+				var pg = consume_percentage(func);
 				consume_comma(func);
-				b = consume_percentage(func);
-				r = iround({r * 255.0 / 100.0});
-				g = iround({g * 255.0 / 100.0});
-				b = iround({b * 255.0 / 100.0});
+				var pb = consume_percentage(func);
+				r = iround(pr * 255.0 / 100.0);
+				g = iround(pg * 255.0 / 100.0);
+				b = iround(pb * 255.0 / 100.0);
 			}
 			if (name == "rgba") {
 				consume_comma(func);
-				a = consume_float(func);
-				a = iround({a * 255.0});
+				var fa = consume_float(func);
+				a = iround(fa * 255.0);
 			}
 			consume_eof(func);
 			r = clamp(r, 0, 255);
@@ -523,37 +521,37 @@ function @parse_color(par)
 			b = clamp(b, 0, 255);
 			if (a != -1) {
 				a = clamp(a, 0, 255);
-				return value_create_color_rgba((a<<24)|(r<<16)|(g<<8)|b);
+				return ColorValue::create_rgba((a<<24)|(r<<16)|(g<<8)|b);
 			}
-			return value_create_color_rgb((r<<16)|(g<<8)|b);
+			return ColorValue::create_rgb((r<<16)|(g<<8)|b);
 		}
 		if (name == "hsl" || name == "hsla") {
-			var h, s, l, a = -1;
-			h = iround(consume_float(func));
-			h = (h % 360 + 360) % 360;
-			h = {float(h) / 360.0};
+			var a = -1;
+			var h = consume_float(func);
+			h = (iround(h) % 360 + 360) % 360;
+			h /= 360.0;
 			consume_comma(func);
-			s = fclamp({consume_percentage(func) / 100.0}, 0.0, 1.0);
+			var s = fclamp(consume_percentage(func) / 100.0, 0.0, 1.0);
 			consume_comma(func);
-			l = fclamp({consume_percentage(func) / 100.0}, 0.0, 1.0);
+			var l = fclamp(consume_percentage(func) / 100.0, 0.0, 1.0);
 			if (name == "hsla") {
 				consume_comma(func);
-				a = iround({consume_float(func) * 255.0});
+				a = iround(consume_float(func) * 255.0);
 			}
 			consume_eof(func);
 			var rgb = hsl_to_rgb(h, s, l);
 			if (a != -1) {
 				a = clamp(a, 0, 255);
-				return value_create_color_rgba((a<<24)|rgb);
+				return ColorValue::create_rgba((a<<24)|rgb);
 			}
-			return value_create_color_rgb(rgb);
+			return ColorValue::create_rgb(rgb);
 		}
 	}
 	back_token(par);
 	return null;
 }
 
-function @next_is_url(par)
+function @next_is_url(par: Parser): Boolean
 {
 	if (next_token(par) == TOKEN_URL) {
 		back_token(par);
@@ -563,15 +561,15 @@ function @next_is_url(par)
 	return false;
 }
 
-function @parse_url(par)
+function @parse_url(par: Parser): URLValue
 {
 	if (next_token(par) != TOKEN_URL) {
-		return 0, error("not URL");
+		throw error("not URL");
 	}
-	return value_create_url(par->TOKEN_value);
+	return URLValue::create(par.value as String);
 }
 
-function @next_is_image(par)
+function @next_is_image(par: Parser): Boolean
 {
 	var token = next_token(par);
 	if (token == TOKEN_URL) {
@@ -580,7 +578,8 @@ function @next_is_image(par)
 	}
 
 	if (token == COMPONENT_FUNCTION) {
-		var name = string_to_lower_case(par->TOKEN_value->FUNCTION_name);
+		var func = par.value as Function;
+		var name = func.name.to_lower_case();
 		if (name == "linear-gradient") {
 			back_token(par);
 			return true;
@@ -591,104 +590,104 @@ function @next_is_image(par)
 	return false;
 }
 
-function @parse_image(par)
+function @parse_image(par: Parser): Value
 {
 	var token = next_token(par);
 	if (token == COMPONENT_FUNCTION) {
-		var func = par->TOKEN_value;
-		var name = string_to_lower_case(func->FUNCTION_name);
+		var func = par.value as Function;
+		var name = func.name.to_lower_case();
 		if (name == "linear-gradient") {
 			rewind_buffer(func);
 			consume_whitespace(func);
 
-			var angle = null;
+			var angle: Value;
 			
-			if (next_token(func) == TOKEN_IDENT && string_to_lower_case(func->TOKEN_value) == "to") {
+			if (next_token(func) == TOKEN_IDENT && (func.value as String).to_lower_case() == "to") {
 				consume_whitespace(func);
-				if (next_token(func) != TOKEN_IDENT) return 0, error("bad direction");
-				name = string_to_lower_case(func->TOKEN_value);
+				if (next_token(func) != TOKEN_IDENT) throw error("bad direction");
+				name = (func.value as String).to_lower_case();
 				if (name == "top") {
 					consume_whitespace(func);
 					if (next_token(func) == TOKEN_IDENT) {
-						name = string_to_lower_case(func->TOKEN_value);
+						name = (func.value as String).to_lower_case();
 						if (name == "left") {
-							angle = value_create(VALUE_TO_TOP_LEFT);
+							angle = Value::create(VALUE_TO_TOP_LEFT);
 						}
 						else if (name == "right") {
-							angle = value_create(VALUE_TO_TOP_RIGHT);
+							angle = Value::create(VALUE_TO_TOP_RIGHT);
 						}
 						else {
-							return 0, error("syntax error");
+							throw error("syntax error");
 						}
 					}
 					else {
 						back_token(func);
 					}
 					if (!angle) {
-						angle = value_create(VALUE_TO_TOP);
+						angle = Value::create(VALUE_TO_TOP);
 					}
 				}
 				else if (name == "right") {
 					consume_whitespace(func);
 					if (next_token(func) == TOKEN_IDENT) {
-						name = string_to_lower_case(func->TOKEN_value);
+						name = (func.value as String).to_lower_case();
 						if (name == "top") {
-							angle = value_create(VALUE_TO_TOP_RIGHT);
+							angle = Value::create(VALUE_TO_TOP_RIGHT);
 						}
 						else if (name == "bottom") {
-							angle = value_create(VALUE_TO_BOTTOM_RIGHT);
+							angle = Value::create(VALUE_TO_BOTTOM_RIGHT);
 						}
 						else {
-							return 0, error("syntax error");
+							throw error("syntax error");
 						}
 					}
 					else {
 						back_token(func);
 					}
 					if (!angle) {
-						angle = value_create(VALUE_TO_RIGHT);
+						angle = Value::create(VALUE_TO_RIGHT);
 					}
 				}
 				else if (name == "bottom") {
 					consume_whitespace(func);
 					if (next_token(func) == TOKEN_IDENT) {
-						name = string_to_lower_case(func->TOKEN_value);
+						name = (func.value as String).to_lower_case();
 						if (name == "left") {
-							angle = value_create(VALUE_TO_BOTTOM_LEFT);
+							angle = Value::create(VALUE_TO_BOTTOM_LEFT);
 						}
 						else if (name == "right") {
-							angle = value_create(VALUE_TO_BOTTOM_RIGHT);
+							angle = Value::create(VALUE_TO_BOTTOM_RIGHT);
 						}
 						else {
-							return 0, error("syntax error");
+							throw error("syntax error");
 						}
 					}
 					else {
 						back_token(func);
 					}
 					if (!angle) {
-						angle = value_create(VALUE_TO_BOTTOM);
+						angle = Value::create(VALUE_TO_BOTTOM);
 					}
 				}
 				else if (name == "left") {
 					consume_whitespace(func);
 					if (next_token(func) == TOKEN_IDENT) {
-						name = string_to_lower_case(func->TOKEN_value);
+						name = (func.value as String).to_lower_case();
 						if (name == "top") {
-							angle = value_create(VALUE_TO_TOP_LEFT);
+							angle = Value::create(VALUE_TO_TOP_LEFT);
 						}
 						else if (name == "bottom") {
-							angle = value_create(VALUE_TO_BOTTOM_LEFT);
+							angle = Value::create(VALUE_TO_BOTTOM_LEFT);
 						}
 						else {
-							return 0, error("syntax error");
+							throw error("syntax error");
 						}
 					}
 					else {
 						back_token(func);
 					}
 					if (!angle) {
-						angle = value_create(VALUE_TO_LEFT);
+						angle = Value::create(VALUE_TO_LEFT);
 					}
 				}
 			}
@@ -700,30 +699,30 @@ function @parse_image(par)
 			if (angle) {
 				consume_whitespace(func);
 				if (next_token(func) != TOKEN_COMMA) {
-					return 0, error("expected comma");
+					throw error("expected comma");
 				}
 			}
 
 			if (!angle) {
-				angle = value_create(VALUE_TO_BOTTOM);
+				angle = Value::create(VALUE_TO_BOTTOM);
 			}
 
-			var gradient = value_create_linear_gradient(angle);
+			var gradient = LinearGradientValue::create(angle);
 
 			for (;;) {
 				consume_whitespace(func);
 				var color = parse_color(func);
-				if (!color) return 0, error("expected color");
+				if (!color) throw error("expected color");
 
-				var group = value_create_group();
-				value_child_add(group, color);
+				var group = GroupValue::create();
+				group.add_child(color);
 
 				consume_whitespace(func);
 				if (next_is_length_percentage(func)) {
-					value_child_add(group, parse_length_percentage(func));
+					group.add_child(parse_length_percentage(func));
 				}
 
-				value_child_add(gradient, group);
+				gradient.add_child(group);
 
 				consume_whitespace(func);
 				if (next_token(func) != TOKEN_COMMA) {
@@ -734,7 +733,7 @@ function @parse_image(par)
 
 			consume_whitespace(func);
 			if (next_token(func) != TOKEN_EOF) {
-				return 0, error("expected EOF");
+				throw error("expected EOF");
 			}
 			return gradient;
 		}
@@ -744,12 +743,12 @@ function @parse_image(par)
 	return parse_url(par);
 }
 
-function @next_is_length(par)
+function @next_is_length(par: Parser): Boolean
 {
 	var token = next_token(par);
 	if (token == TOKEN_NUMBER) {
-		var value = par->TOKEN_value;
-		if (value[0] == "0") {
+		var value = par.value as Number;
+		if (value.repr == "0") {
 			back_token(par);
 			return true;
 		}
@@ -763,65 +762,65 @@ function @next_is_length(par)
 	return false;
 }
 
-function parse_length(par)
+function parse_length(par: Parser): LengthValue
 {
 	var token = next_token(par);
 	if (token == TOKEN_NUMBER) {
-		var value = par->TOKEN_value;
-		if (value[0] == "0") {
-			return value_create_length(0, UNIT_ZERO);
+		var value = par.value as Number;
+		if (value.repr == "0") {
+			return LengthValue::create(0, UNIT_ZERO);
 		}
 	}
 	else if (token == TOKEN_DIMENSION) {
-		var value = number_as_float(par->TOKEN_value);
-		var unit = string_to_lower_case(par->TOKEN_unit);
+		var value = (par.value as Number).as_float();
+		var unit = (par as [DimensionToken])[0 as DimensionToken].unit.to_lower_case();
 		switch (unit[0]) {
 			case 'e':
-				if (unit == "em") return value_create_length(value, UNIT_EM);
-				if (unit == "ex") return value_create_length(value, UNIT_EX);
+				if (unit == "em") return LengthValue::create(value, UNIT_EM);
+				if (unit == "ex") return LengthValue::create(value, UNIT_EX);
 				break;
 
 			case 'c':
-				if (unit == "cm") return value_create_length(value, UNIT_CM);
-				if (unit == "ch") return value_create_length(value, UNIT_CH);
+				if (unit == "cm") return LengthValue::create(value, UNIT_CM);
+				if (unit == "ch") return LengthValue::create(value, UNIT_CH);
 				break;
 
 			case 'r':
-				if (unit == "rem") return value_create_length(value, UNIT_REM);
+				if (unit == "rem") return LengthValue::create(value, UNIT_REM);
 				break;
 
 			case 'v':
-				if (unit == "vw") return value_create_length(value, UNIT_VW);
-				if (unit == "vh") return value_create_length(value, UNIT_VH);
-				if (unit == "vmin") return value_create_length(value, UNIT_VMIN);
-				if (unit == "vmax") return value_create_length(value, UNIT_VMAX);
+				if (unit == "vw") return LengthValue::create(value, UNIT_VW);
+				if (unit == "vh") return LengthValue::create(value, UNIT_VH);
+				if (unit == "vmin") return LengthValue::create(value, UNIT_VMIN);
+				if (unit == "vmax") return LengthValue::create(value, UNIT_VMAX);
 				break;
 
 			case 'm':
-				if (unit == "mm") return value_create_length(value, UNIT_MM);
+				if (unit == "mm") return LengthValue::create(value, UNIT_MM);
 				break;
 
 			case 'q':
-				if (unit == "q") return value_create_length(value, UNIT_Q);
+				if (unit == "q") return LengthValue::create(value, UNIT_Q);
 				break;
 
 			case 'i':
-				if (unit == "in") return value_create_length(value, UNIT_IN);
+				if (unit == "in") return LengthValue::create(value, UNIT_IN);
 				break;
 
 			case 'p':
-				if (unit == "px") return value_create_length(value, UNIT_PX);
-				if (unit == "pt") return value_create_length(value, UNIT_PT);
-				if (unit == "pc") return value_create_length(value, UNIT_PC);
+				if (unit == "px") return LengthValue::create(value, UNIT_PX);
+				if (unit == "pt") return LengthValue::create(value, UNIT_PT);
+				if (unit == "pc") return LengthValue::create(value, UNIT_PC);
 				break;
 		}
-		return 0, error("invalid length unit");
+		throw error("invalid length unit");
 	}
 
-	return 0, error("not length");
+	throw error("not length");
 }
 
-function @next_is_length_percentage(par)
+function @next_is_length_percentage(par: Parser): Boolean
 {
 	if (next_token(par) == TOKEN_PERCENTAGE) {
 		back_token(par);
@@ -832,38 +831,38 @@ function @next_is_length_percentage(par)
 	return next_is_length(par);
 }
 
-function @parse_length_percentage(par)
+function @parse_length_percentage(par: Parser): LengthValue
 {
 	if (next_token(par) == TOKEN_PERCENTAGE) {
-		var value = number_as_float(par->TOKEN_value);
-		return value_create_length(value, UNIT_PERCENT);
+		var value = (par.value as Number).as_float();
+		return LengthValue::create(value, UNIT_PERCENT);
 	}
 
 	back_token(par);
 	return parse_length(par);
 }
 
-function @parse_angle(par)
+function @parse_angle(par: Parser): AngleValue
 {
 	var token = next_token(par);
 	if (token == TOKEN_DIMENSION) {
-		var value = number_as_float(par->TOKEN_value);
-		var unit = string_to_lower_case(par->TOKEN_unit);
+		var value = (par.value as Number).as_float();
+		var unit = (par as [DimensionToken])[0 as DimensionToken].unit.to_lower_case();
 		switch (unit[0]) {
 			case 'd':
-				if (unit == "deg") return value_create_angle(value, UNIT_DEG);
+				if (unit == "deg") return AngleValue::create(value, UNIT_DEG);
 				break;
 
 			case 'g':
-				if (unit == "grad") return value_create_angle(value, UNIT_GRAD);
+				if (unit == "grad") return AngleValue::create(value, UNIT_GRAD);
 				break;
 
 			case 'r':
-				if (unit == "rad") return value_create_angle(value, UNIT_RAD);
+				if (unit == "rad") return AngleValue::create(value, UNIT_RAD);
 				break;
 
 			case 't':
-				if (unit == "turn") return value_create_angle(value, UNIT_TURN);
+				if (unit == "turn") return AngleValue::create(value, UNIT_TURN);
 				break;
 		}
 	}
@@ -872,32 +871,32 @@ function @parse_angle(par)
 	return null;
 }
 
-function @parse_multiple(par, func)
+function @parse_multiple(par: Parser, func): Value
 {
-	var multiple = value_create_multiple();
+	var multiple = MultipleValue::create();
 
 	do {
 		consume_whitespace(par);
 		var value = func(par);
-		if (!value) return 0, error("expected value");
-		value_child_add(multiple, value);
+		if (!value) throw error("expected value");
+		multiple.add_child(value);
 		consume_whitespace(par);
 	}
 	while (next_token(par) == TOKEN_COMMA);
 
-	if (par->TOKEN_type != TOKEN_EOF) {
-		return 0, error("expected EOF");
+	if (par.type != TOKEN_EOF) {
+		throw error("expected EOF");
 	}
 
-	if (value_child_count(multiple) == 1) {
-		return value_child_get(multiple, 0);
+	if (multiple.get_child_count() == 1) {
+		return multiple.get_child(0);
 	}
 	return multiple;
 }
 
-function @next_is_background_image(par)
+function @next_is_background_image(par: Parser): Boolean
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "none") {
 		back_token(par);
 		return true;
 	}
@@ -906,10 +905,10 @@ function @next_is_background_image(par)
 	return next_is_image(par);
 }
 
-function @parse_background_image(par)
+function @parse_background_image(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
-		return value_create(VALUE_NONE);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "none") {
+		return Value::create(VALUE_NONE);
 	}
 	else {
 		back_token(par);
@@ -917,10 +916,10 @@ function @parse_background_image(par)
 	}
 }
 
-function @next_is_background_repeat(par)
+function @next_is_background_repeat(par: Parser): Boolean
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "repeat-x" || name == "repeat-y" || name == "repeat" || name == "space" || name == "round" || name == "no-repeat") {
 			back_token(par);
 			return true;
@@ -931,38 +930,38 @@ function @next_is_background_repeat(par)
 	return false;
 }
 
-function @parse_background_repeat(par)
+function @parse_background_repeat(par: Parser): GroupValue
 {
 	var name = expect_ident(par);
 
 	if (name == "repeat-x") {
-		return value_create_group(value_create(VALUE_REPEAT), value_create(VALUE_NO_REPEAT));
+		return GroupValue::create(Value::create(VALUE_REPEAT), Value::create(VALUE_NO_REPEAT));
 	}
 	if (name == "repeat-y") {
-		return value_create_group(value_create(VALUE_NO_REPEAT), value_create(VALUE_REPEAT));
+		return GroupValue::create(Value::create(VALUE_NO_REPEAT), Value::create(VALUE_REPEAT));
 	}
 
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (var i=0; i<2; i++) {
 		if (name == "repeat") {
-			value_child_add(group, value_create(VALUE_REPEAT));
+			group.add_child(Value::create(VALUE_REPEAT));
 		}
 		else if (name == "space") {
-			value_child_add(group, value_create(VALUE_SPACE));
+			group.add_child(Value::create(VALUE_SPACE));
 		}
 		else if (name == "round") {
-			value_child_add(group, value_create(VALUE_ROUND));
+			group.add_child(Value::create(VALUE_ROUND));
 		}
 		else if (name == "no-repeat") {
-			value_child_add(group, value_create(VALUE_NO_REPEAT));
+			group.add_child(Value::create(VALUE_NO_REPEAT));
 		}
 		else {
 			if (i == 1) {
 				back_token(par);
 				break;
 			}
-			return 0, error("unknown repeat value");
+			throw error("unknown repeat value");
 		}
 
 		consume_whitespace(par);
@@ -971,20 +970,20 @@ function @parse_background_repeat(par)
 			break;
 		}
 
-		name = string_to_lower_case(par->TOKEN_value);
+		name = (par.value as String).to_lower_case();
 	}
 
-	if (value_child_count(group) == 1) {
-		value_child_add(group, value_child_get(group, 0));
+	if (group.get_child_count() == 1) {
+		group.add_child(group.get_child(0));
 	}
 
 	return group;
 }
 
-function @next_is_background_attachment(par)
+function @next_is_background_attachment(par: Parser): Boolean
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "fixed" || name == "local" || name == "scroll") {
 			back_token(par);
 			return true;
@@ -995,32 +994,32 @@ function @next_is_background_attachment(par)
 	return false;
 }
 
-function @parse_background_attachment(par)
+function @parse_background_attachment(par: Parser): Value
 {
 	var name = expect_ident(par);
 
 	if (name == "fixed") {
-		return value_create(VALUE_FIXED);
+		return Value::create(VALUE_FIXED);
 	}
 	if (name == "local") {
-		return value_create(VALUE_LOCAL);
+		return Value::create(VALUE_LOCAL);
 	}
 	if (name == "scroll") {
-		return value_create(VALUE_SCROLL);
+		return Value::create(VALUE_SCROLL);
 	}
 
-	return 0, error("unknown attachment value");
+	throw error("unknown attachment value");
 }
 
-function @parse_background_position_value(par)
+function @parse_background_position_value(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		if (name == "left") return value_create(VALUE_LEFT);
-		if (name == "center") return value_create(VALUE_CENTER);
-		if (name == "right") return value_create(VALUE_RIGHT);
-		if (name == "top") return value_create(VALUE_TOP);
-		if (name == "bottom") return value_create(VALUE_BOTTOM);
+		var name = (par.value as String).to_lower_case();
+		if (name == "left") return Value::create(VALUE_LEFT);
+		if (name == "center") return Value::create(VALUE_CENTER);
+		if (name == "right") return Value::create(VALUE_RIGHT);
+		if (name == "top") return Value::create(VALUE_TOP);
+		if (name == "bottom") return Value::create(VALUE_BOTTOM);
 		back_token(par);
 		return null;
 	}
@@ -1032,9 +1031,9 @@ function @parse_background_position_value(par)
 	return null;
 }
 
-function @bgpos_value_is_dir(value)
+function @bgpos_value_is_dir(value: Value): Boolean
 {
-	switch (value->VALUE_type) {
+	switch (value.type) {
 		case VALUE_LEFT:
 		case VALUE_RIGHT:
 		case VALUE_TOP:
@@ -1044,9 +1043,9 @@ function @bgpos_value_is_dir(value)
 	return false;
 }
 
-function @bgpos_value_is_horiz(value)
+function @bgpos_value_is_horiz(value: Value): Boolean
 {
-	switch (value->VALUE_type) {
+	switch (value.type) {
 		case VALUE_LEFT:
 		case VALUE_RIGHT:
 			return true;
@@ -1054,9 +1053,9 @@ function @bgpos_value_is_horiz(value)
 	return false;
 }
 
-function @bgpos_value_is_vert(value)
+function @bgpos_value_is_vert(value: Value): Boolean
 {
-	switch (value->VALUE_type) {
+	switch (value.type) {
 		case VALUE_TOP:
 		case VALUE_BOTTOM:
 			return true;
@@ -1064,10 +1063,10 @@ function @bgpos_value_is_vert(value)
 	return false;
 }
 
-function @next_is_background_position(par)
+function @next_is_background_position(par: Parser): Boolean
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "left" || name == "center" || name == "right" || name == "top" || name == "bottom") {
 			back_token(par);
 			return true;
@@ -1078,80 +1077,80 @@ function @next_is_background_position(par)
 	return next_is_length_percentage(par);
 }
 
-function @parse_background_position(par)
+function @parse_background_position(par: Parser): GroupValue
 {
-	var v1, v2, v3, v4;
+	var v1: Value, v2: Value, v3: Value, v4: Value;
 	
 	v1 = parse_background_position_value(par);
-	if (!v1) return 0, error("expected position value");
-	//log({"v1=", value_to_string(v1)});
+	if (!v1) throw error("expected position value");
+	//log("v1="+v1.to_string());
 	
 	consume_whitespace(par);
 	v2 = parse_background_position_value(par);
 	if (v2) {
-		//log({"v2=", value_to_string(v2)});
+		//log("v2="+v2.to_string());
 		consume_whitespace(par);
 		v3 = parse_background_position_value(par);
 		if (v3) {
-			//log({"v3=", value_to_string(v3)});
+			//log("v3="+v3.to_string());
 			consume_whitespace(par);
 			v4 = parse_background_position_value(par);
 			//if (v4) {
-			//	log({"v4=", value_to_string(v4)});
+			//	log("v4="+v4.to_string());
 			//}
 		}
 	}
 
 	if (!v2) {
 		if (bgpos_value_is_vert(v1)) {
-			return value_create_group(value_create(VALUE_CENTER), v1);
+			return GroupValue::create(Value::create(VALUE_CENTER), v1);
 		}
-		return value_create_group(v1, value_create(VALUE_CENTER));
+		return GroupValue::create(v1, Value::create(VALUE_CENTER));
 	}
 
 	if (!v3) {
 		if (bgpos_value_is_vert(v1)) {
 			if (bgpos_value_is_vert(v2)) {
-				return 0, error("duplicate direction in position");
+				throw error("duplicate direction in position");
 			}
-			return value_create_group(v2, v1);
+			return GroupValue::create(v2, v1);
 		}
 		if (bgpos_value_is_horiz(v2)) {
-			return 0, error("duplicate direction in position");
+			throw error("duplicate direction in position");
 		}
-		return value_create_group(v1, value_create(VALUE_CENTER));
+		return GroupValue::create(v1, Value::create(VALUE_CENTER));
 	}
 
 	if (!v4) {
-		if (bgpos_value_is_dir(v1) && v2->VALUE_type != VALUE_LENGTH) {
+		if (bgpos_value_is_dir(v1) && v2.type != VALUE_LENGTH) {
 			v4 = v3;
 			v3 = v2;
-			v2 = value_create_length(0, UNIT_ZERO);
+			v2 = LengthValue::create(0, UNIT_ZERO);
 		}
 		else {
-			v4 = value_create_length(0, UNIT_ZERO);
+			v4 = LengthValue::create(0, UNIT_ZERO);
 		}
 	}
 
-	if (v2->VALUE_type != VALUE_LENGTH || v4->VALUE_type != VALUE_LENGTH) {
-		return 0, error("invalid position value");
+	if (v2.type != VALUE_LENGTH || v4.type != VALUE_LENGTH) {
+		throw error("invalid position value");
 	}
 
 	if (bgpos_value_is_horiz(v1) && bgpos_value_is_vert(v3)) {
-		return value_create_group(value_create_group(v1, v2), value_create_group(v3, v4));
+		return GroupValue::create(GroupValue::create(v1, v2), GroupValue::create(v3, v4));
 	}
 
 	if (bgpos_value_is_vert(v1) && bgpos_value_is_horiz(v3)) {
-		return value_create_group(value_create_group(v3, v4), value_create_group(v1, v2));
+		return GroupValue::create(GroupValue::create(v3, v4), GroupValue::create(v1, v2));
 	}
 
-	return 0, error("invalid position value");
+	throw error("invalid position value");
 }
 
-function @next_is_background_clip(par)
+function @next_is_background_clip(par: Parser): Boolean
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "border-box" || name == "padding-box" || name == "content-box") {
 			back_token(par);
 			return true;
@@ -1162,49 +1161,49 @@ function @next_is_background_clip(par)
 	return false;
 }
 
-function @parse_background_clip(par)
+function @parse_background_clip(par: Parser): Value
 {
 	var name = expect_ident(par);
 
 	if (name == "border-box") {
-		return value_create(VALUE_BORDER_BOX);
+		return Value::create(VALUE_BORDER_BOX);
 	}
 	if (name == "padding-box") {
-		return value_create(VALUE_PADDING_BOX);
+		return Value::create(VALUE_PADDING_BOX);
 	}
 	if (name == "content-box") {
-		return value_create(VALUE_CONTENT_BOX);
+		return Value::create(VALUE_CONTENT_BOX);
 	}
 
-	return 0, error("unknown clip value");
+	throw error("unknown clip value");
 }
 
-function @parse_background_size(par)
+function @parse_background_size(par: Parser): Value
 {
 	var token = next_token(par);
 	if (token == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "cover") {
-			return value_create(VALUE_COVER);
+			return Value::create(VALUE_COVER);
 		}
 		if (name == "contain") {
-			return value_create(VALUE_CONTAIN);
+			return Value::create(VALUE_CONTAIN);
 		}
 
 		if (name == "auto") {
 			consume_whitespace(par);
 			token = next_token(par);
 			if (token == TOKEN_IDENT) {
-				name = string_to_lower_case(par->TOKEN_value);
+				name = (par.value as String).to_lower_case();
 				if (name == "auto") {
-					return value_create_group(value_create(VALUE_AUTO), value_create(VALUE_AUTO));
+					return GroupValue::create(Value::create(VALUE_AUTO), Value::create(VALUE_AUTO));
 				}
 			}
 			back_token(par);
 			if (next_is_length_percentage(par)) {
-				return value_create_group(value_create(VALUE_AUTO), parse_length_percentage(par));
+				return GroupValue::create(Value::create(VALUE_AUTO), parse_length_percentage(par));
 			}
-			return value_create_group(value_create(VALUE_AUTO), value_create(VALUE_AUTO));
+			return GroupValue::create(Value::create(VALUE_AUTO), Value::create(VALUE_AUTO));
 		}
 	}
 
@@ -1214,142 +1213,135 @@ function @parse_background_size(par)
 	consume_whitespace(par);
 	token = next_token(par);
 	if (token == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "auto") {
-			return value_create_group(v1, value_create(VALUE_AUTO));
+			return GroupValue::create(v1, Value::create(VALUE_AUTO));
 		}
 	}
 	back_token(par);
 	if (next_is_length_percentage(par)) {
-		return value_create_group(v1, parse_length_percentage(par));
+		return GroupValue::create(v1, parse_length_percentage(par));
 	}
-	return value_create_group(v1, value_create(VALUE_AUTO));
+	return GroupValue::create(v1, Value::create(VALUE_AUTO));
 }
 
-function @parse_background_value(par)
+function @parse_background_value(par: Parser): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (;;) {
 		consume_whitespace(par);
 
 		if (next_is_background_image(par)) {
-			value_child_add(group, parse_background_image(par));
+			group.add_child(parse_background_image(par));
 			continue;
 		}
 
 		if (next_is_background_position(par)) {
-			value_child_add(group, parse_background_position(par));
+			group.add_child(parse_background_position(par));
 			consume_whitespace(par);
-			if (next_token(par) == TOKEN_DELIM && par->TOKEN_value == '/') {
+			if (next_token(par) == TOKEN_DELIM && (par.value as Integer) == '/') {
 				consume_whitespace(par);
-				value_child_add(group, parse_background_size(par));
+				group.add_child(parse_background_size(par));
 			}
 			back_token(par);
 			continue;
 		}
 
 		if (next_is_background_repeat(par)) {
-			value_child_add(group, parse_background_repeat(par));
+			group.add_child(parse_background_repeat(par));
 			continue;
 		}
 
 		if (next_is_background_attachment(par)) {
-			value_child_add(group, parse_background_attachment(par));
+			group.add_child(parse_background_attachment(par));
 			continue;
 		}
 
 		if (next_is_background_clip(par)) {
-			value_child_add(group, parse_background_clip(par));
+			group.add_child(parse_background_clip(par));
 			continue;
 		}
 
 		var color = parse_color(par);
-		if (color != null) {
-			value_child_add(group, color);
+		if (color) {
+			group.add_child(color);
 			continue;
 		}
 
 		break;
 	}
 
-	if (value_child_count(group) == 0) {
-		return 0, error("empty background layer");
+	if (group.get_child_count() == 0) {
+		throw error("empty background layer");
 	}
 	return group;
 }
 
-function @parse_background(par)
+function @parse_background(par: Parser): Value
 {
-	var multiple = parse_multiple(par, parse_background_value#1);
+	var multiple_or_single = parse_multiple(par, parse_background_value#1);
 
-	if (multiple->VALUE_type == VALUE_MULTIPLE) {
-		for (var i=0; i<value_child_count(multiple)-1; i++) {
-			var group = value_child_get(multiple, i);
-			for (var j=0; j<value_child_count(group); j++) {
-				if (value_is_color(value_child_get(group, j))) {
-					return 0, error("color is permitted only in final layer");
+	if (multiple_or_single.type == VALUE_MULTIPLE) {
+		var multiple = multiple_or_single as MultipleValue;
+		for (var i=0; i<multiple.get_child_count()-1; i++) {
+			var group = multiple.get_child(i) as GroupValue;
+			for (var j=0; j<group.get_child_count(); j++) {
+				if (ColorValue::is_instance(group.get_child(j))) {
+					throw error("color is permitted only in final layer");
 				}
 			}
 		}
 	}
-	return multiple;
+	return multiple_or_single;
 }
 
-function @parse_border_group(par, func)
+function @parse_border_group(par: Parser, func): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (var i=0; i<4; i++) {
 		consume_whitespace(par);
 		var value = func(par);
 		if (!value) break;
-		value_child_add(group, value);
+		group.add_child(value);
 	}
 
-	if (value_child_count(group) == 0) {
-		return 0, error("no border values present");
+	if (group.get_child_count() == 0) {
+		throw error("no border values present");
 	}
-	if (value_child_count(group) == 1) {
-		value_child_add(group, value_child_get(group, 0));
+	if (group.get_child_count() == 1) {
+		group.add_child(group.get_child(0));
 	}
-	if (value_child_count(group) == 2) {
-		value_child_add(group, value_child_get(group, 0));
+	if (group.get_child_count() == 2) {
+		group.add_child(group.get_child(0));
 	}
-	if (value_child_count(group) == 3) {
-		value_child_add(group, value_child_get(group, 1));
+	if (group.get_child_count() == 3) {
+		group.add_child(group.get_child(1));
 	}
 	return group;
 }
 
-function @parse_border_color(par)
+function @parse_border_color(par: Parser): GroupValue
 {
 	return parse_border_group(par, parse_color#1);
 }
 
-function @parse_border_style_value(par)
+function @parse_border_style_value(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		switch (length(name)) {
-			case 4:
-				if (name == "none") return value_create(VALUE_NONE);
-				break;
-
-			case 5:
-				if (name == "solid") return value_create(VALUE_SOLID);
-				if (name == "ridge") return value_create(VALUE_RIDGE);
-				if (name == "inset") return value_create(VALUE_INSET);
-				break;
-
-			case 6:
-				if (name == "hidden") return value_create(VALUE_HIDDEN);
-				if (name == "dotted") return value_create(VALUE_DOTTED);
-				if (name == "dashed") return value_create(VALUE_DASHED);
-				if (name == "double") return value_create(VALUE_DOUBLE);
-				if (name == "groove") return value_create(VALUE_GROOVE);
-				if (name == "outset") return value_create(VALUE_OUTSET);
-				break;
+		var name = (par.value as String).to_lower_case();
+		switch (name) {
+			case "none":   return Value::create(VALUE_NONE);
+			case "hidden": return Value::create(VALUE_HIDDEN);
+			case "dotted": return Value::create(VALUE_DOTTED);
+			case "dashed": return Value::create(VALUE_DASHED);
+			case "solid":  return Value::create(VALUE_SOLID);
+			case "double": return Value::create(VALUE_DOUBLE);
+			case "groove": return Value::create(VALUE_GROOVE);
+			case "ridge":  return Value::create(VALUE_RIDGE);
+			case "inset":  return Value::create(VALUE_INSET);
+			case "outset": return Value::create(VALUE_OUTSET);
 		}
 	}
 
@@ -1357,18 +1349,18 @@ function @parse_border_style_value(par)
 	return null;
 }
 
-function @parse_border_style(par)
+function @parse_border_style(par: Parser): GroupValue
 {
 	return parse_border_group(par, parse_border_style_value#1);
 }
 
-function @parse_border_width_value(par)
+function @parse_border_width_value(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		if (name == "thin") return value_create(VALUE_THIN);
-		if (name == "medium") return value_create(VALUE_MEDIUM);
-		if (name == "thick") return value_create(VALUE_THICK);
+		var name = (par.value as String).to_lower_case();
+		if (name == "thin") return Value::create(VALUE_THIN);
+		if (name == "medium") return Value::create(VALUE_MEDIUM);
+		if (name == "thick") return Value::create(VALUE_THICK);
 	}
 
 	back_token(par);
@@ -1378,46 +1370,46 @@ function @parse_border_width_value(par)
 	return null;
 }
 
-function @parse_border_width(par)
+function @parse_border_width(par: Parser): GroupValue
 {
 	return parse_border_group(par, parse_border_width_value#1);
 }
 
-function @parse_border(par)
+function @parse_border(par: Parser): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (;;) {
 		consume_whitespace(par);
 
 		var value = parse_border_width_value(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		value = parse_border_style_value(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		value = parse_color(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		break;
 	}
 
-	if (value_child_count(group) == 0) {
-		return 0, error("no border values present");
+	if (group.get_child_count() == 0) {
+		throw error("no border values present");
 	}
 	return group;
 }
 
-function @parse_border_radius_value(par)
+function @parse_border_radius_value(par: Parser): GroupValue
 {
 	var v1 = parse_length_percentage(par);
 	var v2 = v1;
@@ -1426,59 +1418,59 @@ function @parse_border_radius_value(par)
 	if (next_is_length_percentage(par)) {
 		v2 = parse_length_percentage(par);
 	}
-	return value_create_group(v1, v2);
+	return GroupValue::create(v1, v2);
 }
 
-function @parse_border_radius_group(par, group)
+function @parse_border_radius_group(par: Parser, group: GroupValue)
 {
 	for (var i=0; i<4; i++) {
 		consume_whitespace(par);
 		if (next_is_length_percentage(par)) {
-			value_child_add(group, parse_length_percentage(par));
+			group.add_child(parse_length_percentage(par));
 		}
 		else break;
 	}
-	if (value_child_count(group) == 0) {
-		return 0, error("no values present");
+	if (group.get_child_count() == 0) {
+		throw error("no values present");
 	}
-	if (value_child_count(group) == 1) {
-		value_child_add(group, value_child_get(group, 0));
+	if (group.get_child_count() == 1) {
+		group.add_child(group.get_child(0));
 	}
-	if (value_child_count(group) == 2) {
-		value_child_add(group, value_child_get(group, 0));
+	if (group.get_child_count() == 2) {
+		group.add_child(group.get_child(0));
 	}
-	if (value_child_count(group) == 3) {
-		value_child_add(group, value_child_get(group, 1));
+	if (group.get_child_count() == 3) {
+		group.add_child(group.get_child(1));
 	}
 }
 
-function @parse_border_radius(par)
+function @parse_border_radius(par: Parser): SlashGroupValue
 {
-	var group1 = value_create_group();
+	var group1 = GroupValue::create();
 	var group2;
 
 	parse_border_radius_group(par, group1);
 
-	if (next_token(par) == TOKEN_DELIM && par->TOKEN_value == '/') {
-		group2 = value_create_group();
+	if (next_token(par) == TOKEN_DELIM && (par.value as Integer) == '/') {
+		group2 = GroupValue::create();
 		parse_border_radius_group(par, group2);
 	}
 	else {
 		back_token(par);
 		group2 = group1;
 	}
-	return value_create_slash_group(group1, group2);
+	return SlashGroupValue::create(group1, group2);
 }
 
-function @parse_border_collapse(par)
+function @parse_border_collapse(par: Parser): Value
 {
 	var name = expect_ident(par);
-	if (name == "collapse") return value_create(VALUE_COLLAPSE);
-	if (name == "separate") return value_create(VALUE_SEPARATE);
-	return 0, error("invalid border collapse value");
+	if (name == "collapse") return Value::create(VALUE_COLLAPSE);
+	if (name == "separate") return Value::create(VALUE_SEPARATE);
+	throw error("invalid border collapse value");
 }
 
-function @parse_border_spacing(par)
+function @parse_border_spacing(par: Parser): GroupValue
 {
 	var horiz = parse_length(par);
 	var vert = horiz;
@@ -1487,15 +1479,15 @@ function @parse_border_spacing(par)
 	if (next_is_length(par)) {
 		vert = parse_length(par);
 	}
-	return value_create_group(horiz, vert);
+	return GroupValue::create(horiz, vert);
 }
 
-function @parse_box_shadow_value(par)
+function @parse_box_shadow_value(par: Parser): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "inset") {
-		value_child_add(group, value_create(VALUE_INSET));
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "inset") {
+		group.add_child(Value::create(VALUE_INSET));
 	}
 	else {
 		back_token(par);
@@ -1504,11 +1496,11 @@ function @parse_box_shadow_value(par)
 	for (var i=0; i<4; i++) {
 		consume_whitespace(par);
 		if (next_is_length(par)) {
-			value_child_add(group, parse_length(par));
+			group.add_child(parse_length(par));
 		}
 		else {
 			if (i <= 1) {
-				return 0, error("both offsets required");
+				throw error("both offsets required");
 			}
 			break;
 		}
@@ -1517,14 +1509,14 @@ function @parse_box_shadow_value(par)
 	consume_whitespace(par);
 	var color = parse_color(par);
 	if (color) {
-		value_child_add(group, color);
+		group.add_child(color);
 	}
 
 	// TODO: inset can be also last? or is the position irrelevant for all values?
 	consume_whitespace(par);
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "inset") {
-		if (value_child_get(group, 0)->VALUE_type != VALUE_INSET) {
-			value_child_insert(group, 0, value_create(VALUE_INSET));
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "inset") {
+		if (group.get_child(0).type != VALUE_INSET) {
+			group.insert_child(0, Value::create(VALUE_INSET));
 		}
 	}
 	else {
@@ -1533,12 +1525,12 @@ function @parse_box_shadow_value(par)
 	return group;
 }
 
-function @parse_box_shadow(par)
+function @parse_box_shadow(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "none") {
-			return value_create(VALUE_NONE);
+			return Value::create(VALUE_NONE);
 		}
 	}
 
@@ -1546,18 +1538,18 @@ function @parse_box_shadow(par)
 	return parse_multiple(par, parse_box_shadow_value#1);
 }
 
-function @parse_text_shadow_value(par)
+function @parse_text_shadow_value(par: Parser): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (var i=0; i<3; i++) {
 		consume_whitespace(par);
 		if (next_is_length(par)) {
-			value_child_add(group, parse_length(par));
+			group.add_child(parse_length(par));
 		}
 		else {
 			if (i <= 1) {
-				return 0, error("both offsets required");
+				throw error("both offsets required");
 			}
 			break;
 		}
@@ -1566,18 +1558,18 @@ function @parse_text_shadow_value(par)
 	consume_whitespace(par);
 	var color = parse_color(par);
 	if (color) {
-		value_child_add(group, color);
+		group.add_child(color);
 	}
 
 	return group;
 }
 
-function @parse_text_shadow(par)
+function @parse_text_shadow(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
+		var name = (par.value as String).to_lower_case();
 		if (name == "none") {
-			return value_create(VALUE_NONE);
+			return Value::create(VALUE_NONE);
 		}
 	}
 
@@ -1585,18 +1577,18 @@ function @parse_text_shadow(par)
 	return parse_multiple(par, parse_text_shadow_value#1);
 }
 
-function @parse_opacity(par)
+function @parse_opacity(par: Parser): OpacityValue
 {
 	var opacity = consume_float(par);
 	opacity = fclamp(opacity, 0.0, 1.0);
-	return value_create_opacity(opacity);
+	return OpacityValue::create(opacity);
 }
 
-function @parse_font_family(par)
+function @parse_font_family(par: Parser): FontFamilyValue
 {
 	var token = next_token(par);
 	if (token == TOKEN_STRING) {
-		return value_create_font_family_name(par->TOKEN_value);
+		return FontFamilyValue::create(par.value as String);
 	}
 
 	if (token != TOKEN_IDENT) {
@@ -1604,7 +1596,7 @@ function @parse_font_family(par)
 		return null;
 	}
 
-	var s = {par->TOKEN_value};
+	var s = {par.value as String};
 	for (;;) {
 		consume_whitespace(par);
 		token = next_token(par);
@@ -1613,31 +1605,31 @@ function @parse_font_family(par)
 			break;
 		}
 		s[] = ' ';
-		string_append(s, par->TOKEN_value);
+		s += par.value as String;
 	}
 
 	if (s == "serif" || s == "sans-serif" || s == "cursive" || s == "fantasy" || s == "monospace") {
-		return value_create_font_family_generic(s);
+		return FontFamilyValue::create_generic(s);
 	}
-	return value_create_font_family_name(s);
+	return FontFamilyValue::create(s);
 }
 
-function @parse_font_weight(par)
+function @parse_font_weight(par: Parser): Value
 {
 	var token = next_token(par);
 	if (token == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		if (name == "normal") return value_create_font_weight(400);
-		if (name == "bold") return value_create_font_weight(700);
-		if (name == "bolder") return value_create(VALUE_BOLDER);
-		if (name == "lighter") return value_create(VALUE_LIGHTER);
+		var name = (par.value as String).to_lower_case();
+		if (name == "normal") return FontWeightValue::create(400);
+		if (name == "bold") return FontWeightValue::create(700);
+		if (name == "bolder") return Value::create(VALUE_BOLDER);
+		if (name == "lighter") return Value::create(VALUE_LIGHTER);
 	}
 	else if (token == TOKEN_NUMBER) {
-		var value = par->TOKEN_value;
-		if (value[0][0] != '+' && !value[2]) {
-			switch (value[1]) {
+		var value = par.value as Number;
+		if (value.repr[0] != '+' && !value.is_number) {
+			switch (value.value as Integer) {
 				case 100, 200, 300, 400, 500, 600, 700, 800, 900:
-					return value_create_font_weight(value[1]);
+					return FontWeightValue::create(value.value as Integer);
 			}
 		}
 	}
@@ -1645,43 +1637,32 @@ function @parse_font_weight(par)
 	return null;
 }
 
-function @parse_font_style(par)
+function @parse_font_style(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		if (name == "normal") return value_create(VALUE_NORMAL);
-		if (name == "italic") return value_create(VALUE_ITALIC);
-		if (name == "oblique") return value_create(VALUE_OBLIQUE);
+		var name = (par.value as String).to_lower_case();
+		if (name == "normal") return Value::create(VALUE_NORMAL);
+		if (name == "italic") return Value::create(VALUE_ITALIC);
+		if (name == "oblique") return Value::create(VALUE_OBLIQUE);
 	}
 	back_token(par);
 	return null;
 }
 
-function @parse_font_size(par)
+function @parse_font_size(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		switch (length(name)) {
-			case 5:
-				if (name == "small") return value_create(VALUE_SMALL);
-				if (name == "large") return value_create(VALUE_LARGE);
-				break;
-
-			case 6:
-				if (name == "medium") return value_create(VALUE_MEDIUM);
-				if (name == "larger") return value_create(VALUE_LARGER);
-				break;
-
-			case 7:
-				if (name == "x-small") return value_create(VALUE_X_SMALL);
-				if (name == "x-large") return value_create(VALUE_X_LARGE);
-				if (name == "smaller") return value_create(VALUE_SMALLER);
-				break;
-
-			case 8:
-				if (name == "xx-small") return value_create(VALUE_XX_SMALL);
-				if (name == "xx-large") return value_create(VALUE_XX_LARGE);
-				break;
+		var name = (par.value as String).to_lower_case();
+		switch (name) {
+			case "xx-small": return Value::create(VALUE_XX_SMALL);
+			case "x-small":  return Value::create(VALUE_X_SMALL);
+			case "small":    return Value::create(VALUE_SMALL);
+			case "medium":   return Value::create(VALUE_MEDIUM);
+			case "large":    return Value::create(VALUE_LARGE);
+			case "x-large":  return Value::create(VALUE_X_LARGE);
+			case "xx-large": return Value::create(VALUE_XX_LARGE);
+			case "larger":   return Value::create(VALUE_LARGER);
+			case "smaller":  return Value::create(VALUE_SMALLER);
 		}
 	}
 
@@ -1692,43 +1673,43 @@ function @parse_font_size(par)
 	return null;
 }
 
-function @parse_font(par)
+function @parse_font(par: Parser): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (;;) {
 		consume_whitespace(par);
 
 		var value = parse_font_style(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		value = parse_font_weight(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		value = parse_font_size(par);
 		if (value) {
 			consume_whitespace(par);
-			if (next_token(par) == TOKEN_DELIM && par->TOKEN_value == '/') {
+			if (next_token(par) == TOKEN_DELIM && (par.value as Integer) == '/') {
 				consume_whitespace(par);
-				value_child_add(group, value_create_slash_group(value, parse_line_height(par)));
+				group.add_child(SlashGroupValue::create(value, parse_line_height(par)));
 			}
 			else {
 				back_token(par);
-				value_child_add(group, value);
+				group.add_child(value);
 			}
 			continue;
 		}
 
 		value = parse_font_family(par);
 		if (value) {
-			var multiple = value_create_multiple();
-			value_child_add(multiple, value);
+			var multiple = MultipleValue::create();
+			multiple.add_child(value);
 
 			for (;;) {
 				consume_whitespace(par);
@@ -1739,15 +1720,15 @@ function @parse_font(par)
 				
 				consume_whitespace(par);
 				value = parse_font_family(par);
-				if (!value) return 0, error("expected font family");
-				value_child_add(multiple, value);
+				if (!value) throw error("expected font family");
+				multiple.add_child(value);
 			}
 
-			if (value_child_count(multiple) == 1) {
-				value_child_add(group, value_child_get(multiple, 0));
+			if (multiple.get_child_count() == 1) {
+				group.add_child(multiple.get_child(0));
 			}
 			else {
-				value_child_add(group, multiple);
+				group.add_child(multiple);
 			}
 			continue;
 		}
@@ -1755,31 +1736,31 @@ function @parse_font(par)
 		break;
 	}
 
-	if (value_child_count(group) == 0) {
-		return 0, error("no font values present");
+	if (group.get_child_count() == 0) {
+		throw error("no font values present");
 	}
 	return group;
 }
 
-function @parse_line_height(par)
+function @parse_line_height(par: Parser): Value
 {
 	var token = next_token(par);
-	if (token == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "normal") {
-		return value_create(VALUE_NORMAL);
+	if (token == TOKEN_IDENT && (par.value as String).to_lower_case() == "normal") {
+		return Value::create(VALUE_NORMAL);
 	}
 
 	if (token == TOKEN_NUMBER) {
-		return value_create_number(number_as_float(par->TOKEN_value));
+		return NumberValue::create((par.value as Number).as_float());
 	}
 
 	back_token(par);
 	return parse_length_percentage(par);
 }
 
-function @parse_margin_value(par)
+function @parse_margin_value(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
-		return value_create(VALUE_AUTO);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "auto") {
+		return Value::create(VALUE_AUTO);
 	}
 
 	back_token(par);
@@ -1789,12 +1770,12 @@ function @parse_margin_value(par)
 	return null;
 }
 
-function @parse_margin(par)
+function @parse_margin(par: Parser): GroupValue
 {
 	return parse_border_group(par, parse_margin_value#1);
 }
 
-function @parse_padding_value(par)
+function @parse_padding_value(par: Parser): LengthValue
 {
 	if (next_is_length_percentage(par)) {
 		return parse_length_percentage(par);
@@ -1802,188 +1783,127 @@ function @parse_padding_value(par)
 	return null;
 }
 
-function @parse_padding(par)
+function @parse_padding(par: Parser): GroupValue
 {
 	return parse_border_group(par, parse_padding_value#1);
 }
 
-function @parse_display(par)
+function @parse_display(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 4:
-			if (name == "none") return value_create(VALUE_NONE);
-			if (name == "flex") return value_create(VALUE_FLEX);
-			break;
-
-		case 5:
-			if (name == "block") return value_create(VALUE_BLOCK);
-			if (name == "table") return value_create(VALUE_TABLE);
-			break;
-
-		case 6:
-			if (name == "inline") return value_create(VALUE_INLINE);
-			break;
-
-		case 9:
-			if (name == "list-item") return value_create(VALUE_LIST_ITEM);
-			if (name == "table-row") return value_create(VALUE_TABLE_ROW);
-			break;
-
-		case 10:
-			if (name == "table-cell") return value_create(VALUE_TABLE_CELL);
-			break;
-
-		case 11:
-			if (name == "inline-flex") return value_create(VALUE_INLINE_FLEX);
-			break;
-
-		case 12:
-			if (name == "inline-block") return value_create(VALUE_INLINE_BLOCK);
-			if (name == "inline-table") return value_create(VALUE_INLINE_TABLE);
-			if (name == "table-column") return value_create(VALUE_TABLE_COLUMN);
-			break;
-
-		case 13:
-			if (name == "table-caption") return value_create(VALUE_TABLE_CAPTION);
-			break;
-
-		case 15:
-			if (name == "table-row-group") return value_create(VALUE_TABLE_ROW_GROUP);
-			break;
-
-		case 18:
-			if (name == "table-header-group") return value_create(VALUE_TABLE_HEADER_GROUP);
-			if (name == "table-footer-group") return value_create(VALUE_TABLE_FOOTER_GROUP);
-			if (name == "table-column-group") return value_create(VALUE_TABLE_COLUMN_GROUP);
-			break;
+	switch (name) {
+		case "inline":             return Value::create(VALUE_INLINE);
+		case "block":              return Value::create(VALUE_BLOCK);
+		case "list-item":          return Value::create(VALUE_LIST_ITEM);
+		case "inline-block":       return Value::create(VALUE_INLINE_BLOCK);
+		case "table":              return Value::create(VALUE_TABLE);
+		case "inline-table":       return Value::create(VALUE_INLINE_TABLE);
+		case "table-row-group":    return Value::create(VALUE_TABLE_ROW_GROUP);
+		case "table-header-group": return Value::create(VALUE_TABLE_HEADER_GROUP);
+		case "table-footer-group": return Value::create(VALUE_TABLE_FOOTER_GROUP);
+		case "table-row":          return Value::create(VALUE_TABLE_ROW);
+		case "table-column-group": return Value::create(VALUE_TABLE_COLUMN_GROUP);
+		case "table-column":       return Value::create(VALUE_TABLE_COLUMN);
+		case "table-cell":         return Value::create(VALUE_TABLE_CELL);
+		case "table-caption":      return Value::create(VALUE_TABLE_CAPTION);
+		case "flex":               return Value::create(VALUE_FLEX);
+		case "inline-flex":        return Value::create(VALUE_INLINE_FLEX);
+		case "none":               return Value::create(VALUE_NONE);
 	}
-	return 0, error("invalid display value");
+	throw error("invalid display value");
 }
 
-function @parse_position(par)
+function @parse_position(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 5:
-			if (name == "fixed") return value_create(VALUE_FIXED);
-			break;
-
-		case 6:
-			if (name == "static") return value_create(VALUE_STATIC);
-			break;
-
-		case 8:
-			if (name == "relative") return value_create(VALUE_RELATIVE);
-			if (name == "absolute") return value_create(VALUE_ABSOLUTE);
-			break;
+	switch (name) {
+		case "static":   return Value::create(VALUE_STATIC);
+		case "relative": return Value::create(VALUE_RELATIVE);
+		case "absolute": return Value::create(VALUE_ABSOLUTE);
+		case "fixed":    return Value::create(VALUE_FIXED);
 	}
-	return 0, error("invalid position value");
+	throw error("invalid position value");
 }
 
-function @parse_box_offset(par)
+function @parse_box_offset(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
-		return value_create(VALUE_AUTO);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "auto") {
+		return Value::create(VALUE_AUTO);
 	}
 
 	back_token(par);
 	return parse_length_percentage(par);
 }
 
-function @parse_float(par)
+function @parse_float(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 4:
-			if (name == "left") return value_create(VALUE_LEFT);
-			if (name == "none") return value_create(VALUE_NONE);
-			break;
-
-		case 5:
-			if (name == "right") return value_create(VALUE_RIGHT);
-			break;
+	switch (name) {
+		case "left":  return Value::create(VALUE_LEFT);
+		case "right": return Value::create(VALUE_RIGHT);
+		case "none":  return Value::create(VALUE_NONE);
 	}
-	return 0, error("invalid float value");
+	throw error("invalid float value");
 }
 
-function @parse_clear(par)
+function @parse_clear(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 4:
-			if (name == "left") return value_create(VALUE_LEFT);
-			if (name == "none") return value_create(VALUE_NONE);
-			if (name == "both") return value_create(VALUE_BOTH);
-			break;
-
-		case 5:
-			if (name == "right") return value_create(VALUE_RIGHT);
-			break;
+	switch (name) {
+		case "none":  return Value::create(VALUE_NONE);
+		case "left":  return Value::create(VALUE_LEFT);
+		case "right": return Value::create(VALUE_RIGHT);
+		case "both":  return Value::create(VALUE_BOTH);
 	}
-	return 0, error("invalid clear value");
+	throw error("invalid clear value");
 }
 
-function @parse_z_index(par)
+function @parse_z_index(par: Parser): Value
 {
 	var token = next_token(par);
-	if (token == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
-		return value_create(VALUE_AUTO);
+	if (token == TOKEN_IDENT && (par.value as String).to_lower_case() == "auto") {
+		return Value::create(VALUE_AUTO);
 	}
 
-	if (token != TOKEN_NUMBER || par->TOKEN_value[2]) {
-		return 0, error("expected integer or auto");
+	if (token != TOKEN_NUMBER || (par.value as Number).is_number) {
+		throw error("expected integer or auto");
 	}
-	return value_create_integer(par->TOKEN_value[1]);
+	return IntegerValue::create((par.value as Number).value as Integer);
 }
 
-function @parse_width_height(par)
+function @parse_width_height(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
-		return value_create(VALUE_AUTO);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "auto") {
+		return Value::create(VALUE_AUTO);
 	}
 
 	back_token(par);
 	return parse_length_percentage(par);
 }
 
-function @parse_max_width_height(par)
+function @parse_max_width_height(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
-		return value_create(VALUE_NONE);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "none") {
+		return Value::create(VALUE_NONE);
 	}
 
 	back_token(par);
 	return parse_length_percentage(par);
 }
 
-function @parse_vertical_align(par)
+function @parse_vertical_align(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		switch (length(name)) {
-			case 3:
-				if (name == "sub") return value_create(VALUE_SUB);
-				if (name == "top") return value_create(VALUE_TOP);
-				break;
-
-			case 5:
-				if (name == "super") return value_create(VALUE_SUPER);
-				break;
-
-			case 6:
-				if (name == "middle") return value_create(VALUE_MIDDLE);
-				if (name == "bottom") return value_create(VALUE_BOTTOM);
-				break;
-
-			case 8:
-				if (name == "baseline") return value_create(VALUE_BASELINE);
-				if (name == "text-top") return value_create(VALUE_TEXT_TOP);
-				break;
-
-			case 11:
-				if (name == "text-bottom") return value_create(VALUE_TEXT_BOTTOM);
-				break;
+		var name = (par.value as String).to_lower_case();
+		switch (name) {
+			case "baseline":    return Value::create(VALUE_BASELINE);
+			case "sub":         return Value::create(VALUE_SUB);
+			case "super":       return Value::create(VALUE_SUPER);
+			case "top":         return Value::create(VALUE_TOP);
+			case "text-top":    return Value::create(VALUE_TEXT_TOP);
+			case "middle":      return Value::create(VALUE_MIDDLE);
+			case "bottom":      return Value::create(VALUE_BOTTOM);
+			case "text-bottom": return Value::create(VALUE_TEXT_BOTTOM);
 		}
 	}
 
@@ -1991,159 +1911,112 @@ function @parse_vertical_align(par)
 	return parse_length_percentage(par);
 }
 
-function @parse_box_sizing(par)
+function @parse_box_sizing(par: Parser): Value
 {
 	var name = expect_ident(par);
-	if (name == "content-box") return value_create(VALUE_CONTENT_BOX);
-	if (name == "border-box") return value_create(VALUE_BORDER_BOX);
-	return 0, error("invalid box sizing value");
-}
-
-function @parse_text_align(par)
-{
-	var name = expect_ident(par);
-	switch (length(name)) {
-		case 4:
-			if (name == "left") return value_create(VALUE_LEFT);
-			break;
-
-		case 5:
-			if (name == "right") return value_create(VALUE_RIGHT);
-			break;
-
-		case 6:
-			if (name == "center") return value_create(VALUE_CENTER);
-			break;
-
-		case 7:
-			if (name == "justify") return value_create(VALUE_JUSTIFY);
-			break;
+	switch (name) {
+		case "border-box":  return Value::create(VALUE_BORDER_BOX);
+		case "content-box": return Value::create(VALUE_CONTENT_BOX);
 	}
-	return 0, error("invalid text align value");
+	throw error("invalid box sizing value");
 }
 
-function @parse_text_decoration(par)
+function @parse_text_align(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 4:
-			if (name == "none") return value_create(VALUE_NONE);
-			break;
-
-		case 5:
-			if (name == "blink") return value_create(VALUE_BLINK);
-			break;
-
-		case 8:
-			if (name == "overline") return value_create(VALUE_OVERLINE);
-			break;
-
-		case 9:
-			if (name == "underline") return value_create(VALUE_UNDERLINE);
-			break;
-
-		case 12:
-			if (name == "line-through") return value_create(VALUE_LINE_THROUGH);
-			break;
+	switch (name) {
+		case "left":    return Value::create(VALUE_LEFT);
+		case "right":   return Value::create(VALUE_RIGHT);
+		case "center":  return Value::create(VALUE_CENTER);
+		case "justify": return Value::create(VALUE_JUSTIFY);
 	}
-	return 0, error("invalid text decoration value");
+	throw error("invalid text align value");
 }
 
-function @parse_letter_word_spacing(par)
+function @parse_text_decoration(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "normal") {
-		return value_create(VALUE_NORMAL);
+	var name = expect_ident(par);
+	switch (name) {
+		case "none":         return Value::create(VALUE_NONE);
+		case "underline":    return Value::create(VALUE_UNDERLINE);
+		case "overline":     return Value::create(VALUE_OVERLINE);
+		case "line-through": return Value::create(VALUE_LINE_THROUGH);
+		case "blink":        return Value::create(VALUE_BLINK);
+	}
+	throw error("invalid text decoration value");
+}
+
+function @parse_letter_word_spacing(par: Parser): Value
+{
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "normal") {
+		return Value::create(VALUE_NORMAL);
 	}
 
 	back_token(par);
 	return parse_length(par);
 }
 
-function @parse_text_transform(par)
+function @parse_text_transform(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 4:
-			if (name == "none") return value_create(VALUE_NONE);
-			break;
-
-		case 9:
-			if (name == "uppercase") return value_create(VALUE_UPPERCASE);
-			if (name == "lowercase") return value_create(VALUE_LOWERCASE);
-			break;
-
-		case 10:
-			if (name == "capitalize") return value_create(VALUE_CAPITALIZE);
-			break;
+	switch (name) {
+		case "capitalize": return Value::create(VALUE_CAPITALIZE);
+		case "uppercase":  return Value::create(VALUE_UPPERCASE);
+		case "lowercase":  return Value::create(VALUE_LOWERCASE);
+		case "none":       return Value::create(VALUE_NONE);
 	}
-	return 0, error("invalid text transform value");
+	throw error("invalid text transform value");
 }
 
-function @parse_white_space(par)
+function @parse_white_space(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 3:
-			if (name == "pre") return value_create(VALUE_PRE);
-			break;
-
-		case 6:
-			if (name == "normal") return value_create(VALUE_NORMAL);
-			if (name == "nowrap") return value_create(VALUE_NOWRAP);
-			break;
-
-		case 8:
-			if (name == "pre-wrap") return value_create(VALUE_PRE_WRAP);
-			if (name == "pre-line") return value_create(VALUE_PRE_LINE);
-			break;
+	switch (name) {
+		case "normal":   return Value::create(VALUE_NORMAL);
+		case "pre":      return Value::create(VALUE_PRE);
+		case "nowrap":   return Value::create(VALUE_NOWRAP);
+		case "pre-wrap": return Value::create(VALUE_PRE_WRAP);
+		case "pre-line": return Value::create(VALUE_PRE_LINE);
 	}
-	return 0, error("invalid white space value");
+	throw error("invalid white space value");
 }
 
-function @parse_overflow(par)
+function @parse_overflow(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 4:
-			if (name == "auto") return value_create(VALUE_AUTO);
-			break;
-
-		case 6:
-			if (name == "hidden") return value_create(VALUE_HIDDEN);
-			if (name == "scroll") return value_create(VALUE_SCROLL);
-			break;
-
-		case 7:
-			if (name == "visible") return value_create(VALUE_VISIBLE);
-			break;
+	switch (name) {
+		case "visible": return Value::create(VALUE_VISIBLE);
+		case "hidden":  return Value::create(VALUE_HIDDEN);
+		case "scroll":  return Value::create(VALUE_SCROLL);
+		case "auto":    return Value::create(VALUE_AUTO);
 	}
-	return 0, error("invalid overflow value");
+	throw error("invalid overflow value");
 }
 
-function @parse_clip_value(par)
+function @parse_clip_value(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
-		return value_create(VALUE_AUTO);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "auto") {
+		return Value::create(VALUE_AUTO);
 	}
 
 	back_token(par);
 	return parse_length(par);
 }
 
-function @parse_clip(par)
+function @parse_clip(par: Parser): Value
 {
 	var token = next_token(par);
-	if (token == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
-		return value_create(VALUE_AUTO);
+	if (token == TOKEN_IDENT && (par.value as String).to_lower_case() == "auto") {
+		return Value::create(VALUE_AUTO);
 	}
 
 	if (token != COMPONENT_FUNCTION) {
-		return 0, error("expected rect function");
+		throw error("expected rect function");
 	}
 
-	var func = par->TOKEN_value;
-	if (string_to_lower_case(func->FUNCTION_name) != "rect") {
-		return 0, error("expected rect function");
+	var func = par.value as Function;
+	if (func.name.to_lower_case() != "rect") {
+		throw error("expected rect function");
 	}
 
 	rewind_buffer(func);
@@ -2161,80 +2034,55 @@ function @parse_clip(par)
 	consume_whitespace(func);
 	
 	if (next_token(func) != TOKEN_EOF) {
-		return 0, error("invalid rect parameters");
+		throw error("invalid rect parameters");
 	}
 
-	return value_create_rect(top, right, bottom, left);
+	return RectValue::create(top, right, bottom, left);
 }
 
-function @parse_visibility(par)
+function @parse_visibility(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 6:
-			if (name == "hidden") return value_create(VALUE_HIDDEN);
-			break;
-
-		case 7:
-			if (name == "visible") return value_create(VALUE_VISIBLE);
-			break;
-
-		case 8:
-			if (name == "collapse") return value_create(VALUE_COLLAPSE);
-			break;
+	switch (name) {
+		case "visible":  return Value::create(VALUE_VISIBLE);
+		case "hidden":   return Value::create(VALUE_HIDDEN);
+		case "collapse": return Value::create(VALUE_COLLAPSE);
 	}
-	return 0, error("invalid visibility value");
+	throw error("invalid visibility value");
 }
 
-function @parse_list_style_type(par)
+function @parse_list_style_type(par: Parser): Value
 {
 	if (next_token(par) != TOKEN_IDENT) {
 		back_token(par);
 		return null;
 	}
-	var name = string_to_lower_case(par->TOKEN_value);
-	switch (length(name)) {
-		case 4:
-			if (name == "none") return value_create(VALUE_NONE);
-			if (name == "disc") return value_create(VALUE_DISC);
-			break;
-
-		case 6:
-			if (name == "circle") return value_create(VALUE_CIRCLE);
-			if (name == "square") return value_create(VALUE_SQUARE);
-			break;
-
-		case 7:
-			if (name == "decimal") return value_create(VALUE_DECIMAL);
-			break;
-
-		case 8:
-			if (name == "armenian") return value_create(VALUE_ARMENIAN);
-			if (name == "georgian") return value_create(VALUE_GEORGIAN);
-			break;
-
-		case 11:
-			if (name == "lower-roman") return value_create(VALUE_LOWER_ROMAN);
-			if (name == "upper-roman") return value_create(VALUE_UPPER_ROMAN);
-			if (name == "lower-greek") return value_create(VALUE_LOWER_GREEK);
-			if (name == "lower-latin") return value_create(VALUE_LOWER_LATIN);
-			if (name == "upper-latin") return value_create(VALUE_UPPER_LATIN);
-			if (name == "lower-alpha") return value_create(VALUE_LOWER_ALPHA);
-			if (name == "upper-alpha") return value_create(VALUE_UPPER_ALPHA);
-			break;
-
-		case 20:
-			if (name == "decimal-leading-zero") return value_create(VALUE_DECIMAL_LEADING_ZERO);
-			break;
+	var name = (par.value as String).to_lower_case();
+	switch (name) {
+		case "none":                 return Value::create(VALUE_NONE);
+		case "disc":                 return Value::create(VALUE_DISC);
+		case "circle":               return Value::create(VALUE_CIRCLE);
+		case "square":               return Value::create(VALUE_SQUARE);
+		case "decimal":              return Value::create(VALUE_DECIMAL);
+		case "decimal-leading-zero": return Value::create(VALUE_DECIMAL_LEADING_ZERO);
+		case "lower-roman":          return Value::create(VALUE_LOWER_ROMAN);
+		case "upper-roman":          return Value::create(VALUE_UPPER_ROMAN);
+		case "lower-greek":          return Value::create(VALUE_LOWER_GREEK);
+		case "lower-latin":          return Value::create(VALUE_LOWER_LATIN);
+		case "upper-latin":          return Value::create(VALUE_UPPER_LATIN);
+		case "armenian":             return Value::create(VALUE_ARMENIAN);
+		case "georgian":             return Value::create(VALUE_GEORGIAN);
+		case "lower-alpha":          return Value::create(VALUE_LOWER_ALPHA);
+		case "upper-alpha":          return Value::create(VALUE_UPPER_ALPHA);
 	}
 	back_token(par);
 	return null;
 }
 
-function @parse_list_style_image(par)
+function @parse_list_style_image(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
-		return value_create(VALUE_NONE);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "none") {
+		return Value::create(VALUE_NONE);
 	}
 
 	back_token(par);
@@ -2244,80 +2092,71 @@ function @parse_list_style_image(par)
 	return parse_image(par);
 }
 
-function @parse_list_style_position(par)
+function @parse_list_style_position(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		if (name == "inside") return value_create(VALUE_INSIDE);
-		if (name == "outside") return value_create(VALUE_OUTSIDE);
+		var name = (par.value as String).to_lower_case();
+		switch (name) {
+			case "inside":  return Value::create(VALUE_INSIDE);
+			case "outside": return Value::create(VALUE_OUTSIDE);
+		}
 	}
 	back_token(par);
 	return null;
 }
 
-function @parse_list_style(par)
+function @parse_list_style(par: Parser): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (;;) {
 		consume_whitespace(par);
 
 		var value = parse_list_style_type(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		value = parse_list_style_position(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		value = parse_list_style_image(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		break;
 	}
 
-	if (value_child_count(group) == 0) {
-		return 0, error("no list style values present");
+	if (group.get_child_count() == 0) {
+		throw error("no list style values present");
 	}
 	return group;
 }
 
-function @parse_content(par)
+function @parse_content(par: Parser): ContentTextValue
 {
 	var token = next_token(par);
 	if (token == TOKEN_STRING) {
-		return value_create_content_text(par->TOKEN_value);
+		return ContentTextValue::create(par.value as String);
 	}
-	return 0, error("only string is accepted");
+	throw error("only string is accepted");
 }
 
-function @parse_flex_direction(par)
+function @parse_flex_direction(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		switch (length(name)) {
-			case 3:
-				if (name == "row") return value_create(VALUE_ROW);
-				break;
-
-			case 6:
-				if (name == "column") return value_create(VALUE_COLUMN);
-				break;
-
-			case 11:
-				if (name == "row-reverse") return value_create(VALUE_ROW_REVERSE);
-				break;
-
-			case 14:
-				if (name == "column-reverse") return value_create(VALUE_COLUMN_REVERSE);
-				break;
+		var name = (par.value as String).to_lower_case();
+		switch (name) {
+			case "row":            return Value::create(VALUE_ROW);
+			case "row-reverse":    return Value::create(VALUE_ROW_REVERSE);
+			case "column":         return Value::create(VALUE_COLUMN);
+			case "column-reverse": return Value::create(VALUE_COLUMN_REVERSE);
 		}
 	}
 
@@ -2325,22 +2164,14 @@ function @parse_flex_direction(par)
 	return null;
 }
 
-function @parse_flex_wrap(par)
+function @parse_flex_wrap(par: Parser): Value
 {
 	if (next_token(par) == TOKEN_IDENT) {
-		var name = string_to_lower_case(par->TOKEN_value);
-		switch (length(name)) {
-			case 4:
-				if (name == "wrap") return value_create(VALUE_WRAP);
-				break;
-
-			case 6:
-				if (name == "nowrap") return value_create(VALUE_NOWRAP);
-				break;
-
-			case 12:
-				if (name == "wrap-reverse") return value_create(VALUE_WRAP_REVERSE);
-				break;
+		var name = (par.value as String).to_lower_case();
+		switch (name) {
+			case "nowrap":       return Value::create(VALUE_NOWRAP);
+			case "wrap":         return Value::create(VALUE_WRAP);
+			case "wrap-reverse": return Value::create(VALUE_WRAP_REVERSE);
 		}
 	}
 
@@ -2348,63 +2179,63 @@ function @parse_flex_wrap(par)
 	return null;
 }
 
-function @parse_flex_flow(par)
+function @parse_flex_flow(par: Parser): GroupValue
 {
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	for (;;) {
 		consume_whitespace(par);
 
 		var value = parse_flex_direction(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		value = parse_flex_wrap(par);
 		if (value) {
-			value_child_add(group, value);
+			group.add_child(value);
 			continue;
 		}
 
 		break;
 	}
 
-	if (value_child_count(group) == 0) {
-		return 0, error("no flex flow values present");
+	if (group.get_child_count() == 0) {
+		throw error("no flex flow values present");
 	}
 	return group;
 }
 
-function @parse_order(par)
+function @parse_order(par: Parser): IntegerValue
 {
 	var order = consume_integer(par);
-	return value_create_integer(order);
+	return IntegerValue::create(order);
 }
 
-function @parse_flex_grow_shrink(par)
+function @parse_flex_grow_shrink(par: Parser): NumberValue
 {
 	if (next_token(par) != TOKEN_NUMBER) {
 		back_token(par);
 		return null;
 	}
-	var factor = number_as_float(par->TOKEN_value);
-	if ({factor < 0.0}) {
-		return 0, error("negative factor not allowed");
+	var factor = (par.value as Number).as_float();
+	if (factor < 0.0) {
+		throw error("negative factor not allowed");
 	}
-	return value_create_number(factor);
+	return NumberValue::create(factor);
 }
 
-function @parse_flex_basis(par)
+function @parse_flex_basis(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "content") {
-		return value_create(VALUE_CONTENT);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "content") {
+		return Value::create(VALUE_CONTENT);
 	}
 
 	back_token(par);
 
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "auto") {
-		return value_create(VALUE_AUTO);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "auto") {
+		return Value::create(VALUE_AUTO);
 	}
 
 	back_token(par);
@@ -2414,28 +2245,28 @@ function @parse_flex_basis(par)
 	return null;
 }
 
-function @parse_flex(par)
+function @parse_flex(par: Parser): Value
 {
-	if (next_token(par) == TOKEN_IDENT && string_to_lower_case(par->TOKEN_value) == "none") {
-		return value_create(VALUE_NONE);
+	if (next_token(par) == TOKEN_IDENT && (par.value as String).to_lower_case() == "none") {
+		return Value::create(VALUE_NONE);
 	}
 
-	var group = value_create_group();
+	var group = GroupValue::create();
 
 	var grow = parse_flex_grow_shrink(par);
 	if (grow) {
-		value_child_add(group, grow);
+		group.add_child(grow);
 
 		consume_whitespace(par);
 		var shrink = parse_flex_grow_shrink(par);
 		if (shrink) {
-			value_child_add(group, shrink);
+			group.add_child(shrink);
 			consume_whitespace(par);
 		}
 
 		var basis = parse_flex_basis(par);
 		if (basis) {
-			value_child_add(group, basis);
+			group.add_child(basis);
 		}
 	}
 	else {
@@ -2443,17 +2274,17 @@ function @parse_flex(par)
 		if (!basis) {
 			return null;
 		}
-		value_child_add(group, basis);
+		group.add_child(basis);
 	
 		consume_whitespace(par);
 		grow = parse_flex_grow_shrink(par);
 		if (grow) {
-			value_child_add(group, grow);
+			group.add_child(grow);
 		
 			consume_whitespace(par);
 			var shrink = parse_flex_grow_shrink(par);
 			if (shrink) {
-				value_child_add(group, shrink);
+				group.add_child(shrink);
 			}
 		}
 	}
@@ -2461,113 +2292,120 @@ function @parse_flex(par)
 	return group;
 }
 
-function @parse_justify_content(par)
+function @parse_justify_content(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 6:
-			if (name == "center") return value_create(VALUE_CENTER);
-			break;
-
-		case 8:
-			if (name == "flex-end") return value_create(VALUE_FLEX_END);
-			break;
-
-		case 10:
-			if (name == "flex-start") return value_create(VALUE_FLEX_START);
-			break;
-
-		case 12:
-			if (name == "space-around") return value_create(VALUE_SPACE_AROUND);
-			break;
-
-		case 13:
-			if (name == "space-between") return value_create(VALUE_SPACE_BETWEEN);
-			break;
+	switch (name) {
+		case "flex-start":    return Value::create(VALUE_FLEX_START);
+		case "flex-end":      return Value::create(VALUE_FLEX_END);
+		case "center":        return Value::create(VALUE_CENTER);
+		case "space-between": return Value::create(VALUE_SPACE_BETWEEN);
+		case "space-around":  return Value::create(VALUE_SPACE_AROUND);
 	}
-	return 0, error("invalid justify content value");
+	throw error("invalid justify content value");
 }
 
-function @parse_align_items(par)
+function @parse_align_items(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 6:
-			if (name == "center") return value_create(VALUE_CENTER);
-			break;
-
-		case 7:
-			if (name == "stretch") return value_create(VALUE_STRETCH);
-			break;
-
-		case 8:
-			if (name == "flex-end") return value_create(VALUE_FLEX_END);
-			if (name == "baseline") return value_create(VALUE_BASELINE);
-			break;
-
-		case 10:
-			if (name == "flex-start") return value_create(VALUE_FLEX_START);
-			break;
+	switch (name) {
+		case "flex-start": return Value::create(VALUE_FLEX_START);
+		case "flex-end":   return Value::create(VALUE_FLEX_END);
+		case "center":     return Value::create(VALUE_CENTER);
+		case "baseline":   return Value::create(VALUE_BASELINE);
+		case "stretch":    return Value::create(VALUE_STRETCH);
 	}
-	return 0, error("invalid align items value");
+	throw error("invalid align items value");
 }
 
-function @parse_align_self(par)
+function @parse_align_self(par: Parser): Value
 {
 	var name = expect_ident(par);
-	if (name == "auto") return value_create(VALUE_AUTO);
+	if (name == "auto") {
+		return Value::create(VALUE_AUTO);
+	}
 
 	back_token(par);
 	return parse_align_items(par);
 }
 
-function @parse_align_content(par)
+function @parse_align_content(par: Parser): Value
 {
 	var name = expect_ident(par);
-	switch (length(name)) {
-		case 6:
-			if (name == "center") return value_create(VALUE_CENTER);
-			break;
-
-		case 7:
-			if (name == "stretch") return value_create(VALUE_STRETCH);
-			break;
-
-		case 8:
-			if (name == "flex-end") return value_create(VALUE_FLEX_END);
-			break;
-
-		case 10:
-			if (name == "flex-start") return value_create(VALUE_FLEX_START);
-			break;
-
-		case 12:
-			if (name == "space-around") return value_create(VALUE_SPACE_AROUND);
-			break;
-
-		case 13:
-			if (name == "space-between") return value_create(VALUE_SPACE_BETWEEN);
-			break;
+	switch (name) {
+		case "flex-start":    return Value::create(VALUE_FLEX_START);
+		case "flex-end":      return Value::create(VALUE_FLEX_END);
+		case "center":        return Value::create(VALUE_CENTER);
+		case "space-around":  return Value::create(VALUE_SPACE_AROUND);
+		case "space-between": return Value::create(VALUE_SPACE_BETWEEN);
+		case "stretch":       return Value::create(VALUE_STRETCH);
 	}
-	return 0, error("invalid align content value");
+	throw error("invalid align content value");
 }
 
-function @parse_tab_size(par)
+function @parse_tab_size(par: Parser): IntegerValue
 {
 	var token = next_token(par);
-	if (token != TOKEN_NUMBER || par->TOKEN_value[2]) {
-		return 0, error("expected integer");
+	if (token != TOKEN_NUMBER || (par.value as Number).is_number) {
+		throw error("expected integer");
 	}
-	return value_create_integer(par->TOKEN_value[1]);
+	return IntegerValue::create((par.value as Number).value as Integer);
 }
 
-function @add_handler(name, type, handler, multiple)
+function @parse_cursor(par: Parser): Value
 {
-	property_hash{name} = length(property_data);
-	property_data[] = name;
-	property_data[] = type;
-	property_data[] = handler;
-	property_data[] = multiple;
+	do {
+		consume_whitespace(par);
+		if (next_token(par) == TOKEN_IDENT) {
+			var name = (par.value as String).to_lower_case();
+			switch (name) {
+				case "auto":        return Value::create(VALUE_AUTO);
+				case "default":     return Value::create(VALUE_DEFAULT);
+				case "help":        return Value::create(VALUE_HELP);
+				case "pointer":     return Value::create(VALUE_POINTER);
+				case "progress":    return Value::create(VALUE_PROGRESS);
+				case "wait":        return Value::create(VALUE_WAIT);
+				case "text":        return Value::create(VALUE_TEXT);
+				case "move":        return Value::create(VALUE_MOVE);
+				case "not-allowed": return Value::create(VALUE_NOT_ALLOWED);
+				case "zoom-in":     return Value::create(VALUE_ZOOM_IN);
+				case "zoom-out":    return Value::create(VALUE_ZOOM_OUT);
+			}
+		}
+		else if (par.type == TOKEN_URL) {
+			consume_whitespace(par);
+			if (next_token(par) == TOKEN_NUMBER) {
+				consume_whitespace(par);
+				if (next_token(par) != TOKEN_NUMBER) {
+					back_token(par);
+				}
+			}
+			else {
+				back_token(par);
+			}
+		}
+		else {
+			throw error("invalid cursor value");
+		}
+		consume_whitespace(par);
+	}
+	while (next_token(par) == TOKEN_COMMA);
+
+	if (par.type != TOKEN_EOF) {
+		throw error("expected EOF");
+	}
+	throw error("invalid cursor value");
+}
+
+function @add_handler(name: String, type: Integer, handler, multiple: Boolean)
+{
+	property_data[] = {
+		.name: name,
+		.type: type,
+		.handler: handler,
+		.multiple: multiple
+	};
+	property_hash[name] = property_data.last;
 }
 
 function @init_static_data()
@@ -2706,170 +2544,172 @@ function @init_static_data()
 	add_handler("tab-size", PROP_TAB_SIZE, parse_tab_size#1, false);
 	add_handler("-moz-tab-size", PROP_TAB_SIZE, parse_tab_size#1, false);
 
+	add_handler("cursor", PROP_CURSOR, parse_cursor#1, false);
+
 	colors = {};
 
-	colors{"black"} = 0x000000;
-	colors{"silver"} = 0xC0C0C0;
-	colors{"gray"} = 0x808080;
-	colors{"white"} = 0xFFFFFF;
-	colors{"maroon"} = 0x800000;
-	colors{"red"} = 0xFF0000;
-	colors{"purple"} = 0x800080;
-	colors{"fuchsia"} = 0xFF00FF;
-	colors{"green"} = 0x008000;
-	colors{"lime"} = 0x00FF00;
-	colors{"olive"} = 0x808000;
-	colors{"yellow"} = 0xFFFF00;
-	colors{"navy"} = 0x000080;
-	colors{"blue"} = 0x0000FF;
-	colors{"teal"} = 0x008080;
-	colors{"aqua"} = 0x00FFFF;
+	colors["black"] = 0x000000;
+	colors["silver"] = 0xC0C0C0;
+	colors["gray"] = 0x808080;
+	colors["white"] = 0xFFFFFF;
+	colors["maroon"] = 0x800000;
+	colors["red"] = 0xFF0000;
+	colors["purple"] = 0x800080;
+	colors["fuchsia"] = 0xFF00FF;
+	colors["green"] = 0x008000;
+	colors["lime"] = 0x00FF00;
+	colors["olive"] = 0x808000;
+	colors["yellow"] = 0xFFFF00;
+	colors["navy"] = 0x000080;
+	colors["blue"] = 0x0000FF;
+	colors["teal"] = 0x008080;
+	colors["aqua"] = 0x00FFFF;
 
-	colors{"aliceblue"} = 0xf0f8ff;
-	colors{"antiquewhite"} = 0xfaebd7;
-	colors{"aqua"} = 0x00ffff;
-	colors{"aquamarine"} = 0x7fffd4;
-	colors{"azure"} = 0xf0ffff;
-	colors{"beige"} = 0xf5f5dc;
-	colors{"bisque"} = 0xffe4c4;
-	colors{"black"} = 0x000000;
-	colors{"blanchedalmond"} = 0xffebcd;
-	colors{"blue"} = 0x0000ff;
-	colors{"blueviolet"} = 0x8a2be2;
-	colors{"brown"} = 0xa52a2a;
-	colors{"burlywood"} = 0xdeb887;
-	colors{"cadetblue"} = 0x5f9ea0;
-	colors{"chartreuse"} = 0x7fff00;
-	colors{"chocolate"} = 0xd2691e;
-	colors{"coral"} = 0xff7f50;
-	colors{"cornflowerblue"} = 0x6495ed;
-	colors{"cornsilk"} = 0xfff8dc;
-	colors{"crimson"} = 0xdc143c;
-	colors{"cyan"} = 0x00ffff;
-	colors{"darkblue"} = 0x00008b;
-	colors{"darkcyan"} = 0x008b8b;
-	colors{"darkgoldenrod"} = 0xb8860b;
-	colors{"darkgray"} = 0xa9a9a9;
-	colors{"darkgreen"} = 0x006400;
-	colors{"darkgrey"} = 0xa9a9a9;
-	colors{"darkkhaki"} = 0xbdb76b;
-	colors{"darkmagenta"} = 0x8b008b;
-	colors{"darkolivegreen"} = 0x556b2f;
-	colors{"darkorange"} = 0xff8c00;
-	colors{"darkorchid"} = 0x9932cc;
-	colors{"darkred"} = 0x8b0000;
-	colors{"darksalmon"} = 0xe9967a;
-	colors{"darkseagreen"} = 0x8fbc8f;
-	colors{"darkslateblue"} = 0x483d8b;
-	colors{"darkslategray"} = 0x2f4f4f;
-	colors{"darkslategrey"} = 0x2f4f4f;
-	colors{"darkturquoise"} = 0x00ced1;
-	colors{"darkviolet"} = 0x9400d3;
-	colors{"deeppink"} = 0xff1493;
-	colors{"deepskyblue"} = 0x00bfff;
-	colors{"dimgray"} = 0x696969;
-	colors{"dimgrey"} = 0x696969;
-	colors{"dodgerblue"} = 0x1e90ff;
-	colors{"firebrick"} = 0xb22222;
-	colors{"floralwhite"} = 0xfffaf0;
-	colors{"forestgreen"} = 0x228b22;
-	colors{"fuchsia"} = 0xff00ff;
-	colors{"gainsboro"} = 0xdcdcdc;
-	colors{"ghostwhite"} = 0xf8f8ff;
-	colors{"gold"} = 0xffd700;
-	colors{"goldenrod"} = 0xdaa520;
-	colors{"gray"} = 0x808080;
-	colors{"green"} = 0x008000;
-	colors{"greenyellow"} = 0xadff2f;
-	colors{"grey"} = 0x808080;
-	colors{"honeydew"} = 0xf0fff0;
-	colors{"hotpink"} = 0xff69b4;
-	colors{"indianred"} = 0xcd5c5c;
-	colors{"indigo"} = 0x4b0082;
-	colors{"ivory"} = 0xfffff0;
-	colors{"khaki"} = 0xf0e68c;
-	colors{"lavender"} = 0xe6e6fa;
-	colors{"lavenderblush"} = 0xfff0f5;
-	colors{"lawngreen"} = 0x7cfc00;
-	colors{"lemonchiffon"} = 0xfffacd;
-	colors{"lightblue"} = 0xadd8e6;
-	colors{"lightcoral"} = 0xf08080;
-	colors{"lightcyan"} = 0xe0ffff;
-	colors{"lightgoldenrodyellow"} = 0xfafad2;
-	colors{"lightgray"} = 0xd3d3d3;
-	colors{"lightgreen"} = 0x90ee90;
-	colors{"lightgrey"} = 0xd3d3d3;
-	colors{"lightpink"} = 0xffb6c1;
-	colors{"lightsalmon"} = 0xffa07a;
-	colors{"lightseagreen"} = 0x20b2aa;
-	colors{"lightskyblue"} = 0x87cefa;
-	colors{"lightslategray"} = 0x778899;
-	colors{"lightslategrey"} = 0x778899;
-	colors{"lightsteelblue"} = 0xb0c4de;
-	colors{"lightyellow"} = 0xffffe0;
-	colors{"lime"} = 0x00ff00;
-	colors{"limegreen"} = 0x32cd32;
-	colors{"linen"} = 0xfaf0e6;
-	colors{"magenta"} = 0xff00ff;
-	colors{"maroon"} = 0x800000;
-	colors{"mediumaquamarine"} = 0x66cdaa;
-	colors{"mediumblue"} = 0x0000cd;
-	colors{"mediumorchid"} = 0xba55d3;
-	colors{"mediumpurple"} = 0x9370db;
-	colors{"mediumseagreen"} = 0x3cb371;
-	colors{"mediumslateblue"} = 0x7b68ee;
-	colors{"mediumspringgreen"} = 0x00fa9a;
-	colors{"mediumturquoise"} = 0x48d1cc;
-	colors{"mediumvioletred"} = 0xc71585;
-	colors{"midnightblue"} = 0x191970;
-	colors{"mintcream"} = 0xf5fffa;
-	colors{"mistyrose"} = 0xffe4e1;
-	colors{"moccasin"} = 0xffe4b5;
-	colors{"navajowhite"} = 0xffdead;
-	colors{"navy"} = 0x000080;
-	colors{"oldlace"} = 0xfdf5e6;
-	colors{"olive"} = 0x808000;
-	colors{"olivedrab"} = 0x6b8e23;
-	colors{"orange"} = 0xffa500;
-	colors{"orangered"} = 0xff4500;
-	colors{"orchid"} = 0xda70d6;
-	colors{"palegoldenrod"} = 0xeee8aa;
-	colors{"palegreen"} = 0x98fb98;
-	colors{"paleturquoise"} = 0xafeeee;
-	colors{"palevioletred"} = 0xdb7093;
-	colors{"papayawhip"} = 0xffefd5;
-	colors{"peachpuff"} = 0xffdab9;
-	colors{"peru"} = 0xcd853f;
-	colors{"pink"} = 0xffc0cb;
-	colors{"plum"} = 0xdda0dd;
-	colors{"powderblue"} = 0xb0e0e6;
-	colors{"purple"} = 0x800080;
-	colors{"red"} = 0xff0000;
-	colors{"rosybrown"} = 0xbc8f8f;
-	colors{"royalblue"} = 0x4169e1;
-	colors{"saddlebrown"} = 0x8b4513;
-	colors{"salmon"} = 0xfa8072;
-	colors{"sandybrown"} = 0xf4a460;
-	colors{"seagreen"} = 0x2e8b57;
-	colors{"seashell"} = 0xfff5ee;
-	colors{"sienna"} = 0xa0522d;
-	colors{"silver"} = 0xc0c0c0;
-	colors{"skyblue"} = 0x87ceeb;
-	colors{"slateblue"} = 0x6a5acd;
-	colors{"slategray"} = 0x708090;
-	colors{"slategrey"} = 0x708090;
-	colors{"snow"} = 0xfffafa;
-	colors{"springgreen"} = 0x00ff7f;
-	colors{"steelblue"} = 0x4682b4;
-	colors{"tan"} = 0xd2b48c;
-	colors{"teal"} = 0x008080;
-	colors{"thistle"} = 0xd8bfd8;
-	colors{"tomato"} = 0xff6347;
-	colors{"turquoise"} = 0x40e0d0;
-	colors{"violet"} = 0xee82ee;
-	colors{"wheat"} = 0xf5deb3;
-	colors{"white"} = 0xffffff;
-	colors{"whitesmoke"} = 0xf5f5f5;
-	colors{"yellow"} = 0xffff00;
-	colors{"yellowgreen"} = 0x9acd32;
+	colors["aliceblue"] = 0xf0f8ff;
+	colors["antiquewhite"] = 0xfaebd7;
+	colors["aqua"] = 0x00ffff;
+	colors["aquamarine"] = 0x7fffd4;
+	colors["azure"] = 0xf0ffff;
+	colors["beige"] = 0xf5f5dc;
+	colors["bisque"] = 0xffe4c4;
+	colors["black"] = 0x000000;
+	colors["blanchedalmond"] = 0xffebcd;
+	colors["blue"] = 0x0000ff;
+	colors["blueviolet"] = 0x8a2be2;
+	colors["brown"] = 0xa52a2a;
+	colors["burlywood"] = 0xdeb887;
+	colors["cadetblue"] = 0x5f9ea0;
+	colors["chartreuse"] = 0x7fff00;
+	colors["chocolate"] = 0xd2691e;
+	colors["coral"] = 0xff7f50;
+	colors["cornflowerblue"] = 0x6495ed;
+	colors["cornsilk"] = 0xfff8dc;
+	colors["crimson"] = 0xdc143c;
+	colors["cyan"] = 0x00ffff;
+	colors["darkblue"] = 0x00008b;
+	colors["darkcyan"] = 0x008b8b;
+	colors["darkgoldenrod"] = 0xb8860b;
+	colors["darkgray"] = 0xa9a9a9;
+	colors["darkgreen"] = 0x006400;
+	colors["darkgrey"] = 0xa9a9a9;
+	colors["darkkhaki"] = 0xbdb76b;
+	colors["darkmagenta"] = 0x8b008b;
+	colors["darkolivegreen"] = 0x556b2f;
+	colors["darkorange"] = 0xff8c00;
+	colors["darkorchid"] = 0x9932cc;
+	colors["darkred"] = 0x8b0000;
+	colors["darksalmon"] = 0xe9967a;
+	colors["darkseagreen"] = 0x8fbc8f;
+	colors["darkslateblue"] = 0x483d8b;
+	colors["darkslategray"] = 0x2f4f4f;
+	colors["darkslategrey"] = 0x2f4f4f;
+	colors["darkturquoise"] = 0x00ced1;
+	colors["darkviolet"] = 0x9400d3;
+	colors["deeppink"] = 0xff1493;
+	colors["deepskyblue"] = 0x00bfff;
+	colors["dimgray"] = 0x696969;
+	colors["dimgrey"] = 0x696969;
+	colors["dodgerblue"] = 0x1e90ff;
+	colors["firebrick"] = 0xb22222;
+	colors["floralwhite"] = 0xfffaf0;
+	colors["forestgreen"] = 0x228b22;
+	colors["fuchsia"] = 0xff00ff;
+	colors["gainsboro"] = 0xdcdcdc;
+	colors["ghostwhite"] = 0xf8f8ff;
+	colors["gold"] = 0xffd700;
+	colors["goldenrod"] = 0xdaa520;
+	colors["gray"] = 0x808080;
+	colors["green"] = 0x008000;
+	colors["greenyellow"] = 0xadff2f;
+	colors["grey"] = 0x808080;
+	colors["honeydew"] = 0xf0fff0;
+	colors["hotpink"] = 0xff69b4;
+	colors["indianred"] = 0xcd5c5c;
+	colors["indigo"] = 0x4b0082;
+	colors["ivory"] = 0xfffff0;
+	colors["khaki"] = 0xf0e68c;
+	colors["lavender"] = 0xe6e6fa;
+	colors["lavenderblush"] = 0xfff0f5;
+	colors["lawngreen"] = 0x7cfc00;
+	colors["lemonchiffon"] = 0xfffacd;
+	colors["lightblue"] = 0xadd8e6;
+	colors["lightcoral"] = 0xf08080;
+	colors["lightcyan"] = 0xe0ffff;
+	colors["lightgoldenrodyellow"] = 0xfafad2;
+	colors["lightgray"] = 0xd3d3d3;
+	colors["lightgreen"] = 0x90ee90;
+	colors["lightgrey"] = 0xd3d3d3;
+	colors["lightpink"] = 0xffb6c1;
+	colors["lightsalmon"] = 0xffa07a;
+	colors["lightseagreen"] = 0x20b2aa;
+	colors["lightskyblue"] = 0x87cefa;
+	colors["lightslategray"] = 0x778899;
+	colors["lightslategrey"] = 0x778899;
+	colors["lightsteelblue"] = 0xb0c4de;
+	colors["lightyellow"] = 0xffffe0;
+	colors["lime"] = 0x00ff00;
+	colors["limegreen"] = 0x32cd32;
+	colors["linen"] = 0xfaf0e6;
+	colors["magenta"] = 0xff00ff;
+	colors["maroon"] = 0x800000;
+	colors["mediumaquamarine"] = 0x66cdaa;
+	colors["mediumblue"] = 0x0000cd;
+	colors["mediumorchid"] = 0xba55d3;
+	colors["mediumpurple"] = 0x9370db;
+	colors["mediumseagreen"] = 0x3cb371;
+	colors["mediumslateblue"] = 0x7b68ee;
+	colors["mediumspringgreen"] = 0x00fa9a;
+	colors["mediumturquoise"] = 0x48d1cc;
+	colors["mediumvioletred"] = 0xc71585;
+	colors["midnightblue"] = 0x191970;
+	colors["mintcream"] = 0xf5fffa;
+	colors["mistyrose"] = 0xffe4e1;
+	colors["moccasin"] = 0xffe4b5;
+	colors["navajowhite"] = 0xffdead;
+	colors["navy"] = 0x000080;
+	colors["oldlace"] = 0xfdf5e6;
+	colors["olive"] = 0x808000;
+	colors["olivedrab"] = 0x6b8e23;
+	colors["orange"] = 0xffa500;
+	colors["orangered"] = 0xff4500;
+	colors["orchid"] = 0xda70d6;
+	colors["palegoldenrod"] = 0xeee8aa;
+	colors["palegreen"] = 0x98fb98;
+	colors["paleturquoise"] = 0xafeeee;
+	colors["palevioletred"] = 0xdb7093;
+	colors["papayawhip"] = 0xffefd5;
+	colors["peachpuff"] = 0xffdab9;
+	colors["peru"] = 0xcd853f;
+	colors["pink"] = 0xffc0cb;
+	colors["plum"] = 0xdda0dd;
+	colors["powderblue"] = 0xb0e0e6;
+	colors["purple"] = 0x800080;
+	colors["red"] = 0xff0000;
+	colors["rosybrown"] = 0xbc8f8f;
+	colors["royalblue"] = 0x4169e1;
+	colors["saddlebrown"] = 0x8b4513;
+	colors["salmon"] = 0xfa8072;
+	colors["sandybrown"] = 0xf4a460;
+	colors["seagreen"] = 0x2e8b57;
+	colors["seashell"] = 0xfff5ee;
+	colors["sienna"] = 0xa0522d;
+	colors["silver"] = 0xc0c0c0;
+	colors["skyblue"] = 0x87ceeb;
+	colors["slateblue"] = 0x6a5acd;
+	colors["slategray"] = 0x708090;
+	colors["slategrey"] = 0x708090;
+	colors["snow"] = 0xfffafa;
+	colors["springgreen"] = 0x00ff7f;
+	colors["steelblue"] = 0x4682b4;
+	colors["tan"] = 0xd2b48c;
+	colors["teal"] = 0x008080;
+	colors["thistle"] = 0xd8bfd8;
+	colors["tomato"] = 0xff6347;
+	colors["turquoise"] = 0x40e0d0;
+	colors["violet"] = 0xee82ee;
+	colors["wheat"] = 0xf5deb3;
+	colors["white"] = 0xffffff;
+	colors["whitesmoke"] = 0xf5f5f5;
+	colors["yellow"] = 0xffff00;
+	colors["yellowgreen"] = 0x9acd32;
 }

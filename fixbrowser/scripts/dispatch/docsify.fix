@@ -1,43 +1,44 @@
+use "classes";
+
 import "util/common";
-import "util/stream";
 import "util/string";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var url = request_get_url(request);
+	var url = request.get_url();
 	var s = {""};
 	append_page(s, url, ["_coverpage.md"]);
 	append_page(s, url, ["main.md", "README.md"]);
 	append_page(s, url, ["_sidebar.md"]);
-	request_replace_document(request, document_parse(s));
+	request.replace_document(Document::parse(s));
 }
 
-function @append_page(s, base, files)
+function @append_page(s: String, base: String, files: String[]): Boolean
 {
-	for (var i=0; i<length(files); i++) {
-		var markdown = fetch_page({base, files[i]});
+	foreach (var file in files) {
+		var markdown = fetch_page(base+file);
 		if (markdown) {
-			string_append(s, show_markdown(markdown));
+			s += show_markdown(markdown);
 			return true;
 		}
 	}
 	return false;
 }
 
-function @fetch_page(url)
+function @fetch_page(url: String): String
 {
-	var http = http_open(url);
-	http_connect(http);
-	var content_type = http_get_header(http, "Content-Type");
-	if (string_starts_with(content_type, "text/html")) {
+	var http = Http::open(url);
+	http.connect();
+	var content_type = http.get_header("Content-Type");
+	if (content_type.starts_with("text/html")) {
 		return null;
 	}
-	var content = stream_read_all(http, {""});
-	stream_close(http);
+	var content = http.read_all({""} as Byte[]) as String;
+	http.close();
 	return content;
 }
 
-function @show_markdown(markdown)
+function @show_markdown(markdown: String): String
 {
-	return {"<pre>", markdown, "</pre>"};
+	return "<pre>"+markdown+"</pre>";
 }

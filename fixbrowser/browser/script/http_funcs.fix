@@ -1,6 +1,6 @@
 /*
- * FixBrowser v0.1 - https://www.fixbrowser.org/
- * Copyright (c) 2018-2024 Martin Dvorak <jezek2@advel.cz>
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -32,10 +32,11 @@ function @script_http_open(params, data)
 	log({"fetch URL: ", url_to_string(url)});
 
 	var http = http_create(url);
-	http_set_header(http, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:63.0) Gecko/20100101 Firefox/63.0");
+	http_set_header(http, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0");
 	http_set_header(http, "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
 	http_set_header(http, "Accept-Language", "en-US,en;q=0.5");
 	http_set_header(http, "Accept-Encoding", "identity");
+	http_set_header(http, "Referer", {url->URL_scheme, "://", url->URL_host, "/"});
 
 	return script_create_handle(HANDLE_TYPE_HTTP, http);
 }

@@ -8,7 +8,7 @@ https://web.archive.org/static/images/logo_archive-sm.png
 -->
 </a>
 
-Explore more than 349 billion <a href="https://blog.archive.org/2016/10/23/defining-web-pages-web-sites-and-web-captures/">web pages</a>
+Explore more than 916 billion <a href="https://blog.archive.org/2016/10/23/defining-web-pages-web-sites-and-web-captures/">web pages</a>
 saved over time
 
 <form>
@@ -21,23 +21,16 @@ Find the Wayback Machine useful?
 <a class="beta_button" href="https://archive.org/donate/">DONATE</a>
 </div>
 
-<div>
+<div style="text-align: center">
 <?if defined(years)?>
 	<?begin years?>
-		<b>${year}</b><br>
-		<?if defined(fail)?>
-		&nbsp;&nbsp;(failed to fetch)<br>
-		<?endif?>
-		<?if defined(days)?>
-		<?begin days?>
-		&nbsp;&nbsp;${date}
-			<?begin times?>
-				<?if !first(times)?>|<?endif?>
-				<a href="${link}">${time}</a>
-			<?end?>
-		<br>
-		<?end?>
-		<?endif?>
+		<a href="${link}" target="timeline">${year}</a>
 	<?end?>
+<?endif?>
+</div>
+
+<div style="text-align: center">
+<?if defined(latest_link)?>
+<iframe name="timeline" src="${latest_link}" style="width: 100%; max-width: 1000px; height: 400px; border: 2px solid #ccc; padding: 2px; margin-top: 10px"></iframe>
 <?endif?>
 </div>

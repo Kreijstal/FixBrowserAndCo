@@ -1,0 +1,230 @@
+use "classes";
+
+import "util/common";
+import "util/json";
+import "util/crypto";
+import "util/string";
+import "dispatch/gateopener";
+
+// https://anubis.techaro.lol/
+// https://github.com/TecharoHQ/anubis
+
+class @Response
+{
+	var hash: String;
+	var counter: Integer;
+	var time: Integer;
+
+	constructor create(hash: String, counter: Integer, time: Integer)
+	{
+		this.hash = hash;
+		this.counter = counter;
+		this.time = time;
+	}
+}
+
+function handle_request(request: Request)
+{
+	var gk = GateKeeper::get(request.get_domain());
+	if (gk) {
+		var user_agent = gk.opt("anubis_user_agent").as_string();
+		if (user_agent.length > 0) {
+			request.set_header("User-Agent", user_agent);
+		}
+		var cookies = gk.opt("anubis_cookies").as_object();
+		foreach (var name, value in cookies) {
+			request.append_to_header("Cookie", name+"="+value);
+		}
+	}
+}
+
+function adjust_document(request: Request, document: Element)
+{
+	var (r, e) = handle_challenge(request, document);
+	if (!r) {
+		if (e) {
+			dump(e);
+		}
+		log("Anubis challenge failed, trying GateOpener fallback");
+		handle_fallback(request);
+	}
+}
+
+function @handle_challenge(request: Request, document: Element): Boolean
+{
+	var version = 0;
+	var pass_cookies: String;
+
+	foreach (var name, values in request.get_headers()) {
+		if (name == "Set-Cookie") {
+			foreach (var value in values) {
+				if (value.starts_with("within.website-x-cmd-anubis-auth=")) {
+					version = 1;
+				}
+				if (value.starts_with("techaro.lol-anubis-auth=")) {
+					version = 2;
+				}
+				var cookie = value.split_first(';')[0].trim();
+				if (cookie.split_first('=')[1] != "") {
+					if (pass_cookies) {
+						pass_cookies += "; "+cookie;
+					}
+					else {
+						pass_cookies = cookie;
+					}
+				}
+			}
+			break;
+		}
+	}
+
+	if (version == 0) return false;
+
+	var url = request.get_url();
+
+	var json: JSON;
+	if (version >= 2) {
+		var script = document.query("script[id='anubis_challenge'][type='application/json']");
+		if (script) {
+			json = JSON::parse(script.extract_text());
+		}
+		else {
+			throw error("challenge information not found");
+		}
+	}
+	else {
+		json = JSON::parse(Http::get(Link::with_path(url, "/.within.website/x/cmd/anubis/api/make-challenge"), {}).content);
+	}
+
+	var rules = json.get("rules");
+	var algorithm = rules.get("algorithm").as_string();
+
+	var pass_url: String;
+
+	if (algorithm == "metarefresh") {
+		var meta = document.query("meta[http-equiv='refresh'][content]");
+		pass_url = Link::get_absolute(url, meta.get_attr("content").split_first(';')[1].split_first('=')[1].trim());
+	}
+	else {
+		var challenge = json.get("challenge").as_string();
+		var difficulty = rules.get("difficulty").as_int();
+
+		var response: Response;
+		if (algorithm == "fast") {
+			response = fast_algorithm(challenge, difficulty);
+		}
+		else if (algorithm == "slow") {
+			response = slow_algorithm(challenge, difficulty);
+		}
+		else {
+			throw error("unknown algorithm: "+algorithm);
+		}
+
+		pass_url = Link::with_params(Link::with_path(url, "/.within.website/x/cmd/anubis/api/pass-challenge"), {
+			"response": response.hash,
+			"nonce": response.counter,
+			"redir": url,
+			"elapsedTime": response.time
+		});
+	}
+
+	var http = Http::open(pass_url);
+	if (pass_cookies) {
+		http.set_header("Cookie", pass_cookies);
+	}
+	http.connect();
+	var cookies: String[String] = {};
+	foreach (var value in http.get_header_multiple("Set-Cookie")) {
+		var cookie = value.split_first(';')[0].trim().split_first('=');
+		if (cookie[1] != "") {
+			cookies[cookie[0].trim()] = cookie[1].trim();
+		}
+	}
+	var redirect = http.get_header("Location");
+	if (redirect) {
+		redirect = String::from_utf8(redirect);
+	}
+	http.read_all();
+	http.close();
+
+	if (cookies.length > 0 && redirect != null) { //XXX
+		GateKeeper::set(request.get_domain(), "anubis", {
+			"anubis_cookies": cookies
+		});
+		request.set_redirect(redirect);
+		return true;
+	}
+	return false;
+}
+
+function fast_algorithm(challenge: String, difficulty: Integer): Response
+{
+	var time = Time::get_monotonic();
+	var counter = 0;
+	for (;;) {
+		var hash = sha256(challenge + counter);
+
+		var valid = true;
+		for (var i=0; i<difficulty; i++) {
+			var nibble = (hash[i/2] >>> (i % 2 == 0? 4 : 0)) & 0x0F;
+			if (nibble != 0) {
+				valid = false;
+				break;
+			}
+		}
+		if (valid) {
+			return Response::create(to_hex(hash), counter, sub32(Time::get_monotonic(), time));
+		}
+
+		counter++;
+	}
+}
+
+function slow_algorithm(challenge: String, difficulty: Integer): Response
+{
+	var time = Time::get_monotonic();
+	var counter = 0;
+	for (;;) {
+		var hash = to_hex(sha256(challenge + counter));
+
+		var valid = true;
+		for (var i=0; i<difficulty; i++) {
+			if (hash[i] != '0') {
+				valid = false;
+				break;
+			}
+		}
+		if (valid) {
+			return Response::create(hash, counter, sub32(Time::get_monotonic(), time));
+		}
+
+		counter++;
+	}
+}
+
+function @handle_fallback(request: Request)
+{
+	var url = request.get_url();
+
+	var result = GateOpener::process({
+		"type": "generic",
+		"url": url
+	});
+	if (result) {
+		dump(result);
+		GateKeeper::set(request.get_domain(), "anubis", {
+			"anubis_user_agent": result.get("user_agent"),
+			"anubis_cookies": result.get("cookies")
+		});
+		request.set_redirect(url);
+	}
+	else {
+		show_gateopener_info(request, "Anubis", {
+			"<p>There is direct support for Anubis but it has failed for this website. Possible reasons:</p>",
+			"<ul>",
+			"<li>uses a newer version or too old version of Anubis</li>",
+			"<li>it has been customized in an incompatible way</li>",
+			"</ul>"
+		});
+	}
+}

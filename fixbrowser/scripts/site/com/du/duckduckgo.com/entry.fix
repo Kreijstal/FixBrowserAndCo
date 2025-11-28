@@ -1,0 +1,16 @@
+use "classes";
+
+import "util/common";
+
+function adjust_document(request: Request, document: Element)
+{
+	foreach (var anchor in document.query_all("a[href]")) {
+		var url = URL::create(anchor.get_attr("href"));
+		if (url.get_host() == "duckduckgo.com" && url.get_path() == "/l/") {
+			var link = url.get_param("uddg");
+			if (link) {
+				anchor.set_attr("href", link);
+			}
+		}
+	}
+}

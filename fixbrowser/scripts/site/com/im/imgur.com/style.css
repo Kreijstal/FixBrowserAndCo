@@ -1,0 +1,75 @@
+body {
+	font-family: sans-serif;
+	font-size: 16px;
+	background: linear-gradient(#171544 26.22%, #27292d 100%) no-repeat, #27292d;
+	background-size: auto 500px;
+	color: #ffffff;
+	margin: 20px 40px;
+}
+
+h1 {
+	display: block;
+	width: 94px;
+	height: 34px;
+	background: url(https://s.imgur.com/images/imgur-logo.svg) 50% 50% no-repeat;
+	background-size: contain;
+}
+
+h1 span {
+	display: none;
+}
+
+.metadata {
+	font-size: 12px;
+	color: #b4b9c2;
+}
+
+.image {
+	border: none;
+}
+
+.video {
+	background: #000;
+}
+
+.media-horiz {
+	width: 70%;
+}
+
+.media-vert {
+	height: 70vh;
+}
+
+.media-container {
+	text-align: center;
+}
+
+.box-container {
+	text-align: center;
+}
+
+.box {
+	vertical-align: top;
+	display: inline-block;
+	background: #474a51;
+	box-shadow: 0px 2px 4px 0 rgba(0, 0, 0, 0.4);
+	text-align: left;
+	margin: 8px 5px;
+}
+
+.box-description {
+	font-size: 14px;
+	padding: 5px 10px;
+	padding-bottom: 20px;
+}
+
+.box-description a {
+	font-weight: bold;
+	color: #fff;
+	text-decoration: none;
+}
+
+.box-description a:hover {
+	text-decoration: underline;
+}
+

@@ -1,6 +1,9 @@
+use "classes";
+
+import "util/common";
 import "dispatch/javascript-site" : parent;
 
-function handle_request(request)
+function handle_request(request: Request)
 {
-	return parent:handle_request(request);
+	parent:handle_request(request);
 }

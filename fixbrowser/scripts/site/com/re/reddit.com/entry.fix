@@ -1,7 +1,11 @@
+use "classes";
+
 import "util/common";
 import "util/string";
+import "util/json";
+import "util/comment_tracker";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "redditstatic.com")) return true;
 	if (domain_ends_with(dest, "redd.it")) return true;
@@ -13,44 +17,288 @@ function is_same_domain(src, dest)
 	return false;
 }
 
-function handle_request(request)
+function handle_request(request: Request)
 {
-	var domain = request_get_domain(request);
+	var domain = request.get_domain();
 	if (domain == "www.reddit.com" || domain == "reddit.com") {
-		request_set_redirect(request, {"https://old.reddit.com", request_get_path(request)});
+		var path = request.get_path();
+		var parts = path.split('/');
+		if (parts.length == 5 && parts[1] == "r" && parts[3] == "s") {
+			var real_url = Http::get("https://www.reddit.com"+path).redirect;
+			if (real_url) {
+				var url = URL::create("https://old.reddit.com/");
+				url.set_path(URL::create(real_url).get_path());
+				request.set_redirect(url.to_string());
+				return;
+			}
+		}
+		request.set_redirect("https://old.reddit.com"+path);
 		return;
 	}
 	if (domain == "i.redd.it" || domain == "preview.redd.it") {
-		request_set_header(request, "Accept", "*/*");
-		request_set_header(request, "Referer", request_get_url(request));
+		request.set_header("Accept", "*/*");
+		request.set_header("Referer", request.get_url());
 		return;
+	}
+
+	request.append_to_header("Cookie", "over18=1");
+}
+
+function adjust_document(request: Request, document: Element)
+{
+	var limit_link = document.query("a.title-button[href$='/?limit=500']");
+	if (limit_link) {
+		document = Document::parse_from_http(Link::with_params(request.get_url(), {"limit": "500"}));
+		request.replace_document(document);
+	}
+
+	load_all_comments(request, document);
+	
+	remove_element(document, "section.listingsignupbar");
+	replace_class_in_all_elements(document, "div.collapsed", "collapsed", "noncollapsed");
+	remove_all_elements(document, "a.expand");
+
+	foreach (var image in document.query_all("img[src^='https://preview.redd.it/']")) {
+		var src = image.get_attr("src");
+		src.remove(0, "https://preview.redd.it/".length);
+		var idx = src.search_char('?');
+		if (idx >= 0) {
+			src.set_length(idx);
+		}
+		var url = "https://i.redd.it/"+src;
+		wrap_element(image, Element::create("a", {"href": url}));
+	}
+
+	var path = request.get_path();
+	var parts = path.split('/');
+	if (path == "/" || path == "/new/" || path == "/rising/" || path == "/controversial/" || path == "/top/") {
+		RedditCommentTracker::create().show_new_posts(document);
+	}
+	else if (parts.length == 4 && parts[1] == "r" && parts[3] == "") {
+		RedditCommentTracker::create().show_new_posts(document);
+	}
+	else if (parts.length >= 5 && parts[1] == "r" && parts[3] == "comments") {
+		if (parts.length >= 7 && parts[6] != "") {
+			RedditCommentTracker::create().track(document, ["r/"+parts[2], parts[4]+"_"+parts[6]]);
+		}
+		else {
+			RedditCommentTracker::create().track(document, ["r/"+parts[2], parts[4]]);
+		}
 	}
 }
 
-function adjust_document(request, document)
+function @load_all_comments(request: Request, document: Element)
 {
-	var cookies = element_query(document, "span > a[href='https://www.reddit.com/help/privacypolicy']");
-	if (cookies) {
-		cookies = element_get_parent(cookies, 4);
-		if (cookies && element_get_type(cookies) == "div") {
-			element_remove(cookies);
+	var parts = request.get_path().split('/');
+	if (parts.length >= 3 && parts[1] == "r") {
+		var subreddit = parts[2];
+
+		var num_comments = [0];
+		var span = document.query("div.commentarea > div.panestack-title > span.title");
+		var text_elem: Element;
+		var text_prefix: String;
+		var text_suffix: String;
+		if (span) {
+			var elem = span.get_first_child();
+			if (elem != null && elem.get_type() == "#text") { //XXX
+				var text = elem.get_data() as String;
+				var start = -1, end = -1;
+				for (var i=0; i<text.length; i++) {
+					if (text[i] >= '0' && text[i] <= '9') {
+						start = i;
+						for (var j=i; j<text.length; j++) {
+							if (text[j] >= '0' && text[j] <= '9') {
+								end = j+1;
+							}
+							else break;
+						}
+						break;
+					}
+				}
+				if (start >= 0 && end >= 0) {
+					text_elem = elem;
+					num_comments[0] = String::parse_int(text, start, end - start);
+					text_prefix = text.substring(0, start);
+					text_suffix = text.substring(end);
+				}
+			}
+		}
+
+		for (;;) {
+			var anchors = document.query_all("span.morecomments a");
+			if (anchors.length == 0) break;
+			foreach (var anchor in anchors) {
+				var (r, e) = load_comments(subreddit, anchor, document, num_comments);
+				if (e) {
+					dump(e);
+					if (anchor.get_parent()) {
+						anchor.remove();
+					}
+				}
+			}
+		}
+
+		if (text_elem) {
+			text_elem.set_data(text_prefix+num_comments[0]+text_suffix);
+		}
+	}
+}
+
+function @load_comments(subreddit: String, anchor: Element, document: Element, num_comments: Integer[])
+{
+	var parts = anchor.get_attr("onclick").split('\'');
+	var params = {
+		"link_id": parts[1],
+		"sort": parts[3],
+		"children": parts[5],
+		"id": anchor.get_attr("id").substring(5),
+		"limit_children": parts[7],
+		"r": subreddit,
+		"renderstyle": "html"
+	};
+	var json = JSON::parse(Http::get("https://old.reddit.com/api/morechildren", params).content);
+	foreach (var array in json.get("jquery").as_array() as JSON[][]) {
+		if (array.length == 4 && array[2].is_string() && array[2].as_string() == "call" && array[3].is_array() && array[3].length() == 2) {
+			array = array[3].as_array();
+			if (array.length == 2 && array[0].is_array() && array[1].is_boolean()) {
+				foreach (var entry in array[0].as_array()) {
+					var data = entry.get("data").as_object() as String[String];
+					//log("kind="+entry.get("kind").as_string()+" id="+data["id"]+" parent="+data["parent"]);
+					var parent = document.query("div#siteTable_"+data["parent"]);
+					if (parent) {
+						parent.append_html(html_unescape(data["content"]));
+						var elem = parent.query("div#thing_"+data["id"]+" div.child");
+						if (!elem) {
+							elem = parent.query("div.thing[data-permalink$='/"+data["id"].split_first('_')[1]+"/'] div.child");
+						}
+						if (elem) {
+							elem.append_child(Element::create("div", {
+								"id": "siteTable_"+data["id"],
+								"class": "sitetable listing",
+								"style": "display: block;"
+							}));
+						}
+						else {
+							log("has no self");
+							log(html_unescape(data["content"]));
+						}
+						num_comments[0]++;
+					}
+					else {
+						log("has no parent");
+					}
+				}
+			}
 		}
 	}
 
-	replace_class_in_all_elements(document, "div.collapsed", "collapsed", "noncollapsed");
-	remove_all_elements(document, "a.expand");
-	remove_element(document, "iframe[src^='//www.redditmedia.com/moat/proxy']");
+	var parent = anchor.get_parent(3);
+	var elem = parent.query("div.child > div");
+	if (elem != null && elem.get_children_tag_count() != 0) { //XXX
+		anchor.get_parent(2).remove();
+	}
+	else {
+		parent.remove();
+	}
+}
 
-	var images = element_query_all(document, "img[src^='https://preview.redd.it/']");
-	for (var i=0; i<length(images); i++) {
-		var src = element_get_attr(images[i], "src");
-		array_remove(src, 0, length("https://preview.redd.it/"));
-		var idx = string_search_char(src, '?');
-		if (idx >= 0) {
-			array_set_length(src, idx);
+class @RedditCommentTracker: CommentTracker
+{
+	constructor create()
+	{
+		super::create("reddit.com");
+	}
+
+	function show_new_posts(document: Element)
+	{
+		foreach (var buttons in document.query_all("ul.buttons")) {
+			var anchor = buttons.query("a.comments");
+			if (anchor) {
+				var parts = anchor.extract_text().trim().split(' ');
+				if (parts.length == 2 && (parts[1] == "comment" || parts[1] == "comments")) {
+					var num_comments = String::parse_int(parts[0]);
+					var href = anchor.get_attr("href");
+					parts = URL::create(href).get_path().split('/');
+					if (parts.length >= 5 && parts[1] == "r" && parts[3] == "comments") {
+						var discussion_key = ["r/"+parts[2], parts[4]];
+						var last_comments = get_last_comment_count(discussion_key);
+						if (last_comments >= 0 && num_comments > last_comments) {
+							var item = Element::create("li");
+							anchor = Element::create("a");
+							anchor.set_attr("href", href+"#unread-comment-0");
+							anchor.set_attr("style", "color: #000; font-weight: bold");
+							anchor.append_child(Element::create_text(format_count_english(num_comments - last_comments, "new comment \BB", "new comments \BB")));
+							item.append_child(anchor);
+							buttons.append_child(item);
+						}
+					}
+				}
+			}
 		}
-		var url = {"https://i.redd.it/", src};
-		//element_set_attr(images[i], "src", url);
-		wrap_element(images[i], element_create("a", {"href": url}));
+	}
+
+	override function get_comment_count(document: Element): Integer
+	{
+		var anchor = document.query("a.comments");
+		if (anchor) {
+			var parts = anchor.extract_text().trim().split(' ');
+			if (parts.length == 2 && (parts[1] == "comment" || parts[1] == "comments")) {
+				return String::parse_int(parts[0]);
+			}
+		}
+		return -1;
+	}
+
+	override function get_comment_list(document: Element): Element[]
+	{
+		return document.query_all("div.comment");
+	}
+
+	override function get_comment_time(comment: Element): String
+	{
+		return comment.query("time").get_attr("datetime");
+	}
+
+	override function link_first_comment(document: Element)
+	{
+		var span = document.query("div.commentarea > div.panestack-title > span.title");
+		if (span) {
+			var tagline = document.query("p.tagline");
+			var userattrs = tagline.query("span.userattrs");
+			if (userattrs == null || userattrs.get_children_count() == 0) { //XXX
+				add_style_to_element(tagline, "a.author", "margin-right: 0");
+			}
+			var anchor = Element::create("a");
+			anchor.set_attr("href", "#unread-comment-0");
+			anchor.set_attr("style", "color: #000; font-weight: bold");
+			anchor.append_child(Element::create_text("first unread \BB"));
+			tagline.append_child(Element::create_text(" | "));
+			tagline.append_child(anchor);
+
+			anchor = Element::create("a");
+			anchor.set_attr("href", "#unread-comment-0");
+			anchor.set_attr("style", "color: #000; font-weight: bold");
+			anchor.append_child(Element::create_text("first unread \BB"));
+			span.append_child(Element::create_text(" | "));
+			span.append_child(anchor);
+		}
+	}
+
+	override function mark_comment(comment: Element, index: Integer, last: Boolean)
+	{
+		var entry = comment.query("div.entry");
+		entry.set_attr("style", "background: #ff4; color: #000; padding: 5px 10px; margin: -5px -10px");
+		entry.set_attr("id", "unread-comment-"+index);
+
+		if (!last) {
+			var buttons = entry.query("ul.buttons");
+			var item = Element::create("li");
+			var anchor = Element::create("a");
+			anchor.set_attr("href", "#unread-comment-"+(index+1));
+			anchor.set_attr("style", "color: #000; font-weight: bold");
+			anchor.append_child(Element::create_text("next unread \BB"));
+			item.append_child(anchor);
+			buttons.append_child(item);
+		}
 	}
 }

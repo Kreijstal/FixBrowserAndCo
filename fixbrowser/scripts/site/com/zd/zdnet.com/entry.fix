@@ -1,25 +1,27 @@
+use "classes";
+
 import "util/common";
 import "site/com/di/disqus.com/dispatch";
 
-function is_same_domain(src, dest)
+function is_same_domain(src: String, dest: String): Boolean
 {
 	if (domain_ends_with(dest, "cbsistatic.com")) return true;
 	return false;
 }
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var disqus_container = element_query(document, "div[id^='disqusContainer-'] > div");
+	var disqus_container = document.query("div[id^='disqusContainer-'] > div");
 	if (disqus_container) {
-		var url = element_get_attr(disqus_container, "data-url");
-		var title = element_get_attr(disqus_container, "data-title");
+		var url = disqus_container.get_attr("data-url");
+		var title = disqus_container.get_attr("data-title");
 		embed_disqus(request, document, disqus_container, "zdnet-1", url, title);
 		
-		var elem = element_query(document, "div[id^='comments-']");
-		element_remove_class(elem, "collapsed");
-		elem = element_get_prev_tag(elem);
+		var elem = document.query("div[id^='comments-']");
+		elem.remove_class("collapsed");
+		elem = elem.get_prev_tag();
 		if (elem) {
-			element_remove(elem);
+			elem.remove();
 		}
 	}
 }

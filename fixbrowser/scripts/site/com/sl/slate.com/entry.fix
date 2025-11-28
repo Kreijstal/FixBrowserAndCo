@@ -1,6 +1,8 @@
+use "classes";
+
 import "util/common";
 
-function handle_request(request)
+function handle_request(request: Request)
 {
-	request_set_header(request, "Cookie", "GDPR_consent=1");
+	request.append_to_header("Cookie", "GDPR_consent=1");
 }

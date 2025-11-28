@@ -1,152 +1,398 @@
+use "util/time_literals";
+use "classes";
+
 import "util/string";
-import "util/stream";
+import "util/json";
+import "util/long";
 
-const {
-	@MSD_request,
-	@MSD_is_same_domain_func,
-	@MSD_SIZE
-};
-
-function domain_ends_with(domain, match)
+class Element
 {
-	if (domain == match) return true;
-	var len = length(match);
-	if (length(domain) < len+1) return false;
-	if (domain[length(domain)-len-1] != '.') return false;
-	return array_extract(domain, length(domain)-len, len) == match;
+	static function create(type: String): Element;
+	static function create(type: String, attrs: String[String]): Element;
+	static function create_text(text: String): Element;
+	static function create_fragment(html: String): Element;
+	function get_type(): String;
+	function get_parent(): Element;
+	function get_parent(count: Integer): Element;
+	function get_prev(): Element;
+	function get_next(): Element;
+	function get_prev_tag(): Element;
+	function get_next_tag(): Element;
+	function get_first_child(): Element;
+	function get_last_child(): Element;
+	function get_first_child_tag(): Element;
+	function get_last_child_tag(): Element;
+	function get_children_count(): Integer;
+	function get_children_tag_count(): Integer;
+	function insert_before(elem: Element, before: Element);
+	function insert_after(elem: Element, after: Element);
+	function append_child(elem: Element);
+	function remove_child(elem: Element);
+	function remove();
+	function set_attr(name: String, value: String);
+	function get_attr(name: String): String;
+	function get_attrs(): String[String];
+	function set_attrs(attrs: String[String]);
+	function get_data(): Dynamic;
+	function set_data(data: Dynamic);
+	function to_html(): String;
+	function to_string(): String;
+	function query(selector: String): Element;
+	function query_all(selector: String): Element[];
+
+	function remove_class(class_name: String)
+	{
+		replace_class(class_name, null);
+	}
+
+	function replace_class(class_name: String, replacement: String)
+	{
+		var class_list = get_attr("class");
+		if (!class_list) return;
+
+		class_list = replace_class(class_list, class_name, replacement);
+		set_attr("class", class_list);
+	}
+
+	function @replace_class(class_list: String, value: String, new_value: String): String
+	{
+		var s = {""};
+		foreach (var part in class_list.split(' ')) {
+			if (part.length == 0) continue;
+			if (part == value) {
+				if (!new_value) continue;
+				part = new_value;
+			}
+			if (s.length > 0) {
+				s[] = ' ';
+			}
+			s += part;
+		}
+		return s;
+	}
+
+	function remove_all()
+	{
+		for (var e = get_first_child(), next; e; e = next) {
+			next = e.get_next();
+			e.remove();
+		}
+	}
+
+	function set_text(text: String)
+	{
+		remove_all();
+		append_child(Element::create_text(text));
+	}
+
+	function set_html(html: String)
+	{
+		remove_all();
+		append_html(html);
+	}
+
+	function insert_html_before(before: Element, html: String)
+	{
+		var frag = Element::create_fragment(html);
+		for (var e = frag.get_first_child(), next; e; e = next) {
+			next = e.get_next();
+			frag.remove_child(e);
+			insert_before(e, before);
+		}
+	}
+
+	function insert_html_after(after: Element, html: String)
+	{
+		var frag = Element::create_fragment(html);
+		for (var e = frag.get_first_child(), next; e; e = next) {
+			next = e.get_next();
+			frag.remove_child(e);
+			insert_after(e, after);
+			after = e;
+		}
+	}
+
+	function append_html(html: String)
+	{
+		var frag = Element::create_fragment(html);
+		for (var e = frag.get_first_child(), next; e; e = next) {
+			next = e.get_next();
+			frag.remove_child(e);
+			append_child(e);
+		}
+	}
+
+	function @extract_text(out: String): String
+	{
+		if (get_type() == "#text") {
+			out += get_data() as String;
+		}
+
+		for (var e = get_first_child(); e; e = e.get_next()) {
+			e.extract_text(out);
+		}
+		return out;
+	}
+
+	function extract_text(): String
+	{
+		if (!this) return "";
+		return extract_text({""});
+	}
+
+	static function move_children(dest: Element, src: Element)
+	{
+		var next: Element;
+		for (var e = src.get_first_child(); e; e = next) {
+			next = e.get_next();
+			e.remove();
+			dest.append_child(e);
+		}
+	}
 }
 
-function element_remove_class(elem, class_name)
+class ElementMultiquery
 {
-	element_replace_class(elem, class_name, null);
+	static function create(): ElementMultiquery;
+	function add(selector: String, value: Dynamic);
+	function match_all(elem: Element): Dynamic[];
 }
 
-function element_replace_class(elem, class_name, replacement)
+class Document
 {
-	var class_list = element_get_attr(elem, "class");
-	if (!class_list) return;
+	static function parse(html: Byte[]): Element;
+	static function parse(html: Byte[], charset: String): Element;
 
-	class_list = replace_class(class_list, class_name, replacement);
-	element_set_attr(elem, "class", class_list);
+	static function parse_from_http(url: String): Element
+	{
+		return parse_from_http(url, null, null);
+	}
+
+	static function parse_from_http(url: String, post_params: String[String]): Element
+	{
+		return parse_from_http(url, post_params, null);
+	}
+
+	static function parse_from_http(url: String, post_params: String[String], headers: String[String]): Element
+	{
+		var response = Http::get(url, post_params, headers);
+		return parse(response.content, get_charset_from_content_type(response.type));
+	}
 }
 
-function @replace_class(class_list, value, new_value)
+class Request
+{
+	function get_url(): String;
+	function get_scheme(): String;
+	function get_domain(): String;
+	function get_path(): String;
+	function get_query(): String;
+	function get_param(name: String): String;
+	function get_params(): String[String];
+	function get_headers(): String[][String];
+	function set_redirect(url: String);
+	function set_header(name: String, value: String);
+	function append_to_header(name: String, value: String);
+	function replace_content(data: Byte[]);
+	function replace_content(data: Byte[], content_type: String);
+	function replace_document(document: Element);
+	function add_same_domain(domain: String);
+	function add_same_domain(domain: String, unsecure_allowed: Boolean);
+	function set_same_domain_url(url: String);
+
+	function replace_with_html(html: String)
+	{
+		replace_content(html.to_utf8(), "text/html; charset=UTF-8");
+	}
+
+	function replace_from_http(url: String)
+	{
+		replace_from_http(url, null, null);
+	}
+
+	function replace_from_http(url: String, post_params: String[String])
+	{
+		replace_from_http(url, post_params, null);
+	}
+
+	function replace_from_http(url: String, post_params: String[String], headers: String[String])
+	{
+		var response = Http::get(url, post_params, headers);
+		replace_content(response.content, response.type);
+	}
+}
+
+class URL
+{
+	static function create(s: String): URL;
+	function get_scheme(): String;
+	function set_scheme(scheme: String);
+	function get_host(): String;
+	function set_host(host: String);
+	function get_path(): String;
+	function set_path(path: String);
+	function get_param(name: String): String;
+	function set_param(name: String, value: String);
+	function get_params(): String[String];
+	function get_params_array(): String[];
+	function merge(relative: URL): URL;
+	function to_string(): String;
+	function path_to_string(): String;
+	function query_to_string(): String;
+	function path_query_to_string(): String;
+}
+
+class Stream
+{
+	function read_part(buf: Byte[], off: Integer, len: Integer): Integer;
+	function read(buf: Byte[]);
+	function read(buf: Byte[], off: Integer, len: Integer);
+	function write(buf: Byte[]);
+	function write(buf: Byte[], off: Integer, len: Integer);
+	function flush();
+	function close();
+	
+	function read_all(): Byte[]
+	{
+		return read_all([]);
+	}
+
+	function read_all(buf: Byte[]): Byte[]
+	{
+		var read, pos = buf.length, size = 4096;
+		buf.set_length(pos + size);
+		while ((read = read_part(buf, pos, size)) >= 0) {
+			pos += read;
+			buf.set_length(pos + size);
+		}
+		buf.set_length(pos);
+		return buf;
+	}
+}
+
+class Http: Stream
+{
+	static function open(url: String): Http;
+	function set_header(name: String, value: String);
+	function set_post_params(params: String[String]);
+	function connect();
+	function get_header(name: String): String;
+	function get_header_multiple(name: String): String[];
+
+	static function get(url: String): HttpResponse
+	{
+		return get(url, null, null);
+	}
+
+	static function get(url: String, post_params: String[String]): HttpResponse
+	{
+		return get(url, post_params, null);
+	}
+
+	static function get(url: String, post_params: String[String], headers: String[String]): HttpResponse
+	{
+		var http = open(url);
+		if (post_params) {
+			http.set_post_params(post_params);
+		}
+		if (headers) {
+			foreach (var key, value in headers) {
+				http.set_header(key, value);
+			}
+		}
+		http.connect();
+		var response = new HttpResponse;
+		response.type = http.get_header("Content-Type");
+		response.redirect = http.get_header("Location");
+		if (response.redirect) {
+			response.redirect = String::from_utf8(response.redirect);
+		}
+		response.content = http.read_all();
+		http.close();
+		return response;
+	}
+}
+
+class HttpResponse
+{
+	var type: String;
+	var redirect: String;
+	var content: Byte[];
+}
+
+function resource_get(fname: String): Byte[];
+
+function resource_get_string(fname: String): String
 {
 	var s = {""};
-	var parts = string_split(class_list, ' ');
-	for (var i=0; i<length(parts); i++) {
-		var part = parts[i];
-		if (length(part) == 0) continue;
-		if (part == value) {
-			if (!new_value) continue;
-			part = new_value;
-		}
-		if (length(s) > 0) {
-			s[] = ' ';
-		}
-		string_append(s, part);
-	}
+	s += resource_get(fname) as String;
 	return s;
 }
 
-function element_remove_all(elem)
+function @time_get()/*: Integer, Integer*/;
+function @time_get_monotonic(): Integer;
+
+class Time
 {
-	for (var e = element_get_first_child(elem), next; e; e = next) {
-		next = element_get_next(e);
-		element_remove(e);
+	static function get(): Long
+	{
+		var (lo, hi) = @time_get();
+		return Long(lo, hi);
+	}
+
+	static function get_monotonic(): Integer
+	{
+		return @time_get_monotonic();
 	}
 }
 
-function element_set_text(elem, text)
+function domain_ends_with(domain: String, match: String): Boolean
 {
-	element_remove_all(elem);
-	element_append_child(elem, element_create_text(text));
+	if (domain == match) return true;
+	var len = match.length;
+	if (domain.length < len+1) return false;
+	if (domain[domain.length-len-1] != '.') return false;
+	return domain.extract(domain.length-len, len) == match;
 }
 
-function element_set_html(elem, html)
-{
-	element_remove_all(elem);
-	element_append_html(elem, html);
-}
-
-function element_append_html(elem, html)
-{
-	var frag = element_create_fragment(html);
-	for (var e = element_get_first_child(frag), next; e; e = next) {
-		next = element_get_next(e);
-		element_remove_child(frag, e);
-		element_append_child(elem, e);
-	}
-}
-
-function @extract_text(elem, out)
-{
-	if (element_get_type(elem) == "#text") {
-		string_append(out, element_get_data(elem));
-	}
-
-	for (var e = element_get_first_child(elem); e; e = element_get_next(e)) {
-		extract_text(e, out);
-	}
-
-	return out;
-}
-
-function element_extract_text(elem)
-{
-	if (!elem) return "";
-	return extract_text(elem, {""});
-}
-
-function element_move_children(dest, src)
-{
-	for (var e = element_get_first_child(src), next; e; e = next) {
-		next = element_get_next(e);
-		element_remove(e);
-		element_append_child(dest, e);
-	}
-}
-
-function show_elem(elem)
+function show_elem(elem: Element): String
 {
 	return show_elem_internal(elem, {""});
 }
 
-function show_elem(dest, elem)
+function show_elem(dest: Element, elem: Element)
 {
-	element_set_html(dest, show_elem(elem));
+	dest.set_html(show_elem(elem));
 }
 
-function @show_elem_internal(elem, out)
+function @show_elem_internal(elem: Element, out: String): String
 {
-	string_append(out, "<table border=\"1\" width=\"100%\" style=\"margin: 5px 0\"><tr valign=\"top\">");
-	var type = element_get_type(elem);
-	string_append(out, {"<td style=\"background: #CCC\" width=\"1\">", html_escape(type), "</td>"});
+	out += "<table border=\"1\" width=\"100%\" style=\"margin: 5px 0\"><tr valign=\"top\">";
+	var type = elem.get_type();
+	out += "<td style=\"background: #CCC\" width=\"1\">"+html_escape(type)+"</td>";
 	if (type == "#text") {
-		string_append(out, {"<td style=\"background: #FFF\">", html_escape(element_get_data(elem)), "</td>"});
+		out += "<td style=\"background: #FFF\">"+html_escape(element_get_data(elem))+"</td>";
 	}
 	else {
-		string_append(out, {"<td style=\"background: #CC4\">"});
-		var attrs = element_get_attrs(elem);
-		for (var i=0; i<length(attrs); i++) {
-			var (k, v) = hash_entry(attrs, i);
-			string_append(out, {"<b>", html_escape(k), "</b>=", html_escape(v), " "});
+		out += "<td style=\"background: #CC4\">";
+		foreach (var key, value in elem.get_attrs()) {
+			out += "<b>"+html_escape(key)+"</b>="+html_escape(value)+" ";
 		}
-		string_append(out, {"</td>"});
+		out += "</td>";
 	}
-	string_append(out, "</tr><tr><td style=\"padding-left: 10px;\" colspan=\"2\">");
-	for (var e = element_get_first_child(elem); e; e = element_get_next(e)) {
+	out += "</tr><tr><td style=\"padding-left: 10px;\" colspan=\"2\">";
+	for (var e = elem.get_first_child(); e; e = e.get_next()) {
 		show_elem_internal(e, out);
 	}
-	string_append(out, "</td></tr></table>");
+	out += "</td></tr></table>";
 	return out;
 }
 
-function html_escape(s)
+function html_escape(s: String): String
 {
-	var i, c, r = {""}, len = length(s);
-	for (i=0; i<len; i++) {
-		c = s[i];
+	var r = {""};
+	for (var i=0; i<s.length; i++) {
+		var c = s[i];
 		switch (c) {
 			case '&': r[]='&'; r[]='a'; r[]='m'; r[]='p'; r[]=';'; continue;
 			case '<': r[]='&'; r[]='l'; r[]='t'; r[]=';'; continue;
@@ -159,184 +405,448 @@ function html_escape(s)
 	return r;
 }
 
-function http_get(url)
+function html_unescape(s: String): String
 {
-	return http_get(url, null, null);
-}
+	var r = {""};
+	for (var i=0; i<s.length; i++) {
+		var c = s[i];
+		switch (c) {
+			case '&': {
+				var start = i+1;
+				var end = -1;
+				for (var j=start; j<s.length; j++) {
+					if (s[j] == ';') {
+						end = j;
+						break;
+					}
+				}
+				if (end < 0) {
+					r[] = c;
+					continue;
+				}
+				switch (end - start)  {
+					case 2:
+						if (s[i+1] == 'l' && s[i+2] == 't') {
+							r[] = '<';
+							i = end;
+							continue;
+						}
+						if (s[i+1] == 'g' && s[i+2] == 't') {
+							r[] = '>';
+							i = end;
+							continue;
+						}
+						break;
 
-function http_get(url, post_params)
-{
-	return http_get(url, post_params, null);
-}
+					case 3:
+						if (s[i+1] == 'a' && s[i+2] == 'm' && s[i+3] == 'p') {
+							r[] = '&';
+							i = end;
+							continue;
+						}
+						break;
 
-function http_get(url, post_params, headers)
-{
-	var http = http_open(url);
-	if (post_params) {
-		http_set_post_params(http, post_params);
-	}
-	if (headers) {
-		for (var i=0; i<length(headers); i++) {
-			var (k, v) = hash_entry(headers, i);
-			http_set_header(http, k, v);
+					case 4:
+						if (s[i+1] == 'q' && s[i+2] == 'u' && s[i+3] == 'o' && s[i+4] == 't') {
+							r[] = '"';
+							i = end;
+							continue;
+						}
+						if (s[i+1] == 'n' && s[i+2] == 'b' && s[i+3] == 's' && s[i+4] == 'p') {
+							r[] = 0xA0;
+							i = end;
+							continue;
+						}
+						break;
+				}
+				r[] = c;
+				continue;
+			}
+
+			default:
+				r[] = c;
+				continue;
 		}
 	}
-	http_connect(http);
-	var content = stream_read_all(http, {""});
-	stream_close(http);
-	return content;
+	return r;
 }
 
-function make_same_domain_link(request, url)
+function make_same_domain_link(request: Request, url: String): String
 {
-	request_set_same_domain_url(request, url);
+	request.set_same_domain_url(url);
 	return url;
 }
 
-function rewrite_links(document, rewrite_func, rewrite_data)
+function rewrite_links(document: Element, rewrite_func, rewrite_data)
 {
 	rewrite_links(document, "html > head > link[rel='stylesheet'], a", "href", rewrite_func, rewrite_data);
 	rewrite_links(document, "img", "src", rewrite_func, rewrite_data);
 }
 
-function @rewrite_links(document, selector, attr_name, rewrite_func, rewrite_data)
+function @rewrite_links(document: Element, selector: String, attr_name: String, rewrite_func, rewrite_data)
 {
-	var elems = element_query_all(document, selector);
-	for (var i=0; i<length(elems); i++) {
-		var value = element_get_attr(elems[i], attr_name);
+	foreach (var elem in document.query_all(selector)) {
+		var value = elem.get_attr(attr_name);
 		if (!value) continue;
 
-		var new_value = rewrite_func(elems[i], value, rewrite_data);
+		var new_value = rewrite_func(elem, value, rewrite_data);
 		if (new_value != value) {
-			element_set_attr(elems[i], attr_name, new_value);
+			elem.set_attr(attr_name, new_value);
 		}
 	}
 }
 
-function mark_same_domain_links(request, document, is_same_domain_func)
+class @MarkSameDomain
 {
-	var msd = object_create(MSD_SIZE);
-	msd->MSD_request = request;
-	msd->MSD_is_same_domain_func = is_same_domain_func;
+	var request: Request;
+	var is_same_domain_func;
+}
+
+function mark_same_domain_links(request: Request, document: Element, is_same_domain_func)
+{
+	var msd = new MarkSameDomain;
+	msd.request = request;
+	msd.is_same_domain_func = is_same_domain_func;
 	rewrite_links(document, mark_same_domain_links_func#3, msd);
 }
 
-function @mark_same_domain_links_func(elem, value, msd)
+function @mark_same_domain_links_func(elem: Element, value: String, msd: MarkSameDomain): String
 {
-	var domain;
-	if (string_starts_with(value, "https://")) {
-		domain = string_substring(value, 8);
+	var domain: String;
+	if (value.starts_with("https://")) {
+		domain = value.substring(8);
 	}
-	else if (string_starts_with(value, "http://")) {
-		domain = string_substring(value, 7);
+	else if (value.starts_with("http://")) {
+		domain = value.substring(7);
 	}
-	else if (string_starts_with(value, "//")) {
-		domain = string_substring(value, 2);
+	else if (value.starts_with("//")) {
+		domain = value.substring(2);
 	}
 	if (domain) {
-		var idx = string_search_char(domain, '/');
+		var idx = domain.search_char('/');
 		if (idx != -1) {
-			array_set_length(domain, idx);
-			if (msd->MSD_is_same_domain_func(domain)) {
-				return make_same_domain_link(msd->MSD_request, value);
+			domain.set_length(idx);
+			if ((msd.is_same_domain_func)(domain)) { //XXX
+				return make_same_domain_link(msd.request, value);
 			}
 		}
 	}
 	return value;
 }
 
-function link_get_domain(link)
+class Link
 {
-	return url_get_host(url_create(link));
-}
-
-function link_get_param(link, name)
-{
-	return url_get_param(url_create(link), name);
-}
-
-function link_with_params(link, params)
-{
-	var url = url_create(link);
-	for (var i=0; i<length(params); i++) {
-		var (k, v) = hash_entry(params, i);
-		url_set_param(url, k, v);
+	static function get_domain(link: String): String
+	{
+		return URL::create(link).get_host();
 	}
-	return url_to_string(url);
+
+	static function get_param(link: String, name: String): String
+	{
+		return URL::create(link).get_param(name);
+	}
+
+	static function with_params(link: String, params: String[String]): String
+	{
+		var url = URL::create(link);
+		foreach (var key, value in params) {
+			url.set_param(key, value);
+		}
+		return url.to_string();
+	}
+
+	static function with_path(link: String, path: String): String
+	{
+		var url = URL::create(link);
+		var new_url = URL::create(url.get_scheme()+"://"+url.get_host()+"/");
+		new_url.set_path(path);
+		return new_url.to_string();
+	}
+
+	static function strip_params(link: String): String
+	{
+		var url = URL::create(link);
+		var new_url = URL::create(url.get_scheme()+"://"+url.get_host()+"/");
+		new_url.set_path(url.get_path());
+		return new_url.to_string();
+	}
+
+	static function with_https(link: String): String
+	{
+		var url = URL::create(link);
+		url.set_scheme("https");
+		return url.to_string();
+	}
+
+	static function get_absolute(base: String, relative: String): String
+	{
+		return URL::create(base).merge(URL::create(relative)).to_string();
+	}
 }
 
-function link_with_path(link, path)
+function @data_store_set(domain: String, key: String[], value: String, expiration: Integer);
+function @data_store_get(domain: String, key: String[]): String;
+
+class DataStore
 {
-	var url = url_create(link);
-	url_set_path(url, path);
-	return url_to_string(url);
+	static function set(domain: String, key: String[], value: JSON or Dynamic[String], expiration: Integer)
+	{
+		@data_store_set(domain, key, (value as JSON).to_string(), expiration);
+	}
+
+	static function remove(domain: String, key: String[])
+	{
+		@data_store_set(domain, key, null, 0);
+	}
+
+	static function get(domain: String, key: String[]): JSON
+	{
+		var value = @data_store_get(domain, key);
+		if (value) {
+			return JSON::parse_string(value);
+		}
+		return null;
+	}
+
+	static function get_keys(domain: String): String[][];
+	static function get_keys(domain: String, filter: String[]): String[][];
 }
 
-function remove_element(document, selector)
+class GateKeeper
 {
-	var elem = element_query(document, selector);
+	static function get(domain: String): GateKeeper
+	{
+		return DataStore::get(domain, ["gatekeeper"]) as GateKeeper;
+	}
+
+	function get_types(): String[]
+	{
+		var data = this as JSON;
+		var types: String[] = [];
+		foreach (var value in data.get("types").as_array()) {
+			types[] = value.as_string();
+		}
+		return types;
+	}
+
+	function get(key: String): JSON
+	{
+		return (this as JSON).get(key);
+	}
+
+	function opt(key: String): JSON
+	{
+		return (this as JSON).opt(key);
+	}
+
+	static function set(domain: String, type: String, values: Dynamic[String])
+	{
+		var data = DataStore::get(domain, ["gatekeeper"]);
+		if (!data) {
+			data = {
+				"types": [type]
+			} as JSON;
+		}
+
+		var types = data.get("types").as_array() as String[];
+		var found = false;
+		foreach (var value in types) {
+			if (value == type) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			types[] = type;
+		}
+
+		var cur_values = data as Dynamic[String];
+		var prefix = type+"_";
+		for (var i=0; i<cur_values.length; i++) {
+			var (key, value) = cur_values.entry(i);
+			if (key == type || key.starts_with(prefix)) {
+				cur_values.remove(key);
+				i--;
+				continue;
+			}
+		}
+
+		foreach (var key, value in values) {
+			cur_values[key] = value;
+		}
+
+		DataStore::set(domain, ["gatekeeper"], data, 30 days);
+
+		var old_data = DataStore::get(domain, ["gate_keeper"]);
+		if (old_data) {
+			DataStore::remove(domain, ["gate_keeper"]);
+		}
+	}
+}
+
+class GateOpener
+{
+	static function is_available(): Boolean
+	{
+		var (r, e) = @gate_opener_is_available();
+		if (e) {
+			if (is_string(e)) {
+				return false;
+			}
+			throw e;
+		}
+		return r;
+	}
+
+	static function process(request: Dynamic): JSON
+	{
+		var result = @gate_opener_process((request as JSON).to_string());
+		if (result) {
+			return JSON::parse_string(result);
+		}
+		return null;
+	}
+}
+
+class CookieStore
+{
+	static function apply_cookies(request: Request, domain: String)
+	{
+		var data = DataStore::get(domain, ["cookies"]);
+		if (data) {
+			foreach (var key, value in data as String[String]) {
+				request.append_to_header("Cookie", key+"="+value);
+			}
+		}
+	}
+
+	static function save_cookies(request: Request, domain: String, timeout: Integer)
+	{
+		var cookies: String[String];
+		foreach (var name, values in request.get_headers()) {
+			if (name == "Set-Cookie") {
+				foreach (var value in values) {
+					var cookie = value.split_first(';')[0].split_first('=');
+					if (!cookies) {
+						cookies = {};
+					}
+					cookies[cookie[0].trim()] = cookie[1].trim();
+				}
+			}
+		}
+
+		if (cookies) {
+			var data = DataStore::get(domain, ["cookies"]);
+			if (!data) {
+				data = {} as JSON;
+			}
+			foreach (var key, value in cookies) {
+				(data as Dynamic[String])[key] = value;
+			}
+			DataStore::set(domain, ["cookies"], data, timeout);
+		}
+	}
+}
+
+function remove_element(document: Element, selector: String)
+{
+	var elem = document.query(selector);
 	if (elem) {
-		element_remove(elem);
+		elem.remove();
 	}
 }
 
-function remove_all_elements(document, selector)
+function remove_all_elements(document: Element, selector: String)
 {
-	var elems = element_query_all(document, selector);
-	for (var i=0; i<length(elems); i++) {
-		element_remove(elems[i]);
+	foreach (var elem in document.query_all(selector)) {
+		elem.remove();
 	}
 }
 
-function remove_class_in_element(document, selector, class)
+function remove_class_in_element(document: Element, selector: String, class: String)
 {
-	var elem = element_query(document, selector);
+	var elem = document.query(selector);
 	if (elem) {
-		element_remove_class(elem, class);
+		elem.remove_class(class);
 	}
 }
 
-function remove_class_in_all_elements(document, selector, class)
+function remove_class_in_all_elements(document: Element, selector: String, class: String)
 {
-	var elems = element_query_all(document, selector);
-	for (var i=0; i<length(elems); i++) {
-		element_remove_class(elems[i], class);
+	foreach (var elem in document.query_all(selector)) {
+		elem.remove_class(class);
 	}
 }
 
-function replace_class_in_element(document, selector, class, new_class)
+function replace_class_in_element(document: Element, selector: String, class: String, new_class: String)
 {
-	var elem = element_query(document, selector);
+	var elem = document.query(selector);
 	if (elem) {
-		element_replace_class(elem, class, new_class);
+		elem.replace_class(class, new_class);
 	}
 }
 
-function replace_class_in_all_elements(document, selector, class, new_class)
+function replace_class_in_all_elements(document: Element, selector: String, class: String, new_class: String)
 {
-	var elems = element_query_all(document, selector);
-	for (var i=0; i<length(elems); i++) {
-		element_replace_class(elems[i], class, new_class);
+	foreach (var elem in document.query_all(selector)) {
+		elem.replace_class(class, new_class);
 	}
 }
 
-function add_style_to_element(document, selector, added_style)
+function add_style_to_element(document: Element, selector: String, added_style: String)
 {
-	var elem = element_query(document, selector);
+	var elem = document.query(selector);
 	if (elem) {
-		var style = element_get_attr(elem, "style");
+		var style = elem.get_attr("style");
 		if (style) {
-			element_set_attr(elem, "style", {style, ";", added_style});
+			elem.set_attr("style", style+";"+added_style);
 		}
 		else {
-			element_set_attr(elem, "style", added_style);
+			elem.set_attr("style", added_style);
 		}
 	}
 }
 
-function wrap_element(inside_elem, outside_elem)
+function wrap_element(inside_elem: Element, outside_elem: Element)
 {
-	element_insert_before(element_get_parent(inside_elem), outside_elem, inside_elem);
-	element_remove(inside_elem);
-	element_append_child(outside_elem, inside_elem);
+	inside_elem.get_parent().insert_before(outside_elem, inside_elem);
+	inside_elem.remove();
+	outside_elem.append_child(inside_elem);
+}
+
+function format_count_english(count: Integer, singular: String, plural: String): String
+{
+	return count+" "+(count == 1? singular : plural);
+}
+
+function show_json(value: JSON): String
+{
+	return "<pre>"+html_escape(value.to_string())+"</pre>";
+}
+
+function show_json(dest_elem: Element, value: JSON)
+{
+	dest_elem.set_html(show_json(value));
+}
+
+function @get_charset_from_content_type(content_type: String): String
+{
+	var charset = null;
+	var parts = content_type.split(';');
+	for (var i=1; i<parts.length; i++) {
+		var p = parts[i].split('=');
+		if (p.length == 2 && p[0].trim() == "charset") {
+			return p[1].trim();
+		}
+	}
+	return null;
+}
+
+function String::split_first(char: Integer): String[]
+{
+	var idx = this.search_char(char);
+	if (idx >= 0) {
+		return [this.substring(0, idx), this.substring(idx+1)];
+	}
+	return [this];
 }

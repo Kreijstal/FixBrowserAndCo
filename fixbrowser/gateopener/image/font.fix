@@ -1,0 +1,1701 @@
+/*
+ * FixScript Image v0.7 - https://www.fixscript.org/
+ * Copyright (c) 2019-2024 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "macros";
+use "classes";
+
+import "image/image";
+
+class Font
+{
+	var @r: DataReader;
+	var @tables: TableEntry[String];
+
+	var @units_per_em: Integer;
+	var @units_per_em_inv: Float;
+
+	var @index_to_loc_format: Integer;
+	var @num_glyphs: Integer;
+
+	var @char_to_glyph: CharToGlyph;
+	var @advances: Float[];
+	var @char_advances: Float[Integer];
+	var @kerning_pairs: Float[Integer];
+
+	var @num_hmetrics: Short;
+
+	var @ascent: Float;
+	var @descent: Float;
+	var @height: Float;
+
+	var @glyph_cache: GlyphCache;
+
+	constructor load(data: Byte[])
+	{
+		kerning_pairs = {};
+		r = DataReader::create(data);
+		glyph_cache = GlyphCache::create();
+		char_advances = {};
+		parse();
+	}
+
+	function get_ascent(): Float
+	{
+		return ascent;
+	}
+
+	function get_descent(): Float
+	{
+		return descent;
+	}
+
+	function get_height(): Float
+	{
+		return height;
+	}
+
+	function get_char_shape(char: Integer, off_x: Float, off_y: Float, size_x: Float, size_y: Float): Shape
+	{
+		var shape = Shape::create();
+		append_char_shape(shape, char, off_x, off_y, size_x, size_y);
+		return shape;
+	}
+
+	function get_string_shape(s: String, off_x: Float, off_y: Float, size_x: Float, size_y: Float): Shape
+	{
+		var shape = Shape::create();
+		append_string_shape(shape, s, 0, s.length, off_x, off_y, size_x, size_y);
+		return shape;
+	}
+
+	function get_string_shape(s: String, off: Integer, len: Integer, off_x: Float, off_y: Float, size_x: Float, size_y: Float): Shape
+	{
+		var shape = Shape::create();
+		append_string_shape(shape, s, off, len, off_x, off_y, size_x, size_y);
+		return shape;
+	}
+
+	function append_char_shape(shape: Shape, char: Integer, off_x: Float, off_y: Float, size_x: Float, size_y: Float)
+	{
+		for (;;) {
+			if (glyph_cache.get(shape, char, off_x, off_y, size_x, size_y)) {
+				return;
+			}
+			var glyph = char_to_glyph.get(char);
+			glyph_cache.add(char, parse_glyph(glyph, 5));
+		}
+	}
+
+	function append_string_shape(shape: Shape, s: String, off_x: Float, off_y: Float, size_x: Float, size_y: Float)
+	{
+		append_string_shape(shape, s, 0, s.length, off_x, off_y, size_x, size_y);
+	}
+
+	function append_string_shape(shape: Shape, s: String, off: Integer, len: Integer, off_x: Float, off_y: Float, size_x: Float, size_y: Float)
+	{
+		for (var i=off, end=off+len; i<end; i++) {
+			var c = s[i];
+			append_char_shape(shape, c, off_x, off_y, size_x, size_y);
+			off_x += get_char_advance(c) * size_x;
+		}
+	}
+
+	function get_char_bounds(bounds: Float[], char: Integer, off_x: Float, off_y: Float, size_x: Float, size_y: Float): Float[]
+	{
+		var scaled_off_x = off_x / size_x;
+		var scaled_off_y = off_y / size_y;
+		if (!bounds) {
+			bounds = [1000000.0, 1000000.0, -1000000.0, -1000000.0];
+		}
+		else {
+			bounds[0] = 1000000.0;
+			bounds[1] = 1000000.0;
+			bounds[2] = -1000000.0;
+			bounds[3] = -1000000.0;
+		}
+		for (;;) {
+			if (glyph_cache.get_bounds(bounds, char, scaled_off_x, scaled_off_y)) {
+				break;
+			}
+			var glyph = char_to_glyph.get(char);
+			glyph_cache.add(char, parse_glyph(glyph, 5));
+		}
+		bounds[0] = bounds[0] * size_x;
+		bounds[1] = bounds[1] * size_y;
+		bounds[2] = bounds[2] * size_x;
+		bounds[3] = bounds[3] * size_y;
+		return bounds;
+	}
+
+	function get_string_bounds(bounds: Float[], s: String, off_x: Float, off_y: Float, size_x: Float, size_y: Float): Float[]
+	{
+		return get_string_bounds(bounds, s, 0, s.length, off_x, off_y, size_x, size_y);
+	}
+
+	function get_string_bounds(bounds: Float[], s: String, off: Integer, len: Integer, off_x: Float, off_y: Float, size_x: Float, size_y: Float): Float[]
+	{
+		var scaled_off_x = off_x / size_x;
+		var scaled_off_y = off_y / size_y;
+		if (!bounds) {
+			bounds = [1000000.0, 1000000.0, -1000000.0, -1000000.0];
+		}
+		else {
+			bounds[0] = 1000000.0;
+			bounds[1] = 1000000.0;
+			bounds[2] = -1000000.0;
+			bounds[3] = -1000000.0;
+		}
+		for (var i=off, end=off+len; i<end; i++) {
+			var c = s[i];
+			for (;;) {
+				if (glyph_cache.get_bounds(bounds, c, scaled_off_x, scaled_off_y)) {
+					break;
+				}
+				var glyph = char_to_glyph.get(c);
+				glyph_cache.add(c, parse_glyph(glyph, 5));
+			}
+			scaled_off_x = scaled_off_x + get_char_advance(c);
+		}
+		bounds[0] = bounds[0] * size_x;
+		bounds[1] = bounds[1] * size_y;
+		bounds[2] = bounds[2] * size_x;
+		bounds[3] = bounds[3] * size_y;
+		return bounds;
+	}
+
+	function get_char_advance(char: Integer): Float
+	{
+		var value = char_advances.get(char, 0 as Float);
+		if (is_float(value)) {
+			return value as Float;
+		}
+		value = advances[char_to_glyph.get(char)];
+		char_advances[char] = value;
+		return value;
+	}
+
+	function get_string_advance(s: String): Float
+	{
+		return get_string_advance(s, 0, s.length);
+	}
+
+	function get_string_advance(s: String, off: Integer, len: Integer): Float
+	{
+		var adv = 0.0;
+		for (var i=off, end=off+len; i<end; i++) {
+			adv += get_char_advance(s[i]);
+		}
+		return adv;
+	}
+
+	function get_string_position(s: String, x: Float): Float
+	{
+		return get_string_position(s, 0, s.length, x);
+	}
+
+	function get_string_position(s: String, off: Integer, len: Integer, x: Float): Float
+	{
+		if (x < 0.0) return 0;
+		var adv = 0.0, prev = 0.0;
+		for (var i=off, end=off+len; i<end; i++) {
+			adv += get_char_advance(s[i]);
+			if (x >= prev && x < adv) {
+				var frac = (x - prev) / (adv - prev);
+				return (i - off) + frac;
+			}
+			prev = adv;
+		}
+		return len;
+	}
+
+	function @parse()
+	{
+		var version = r.read_uint32();
+		if (version != 0x00010000) {
+			throw error("unsupported version or not a TrueType font");
+		}
+	
+		var num_tables = r.read_uint16();
+		//log("num_tables=" + num_tables);
+		r.skip(3*2);
+
+		tables = {};
+		for (var i=0; i<num_tables; i++) {
+			var tag = get_tag_name(r.read_int32());
+			var entry = new TableEntry;
+			entry.checksum = r.read_int32();
+			entry.offset = r.read_uint32();
+			entry.length = r.read_uint32();
+			//log("tag="+tag+" checksum="+entry.checksum+" offset="+entry.offset+" length="+entry.length);
+			tables[tag] = entry;
+		}
+		//dump(tables.get_keys());
+
+		r.seek(tables["head"].offset);
+		parse_head();
+
+		r.seek(tables["maxp"].offset);
+		parse_maxp();
+
+		r.seek(tables["cmap"].offset);
+		parse_cmap();
+
+		r.seek(tables["hhea"].offset);
+		parse_hhea();
+
+		r.seek(tables["hmtx"].offset);
+		parse_hmtx();
+
+		if (tables.contains("kern")) {
+			r.seek(tables["kern"].offset);
+			parse_kern();
+		}
+
+		r.seek(tables["loca"].offset);
+		r.seek(tables["glyf"].offset);
+	}
+
+	function @parse_head()
+	{
+		var version = r.read_uint32();
+		if (version != 0x00010000) {
+			throw error("unsupported version");
+		}
+		r.skip(2*4);
+		var magic = r.read_uint32();
+		if (magic != 0x5F0F3CF5) {
+			throw error("invalid magic number");
+		}
+		var flags = r.read_uint16();
+		units_per_em = r.read_uint16();
+		units_per_em_inv = 1.0 / units_per_em;
+		r.skip(7*4+2);
+		index_to_loc_format = r.read_uint16();
+		if (index_to_loc_format != 0 && index_to_loc_format != 1) {
+			throw error("unsupported index to location format");
+		}
+		var glyph_data_format = r.read_uint16();
+		if (glyph_data_format != 0) {
+			throw error("unsupported glyph data format");
+		}
+	}
+
+	function @parse_maxp()
+	{
+		var version = r.read_int32();
+		if (version != 0x00010000) {
+			throw error("unsupported version");
+		}
+		num_glyphs = r.read_uint16();
+		//log("numGlyphs="+num_glyphs);
+	}
+
+	function @get_glyph_offset(idx: Integer): Dynamic
+	{
+		var loca_off = tables["loca"].offset;
+		if (index_to_loc_format == 0) {
+			r.seek(loca_off + idx*2);
+			var off = r.read_uint16() << 1;
+			var len = (r.read_uint16() << 1) - off;
+			return off, len;
+		}
+		else {
+			r.seek(loca_off + idx*4);
+			var off = r.read_int32();
+			var len = r.read_int32() - off;
+			return off, len;
+		}
+	}
+
+	function @parse_cmap()
+	{
+		var version = r.read_uint16();
+		if (version != 0) {
+			throw error("unsupported version");
+		}
+		var num_subtables = r.read_uint16();
+		//log("subtables="+num_subtables);
+		
+		var record_offset = 0;
+		
+		for (var i=0; i<num_subtables; i++) {
+			var platform_id = r.read_uint16();
+			var encoding_id = r.read_uint16();
+			var offset = r.read_int32();
+			//log("p="+platform_id+" e="+encoding_id+" offset="+offset+" skip="+(offset - 4 - num_subtables*8));
+			
+			if (platform_id == 3 && (encoding_id == 1 || encoding_id == 10)) { // UCS-2 or UCS-4
+				record_offset = offset;
+			}
+		}
+		
+		if (record_offset == 0) {
+			throw error("no suitable character to glyph encoding found");
+		}
+		
+		record_offset -= 4 + num_subtables*8;
+		r.skip(record_offset);
+		
+		var format = r.read_uint16();
+		//log("format="+format);
+		if (format == 4) {
+			char_to_glyph = CharToGlyphFormat4::parse(r, num_glyphs);
+		}
+		else if (format == 12) {
+			char_to_glyph = CharToGlyphFormat12::parse(r, num_glyphs);
+		}
+		else {
+			throw error("format mismatch");
+		}
+	}
+	
+	function @parse_hhea()
+	{
+		var major_version = r.read_uint16();
+		var minor_version = r.read_uint16();
+		if (major_version != 1 && minor_version != 0) {
+			throw error("unsupported version for horizontal header table ("+major_version+"."+minor_version+")");
+		}
+		ascent = r.read_int16() * units_per_em_inv;
+		descent = r.read_int16() * units_per_em_inv;
+		var line_gap = r.read_int16() * units_per_em_inv;
+		height = ascent - descent + line_gap;
+		r.skip(11*2);
+		var metric_data_format = r.read_int16();
+		if (metric_data_format != 0) {
+			throw error("unsupported metric data format ("+metric_data_format+")");
+		}
+		num_hmetrics = r.read_uint16();
+	}
+
+	function @parse_hmtx()
+	{
+		advances = Array::create(num_glyphs, 4);
+		for (var i=0; i<num_hmetrics; i++) {
+			var advance = r.read_uint16();
+			r.read_int16(); // lsb
+			advances[i] = advance * units_per_em_inv;
+		}
+		if (num_hmetrics > 0) {
+			for (var i=num_hmetrics; i<num_glyphs; i++) {
+				advances[i] = advances[num_hmetrics-1];
+			}
+		}
+	}
+
+	function @parse_kern()
+	{
+		var version = r.read_uint16();
+		if (version != 0) return;
+		var num_tables = r.read_uint16();
+		//log("num_tables="+num_tables);
+
+		var offset = 0;
+		var table_offset = -1;
+		for (var i=0; i<num_tables; i++) {
+			var subversion = r.read_uint16();
+			var length = r.read_uint16();
+			var coverage = r.read_uint16();
+			//log("ver="+subversion+" cov="+coverage);
+			if (table_offset == -1 && subversion == 0 && coverage == 1) {
+				table_offset = offset;
+			}
+			offset += length;
+		}
+
+		if (table_offset == -1) {
+			return;
+		}
+		
+		r.skip(table_offset);
+		var num_pairs = r.read_uint16();
+		var search_range = r.read_uint16();
+		var entry_selector = r.read_uint16();
+		var range_shift = r.read_uint16();
+		//log("num_pairs="+num_pairs);
+		for (var i=0; i<num_pairs; i++) {
+			var left = r.read_uint16();
+			var right = r.read_uint16();
+			var value = r.read_int16();
+			kerning_pairs[(left << 16) | (right & 0xFFFF)] = value * units_per_em_inv;
+			//log("left="+left+" right="+right+" value="+value+" "+(float(value) / units_per_em));
+		}
+	}
+
+	function @parse_glyph(glyph_idx: Integer, recursion_limit: Integer): Shape
+	{
+		var shape = Shape::create();
+		if (recursion_limit == 0) {
+			return shape;
+		}
+
+		var entry = tables["glyf"];
+		var glyf_off = entry.offset;
+		var glyf_len = entry.length;
+		
+		var end_points: Integer[] = [];
+		var flags: Byte[] = [];
+		var coords_x: Integer[] = [];
+		var coords_y: Integer[] = [];
+		
+		var (goff, glen) = get_glyph_offset(glyph_idx);
+		if (!is_int(glen)) throw glen;
+		if (glen == 0) {
+			return shape;
+		}
+		
+		if (goff < 0 || goff + glen > glyf_len) throw error("bad glyph offset");
+		r.seek(glyf_off + goff);
+		
+		var num_contours = r.read_int16();
+		var min_x = r.read_int16();
+		var min_y = r.read_int16();
+		var max_x = r.read_int16();
+		var max_y = r.read_int16();
+			
+		var fx = units_per_em_inv;
+		var fy = -units_per_em_inv;
+		
+		if (num_contours >= 0) {
+			var num_points = 0;
+			end_points.clear();
+			for (var j=0; j<num_contours; j++) {
+				var ep = r.read_uint16();
+				end_points[] = ep;
+				num_points = ep+1;
+			}
+			
+			var insn_len = r.read_uint16();
+			r.skip(insn_len);
+			
+			flags.clear();
+			for (var j=0; j<num_points; j++) {
+				var flag = r.read_uint8();
+				flags[] = flag;
+				
+				if ((flag & (1 << 3)) != 0) { // repeat
+					var rep = r.read_uint8();
+					for (var k=0; k<rep; k++) {
+						flags[] = flag;
+					}
+					j += rep;
+				}
+			}
+			if (flags.length != num_points) {
+				throw error("incorrect number of flags");
+			}
+			
+			read_coords(r, flags, coords_x, num_points, end_points, false);
+			read_coords(r, flags, coords_y, num_points, end_points, true);
+
+			var start = 0;
+			for (var j=0; j<num_contours; j++) {
+				var end = end_points[j];
+				var next = end+1;
+
+				var len = end - start + 1;
+				var pos = 0;
+				
+				for (var k=0; k<len; k++) {
+					if ((flags[start+k] & 1) as Boolean) {
+						pos = k;
+						break;
+					}
+				}
+
+				shape.move_to(coords_x[start+pos]*fx, coords_y[start+pos]*fy);
+
+				for (var k=0; k<len; k++) {
+					pos = (pos+1) % len;
+					var idx = start+pos;
+					if ((flags[idx] & 1) as Boolean) {
+						if (k < len-1) {
+							shape.line_to(coords_x[idx]*fx, coords_y[idx]*fy);
+						}
+					}
+					else {
+						var idx2 = start + (pos+1) % len;
+						if ((flags[idx2] & 1) as Boolean) {
+							shape.quad_to(coords_x[idx]*fx, coords_y[idx]*fy, coords_x[idx2]*fx, coords_y[idx2]*fy);
+							pos = idx2 - start;
+							k++;
+						}
+						else {
+							var mx = (coords_x[idx] + coords_x[idx2]) >> 1;
+							var my = (coords_y[idx] + coords_y[idx2]) >> 1;
+							shape.quad_to(coords_x[idx]*fx, coords_y[idx]*fy, mx*fx, my*fy);
+						}
+					}
+				}
+
+				shape.close_path();
+				
+				start = next;
+			}
+		}
+		else {
+			if (num_contours != -1) throw error("unknown glyph data");
+
+			var tr = Transform::create();
+			var comp_flags: Short;
+			do {
+				comp_flags = r.read_uint16();
+				var comp_glyph_idx = r.read_uint16();
+
+				var arg1: Short, arg2: Short;
+
+				if ((comp_flags & (1 << 0)) != 0) { // ARG_1_AND_2_ARE_WORDS
+					arg1 = r.read_int16();
+					arg2 = r.read_int16();
+				}
+				else {
+					arg1 = r.read_int8();
+					arg2 = r.read_int8();
+				}
+
+				tr.m02 = arg1 * fx;
+				tr.m12 = arg2 * fy;
+
+				if ((comp_flags & (1 << 1)) == 0) { // ARGS_ARE_XY_VALUES
+					throw error("point positioning not supported");
+				}
+
+				if ((comp_flags & (1 << 3)) != 0) { // WE_HAVE_A_SCALE
+					var scale = r.read_int16() / 16384.0;
+					tr.m00 = scale;
+					tr.m11 = scale;
+					tr.m01 = 0.0;
+					tr.m10 = 0.0;
+				}
+				else if ((comp_flags & (1 << 6)) != 0) { // WE_HAVE_AN_X_AND_Y_SCALE
+					tr.m00 = r.read_int16() / 16384.0;
+					tr.m11 = r.read_int16() / 16384.0;
+					tr.m01 = 0.0;
+					tr.m10 = 0.0;
+				}
+				else if ((comp_flags & (1 << 7)) != 0) { // WE_HAVE_A_TWO_BY_TWO
+					tr.m00 = r.read_int16() / 16384.0;
+					tr.m10 = r.read_int16() / 16384.0;
+					tr.m01 = r.read_int16() / 16384.0;
+					tr.m11 = r.read_int16() / 16384.0;
+				}
+				else {
+					tr.m00 = 1.0;
+					tr.m01 = 0.0;
+					tr.m10 = 0.0;
+					tr.m11 = 1.0;
+				}
+
+				var pos = r.get_position();
+				var subshape = parse_glyph(comp_glyph_idx, recursion_limit-1);
+				r.seek(pos);
+				shape.append(subshape, tr);
+			}
+			while ((comp_flags & (1 << 5)) != 0); // MORE_COMPONENTS
+		}
+		
+		return shape;
+	}
+
+	static function @read_coords(r: DataReader, flags: Byte[], coords: Integer[], num_points: Integer, end_points: Integer[], dir_y: Boolean)
+	{
+		coords.clear();
+
+		var c = 0;
+		for (var i=0; i<num_points; i++) {
+			if ((flags[i] & (1 << (dir_y? 2:1))) != 0) { // x-short / y-short vector
+				var value = r.read_uint8();
+				if ((flags[i] & (1 << (dir_y? 5:4))) == 0) {
+					value = -value;
+				}
+				c += value;
+			}
+			else if ((flags[i] & (1 << (dir_y? 5:4))) == 0) {
+				c += r.read_int16();
+			}
+			coords[] = c;
+		}
+	}
+
+	static function @get_tag_name(value: Integer): String
+	{
+		var s = {"xxxx"};
+		s[0] = (value >> 24) & 0xFF;
+		s[1] = (value >> 16) & 0xFF;
+		s[2] = (value >>  8) & 0xFF;
+		s[3] = (value >>  0) & 0xFF;
+		return s;
+	}
+}
+
+class @TableEntry
+{
+	var offset: Integer;
+	var length: Integer;
+	var checksum: Integer;
+}
+
+class @CharToGlyph
+{
+	constructor @create()
+	{
+	}
+	
+	virtual function get(idx: Integer): Integer;
+}
+
+class @CharToGlyphFormat4: CharToGlyph
+{
+	var @seg_count: Integer;
+	var @data: Short[];
+	var @flags: Integer[];
+	var @glyph_ids: Short[];
+
+	macro @DATA_start  { 0 }
+	macro @DATA_end    { 1 }
+	macro @DATA_offset { 2 }
+	macro @DATA_SIZE   { 3 }
+
+	macro @data_init(seg_count)
+	{
+		data = Array::create((seg_count) * DATA_SIZE, 2);
+		flags = Array::create(((seg_count) + 31) >> 5, 4);
+	}
+
+	macro @data_field(idx, name)
+	{
+		data[(idx)*DATA_SIZE+DATA_#name]
+	}
+
+	macro @get_start(idx)
+	{
+		data_field(idx, start)
+	}
+
+	macro @set_start(idx, value)
+	{
+		data_field(idx, start) = value;
+	}
+
+	macro @get_end(idx)
+	{
+		data_field(idx, end)
+	}
+
+	macro @set_end(idx, value)
+	{
+		data_field(idx, end) = value;
+	}
+
+	macro @get_offset(idx)
+	{
+		(data_field(idx, offset) << 16 >> 16)
+	}
+
+	macro @set_offset(idx, value)
+	{
+		data_field(idx, offset) = (value) & 0xFFFF;
+	}
+
+	macro @get_glyph_idx(idx)
+	{
+		data_field(idx, offset)
+	}
+
+	macro @set_glyph_idx(idx, value)
+	{
+		data_field(idx, offset) = value;
+	}
+
+	macro @set_uses_index(idx, b)
+	{
+		var $idx = idx;
+		var $value = flags[$idx >> 5];
+		if (b) {
+			$value |= 1 << ($idx & 31);
+		}
+		else {
+			$value &= ~(1 << ($idx & 31));
+		}
+		flags[$idx >> 5] = $value;
+	}
+
+	macro @get_uses_index(idx)
+	{
+		((flags[(idx) >> 5] & (1 << ((idx) & 31))) != 0)
+	}
+
+	constructor parse(r: DataReader, num_glyphs: Integer)
+	{
+		r.skip(2*2);
+		var seg_count = this.seg_count = r.read_uint16() / 2;
+		r.skip(3*2);
+		data_init(seg_count);
+		for (var i=0; i<seg_count; i++) {
+			set_end(i, r.read_uint16());
+		}
+		r.skip(1*2);
+		for (var i=0; i<seg_count; i++) {
+			set_start(i, r.read_uint16());
+		}
+		for (var i=0; i<seg_count; i++) {
+			set_offset(i, r.read_int16());
+		}
+		var glyph_id_base = seg_count * 2;
+		//log("base="+glyph_id_base);
+		var glyph_ids_len = 0;
+		for (var i=0; i<seg_count; i++) {
+			var id_range_offset = r.read_uint16();
+			if (id_range_offset != 0) {
+				var glyph_idx = (id_range_offset - glyph_id_base) / 2;
+				if (glyph_idx < 0) throw error("negative glyph index offset");
+				set_glyph_idx(i, glyph_idx);
+				set_uses_index(i, true);
+				glyph_ids_len = max(glyph_ids_len, glyph_idx + (get_end(i) - get_start(i) + 1));
+			}
+			glyph_id_base -= 2;
+		}
+		glyph_ids = Array::create(glyph_ids_len, 2);
+		for (var i=0; i<glyph_ids_len; i++) {
+			glyph_ids[i] = r.read_uint16();
+		}
+		var last_start = -1;
+		var last_end = -1;
+		for (var i=0; i<seg_count; i++) {
+			//log("range["+i+"]="+to_string(i));
+			var start: Integer = get_start(i);
+			var end: Integer = get_end(i);
+			if (start > end) {
+				throw error("invalid range");
+			}
+			if (start <= last_end) {
+				throw error("overlapping ranges");
+			}
+			if (!get_uses_index(i)) {
+				var offset = get_offset(i);
+				if (((start+offset) & 0xFFFF) >= num_glyphs || ((end+offset) & 0xFFFF) >= num_glyphs) {
+					throw error("glyph index outside the range");
+				}
+			}
+			last_start = start;
+			last_end = end;
+		}
+		for (var i=0; i<glyph_ids.length; i++) {
+			var idx = glyph_ids[i];
+			if (idx < 0 || idx >= num_glyphs) {
+				throw error("glyph index outside the range");
+			}
+		}
+	}
+
+	override function get(idx: Integer): Integer
+	{
+		var range = find_range(idx);
+		if (range == -1) {
+			return 0;
+		}
+		//log("range="+range+" "+to_string(range));
+		if (get_uses_index(range)) {
+			return glyph_ids[get_glyph_idx(range) + (idx - get_start(range))];
+		}
+		return idx + get_offset(range);
+	}
+
+	function @find_range0(idx: Integer): Integer
+	{
+		for (var i=0; i<seg_count; i++) {
+			if (get_end(i) >= idx) {
+				if (idx < get_start(i)) {
+					return -1;
+				}
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	function @find_range(idx: Integer): Integer
+	{
+		var min = 0;
+		var max = seg_count-1;
+		while (min <= max) {
+			var mid = min + (max - min) / 2;
+			//log("min="+min+" max="+max+" mid="+mid);
+			var end: Integer = get_end(mid);
+			if (end > idx) {
+				if (mid == 0) break;
+				max = mid - 1;
+			}
+			else if (end < idx) {
+				min = mid + 1;
+			}
+			else {
+				return mid;
+			}
+		}
+		
+		if (idx >= get_start(min)) {
+			return min;
+		}
+		return -1;
+	}
+
+	function @to_string(idx: Integer): String
+	{
+		return "[start="+get_start(idx)+" end="+get_end(idx)+" "+(get_uses_index(idx)? "glyph_idx="+get_glyph_idx(idx) : "offset="+get_offset(idx))+"]";
+	}
+}
+
+class @CharToGlyphFormat12: CharToGlyph
+{
+	var @num_groups: Integer;
+	var @data: Integer[];
+
+	macro @DATA_start     { 0 }
+	macro @DATA_end       { 1 }
+	macro @DATA_glyph_idx { 2 }
+	macro @DATA_SIZE      { 3 }
+
+	macro @data_init(group_count)
+	{
+		data = Array::create((group_count) * DATA_SIZE, 4);
+	}
+
+	macro @data_field(idx, name)
+	{
+		data[(idx)*DATA_SIZE+DATA_#name]
+	}
+
+	macro @get_start(idx)
+	{
+		data_field(idx, start)
+	}
+
+	macro @set_start(idx, value)
+	{
+		data_field(idx, start) = value;
+	}
+
+	macro @get_end(idx)
+	{
+		data_field(idx, end)
+	}
+
+	macro @set_end(idx, value)
+	{
+		data_field(idx, end) = value;
+	}
+
+	macro @get_glyph_idx(idx)
+	{
+		data_field(idx, glyph_idx)
+	}
+
+	macro @set_glyph_idx(idx, value)
+	{
+		data_field(idx, glyph_idx) = value;
+	}
+
+	constructor parse(r: DataReader, num_glyphs: Integer)
+	{
+		r.skip(2+2*4);
+		num_groups = r.read_int32();
+		if ((num_groups as Integer) < (0 as Integer)) throw error("too many groups");
+		//log("numGroups="+numGroups);
+		
+		var last_start = -1;
+		var last_end = -1;
+		
+		data_init(num_groups);
+		for (var i=0; i<num_groups; i++) {
+			var start = r.read_int32();
+			var end = r.read_int32();
+			var glyph_idx = r.read_int32();
+			
+			if (start < 0) throw error("negative start mapping");
+			if (end < 0) throw error("negative end mapping");
+			if (glyph_idx < 0) throw error("negative glyphIdx mapping");
+			
+			set_start(i, start);
+			set_end(i, end);
+			set_glyph_idx(i, glyph_idx);
+			
+			//log("group["+i+"]="+to_string(i));
+			
+			if (start > end) {
+				throw error("invalid range");
+			}
+			if (start <= last_end) {
+				throw error("overlapping ranges");
+			}
+			var end_idx = glyph_idx + (end - start);
+			if (end_idx < 0 || end_idx >= num_glyphs) {
+				throw error("glyph index outside the range");
+			}
+			last_start = start;
+			last_end = end;
+		}
+	}
+	
+	override function get(idx: Integer): Integer
+	{
+		var min = 0;
+		var max = num_groups-1;
+		while (min <= max) {
+			var mid = min + (max - min) / 2;
+			//log("min="+min+" max="+max+" mid="+mid);
+			var end = get_end(mid);
+			if (end > idx) {
+				if (mid == 0) break;
+				max = mid - 1;
+			}
+			else if (end < idx) {
+				min = mid + 1;
+			}
+			else {
+				return get_glyph_idx(mid) + (idx - get_start(mid));
+			}
+		}
+		
+		if (idx >= get_start(min)) {
+			return get_glyph_idx(min) + (idx - get_start(min));
+		}
+		return 0;
+	}
+
+	function @to_string(idx: Integer): String
+	{
+		return "[start="+get_start(idx)+" end="+get_end(idx)+" glyphIdx="+get_glyph_idx(idx)+"]";
+	}
+}
+
+class @DataReader
+{
+	var @data: Byte[];
+	var @off: Integer;
+
+	constructor create(data: Byte[])
+	{
+		this.data = data;
+	}
+
+	function read_int8(): Byte
+	{
+		var off = this.off;
+		this.off = off + 1;
+		return data[off] << 24 >> 24;
+	}
+
+	function read_uint8(): Byte
+	{
+		var off = this.off;
+		this.off = off + 1;
+		return data[off];
+	}
+
+	function read_int16(): Short
+	{
+		var data = this.data;
+		var off = this.off;
+		this.off = off + 2;
+		return ((data[off] << 8) | data[off+1]) << 16 >> 16;
+	}
+
+	function read_uint16(): Short
+	{
+		var data = this.data;
+		var off = this.off;
+		this.off = off + 2;
+		return ((data[off] << 8) | data[off+1]);
+	}
+
+	function read_int32(): Integer
+	{
+		var data = this.data;
+		var off = this.off;
+		this.off = off + 4;
+		return (data[off] << 24) | (data[off+1] << 16) | (data[off+2] << 8) | data[off+3];
+	}
+
+	function read_uint32(): Integer
+	{
+		var data = this.data;
+		var off = this.off;
+		this.off = off + 4;
+		return (data[off] << 24) | (data[off+1] << 16) | (data[off+2] << 8) | data[off+3];
+	}
+
+	function seek(pos: Integer)
+	{
+		off = pos;
+	}
+
+	function get_position(): Integer
+	{
+		return off;
+	}
+
+	function skip(amount: Integer)
+	{
+		off += amount;
+	}
+}
+
+class @GlyphCache
+{
+	var @index: Integer[Integer];
+	var @data: Dynamic[];
+	
+	constructor create()
+	{
+		index = {};
+		data = [];
+	}
+
+	function add(char: Integer, shape: Shape)
+	{
+		var min_x = 1000000.0;
+		var min_y = 1000000.0;
+		var max_x = -1000000.0;
+		var max_y = -1000000.0;
+
+		var odd = true;
+		for (var i=0, n=length(shape as Dynamic[]); i<n; i++) {
+			var value = (shape as Dynamic[])[i];
+			if (!is_float(value)) continue;
+			if (odd) {
+				min_x = fmin(min_x, value as Float);
+				max_x = fmax(max_x, value as Float);
+			}
+			else {
+				min_y = fmin(min_y, value as Float);
+				max_y = fmax(max_y, value as Float);
+			}
+			odd = !odd;
+		}
+
+		var data = this.data;
+		data[] = min_x;
+		data[] = min_y;
+		data[] = max_x;
+		data[] = max_y;
+
+		index[char] = data.length;
+		index[~char] = length(shape as Dynamic[]);
+		data.append(shape as Dynamic[]);
+	}
+
+	function get_bounds(bounds: Float[], char: Integer, scaled_off_x: Float, scaled_off_y: Float): Boolean
+	{
+		var off = index.get(char, -1);
+		if (off == -1) return false;
+
+		var data = this.data;
+		off -= 4;
+		bounds[0] = fmin(bounds[0], (data[off++] as Float) + scaled_off_x);
+		bounds[1] = fmin(bounds[1], (data[off++] as Float) + scaled_off_y);
+		bounds[2] = fmax(bounds[2], (data[off++] as Float) + scaled_off_x);
+		bounds[3] = fmax(bounds[3], (data[off  ] as Float) + scaled_off_y);
+		return true;
+	}
+
+	function get(shape: Shape, char: Integer, off_x: Float, off_y: Float, size_x: Float, size_y: Float): Boolean
+	{
+		var off = index.get(char, -1);
+		if (off == -1) return false;
+		var end = off + index[~char];
+		var data = this.data;
+
+		var odd = true;
+		for (var i=off; i<end; i++) {
+			var value = data[i];
+			if (is_float(value)) {
+				if (odd) {
+					shape[] = off_x + (value as Float) * size_x;
+				}
+				else {
+					shape[] = off_y + (value as Float) * size_y;
+				}
+				odd = !odd;
+				continue;
+			}
+			shape[] = value;
+		}
+		return true;
+	}
+}
+
+class ScaledFont
+{
+	var @font: Font;
+	var @size_x: Float;
+	var @size_y: Float;
+	var @size_y_lowercase: Float;
+	var @weight: Float;
+	var @glyph_cache: GlyphCache;
+
+	static function create(font: Font, size: Float): ScaledFont
+	{
+		return create(font, size, -1.0);
+	}
+	
+	constructor create(font: Font, size: Float, grid_fitting_weight: Float)
+	{
+		this.font = font;
+
+		if (is_monospace_font(font)) {
+			var advance = font.get_char_advance(' ') * size;
+			size = size * (round(advance) / advance);
+		}
+
+		size_x = size;
+		size_y = get_aligned_size(font, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", size);
+		size_y_lowercase = get_aligned_size(font, "acegmnopqrsuvwxyz", size);
+
+		if (grid_fitting_weight >= 0.0) {
+			weight = grid_fitting_weight;
+		}
+		else {
+			weight = (1.0 - fclamp((size - 16.0) / (32.0 - 16.0), 0.0, 1.0)) * 0.5;
+		}
+
+		glyph_cache = GlyphCache::create();
+	}
+
+	function get_font(): Font
+	{
+		return font;
+	}
+
+	function get_size(): Float
+	{
+		return size_x;
+	}
+
+	function get_ascent(): Float
+	{
+		return font.get_ascent() * size_x;
+	}
+
+	function get_descent(): Float
+	{
+		return font.get_descent() * size_x;
+	}
+
+	function get_height(): Float
+	{
+		return font.get_height() * size_x;
+	}
+
+	function get_char_shape(char: Integer, off_x: Float, off_y: Float): Shape
+	{
+		var shape = Shape::create();
+		append_char_shape(shape, char, off_x, off_y);
+		return shape;
+	}
+
+	function get_string_shape(s: String, off_x: Float, off_y: Float): Shape
+	{
+		var shape = Shape::create();
+		append_string_shape(shape, s, 0, s.length, off_x, off_y);
+		return shape;
+	}
+
+	function get_string_shape(s: String, off: Integer, len: Integer, off_x: Float, off_y: Float): Shape
+	{
+		var shape = Shape::create();
+		append_string_shape(shape, s, off, len, off_x, off_y);
+		return shape;
+	}
+
+	function append_char_shape(shape: Shape, char: Integer, off_x: Float, off_y: Float)
+	{
+		for (;;) {
+			if (glyph_cache.get(shape, char, off_x, off_y, 1.0, 1.0)) {
+				return;
+			}
+			glyph_cache.add(char, get_scaled_glyph(char));
+		}
+	}
+
+	function append_string_shape(shape: Shape, s: String, off_x: Float, off_y: Float)
+	{
+		append_string_shape(shape, s, 0, s.length, off_x, off_y);
+	}
+	
+	function append_string_shape(shape: Shape, s: String, off: Integer, len: Integer, off_x: Float, off_y: Float)
+	{
+		var font = this.font;
+		var size_x = this.size_x;
+		for (var i=off, end=off+len; i<end; i++) {
+			var c = s[i];
+			append_char_shape(shape, c, off_x, off_y);
+			off_x += font.get_char_advance(c) * size_x;
+		}
+	}
+
+	function get_char_bounds(bounds: Float[], char: Integer, off_x: Float, off_y: Float): Float[]
+	{
+		if (!bounds) {
+			bounds = [1000000.0, 1000000.0, -1000000.0, -1000000.0];
+		}
+		else {
+			bounds[0] = 1000000.0;
+			bounds[1] = 1000000.0;
+			bounds[2] = -1000000.0;
+			bounds[3] = -1000000.0;
+		}
+		for (;;) {
+			if (glyph_cache.get_bounds(bounds, char, off_x, off_y)) {
+				break;
+			}
+			glyph_cache.add(char, get_scaled_glyph(char));
+		}
+		return bounds;
+	}
+
+	function get_string_bounds(bounds: Float[], s: String, off_x: Float, off_y: Float): Float[]
+	{
+		return get_string_bounds(bounds, s, 0, s.length, off_x, off_y);
+	}
+
+	function get_string_bounds(bounds: Float[], s: String, off: Integer, len: Integer, off_x: Float, off_y: Float): Float[]
+	{
+		if (!bounds) {
+			bounds = [1000000.0, 1000000.0, -1000000.0, -1000000.0];
+		}
+		else {
+			bounds[0] = 1000000.0;
+			bounds[1] = 1000000.0;
+			bounds[2] = -1000000.0;
+			bounds[3] = -1000000.0;
+		}
+		var font = this.font;
+		var size_x = this.size_x;
+		for (var i=off, end=off+len; i<end; i++) {
+			var c = s[i];
+			for (;;) {
+				if (glyph_cache.get_bounds(bounds, c, off_x, off_y)) {
+					break;
+				}
+				glyph_cache.add(c, get_scaled_glyph(c));
+			}
+			off_x += font.get_char_advance(c) * size_x;
+		}
+		return bounds;
+	}
+
+	function get_char_advance(char: Integer): Float
+	{
+		return font.get_char_advance(char) * size_x;
+	}
+
+	function get_string_advance(s: String): Float
+	{
+		return font.get_string_advance(s, 0, s.length) * size_x;
+	}
+
+	function get_string_advance(s: String, off: Integer, len: Integer): Float
+	{
+		return font.get_string_advance(s, off, len) * size_x;
+	}
+
+	function get_string_position(s: String, x: Float): Float
+	{
+		return font.get_string_position(s, 0, s.length, x / size_x);
+	}
+
+	function get_string_position(s: String, off: Integer, len: Integer, x: Float): Float
+	{
+		return font.get_string_position(s, off, len, x / size_x);
+	}
+
+	static function @is_monospace_font(font: Font): Boolean
+	{
+		var advance = font.get_char_advance(32);
+		for (var i=33; i<=126; i++) {
+			if (font.get_char_advance(i) != advance) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	static function @get_aligned_size(font: Font, s: String, size: Float): Float
+	{
+		var bounds: Float[];
+		var y1 = 0.0;
+		for (var i=0; i<s.length; i++) {
+			bounds = font.get_char_bounds(bounds, s[i], 0, 0, size, size);
+			y1 += bounds[1];
+		}
+		y1 = -y1 / s.length;
+		return size * (round(y1) / y1);
+	}
+
+	static function @find_axis_aligned_lines(shape: Shape, horiz: AxisLines, vert: AxisLines)
+	{
+		var arr = shape as Dynamic[];
+
+		macro check(x1, y1, x2, y2, px, py) {
+			var $dx = (x2) - (x1);
+			var $dy = (y2) - (y1);
+			var $len = sqrt($dx*$dx + $dy*$dy);
+			var $norm_dx = $dx / $len;
+			var $norm_dy = $dy / $len;
+			if (fabs($norm_dx) < 0.1 && fabs($dy) > 0.1) {
+				if (horiz) {
+					horiz.add(px, (y1) < (y2));
+				}
+			}
+			else if (fabs($norm_dy) < 0.1 && fabs($dx) > 0.1) {
+				if (vert) {
+					vert.add(py, (x1) < (x2));
+				}
+			}
+		}
+
+		var start_x = 0.0;
+		var start_y = 0.0;
+		var x0 = 0.0;
+		var y0 = 0.0;
+
+		for (var i=0; i<arr.length; ) {
+			switch (arr[i++]) {
+				case PART_MOVE_TO: {
+					var x1 = arr[i++] as Float;
+					var y1 = arr[i++] as Float;
+					x0 = x1;
+					y0 = y1;
+					start_x = x1;
+					start_y = y1;
+					break;
+				}
+
+				case PART_LINE_TO: {
+					var x1 = arr[i++] as Float;
+					var y1 = arr[i++] as Float;
+					check(x0, y0, x1, y1, (x0+x1)*0.5, (y0+y1)*0.5);
+					x0 = x1;
+					y0 = y1;
+					break;
+				}
+
+				case PART_QUAD_TO: {
+					var x1 = arr[i++] as Float;
+					var y1 = arr[i++] as Float;
+					var x2 = arr[i++] as Float;
+					var y2 = arr[i++] as Float;
+					check(x0, y0, x1, y1, x0, y0);
+					check(x1, y1, x2, y2, x2, y2);
+					x0 = x2;
+					y0 = y2;
+					break;
+				}
+
+				case PART_CUBIC_TO: {
+					var x1 = arr[i++] as Float;
+					var y1 = arr[i++] as Float;
+					var x2 = arr[i++] as Float;
+					var y2 = arr[i++] as Float;
+					var x3 = arr[i++] as Float;
+					var y3 = arr[i++] as Float;
+					check(x0, y0, x1, y1, x0, y0);
+					check(x1, y1, x2, y2, (x1+x2)*0.5, (y1+y2)*0.5);
+					check(x2, y2, x3, y3, x3, y3);
+					x0 = x3;
+					y0 = y3;
+					break;
+				}
+
+				case PART_CLOSE_PATH: {
+					check(x0, y0, start_x, start_y, (x0+start_x)*0.5, (y0+start_y)*0.5);
+					x0 = start_x;
+					y0 = start_y;
+					break;
+				}
+			}
+		}
+	}
+
+	static function @is_visual_lowercase(char: Integer): Boolean
+	{
+		switch (char) {
+			// Basic Latin:
+			case 'a'..'z':
+				return true;
+
+			// Latin-1 Supplement:
+			case 0xA2, 0xB5, 0xE0..0xF6, 0xF8..0xFF:
+				return true;
+
+			// Latin Extended-A:
+			case 0x100..0x17F:
+				if ((char & 1) == 0) {
+					switch (char) {
+						case 0x140, 0x142, 0x144, 0x146, 0x138, 0x148, 0x17A, 0x13C, 0x17C, 0x13E, 0x17E:
+							return true;
+					}
+				}
+				else {
+					switch (char) {
+						case 0x141, 0x143, 0x145, 0x147, 0x139, 0x179, 0x13B, 0x17B, 0x13D, 0x17D, 0x13F:
+							return false;
+					}
+					return true;
+				}
+				return false;
+
+			// Latin Extended-B:
+			case 0x180..0x24F:
+				switch (char) {
+					case 0x180, 0x184, 0x185, 0x188, 0x18C, 0x192, 0x195, 0x196, 0x199, 0x19A, 0x19E, 0x1A1:
+					case 0x1A3, 0x1A5, 0x1A8, 0x1AB, 0x1AD, 0x1B0, 0x1B4, 0x1B6, 0x1B9, 0x1BA, 0x1BD, 0x1BE:
+					case 0x1BF, 0x1C6, 0x1C9, 0x1CC, 0x1CE, 0x1D0, 0x1D2, 0x1D4, 0x1D6, 0x1D8, 0x1DA, 0x1DC:
+					case 0x1DD, 0x1DF, 0x1E1, 0x1E3, 0x1E5, 0x1E7, 0x1E9, 0x1EB, 0x1ED, 0x1EF, 0x1F0, 0x1F3:
+					case 0x1F5, 0x1F9, 0x1FB, 0x1FD, 0x1FF, 0x201, 0x203, 0x205, 0x207, 0x209, 0x20B, 0x20D:
+					case 0x20F, 0x211, 0x213, 0x215, 0x217, 0x219, 0x21B, 0x21D, 0x21F, 0x221, 0x225, 0x227:
+					case 0x229, 0x22B, 0x22D, 0x22F, 0x231, 0x233, 0x234, 0x235, 0x236, 0x237, 0x238, 0x239:
+					case 0x23C, 0x23F, 0x240, 0x242, 0x247, 0x249, 0x24B, 0x24D, 0x24F:
+						return true;
+				}
+				return false;
+
+			// IPA Extensions:
+			case 0x250..0x2AF:
+				switch (char) {
+					case 0x278, 0x298:
+						return false;
+				}
+				return true;
+
+			// Latin Extended Additional:
+			case 0x1E00..0x1EFF:
+				if ((char & 1) == 0) {
+					switch (char) {
+						case 0x1E96, 0x1E98, 0x1E9A, 0x1E9C:
+							return true;
+					}
+				}
+				else {
+					return true;
+				}
+				return false;
+			
+			// Latin Extended-C:
+			case 0x2C60..0x2C7F:
+				if ((char & 1) == 0) {
+					switch (char) {
+						case 0x2C74, 0x2C66, 0x2C76, 0x2C68, 0x2C78, 0x2C6A, 0x2C7A, 0x2C7C:
+							return true;
+					}
+				}
+				else {
+					switch (char) {
+						case 0x2C63, 0x2C75, 0x2C67, 0x2C69, 0x2C6B, 0x2C6D, 0x2C6F, 0x2C7F:
+							return false;
+					}
+					return true;
+				}
+				return false;
+		}
+		return false;
+	}
+
+	function @get_scaled_glyph(char: Integer): Shape
+	{
+		var size_y = this.size_y;
+		if (is_visual_lowercase(char)) {
+			size_y = this.size_y_lowercase;
+		}
+
+		var shape = font.get_char_shape(char, 0, 0, size_x, size_y);
+		var distortion_x = Distortion::create();
+		var distortion_y = Distortion::create();
+		var horiz = AxisLines::create();
+		var vert = AxisLines::create();
+		find_axis_aligned_lines(shape, horiz, vert);
+		horiz.apply(distortion_x, weight);
+		vert.apply(distortion_y, weight);
+		distortion_x.add_dividers(2.0);
+		distortion_y.add_dividers(2.0);
+		distortion_x.apply_to_shape(shape, false);
+		distortion_y.apply_to_shape(shape, true);
+		return shape;
+	}
+}
+
+class @AxisLines
+{
+	static function create(): AxisLines
+	{
+		return [] as AxisLines;
+	}
+
+	function add(pos: Float, dir: Boolean)
+	{
+		var arr = this as Dynamic[];
+		for (var i=0; i<arr.length; i+=2) {
+			if (pos < (arr[i] as Float)) {
+				arr.insert(i, pos);
+				arr.insert(i+1, dir);
+				return;
+			}
+		}
+		arr[] = pos;
+		arr[] = dir;
+	}
+
+	function apply(distortion: Distortion, weight: Float)
+	{
+		var arr = this as Dynamic[];
+		if (arr.length == 0) {
+			return;
+		}
+
+		var prev_pos = arr[0] as Float;
+		var prev_dir = arr[1] as Boolean;
+		for (var i=2; i<arr.length; i+=2) {
+			var cur_pos = arr[i+0] as Float;
+			var cur_dir = arr[i+1] as Boolean;
+			if (fabs(cur_pos - prev_pos) < 0.25 && cur_dir == prev_dir) {
+				arr.remove(i, 2);
+				i -= 2;
+			}
+			prev_pos = cur_pos;
+			prev_dir = cur_dir;
+		}
+
+		var pairs: Float[] = [];
+		for (var i=0; i<arr.length; ) {
+			var pos1 = arr[i++] as Float;
+			var dir1 = arr[i++] as Boolean;
+			for (var j=i; j<arr.length; ) {
+				var pos2 = arr[j++] as Float;
+				var dir2 = arr[j++] as Boolean;
+				if (dir2 != dir1 && pos2 - pos1 < 3.0) {
+					pairs[] = pos1;
+					pairs[] = pos2;
+					arr.remove(i, j-i);
+					break;
+				}
+			}
+		}
+
+		for (var i=0; i<pairs.length; ) {
+			var pos1 = pairs[i++];
+			var pos2 = pairs[i++];
+			var center = (pos1 + pos2) * 0.5;
+			var len = max(1, iround(pos2 - pos1));
+			if (len % 2 == 1) {
+				center = center + 0.4;
+			}
+			var adjust = round(center) - center;
+			var new_pos1 = round(pos1 + adjust);
+			var new_pos2 = round(pos2 + adjust);
+			//var new_pos1 = pos1 + adjust;
+			//var new_pos2 = pos2 + adjust;
+			distortion.add(pos1, (new_pos1 - pos1) * weight);
+			distortion.add(pos2, (new_pos2 - pos2) * weight);
+		}
+	}
+}
+
+class @Distortion
+{
+	static function create(): Distortion
+	{
+		return [] as Distortion;
+	}
+
+	function add(pos: Float, delta: Float)
+	{
+		var arr = this as Float[];
+		for (var i=0; i<arr.length; i+=2) {
+			if (pos < arr[i]) {
+				arr.insert(i, pos);
+				arr.insert(i+1, delta);
+				return;
+			}
+		}
+		arr[] = pos;
+		arr[] = delta;
+	}
+
+	function add_dividers(radius: Float)
+	{
+		var arr = clone(this) as Float[];
+		if (arr.length == 0) {
+			return;
+		}
+
+		var prev_pos = arr[0];
+		add(prev_pos - radius, 0.0);
+		
+		for (var i=2; i<arr.length-2; i+=2) {
+			var pos = arr[i];
+			if (pos - prev_pos > radius*2) {
+				add(prev_pos + radius, 0.0);
+				add(pos - radius, 0.0);
+			}
+			prev_pos = pos;
+		}
+
+		add(prev_pos + radius, 0.0);
+	}
+
+	function apply(pos: Float): Float
+	{
+		var arr = this as Float[];
+		if (arr.length == 0) {
+			return pos;
+		}
+		if (pos < arr[0]) {
+			return pos + arr[1];
+		}
+		for (var i=2; i<arr.length; i+=2) {
+			var next_pos = arr[i];
+			if (pos < next_pos) {
+				var prev_pos = arr[i-2];
+				var prev_delta = arr[i-1];
+				var next_delta = arr[i+1];
+				var factor = (pos - prev_pos) / (next_pos - prev_pos);
+				return pos + prev_delta * (1.0 - factor) + next_delta * factor;
+			}
+		}
+		return pos + arr[arr.length-1];
+	}
+
+	function apply_to_shape(shape: Shape, vertical: Boolean)
+	{
+		var arr = shape as Dynamic[];
+		var valid = !vertical;
+		for (var i=0; i<arr.length; i++) {
+			var value = arr[i];
+			if (is_float(value)) {
+				if (valid) {
+					arr[i] = apply(value as Float);
+				}
+				valid = !valid;
+			}
+		}
+	}
+}

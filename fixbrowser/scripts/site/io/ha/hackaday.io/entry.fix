@@ -1,19 +1,19 @@
+use "classes";
+
 import "util/common";
 
-function adjust_document(request, document)
+function adjust_document(request: Request, document: Element)
 {
-	var imgs = element_query_all(document, "img.lazy[data-src]");
-	for (var i=0; i<length(imgs); i++) {
-		element_set_attr(imgs[i], "src", element_get_attr(imgs[i], "data-src"));
+	foreach (var img in document.query_all("img.lazy[data-src]")) {
+		img.set_attr("src", img.get_attr("data-src"));
 	}
 
 	// TODO: incomplete
-	var links = element_query_all(document, "a.lazy[data-image]");
-	for (var i=0; i<length(links); i++) {
-		var img = element_create("img");
-		element_set_attr(img, "src", element_get_attr(links[i], "data-image"));
-		element_append_child(links[i], img);
-		element_set_attr(links[i], "style", "width: auto; height: auto");
+	foreach (var link in document.query_all("a.lazy[data-image]")) {
+		var img = Element::create("img");
+		img.set_attr("src", link.get_attr("data-image"));
+		link.append_child(img);
+		link.set_attr("style", "width: auto; height: auto");
 	}
 
 	add_style_to_element(document, "div.thumbs-holder", "overflow-x: scroll");

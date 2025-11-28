@@ -1,0 +1,119 @@
+/*
+ * FixBrowser v0.4 - https://www.fixbrowser.org/
+ * Copyright (c) 2018-2025 Martin Dvorak <jezek2@advel.cz>
+ *
+ * This software is provided 'as-is', without any express or implied warranty.
+ * In no event will the authors be held liable for any damages arising from
+ * the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose, 
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+use "classes";
+
+import "io/time";
+import "task/task";
+import "task/global";
+import "task/channel";
+import "util/json";
+import "util/long";
+
+const {
+	BUTTON_LEFT = 1
+};
+
+var @viewport_x: Integer;
+var @viewport_y: Integer;
+
+class NativeMouse
+{
+	static function connect();
+	static function disconnect();
+	static function move_event(x: Integer, y: Integer);
+	static function button_event(button: Integer, pressed: Boolean);
+}
+
+function @handle_message(msg: Dynamic[])
+{
+	if (msg[0] == 0) {
+		var start_x = msg[1] as Integer;
+		var start_y = msg[2] as Integer;
+		var target_x = msg[3] as Integer;
+		var target_y = msg[4] as Integer;
+		var move_duration = msg[5] as Integer;
+		var press_duration = msg[6] as Integer;
+
+		log("mouse action start (time="+Clock::get_time()+")");
+
+		NativeMouse::move_event(viewport_x + start_x, viewport_y + start_y);
+		
+		var start_time = Monotonic::get_time();
+		var prev_x = start_x;
+		var prev_y = start_y;
+
+		for (;;) {
+			var delta_time = float(sub32(Monotonic::get_time(), start_time)) / float(move_duration);
+			if (delta_time > 1.0) {
+				delta_time = 1.0;
+			}
+			var x = start_x + iround(float(target_x - start_x) * delta_time);
+			var y = start_y + iround(float(target_y - start_y) * delta_time);
+			if (x != prev_x || y != prev_y) {
+				NativeMouse::move_event(viewport_x + x, viewport_y + y);
+				prev_x = x;
+				prev_y = y;
+			}
+			Task::sleep(10);
+			if (delta_time >= 1.0) {
+				break;
+			}
+		}
+		
+		NativeMouse::button_event(BUTTON_LEFT, true);
+		Task::sleep(press_duration);
+		NativeMouse::button_event(BUTTON_LEFT, false);
+
+		log("mouse action end (time="+Clock::get_time()+")");
+	}
+}
+
+function @custom_log(value)
+{
+	log("[mouse] "+value);
+}
+
+function main(channel: Channel)
+{
+	set_log_function(custom_log#1);
+
+	var config = Global::get("config") as JSON;
+
+	var origin = config.get("viewport_origin").as_array();
+	viewport_x = origin[0].as_int();
+	viewport_y = origin[1].as_int();
+
+	NativeMouse::connect();
+	for (;;) {
+		var (msg, e1) = channel.receive();
+		if (e1) {
+			dump(e1);
+			continue;
+		}
+		if (!msg) break;
+		var (r, e2) = handle_message(msg);
+		if (e2) {
+			dump(e2);
+		}
+	}
+	NativeMouse::disconnect();
+}

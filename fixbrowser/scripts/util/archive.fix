@@ -1,11 +1,13 @@
+use "classes";
+
 import "util/common";
 
-function get_archive_org_link(request, url)
+function get_archive_org_link(request: Request, url: String): String
 {
-	return make_same_domain_link(request, {"https://web.archive.org/web/*/", url});
+	return make_same_domain_link(request, "https://web.archive.org/web/*/"+url);
 }
 
-function get_archive_today_link(request, url)
+function get_archive_today_link(request: Request, url: String): String
 {
-	return make_same_domain_link(request, link_with_params("https://archive.fo/search/", {"q": url}));
+	return make_same_domain_link(request, Link::with_params("https://archive.fo/search/", {"q": url}));
 }
