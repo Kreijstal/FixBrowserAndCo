@@ -75,6 +75,9 @@ def try_version_update(package: str, current_version: str, base_url: str) -> Opt
     if download_and_extract(url, package):
         # Parse version using integer arithmetic
         parts = current_version.split('.')
+        if len(parts) < 2:
+            # Non-semver version, just return current version
+            return current_version
         current_major = int(parts[0])
         current_minor = int(parts[1])
         
